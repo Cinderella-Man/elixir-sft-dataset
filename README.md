@@ -15,3 +15,9 @@ any other task's evaluation.
 mix deps.get
 mix compile
 ```
+
+Test a single task:
+
+```
+mix run ./scripts/eval_task.exs 8 | jq
+```
