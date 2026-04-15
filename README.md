@@ -1,2 +1,17 @@
-# elixir-sft-dataset
-A curated dataset of Elixir coding tasks with reference solutions and tests for supervised fine-tuning (SFT) of LLMs.
+# Elixir Benchmark Suite
+
+A framework for evaluating AI-generated Elixir code against verified test harnesses.
+Each solution runs in its own BEAM process — a non-compiling solution cannot affect
+any other task's evaluation.
+
+## Prerequisites
+
+- Elixir 1.17+ / OTP 27+
+- PostgreSQL 16+ (only for database-tagged tasks)
+
+## Setup
+
+```bash
+mix deps.get
+mix compile
+```
