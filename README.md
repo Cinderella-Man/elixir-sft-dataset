@@ -21,3 +21,31 @@ Test a single task:
 ```
 mix run ./scripts/eval_task.exs 8 | jq
 ```
+
+### How to contribute:
+
+Anyone is invited to contribute solutions / harnesses. Please don't do too many at once as there could be a clash of doubled effort(same tasks solved).
+
+Step 1. Grab a prompt from `tasks/generation_prompt.md`
+Step 2. Substitute this block:
+
+```
+### 80. Directed Acyclic Graph with Topological Sort
+Build a DAG module. The interface is `DAG.new()`, `DAG.add_vertex(dag, vertex)`, `DAG.add_edge(dag, from, to)` (fails if it would create a cycle), `DAG.topological_sort(dag)` returning a valid ordering, and `DAG.predecessors(dag, vertex)` / `DAG.successors(dag, vertex)`. Verify by building a known dependency graph, asserting the topological sort is valid (every vertex appears before its dependents), that adding a cycle-creating edge returns an error, and that predecessor/successor queries return correct results.
+```
+
+with any of the ideas from `tasks/tasks.md` list that aren't done yet.
+
+Step 3. Leave the rest as is and attach the test harness of the task 1 (as an example) `tasks/001_rate_limiter/test_harness.exs`
+
+Step 4. Create new directory that is based on the title of the task (including the number) and put `solution.ex` and `test_harness.exs` there
+
+Step 5. Confirm that the tests are actually passing:
+
+```
+mix run ./scripts/eval_task.exs <YOUR_TASK_NUMBER_HERE> | jq
+```
+
+Step 6. Fix any problems
+
+Step 7. Create a PR
