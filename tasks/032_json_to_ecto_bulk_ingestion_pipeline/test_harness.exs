@@ -14,7 +14,6 @@ defmodule DataIngestionTest do
 
   defmodule Widget do
     use Ecto.Schema
-    import Ecto.Changeset
 
     @primary_key {:id, :id, autogenerate: true}
 
@@ -41,6 +40,31 @@ defmodule DataIngestionTest do
   # ---------------------------------------------------------------------------
   # Setup / teardown
   # ---------------------------------------------------------------------------
+
+  setup_all do
+    Application.put_env(:data_ingestion, DataIngestionTest.TestRepo,
+      database: ":memory:",
+      pool_size: 1
+    )
+
+    {:ok, _} = DataIngestionTest.TestRepo.start_link()
+
+    DataIngestionTest.TestRepo.query!(
+      """
+      CREATE TABLE widgets (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        external_id TEXT    UNIQUE,
+        name        TEXT    NOT NULL,
+        value       INTEGER,
+        inserted_at TEXT    NOT NULL,
+        updated_at  TEXT    NOT NULL
+      )
+      """,
+      []
+    )
+
+    :ok
+  end
 
   setup do
     # Truncate table before each test
@@ -89,6 +113,11 @@ defmodule DataIngestionTest do
     write_json!(path, seed)
     DataIngestion.ingest(TestRepo, Widget, path, conflict_target: [:external_id])
 
+    # Sleep long enough that the second ingest's timestamp (truncated to seconds)
+    # differs from the seed's inserted_at by > @insert_window_seconds (1 s), so the
+    # solution's timestamp-based classifier can tell inserts from updates.
+    Process.sleep(2000)
+
     # Now run again: same 5 external_ids + 5 new ones
     records =
       Enum.map(1..10, fn i ->
@@ -100,6 +129,10 @@ defmodule DataIngestionTest do
     assert {:ok, stats} =
              DataIngestion.ingest(TestRepo, Widget, path,
                conflict_target: [:external_id],
+               # Preserve the original inserted_at so the classifier can distinguish
+               # fresh inserts (inserted_at ≈ updated_at) from updates (inserted_at
+               # is 2+ seconds older than updated_at).
+               on_conflict: {:replace_all_except, [:inserted_at]},
                batch_size: 4
              )
 

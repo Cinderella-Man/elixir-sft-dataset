@@ -73,11 +73,16 @@ defmodule AssertHelpersTest do
 
   describe "assert_recent/2" do
     test "passes for DateTime.utc_now()" do
-      assert_recent(DateTime.utc_now())
+      # apply/3 returns dynamic(term()), preventing the type checker from
+      # narrowing to %DateTime{} and flagging the %NaiveDateTime{} branch in
+      # the macro's case expression as unreachable.
+      assert_recent(apply(DateTime, :utc_now, []))
     end
 
     test "passes for a NaiveDateTime within tolerance" do
-      just_now = NaiveDateTime.utc_now()
+      # Same rationale: apply/3 keeps the type opaque so both branches remain
+      # reachable in the type checker's view.
+      just_now = apply(NaiveDateTime, :utc_now, [])
       assert_recent(just_now, 5)
     end
 

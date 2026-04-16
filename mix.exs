@@ -49,7 +49,7 @@ defmodule ElixirBenchmark.MixProject do
       {:nimble_csv, "~> 1.2"},
 
       # Testing
-      {:stream_data, "~> 1.1", only: :test},
+      {:stream_data, "~> 1.1", only: [:dev, :test]},
       {:mox, "~> 1.1", only: :test},
 
       # Decimal arithmetic

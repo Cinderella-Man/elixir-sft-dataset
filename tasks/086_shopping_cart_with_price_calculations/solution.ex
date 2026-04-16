@@ -94,7 +94,7 @@ defmodule Cart do
         cart.items,
         product_id,
         %Item{product_id: product_id, quantity: quantity, unit_price: unit_price},
-        fn existing -> %Item{existing | quantity: existing.quantity + quantity} end
+        fn %Item{} = existing -> %Item{existing | quantity: existing.quantity + quantity} end
       )
 
     {:ok, %Cart{cart | items: updated_items}}
@@ -154,7 +154,7 @@ defmodule Cart do
       {:ok, _item} when quantity == 0 ->
         {:ok, remove_item(cart, product_id)}
 
-      {:ok, item} ->
+      {:ok, %Item{} = item} ->
         updated_item = %Item{item | quantity: quantity}
         {:ok, %Cart{cart | items: Map.put(cart.items, product_id, updated_item)}}
     end
