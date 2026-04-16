@@ -31,6 +31,7 @@ for TASK_DIR in tasks/*/; do
   # but that's EXPECTED (the solution module isn't loaded).
   # We're checking for SYNTAX errors in the harness itself.
 
+  TMP_ERR=$(mktemp)
   RESULT=$(elixir -e '
     # Suppress output
     ExUnit.start(autorun: false)
@@ -38,8 +39,12 @@ for TASK_DIR in tasks/*/; do
       Code.compile_file("'"$HARNESS"'")
       IO.puts("OK")
     rescue
-      e in [CompileError, SyntaxError, TokenMissingError] ->
+      e in [SyntaxError, TokenMissingError] ->
         IO.puts("SYNTAX_ERROR: #{Exception.message(e)}")
+      e in [CompileError] ->
+        # CompileError can mean a missing module (OK) or a real harness bug.
+        # Emit a distinct marker so we can inspect stderr to tell them apart.
+        IO.puts("COMPILE_ERROR: #{Exception.message(e)}")
       e ->
         # UndefinedFunctionError or similar means the harness is fine
         # but the solution module is missing — this is expected
@@ -51,7 +56,19 @@ for TASK_DIR in tasks/*/; do
           IO.puts("ERROR: #{Exception.message(e)}")
         end
     end
-  ' 2>/dev/null)
+  ' 2>"$TMP_ERR")
+
+  # A CompileError caused by a missing module (solution or library dep) is not
+  # a harness bug — promote it to OK_NEEDS_MODULE.  Errors caused by genuine
+  # harness mistakes produce different stderr patterns and stay as SYNTAX_ERROR.
+  if [[ "$RESULT" == COMPILE_ERROR* ]]; then
+    if grep -qE "(is not loaded and could not be found|cannot expand struct)" "$TMP_ERR" 2>/dev/null; then
+      RESULT="OK_NEEDS_MODULE"
+    else
+      RESULT="SYNTAX_ERROR: ${RESULT#COMPILE_ERROR: }"
+    fi
+  fi
+  rm -f "$TMP_ERR"
 
   case "$RESULT" in
     OK|OK_NEEDS_MODULE)
