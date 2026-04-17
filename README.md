@@ -38,14 +38,22 @@ with any of the ideas from `tasks/tasks.md` list that aren't done yet.
 
 Step 3. Leave the rest as is and attach the test harness of the task 1 (as an example) `tasks/001_rate_limiter/test_harness.exs`
 
-Step 4. Create new directory that is based on the title of the task (including the number) and put `solution.ex` and `test_harness.exs` there
+Step 4. Create new directory that is based on the title of the task (including the number) and put `prompt.md` and `test_harness.exs` there
 
-Step 5. Confirm that the tests are actually passing:
+Step 5. Start a new LLM session and paste there just the contents of the `prompt.md`
+
+Step 6. Store results in the `solution.ex`
+
+Step 7. Confirm that the tests are actually passing:
 
 ```
 mix run ./scripts/eval_task.exs <YOUR_TASK_NUMBER_HERE> | jq
 ```
 
-Step 6. Fix any problems
+Step 8. Fix any problems (most of the time by submitting the report out of the `eval_task.exs` command and `test_harness.exs` file and say can it fix it)
 
-Step 7. Create a PR
+Step 9. Create a PR
+
+Step 10. Look through `solution.ex` and find good candidates functions for secondary tests (the "fill-in-the-middle" type)
+
+Step 11. Include `solution.ex` and ask can LLM generate a task to write specific function
