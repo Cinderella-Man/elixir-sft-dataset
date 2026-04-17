@@ -110,13 +110,14 @@ defmodule RateLimiter do
       {:reply, {:ok, remaining}, %{state | keys: new_keys}}
     else
       # Denied – compute how long until the oldest active entry expires.
-      oldest = Enum.min(active)
+      oldest = List.last(active)
       retry_after = oldest + window_ms - now
       retry_after = max(retry_after, 1)
 
-      # Still store the pruned list (no new timestamp added).
-      new_keys = Map.put(state.keys, key, {active, window_ms})
-      {:reply, {:error, :rate_limited, retry_after}, %{state | keys: new_keys}}
+      # Update state with the pruned list even on failure
+      new_state = put_in(state.keys[key], {active, window_ms})
+
+      {:reply, {:error, :rate_limited, retry_after}, new_state}
     end
   end
 
