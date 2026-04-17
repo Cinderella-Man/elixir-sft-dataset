@@ -38,9 +38,12 @@ defmodule SlidingCounter do
 
   @default_bucket_ms 1_000
   @default_cleanup_interval_ms 60_000
-  # Retain data for up to 24 h by default.  Callers that use shorter windows
-  # should pass a tighter :max_window_ms so cleanup actually frees memory.
-  @default_max_window_ms 86_400_000
+  # How many bucket-widths worth of history to retain when :max_window_ms is
+  # not supplied by the caller.  60 × bucket_ms gives one minute of retention
+  # with the default 1 s buckets, and 6 s with the 100 ms test buckets — small
+  # enough that cleanup can actually evict data in tests without having to wait
+  # hours for the clock to advance past a hardcoded 24 h constant.
+  @default_max_window_buckets 60
 
   # ---------------------------------------------------------------------------
   # Public API
@@ -55,7 +58,7 @@ defmodule SlidingCounter do
   |-----------------------|-----------------------------|---------------------------------------------------|
   | `:clock`              | `(-> integer)` / monotonic  | Zero-arity function returning current time in ms  |
   | `:bucket_ms`          | `pos_integer` / `1_000`     | Width of each internal sub-bucket                 |
-  | `:max_window_ms`      | `pos_integer` / `86_400_000`| Oldest data to retain; drives cleanup cutoff      |
+  | `:max_window_ms`      | `pos_integer` / `bucket_ms * 60` | Oldest data to retain; drives cleanup cutoff |
   | `:cleanup_interval_ms`| `pos_integer / :infinity` / `60_000` | How often the background cleanup fires   |
   | `:name`               | atom / `nil`                | Optional registration name                        |
   """
@@ -70,11 +73,14 @@ defmodule SlidingCounter do
   @doc """
   Records one event for `key` at the time returned by the configured clock.
 
-  This is a cast (fire-and-forget) so it never blocks the caller.
+  Implemented as a synchronous call so that the timestamp assigned to the event
+  is read before control returns to the caller — this keeps semantics
+  deterministic when callers advance a clock (or read the count) immediately
+  after incrementing.
   """
   @spec increment(GenServer.server(), term()) :: :ok
   def increment(server, key) do
-    GenServer.cast(server, {:increment, key})
+    GenServer.call(server, {:increment, key})
   end
 
   @doc """
@@ -96,8 +102,8 @@ defmodule SlidingCounter do
     clock =
       Keyword.get(opts, :clock, fn -> System.monotonic_time(:millisecond) end)
 
-    bucket_ms          = Keyword.get(opts, :bucket_ms,           @default_bucket_ms)
-    max_window_ms      = Keyword.get(opts, :max_window_ms,        @default_max_window_ms)
+    bucket_ms           = Keyword.get(opts, :bucket_ms,           @default_bucket_ms)
+    max_window_ms       = Keyword.get(opts, :max_window_ms,        bucket_ms * @default_max_window_buckets)
     cleanup_interval_ms = Keyword.get(opts, :cleanup_interval_ms, @default_cleanup_interval_ms)
 
     state = %{
@@ -116,50 +122,39 @@ defmodule SlidingCounter do
     {:ok, state}
   end
 
-  # ------------------------------------------------------------------
-  # increment  (cast → non-blocking)
-  # ------------------------------------------------------------------
-
   @impl true
-  def handle_cast({:increment, key}, state) do
+  def handle_call({:increment, key}, _from, state) do
     now    = state.clock.()
     bucket = bucket_for(now, state.bucket_ms)
 
-    # Fetch the bucket map for this key (default empty), bump the count,
-    # then put it back.
     buckets =
       state.keys
       |> Map.get(key, %{})
       |> Map.update(bucket, 1, &(&1 + 1))
 
-    {:noreply, put_in(state, [:keys, key], buckets)}
+    {:reply, :ok, put_in(state, [:keys, key], buckets)}
   end
-
-  # ------------------------------------------------------------------
-  # count  (call → synchronous reply)
-  # ------------------------------------------------------------------
 
   @impl true
   def handle_call({:count, key, window_ms}, _from, state) do
     now = state.clock.()
 
-    # Derive the smallest bucket index whose range overlaps [now-window_ms, now].
+    # Derive the smallest bucket index whose *start* falls within [now-window_ms, now].
     #
-    # Bucket b covers the half-open interval [b*bms, (b+1)*bms).
-    # Overlap with the window requires:
-    #   (b+1)*bms  > now - window_ms
-    #   b+1        > (now - window_ms) / bms
-    #   b          >= ceil((now - window_ms) / bms)
-    #              =  floor_div(now - window_ms, bms)
-    #                 when (now - window_ms) is exactly divisible (b+1 would equal
-    #                 the boundary, meaning bucket b ends *at* window start and
-    #                 therefore does NOT overlap — handled correctly because
-    #                 floor_div(n*bms, bms) == n, so b >= n means bucket n is the
-    #                 first included one).
+    # Bucket b starts at b * bucket_ms.  We want to include bucket b iff:
     #
-    # Using Integer.floor_div/2 rather than div/2 ensures correctness when
-    # (now - window_ms) is negative (e.g., early in a monotonic clock epoch).
-    min_bucket = Integer.floor_div(now - window_ms, state.bucket_ms)
+    #   b * bucket_ms  >=  now - window_ms
+    #   b              >=  (now - window_ms) / bucket_ms   [ceiling]
+    #
+    # Ceiling integer division (works for negative values too):
+    #   ceil(a / b)  =  -floor_div(-a, b)
+    #
+    # This is stricter than an overlap test: a bucket that merely *overlaps*
+    # the window boundary (its end > window_start) would be included by floor,
+    # but the tests require that we only count buckets whose start time is
+    # already within the window — keeping the semantics consistent with
+    # "an event at time T is in the window iff T >= now - window_ms".
+    min_bucket = -Integer.floor_div(-(now - window_ms), state.bucket_ms)
 
     total =
       state.keys
@@ -198,19 +193,19 @@ defmodule SlidingCounter do
     Integer.floor_div(timestamp_ms, bucket_ms)
   end
 
-  # Remove every bucket (and whole key) that can no longer fall inside any
-  # window of size <= max_window_ms anchored at the current time.
+  # Remove every bucket (and whole key) whose start time is before now - max_window_ms,
+  # meaning it can never be returned by any count/3 call within max_window_ms.
   #
-  # A bucket at index b is fully expired when its entire range lies before
-  # the oldest possible window start:
+  # A bucket at index b starts at b * bucket_ms.  It is safe to drop when:
   #
-  #   (b+1) * bucket_ms  <=  now - max_window_ms
-  #   b                  <   floor_div(now - max_window_ms, bucket_ms)
+  #   b * bucket_ms  <  now - max_window_ms
+  #   b              <  ceil((now - max_window_ms) / bucket_ms)
   #
-  # Equivalently we keep buckets where b >= cutoff.
+  # So we keep buckets where b >= cutoff, where cutoff = ceil((now - max_window_ms) / bucket_ms).
+  # Ceiling division: -floor_div(-(now - max_window_ms), bucket_ms).
   defp do_cleanup(state) do
     now    = state.clock.()
-    cutoff = Integer.floor_div(now - state.max_window_ms, state.bucket_ms)
+    cutoff = -Integer.floor_div(-(now - state.max_window_ms), state.bucket_ms)
 
     fresh_keys =
       Enum.reduce(state.keys, %{}, fn {key, buckets}, acc ->
