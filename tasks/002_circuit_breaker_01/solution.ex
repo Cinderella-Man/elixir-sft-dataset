@@ -112,11 +112,12 @@ defmodule CircuitBreaker do
       {:reply, result, %{state | failure_count: 0}}
     else
       new_count = state.failure_count + 1
+      new_state = %{state | failure_count: new_count}
 
       if new_count >= state.failure_threshold do
-        {:reply, result, trip_open(state)}
+        {:reply, result, trip_open(new_state)}
       else
-        {:reply, result, %{state | failure_count: new_count}}
+        {:reply, result, new_state}
       end
     end
   end
@@ -155,8 +156,14 @@ defmodule CircuitBreaker do
   defp execute(func) do
     try do
       case func.() do
-        {:ok, _value} = ok -> {ok, true}
-        {:error, _reason} = err -> {err, false}
+        {:ok, _} = ok ->
+          {ok, true}
+
+        {:error, _} = error ->
+          {error, false}
+
+        other ->
+          {{:error, {:unexpected_return, other}}, false}
       end
     rescue
       exception ->
