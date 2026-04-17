@@ -1,4 +1,8 @@
-Implement `handle_open/2`. It should check if enough time has passed (based on `reset_timeout_ms`) since the breaker was opened. If the timeout has elapsed, transition the state to `:half_open` and immediately attempt to handle the call in that new state. If the timeout has NOT elapsed, return `{:error, :circuit_open}` without executing the function.
+Implement the private `handle_open/2` function. It should check whether enough time has passed since the circuit was opened, based on `reset_timeout_ms` and `opened_at`, using the provided `clock/0` function.
+
+If the timeout has not elapsed, return `{:error, :circuit_open}` without executing the function.
+
+If the timeout has elapsed, transition the circuit to the `:half_open` state, reset `probe_count` to 0, and immediately delegate execution to `handle_half_open/2` with the updated state and the provided function.
 
 ```elixir
 defmodule CircuitBreaker do

@@ -1,4 +1,10 @@
-Implement the `handle_closed/2` private function. It should execute the provided function. If it succeeds, reset the failure count to zero. If it fails, increment the failure count; if that count reaches the `failure_threshold`, transition the circuit to the `:open` state using the `trip_open/1` helper. Return the result of the function execution in the GenServer reply.
+Implement the private `handle_closed/2` function. It should execute the provided zero-arity function using `execute/1`.
+
+If the execution succeeds, reset `failure_count` to 0 and return the result in the GenServer reply.
+
+If the execution fails, increment `failure_count`. If the updated count is greater than or equal to `failure_threshold`, transition the circuit to the `:open` state using `trip_open/1`.
+
+In all cases, return the result produced by `execute/1` in the GenServer reply along with the updated state.
 
 ```elixir
 defmodule CircuitBreaker do

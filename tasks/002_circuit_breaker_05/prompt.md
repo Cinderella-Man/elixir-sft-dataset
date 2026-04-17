@@ -1,12 +1,12 @@
-Implement the private `handle_half_open/2` function. It should enforce the probe limit defined by `half_open_max_probes`.
+Implement the private `execute/1` helper. It should safely execute the provided zero-arity function and normalize its result.
 
-If `probe_count` is greater than or equal to `half_open_max_probes`, return `{:error, :circuit_open}` without executing the function.
+If the function raises an exception, catch it and return `{{:error, exception}, false}`.
 
-Otherwise, increment `probe_count` and execute the provided zero-arity function using `execute/1`.
+If the function returns `{:ok, value}`, return `{ {:ok, value}, true }`.
 
-If execution succeeds, transition the circuit to the `:closed` state using `reset_to_closed/1` and return the successful result.
+If the function returns `{:error, reason}`, return `{ {:error, reason}, false }`.
 
-If execution fails, transition the circuit back to the `:open` state using `trip_open/1` and return the failure result.
+If the function returns any other value, wrap it as `{:error, {:unexpected_return, value}}` and return it with a `false` success flag.
 
 ```elixir
 defmodule CircuitBreaker do
@@ -146,7 +146,18 @@ defmodule CircuitBreaker do
   end
 
   defp handle_half_open(func, state) do
-    # TODO
+    if state.probe_count >= state.half_open_max_probes do
+      {:reply, {:error, :circuit_open}, state}
+    else
+      new_state = %{state | probe_count: state.probe_count + 1}
+      {result, success?} = execute(func)
+
+      if success? do
+        {:reply, result, reset_to_closed(new_state)}
+      else
+        {:reply, result, trip_open(new_state)}
+      end
+    end
   end
 
   # ---------------------------------------------------------------------------
@@ -154,21 +165,7 @@ defmodule CircuitBreaker do
   # ---------------------------------------------------------------------------
 
   defp execute(func) do
-    try do
-      case func.() do
-        {:ok, _} = ok ->
-          {ok, true}
-
-        {:error, _} = error ->
-          {error, false}
-
-        other ->
-          {{:error, {:unexpected_return, other}}, false}
-      end
-    rescue
-      exception ->
-        {{:error, exception}, false}
-    end
+    # TODO
   end
 
   defp trip_open(state) do
