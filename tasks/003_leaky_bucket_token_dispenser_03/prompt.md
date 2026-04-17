@@ -1,3 +1,14 @@
+Implement the `handle_info/2` clause that handles the `:cleanup` message.
+
+Get the current time by calling `state.clock.()`.
+
+Build a new bucket map that drops any entry whose `last_access` is older than `state.cleanup_ttl_ms` milliseconds ago (i.e. where `now - bucket.last_access` exceeds `state.cleanup_ttl_ms`) and keeps all other entries unchanged.
+
+Reschedule the next cleanup sweep using the private `schedule_cleanup/1` helper with `state.cleanup_interval_ms`.
+
+Return `{:noreply, new_state}` where `new_state` is `state` with its `buckets` field replaced by the filtered map.
+
+```elixir
 defmodule LeakyBucket do
   @moduledoc """
   A token-based leaky bucket rate limiter implemented as a GenServer.
@@ -108,18 +119,7 @@ defmodule LeakyBucket do
 
   @impl true
   def handle_info(:cleanup, %State{} = state) do
-    now = state.clock.()
-
-    buckets =
-      state.buckets
-      |> Enum.reject(fn {_name, bucket} ->
-        now - bucket.last_access > state.cleanup_ttl_ms
-      end)
-      |> Map.new()
-
-    schedule_cleanup(state.cleanup_interval_ms)
-
-    {:noreply, %State{state | buckets: buckets}}
+    # TODO
   end
 
   # Catch-all so unexpected messages don't crash the process.
@@ -151,3 +151,4 @@ defmodule LeakyBucket do
     {gen_opts, rest}
   end
 end
+```
