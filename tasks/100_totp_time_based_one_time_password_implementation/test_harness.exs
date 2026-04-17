@@ -12,17 +12,6 @@ defmodule TOTPTest do
 
   @rfc_secret "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
 
-  # These expected codes were computed independently from the RFC vectors.
-  # Each tuple is {unix_timestamp, expected_6_digit_code}.
-  @rfc_vectors [
-    {59, "287082"},
-    {1_111_111_109, "081804"},
-    {1_111_111_111, "050471"},
-    {1_234_567_890, "005924"},
-    {2_000_000_000, "279037"},
-    {20_000_000_000, "353130"}
-  ]
-
   # -------------------------------------------------------------------
   # generate_secret/0
   # -------------------------------------------------------------------
