@@ -26,7 +26,7 @@ mix run ./scripts/eval_task.exs 8 | jq
 
 Anyone is invited to contribute solutions / harnesses. Please don't do too many at once as there could be a clash of doubled effort(same tasks solved).
 
-Step 1. Grab a prompt from `tasks/generation_prompt.md`
+Step 1. Grab a prompt from `tasks/single_shot_prompt.md`
 Step 2. Substitute this block:
 
 ```
