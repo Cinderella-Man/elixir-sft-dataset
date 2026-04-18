@@ -175,14 +175,14 @@ defmodule EvalTask do
     end
   end
 
-  # eval_task.exs solution.ex harness.exs [support]
-  defp parse_args([solution, harness, support]) do
-    {solution, harness, support}
-  end
+  # # eval_task.exs solution.ex harness.exs [support]
+  # defp parse_args([solution, harness, support]) do
+  #   {solution, harness, support}
+  # end
 
-  defp parse_args([solution, harness]) do
-    {solution, harness, nil}
-  end
+  # defp parse_args([solution, harness]) do
+  #   {solution, harness, nil}
+  # end
 
   defp parse_args(_), do: usage()
 
