@@ -2,7 +2,7 @@
 # eval_task.exs — Evaluates a single AI solution against a test harness.
 
 for pattern <- ["_build/dev/lib/*/ebin", "_build/test/lib/*/ebin"],
-    path    <- Path.wildcard(pattern) do
+    path <- Path.wildcard(pattern) do
   Code.prepend_path(path)
 end
 
@@ -80,6 +80,8 @@ end
 defmodule EvalTask do
   @moduledoc false
 
+  # ---------------- MAIN ----------------
+
   def main(args) do
     :logger.remove_handler(:default)
 
@@ -138,53 +140,97 @@ defmodule EvalTask do
     IO.puts(:json.encode(result))
   end
 
-  defp parse_args([maybe_num]) do
-    case Integer.parse(maybe_num) do
-      {_, ""} -> resolve_task_args(maybe_num, "solution.ex")
-      _ ->
-        IO.puts(:stderr, "Usage: elixir eval_task.exs <solution> <harness> [support_dir]")
-        System.halt(1)
-    end
-  end
+  # ---------------- ARG PARSING ----------------
 
-  defp parse_args([first, second]) do
-    case Integer.parse(first) do
-      {_, ""} -> resolve_task_args(first, second)
-      _       -> {first, second, nil}
-    end
-  end
-
-  defp parse_args([first, second, support]) do
-    case Integer.parse(first) do
+  # eval_task.exs 1
+  defp parse_args([task]) do
+    case Integer.parse(task) do
       {_, ""} ->
-        {solution, harness, nil} = resolve_task_args(first, second)
-        {solution, harness, support}
+        resolve_task_args(task, "001", "solution.ex")
+
       _ ->
-        {first, second, support}
+        usage()
     end
   end
 
-  defp parse_args(_) do
-    IO.puts(:stderr, "Usage: elixir eval_task.exs <solution> <harness> [support_dir]")
-    IO.puts(:stderr, "       elixir eval_task.exs <task_number> [solution_file]")
+  # eval_task.exs 1 2
+  defp parse_args([task, variation]) do
+    case {Integer.parse(task), Integer.parse(variation)} do
+      {{_, ""}, {_, ""}} ->
+        resolve_task_args(task, variation, "solution.ex")
+
+      _ ->
+        {task, variation, nil}
+    end
+  end
+
+  # eval_task.exs 1 2 solution.ex
+  defp parse_args([task, variation, solution]) do
+    case {Integer.parse(task), Integer.parse(variation)} do
+      {{_, ""}, {_, ""}} ->
+        resolve_task_args(task, variation, solution)
+
+      _ ->
+        {task, variation, solution}
+    end
+  end
+
+  # eval_task.exs solution.ex harness.exs [support]
+  defp parse_args([solution, harness, support]) do
+    {solution, harness, support}
+  end
+
+  defp parse_args([solution, harness]) do
+    {solution, harness, nil}
+  end
+
+  defp parse_args(_), do: usage()
+
+  defp usage do
+    IO.puts(:stderr, "Usage:")
+    IO.puts(:stderr, "  elixir eval_task.exs <task>")
+    IO.puts(:stderr, "  elixir eval_task.exs <task> <variation>")
+    IO.puts(:stderr, "  elixir eval_task.exs <task> <variation> <solution_file>")
+    IO.puts(:stderr, "  elixir eval_task.exs <solution> <harness> [support_dir]")
     System.halt(1)
   end
 
-  defp resolve_task_args(num_str, solution_filename) do
-    {num, ""} = Integer.parse(num_str)
-    padded = String.pad_leading(to_string(num), 3, "0")
+  # ---------------- TASK RESOLUTION ----------------
 
-    dir =
+  defp resolve_task_args(task_str, variation_str, solution_filename) do
+    {task, ""} = Integer.parse(task_str)
+    {variation, ""} = Integer.parse(variation_str)
+
+    a = String.pad_leading(to_string(task), 3, "0")
+    b = String.pad_leading(to_string(variation), 3, "0")
+    d = "01"
+
+    pattern =
       "tasks"
-      |> Path.join("#{padded}_*")
-      |> Path.wildcard()
-      |> Enum.find(&File.dir?/1)
+      |> Path.join("#{a}_#{b}_*_#{d}")
 
-    case dir do
-      nil -> throw("No task directory found matching tasks/#{padded}_*")
-      dir -> {Path.join(dir, solution_filename), Path.join(dir, "test_harness.exs"), nil}
+    dirs =
+      pattern
+      |> Path.wildcard()
+      |> Enum.filter(&File.dir?/1)
+
+    case dirs do
+      [dir] ->
+        {
+          Path.join(dir, solution_filename),
+          Path.join(dir, "test_harness.exs"),
+          nil
+        }
+
+      [] ->
+        throw("No task directory found matching #{pattern}")
+
+      many ->
+        throw("Multiple matches found: #{inspect(many)}")
     end
   end
+
+  # ---------------- REST (unchanged) ----------------
 
   defp compile_support(dir) do
     if dir && File.dir?(dir) do
@@ -226,7 +272,7 @@ defmodule EvalTask do
       end)
 
     warnings = Enum.filter(diagnostics, &(&1.severity == :warning))
-    errors   = Enum.filter(diagnostics, &(&1.severity == :error))
+    errors = Enum.filter(diagnostics, &(&1.severity == :error))
 
     case result do
       :ok ->
@@ -330,20 +376,18 @@ defmodule EvalTask do
     }
   end
 
-  # Returns {points_earned, max_points, reasons} for each analysis check.
   defp analysis_checks(a) do
     credo_issue_count = length(a.credo_issues)
     credo_points = if credo_issue_count == 0, do: 2, else: max(0, 2 - credo_issue_count * 0.2)
 
     [
-      {2, 2, a.has_moduledoc,          "@moduledoc present"},
-      {2, 2, a.has_typespecs,          "@spec annotations present"},
-      {1, 1, a.has_doc_on_public_fns,  "@doc on public functions"},
-      {1, 1, a.lines_over_98 == 0,     "no lines over 98 chars (found #{a.lines_over_98})"},
-      {1, 1, a.todo_count == 0,        "no TODO/FIXME/HACK comments (found #{a.todo_count})"},
-      {1, 1, !a.sql_injection_risk,    "no SQL injection risk"},
-      {credo_points, 2, credo_issue_count == 0,
-       "credo clean (#{credo_issue_count} issues)"}
+      {2, 2, a.has_moduledoc, "@moduledoc present"},
+      {2, 2, a.has_typespecs, "@spec annotations present"},
+      {1, 1, a.has_doc_on_public_fns, "@doc on public functions"},
+      {1, 1, a.lines_over_98 == 0, "no lines over 98 chars (found #{a.lines_over_98})"},
+      {1, 1, a.todo_count == 0, "no TODO/FIXME/HACK comments (found #{a.todo_count})"},
+      {1, 1, !a.sql_injection_risk, "no SQL injection risk"},
+      {credo_points, 2, credo_issue_count == 0, "credo clean (#{credo_issue_count} issues)"}
     ]
   end
 
@@ -364,9 +408,8 @@ defmodule EvalTask do
     checks = analysis_checks(a)
 
     analysis_points = checks |> Enum.map(fn {pts, _, _, _} -> pts end) |> Enum.sum()
-    analysis_score  = min(analysis_points / 10, 1.0)
+    analysis_score = min(analysis_points / 10, 1.0)
 
-    # Build human-readable reasons for any deduction
     reasons =
       []
       |> then(fn acc ->
