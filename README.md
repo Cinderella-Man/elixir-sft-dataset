@@ -22,7 +22,20 @@ Test a single task:
 mix run ./scripts/eval_task.exs 8 | jq
 ```
 
-### How to contribute:
+## Naming convention
+
+```
+001_001_rate_limiter_01
+ a   b        c       d
+
+
+a - task number
+b - task variation number (01 - original task, 02..0x - variations generated later)
+c - task name
+d - subtask number(01 - single-hot, 02..0x - fill-in-the-middle functions)
+```
+
+## How to contribute:
 
 Anyone is invited to contribute solutions / harnesses. Please don't do too many at once as there could be a clash of doubled effort(same tasks solved).
 
