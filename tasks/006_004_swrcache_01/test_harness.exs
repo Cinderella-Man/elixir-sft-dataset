@@ -14,6 +14,8 @@ defmodule SwrCacheTest do
   end
 
   defmodule Loader do
+    use Agent
+
     def start_link(values) do
       Agent.start_link(fn -> %{values: values, calls: 0} end, name: __MODULE__)
     end
@@ -262,26 +264,21 @@ defmodule SwrCacheTest do
   # Sweep removes past-stale entries only
   # -------------------------------------------------------
 
-  test "sweep removes entries past stale window, keeps stale-but-live entries" do
-    start_supervised!({Clock, 0})
-
-    {:ok, c} =
-      SwrCache.start_link(
-        clock: &Clock.now/0,
-        sweep_interval_ms: :infinity
-      )
+  test "sweep removes entries past stale window, keeps stale-but-live entries", %{c: c} do
+    # Reset Clock to 0 (setup already started it)
+    Clock.set(0)
 
     # hard expires at 300
     :ok = SwrCache.put(c, :a, 1, 100, 200, fn -> :_ end)
     # hard expires at 3000
-    :ok = SwrCache.put(c, :b, 2, 1_000, 2_000, fn -> :_ end)
+    :ok = SwrCache.put(c, :b, 2, 200, 2_800, fn -> :_ end)
 
     Clock.advance(500)
     send(c, :sweep)
     :sys.get_state(c)
 
     assert :miss = SwrCache.get(c, :a)
-    # :b is stale now (t=500, fresh_until=1000) but NOT past hard expiry
+    # :b is stale now (t=500, fresh_until=200) but NOT past hard expiry (3000)
     assert {:ok, 2, :stale} = SwrCache.get(c, :b)
   end
 

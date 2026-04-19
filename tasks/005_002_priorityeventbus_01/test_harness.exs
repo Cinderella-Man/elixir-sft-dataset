@@ -11,6 +11,10 @@ defmodule PriorityEventBusTest do
       GenServer.start_link(__MODULE__, opts)
     end
 
+    def start(opts) do
+      GenServer.start(__MODULE__, opts)
+    end
+
     @impl true
     def init(opts) do
       {:ok,
@@ -54,7 +58,7 @@ defmodule PriorityEventBusTest do
 
   defp spawn_sub(tag, opts \\ []) do
     {:ok, pid} =
-      ScriptedSub.start_link([test_pid: self(), tag: tag] ++ opts)
+      ScriptedSub.start([test_pid: self(), tag: tag] ++ opts)
 
     pid
   end

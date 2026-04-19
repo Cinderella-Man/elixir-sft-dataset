@@ -160,12 +160,12 @@ defmodule RefreshAheadCacheTest do
     :ok = wait_for_idle(c)
 
     # The refresh applied at t=850 should set expires_at = 850 + 1000 = 1850.
-    # So at t=1700 we're still fresh.
-    Clock.advance(850)
+    # At t=1600 (age=750 < threshold 800) we're still fresh and no new refresh fires.
+    Clock.advance(750)
     assert {:ok, :v2} = RefreshAheadCache.get(c, :a)
 
     # At t=1900 we're past the NEW expiry.
-    Clock.advance(200)
+    Clock.advance(300)
     assert :miss = RefreshAheadCache.get(c, :a)
   end
 
@@ -230,8 +230,7 @@ defmodule RefreshAheadCacheTest do
       RefreshAheadCache.put(c, :a, :v1, 1_000, fn -> Loader.slow_next_value(100) end)
 
     Clock.advance(850)
-    # triggers slow refresh
-    RefreshAheadCache.get(c, :a)
+    RefreshAheadCache.get(c, :a)   # triggers slow refresh
 
     # User overwrites manually before refresh completes
     RefreshAheadCache.put(c, :a, :user_set, 1_000, fn -> :ignored end)
