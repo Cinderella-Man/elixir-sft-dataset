@@ -4,4 +4,6 @@ Can you propose a variation of the task that will have a meaningful difference t
 
 Give me 3 files that will correspond to the three that I've attached and explain your reasoning
 
-Additionally I've attached list of 1000+ ideas that I don't want my variations to repeat. 
+Additionally I've attached list of 1000+ ideas that I don't want my variations to repeat.
+
+Additionally give me the version of the variation that is similar those in 1000+ task file - I need all three variations in this format so I can add them to the list
