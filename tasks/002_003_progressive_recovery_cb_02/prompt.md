@@ -1,3 +1,14 @@
+Implement the private `execute_in_closed/2` function. It should execute the provided zero-arity function using the `execute_and_classify/1` helper.
+
+If the execution succeeds (`{:ok, reply}`), the consecutive failure run is broken. Reset the `failure_count` to 0 in the state.
+
+If the execution fails (`{:error, reply}`), increment the `failure_count` by 1. Check if this new count is greater than or equal to `state.config.failure_threshold`.
+- If it is, transition the circuit to the `:open` state, record the trip time in `opened_at` using the `state.clock.()` function, and reset the `failure_count` to 0.
+- If it is not, simply update the state with the new `failure_count`.
+
+In all cases, return a tuple containing the `reply` produced by the execution and the updated state.
+
+```elixir
 defmodule ProgressiveRecoveryCircuitBreaker do
   @moduledoc """
   A four-state circuit breaker that replaces the standard instant-recovery
@@ -136,21 +147,7 @@ defmodule ProgressiveRecoveryCircuitBreaker do
   # ---------------------------------------------------------------------------
 
   defp execute_in_closed(state, func) do
-    case execute_and_classify(func) do
-      {:ok, reply} ->
-        # Consecutive failure run is broken — reset counter.
-        {reply, %{state | failure_count: 0}}
-
-      {:error, reply} ->
-        new_count = state.failure_count + 1
-
-        if new_count >= state.config.failure_threshold do
-          {reply,
-           %{state | state: :open, opened_at: state.clock.(), failure_count: 0}}
-        else
-          {reply, %{state | failure_count: new_count}}
-        end
-    end
+    # TODO
   end
 
   defp execute_in_half_open(state, func) do
@@ -279,3 +276,4 @@ defmodule ProgressiveRecoveryCircuitBreaker do
     }
   end
 end
+```

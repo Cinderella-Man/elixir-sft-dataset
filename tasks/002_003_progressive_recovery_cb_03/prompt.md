@@ -1,3 +1,12 @@
+Implement the private `execute_in_half_open/2` function. It should execute the provided zero-arity function using the `execute_and_classify/1` helper.
+
+If the execution succeeds (`{:ok, reply}`), the probe has cleared. Transition the circuit to the `:recovering` state to begin staged recovery. Initialize the process by setting `recovery_stage`, `stage_calls`, `stage_failures`, `probes_in_flight`, and `failure_count` to 0. Additionally, set `opened_at` to `nil`.
+
+If the execution fails (`{:error, reply}`), the probe has failed. Transition the circuit back to the `:open` state. Record the current time in `opened_at` using the configured `state.clock.()` function and reset `probes_in_flight` to 0.
+
+In both cases, return a tuple containing the `reply` from the execution and the updated state.
+
+```elixir
 defmodule ProgressiveRecoveryCircuitBreaker do
   @moduledoc """
   A four-state circuit breaker that replaces the standard instant-recovery
@@ -154,25 +163,7 @@ defmodule ProgressiveRecoveryCircuitBreaker do
   end
 
   defp execute_in_half_open(state, func) do
-    case execute_and_classify(func) do
-      {:ok, reply} ->
-        # Probe cleared — begin staged recovery from stage 0.
-        {reply,
-         %{
-           state
-           | state: :recovering,
-             recovery_stage: 0,
-             stage_calls: 0,
-             stage_failures: 0,
-             probes_in_flight: 0,
-             opened_at: nil,
-             failure_count: 0
-         }}
-
-      {:error, reply} ->
-        {reply,
-         %{state | state: :open, opened_at: state.clock.(), probes_in_flight: 0}}
-    end
+    # TODO
   end
 
   defp execute_in_recovering(state, func) do
@@ -279,3 +270,4 @@ defmodule ProgressiveRecoveryCircuitBreaker do
     }
   end
 end
+```

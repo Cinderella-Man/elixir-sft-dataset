@@ -1,3 +1,14 @@
+Implement the private `advance_stage/2` function. It evaluates whether the circuit has completed all recovery stages or just a single intermediate stage.
+
+Calculate the next stage index by incrementing `state.recovery_stage` by 1. 
+
+Compare this next stage index against the total number of stages in `state.config.recovery_stages`:
+- If the next stage index is greater than or equal to the length of the recovery stages list, the final stage has been cleared. Transition the circuit fully to the `:closed` state and reset `recovery_stage`, `stage_calls`, `stage_failures`, and `failure_count` to 0.
+- Otherwise, the circuit moves to the next recovery stage. Update the state by setting `recovery_stage` to the new index, and provide fresh counters by resetting `stage_calls` and `stage_failures` to 0.
+
+In both scenarios, return a tuple containing the provided `reply` and the newly updated state.
+
+```elixir
 defmodule ProgressiveRecoveryCircuitBreaker do
   @moduledoc """
   A four-state circuit breaker that replaces the standard instant-recovery
@@ -218,24 +229,7 @@ defmodule ProgressiveRecoveryCircuitBreaker do
   end
 
   defp advance_stage(state, reply) do
-    next_stage = state.recovery_stage + 1
-
-    if next_stage >= length(state.config.recovery_stages) do
-      # Final stage cleared → full closure.
-      {reply,
-       %{
-         state
-         | state: :closed,
-           recovery_stage: 0,
-           stage_calls: 0,
-           stage_failures: 0,
-           failure_count: 0
-       }}
-    else
-      # Move to next stage with fresh counters.
-      {reply,
-       %{state | recovery_stage: next_stage, stage_calls: 0, stage_failures: 0}}
-    end
+    # TODO
   end
 
   # ---------------------------------------------------------------------------
@@ -279,3 +273,4 @@ defmodule ProgressiveRecoveryCircuitBreaker do
     }
   end
 end
+```
