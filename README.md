@@ -51,7 +51,7 @@ with any of the ideas from `tasks/tasks.md` list that aren't done yet.
 
 Step 3. Leave the rest as is and attach the test harness of the task 1 (as an example) `tasks/001_rate_limiter/test_harness.exs`
 
-Step 4. Create new directory that is based on the title of the task (including the number) and put `prompt.md` and `test_harness.exs` there
+Step 4. Create new directory that is based on the title of the task (including the number it will be like `${task_number}_001_${lowercased_name_of_the_task_with_underscores_only}_01`) and put `prompt.md` and `test_harness.exs` there
 
 Step 5. Start a new LLM session and paste there just the contents of the `prompt.md`
 
