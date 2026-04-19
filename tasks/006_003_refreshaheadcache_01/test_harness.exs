@@ -16,6 +16,8 @@ defmodule RefreshAheadCacheTest do
   # A programmable loader backed by an Agent — lets tests control what the
   # loader returns and count its invocations.
   defmodule Loader do
+    use Agent
+
     def start_link(values) do
       Agent.start_link(fn -> %{values: values, calls: 0} end, name: __MODULE__)
     end
@@ -261,15 +263,8 @@ defmodule RefreshAheadCacheTest do
   # Hard expiry sweep
   # -------------------------------------------------------
 
-  test "sweep removes hard-expired entries" do
-    start_supervised!({Clock, 0})
-
-    {:ok, c} =
-      RefreshAheadCache.start_link(
-        clock: &Clock.now/0,
-        sweep_interval_ms: :infinity,
-        refresh_threshold: 0.8
-      )
+  test "sweep removes hard-expired entries", %{c: c} do
+    Clock.set(0)
 
     :ok = RefreshAheadCache.put(c, :a, 1, 1_000, fn -> 99 end)
     :ok = RefreshAheadCache.put(c, :b, 2, 5_000, fn -> 99 end)

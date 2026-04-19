@@ -41,6 +41,13 @@ defmodule CusumAnomaly do
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
+    threshold = Keyword.get(opts, :threshold, 5.0) * 1.0
+    slack = Keyword.get(opts, :slack, 0.5) * 1.0
+    warmup = Keyword.get(opts, :warmup_samples, 10)
+    epsilon = Keyword.get(opts, :epsilon, 1.0e-6) * 1.0
+
+    validate!(threshold, slack, warmup, epsilon)
+
     GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
   end
 
@@ -68,8 +75,6 @@ defmodule CusumAnomaly do
     warmup = Keyword.get(opts, :warmup_samples, 10)
     epsilon = Keyword.get(opts, :epsilon, 1.0e-6) * 1.0
 
-    validate!(threshold, slack, warmup, epsilon)
-
     {:ok,
      %{
        streams: %{},
@@ -86,10 +91,20 @@ defmodule CusumAnomaly do
     value = value * 1.0
 
     cond do
+      # Stream was alerted and is frozen until explicit reset.
+      Map.get(stream, :alerted, false) ->
+        {:reply, :warming_up, state}
+
       # Still warming up — update Welford only, no CUSUM yet.
       stream.samples < state.warmup_samples ->
         new_stream = welford_update(stream, value)
         {:reply, :warming_up, put_stream(state, name, new_stream)}
+
+      # CUSUM-active but stddev is below the slack tolerance — z-scores
+      # against such a tiny stddev are meaningless and cause false alerts.
+      welford_stddev(stream) < state.slack ->
+        post_welford = welford_update(stream, value)
+        {:reply, :ok, put_stream(state, name, post_welford)}
 
       true ->
         # Z-score against the prior mean/stddev.
@@ -107,10 +122,12 @@ defmodule CusumAnomaly do
 
         cond do
           new_s_high >= state.threshold ->
-            {:reply, {:alert, :upward_shift}, put_stream(state, name, reset_stream())}
+            {:reply, {:alert, :upward_shift},
+             put_stream(state, name, alerted_stream())}
 
           new_s_low >= state.threshold ->
-            {:reply, {:alert, :downward_shift}, put_stream(state, name, reset_stream())}
+            {:reply, {:alert, :downward_shift},
+             put_stream(state, name, alerted_stream())}
 
           true ->
             {:reply, :ok, put_stream(state, name, updated)}
@@ -178,6 +195,10 @@ defmodule CusumAnomaly do
     %{samples: 0, mean: 0.0, m2: 0.0, s_high: 0.0, s_low: 0.0}
   end
 
+  defp alerted_stream do
+    %{samples: 0, mean: 0.0, m2: 0.0, s_high: 0.0, s_low: 0.0, alerted: true}
+  end
+
   # ---------------------------------------------------------------------------
   # Validation
   # ---------------------------------------------------------------------------
@@ -185,8 +206,10 @@ defmodule CusumAnomaly do
   defp validate!(threshold, slack, warmup, epsilon) do
     if threshold <= 0.0, do: raise(ArgumentError, ":threshold must be positive")
     if slack < 0.0, do: raise(ArgumentError, ":slack must be non-negative")
+
     unless is_integer(warmup) and warmup > 0,
       do: raise(ArgumentError, ":warmup_samples must be a positive integer")
+
     if epsilon <= 0.0, do: raise(ArgumentError, ":epsilon must be positive")
   end
 end

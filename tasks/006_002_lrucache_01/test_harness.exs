@@ -185,7 +185,8 @@ defmodule LRUCacheTest do
   # -------------------------------------------------------
 
   test "longer sequence produces the expected LRU evictions" do
-    start_supervised!({Clock, 0})
+    # Clock is already started by setup — reset it instead of starting again.
+    Clock.set(0)
 
     {:ok, c} = LRUCache.start_link(capacity: 3, clock: &Clock.now/0)
 
