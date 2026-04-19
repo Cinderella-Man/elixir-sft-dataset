@@ -1,3 +1,10 @@
+Implement the `handle_info/2` callback for the `:cleanup` message.
+
+Iterate through the `keys` map and remove any entries that are functionally "empty." An entry should only be kept if it has an active cooldown, at least one recorded strike, or non-expired timestamps.
+
+Once the map is cleaned, update the state and use `schedule_cleanup/1` to ensure the next cleanup cycle is triggered according to the `cleanup_interval_ms`. Return the updated state in a `{:noreply, state}` tuple.
+
+```elixir
 defmodule PenaltyLimiter do
   @moduledoc """
   A GenServer that enforces per-key rate limits with escalating cooldowns for
@@ -88,7 +95,7 @@ defmodule PenaltyLimiter do
 
   defp evaluate_window(state, key, entry, now, max_requests, window_ms, ladder) do
     window_start = now - window_ms
-
+    
     # Highly efficient: stops traversing as soon as we hit expired timestamps
     active = Enum.take_while(entry.timestamps, fn ts -> ts > window_start end)
     count = length(active)
@@ -106,7 +113,7 @@ defmodule PenaltyLimiter do
       # List.last is perfectly safe because monotonic time + prepending guarantees order
       oldest = List.last(active)
       window_retry = oldest + window_ms - now
-
+      
       # Calculate the true retry duration
       retry_after = max(max(window_retry, cooldown_ms), 1)
 
@@ -163,28 +170,7 @@ defmodule PenaltyLimiter do
 
   @impl true
   def handle_info(:cleanup, state) do
-    now = state.clock.()
-
-    cleaned =
-      Enum.reduce(state.keys, %{}, fn {key, entry}, acc ->
-        # NEW: drop expired timestamps
-        active = Enum.take_while(entry.timestamps, fn ts -> ts > now end)
-        entry = %{entry | timestamps: active}
-
-        cooldown_active = entry.cooldown_end != nil and entry.cooldown_end > now
-        has_strikes = entry.strikes > 0
-        has_timestamps = active != []
-
-        if cooldown_active or has_strikes or has_timestamps do
-          Map.put(acc, key, entry)
-        else
-          acc
-        end
-      end)
-
-    schedule_cleanup(state.cleanup_interval_ms)
-
-    {:noreply, %{state | keys: cleaned}}
+    # TODO
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
@@ -195,3 +181,4 @@ defmodule PenaltyLimiter do
     Process.send_after(self(), :cleanup, interval_ms)
   end
 end
+```

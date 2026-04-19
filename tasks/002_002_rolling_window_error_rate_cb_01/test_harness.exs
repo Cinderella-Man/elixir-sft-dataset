@@ -109,6 +109,7 @@ defmodule RollingRateCircuitBreakerTest do
     assert :open = RollingRateCircuitBreaker.state(cb)
 
     tracker = self()
+
     assert {:error, :circuit_open} =
              RollingRateCircuitBreaker.call(cb, fn ->
                send(tracker, :was_called)

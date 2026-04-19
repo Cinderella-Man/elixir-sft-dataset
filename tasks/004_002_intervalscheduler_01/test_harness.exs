@@ -66,7 +66,8 @@ defmodule IntervalSchedulerTest do
   end
 
   test "rejects duplicate names with :already_exists", %{is: is} do
-    :ok = IntervalScheduler.register(is, "j", {:every, 1, :seconds}, {JobSink, :ping, [self(), :x]})
+    :ok =
+      IntervalScheduler.register(is, "j", {:every, 1, :seconds}, {JobSink, :ping, [self(), :x]})
 
     assert {:error, :already_exists} =
              IntervalScheduler.register(
@@ -79,29 +80,54 @@ defmodule IntervalSchedulerTest do
 
   test "rejects malformed interval specs with :invalid_interval", %{is: is} do
     assert {:error, :invalid_interval} =
-             IntervalScheduler.register(is, "a", {:every, 0, :seconds}, {JobSink, :ping, [self(), :x]})
+             IntervalScheduler.register(
+               is,
+               "a",
+               {:every, 0, :seconds},
+               {JobSink, :ping, [self(), :x]}
+             )
 
     assert {:error, :invalid_interval} =
-             IntervalScheduler.register(is, "b", {:every, -5, :seconds}, {JobSink, :ping, [self(), :x]})
+             IntervalScheduler.register(
+               is,
+               "b",
+               {:every, -5, :seconds},
+               {JobSink, :ping, [self(), :x]}
+             )
 
     assert {:error, :invalid_interval} =
-             IntervalScheduler.register(is, "c", {:every, 5, :fortnights}, {JobSink, :ping, [self(), :x]})
+             IntervalScheduler.register(
+               is,
+               "c",
+               {:every, 5, :fortnights},
+               {JobSink, :ping, [self(), :x]}
+             )
 
     assert {:error, :invalid_interval} =
-             IntervalScheduler.register(is, "d", "every 5 seconds", {JobSink, :ping, [self(), :x]})
+             IntervalScheduler.register(
+               is,
+               "d",
+               "every 5 seconds",
+               {JobSink, :ping, [self(), :x]}
+             )
   end
 
   test "unregister returns :ok when found, :not_found otherwise", %{is: is} do
     assert {:error, :not_found} = IntervalScheduler.unregister(is, "ghost")
 
-    :ok = IntervalScheduler.register(is, "j", {:every, 1, :seconds}, {JobSink, :ping, [self(), :x]})
+    :ok =
+      IntervalScheduler.register(is, "j", {:every, 1, :seconds}, {JobSink, :ping, [self(), :x]})
+
     assert :ok = IntervalScheduler.unregister(is, "j")
     assert {:error, :not_found} = IntervalScheduler.next_run(is, "j")
   end
 
   test "jobs/1 returns the registered jobs", %{is: is} do
-    :ok = IntervalScheduler.register(is, "a", {:every, 10, :seconds}, {JobSink, :ping, [self(), :a]})
-    :ok = IntervalScheduler.register(is, "b", {:every, 30, :minutes}, {JobSink, :ping, [self(), :b]})
+    :ok =
+      IntervalScheduler.register(is, "a", {:every, 10, :seconds}, {JobSink, :ping, [self(), :a]})
+
+    :ok =
+      IntervalScheduler.register(is, "b", {:every, 30, :minutes}, {JobSink, :ping, [self(), :b]})
 
     list = IntervalScheduler.jobs(is)
     assert length(list) == 2
@@ -114,7 +140,13 @@ defmodule IntervalSchedulerTest do
   # -------------------------------------------------------
 
   test "jobs whose next_run is <= now are executed on tick", %{is: is} do
-    :ok = IntervalScheduler.register(is, "j", {:every, 10, :seconds}, {JobSink, :ping, [self(), :fired]})
+    :ok =
+      IntervalScheduler.register(
+        is,
+        "j",
+        {:every, 10, :seconds},
+        {JobSink, :ping, [self(), :fired]}
+      )
 
     # Before t0+10: not yet due
     Clock.advance_seconds(5)
@@ -128,8 +160,21 @@ defmodule IntervalSchedulerTest do
   end
 
   test "multiple due jobs all fire on one tick", %{is: is} do
-    :ok = IntervalScheduler.register(is, "a", {:every, 5, :seconds}, {JobSink, :ping, [self(), :a_fired]})
-    :ok = IntervalScheduler.register(is, "b", {:every, 5, :seconds}, {JobSink, :ping, [self(), :b_fired]})
+    :ok =
+      IntervalScheduler.register(
+        is,
+        "a",
+        {:every, 5, :seconds},
+        {JobSink, :ping, [self(), :a_fired]}
+      )
+
+    :ok =
+      IntervalScheduler.register(
+        is,
+        "b",
+        {:every, 5, :seconds},
+        {JobSink, :ping, [self(), :b_fired]}
+      )
 
     Clock.advance_seconds(5)
     tick(is)
@@ -143,7 +188,8 @@ defmodule IntervalSchedulerTest do
   # -------------------------------------------------------
 
   test "a late tick does NOT push future runs further out", %{is: is} do
-    :ok = IntervalScheduler.register(is, "j", {:every, 60, :seconds}, {JobSink, :ping, [self(), :f]})
+    :ok =
+      IntervalScheduler.register(is, "j", {:every, 60, :seconds}, {JobSink, :ping, [self(), :f]})
 
     # Tick arrives 1 second late (at t0 + 61s)
     Clock.advance_seconds(61)
@@ -157,7 +203,8 @@ defmodule IntervalSchedulerTest do
   end
 
   test "long skip does not replay missed intervals — one fire per tick", %{is: is} do
-    :ok = IntervalScheduler.register(is, "j", {:every, 60, :seconds}, {JobSink, :ping, [self(), :f]})
+    :ok =
+      IntervalScheduler.register(is, "j", {:every, 60, :seconds}, {JobSink, :ping, [self(), :f]})
 
     # Jump 250 seconds forward — four boundaries (60, 120, 180, 240) missed
     Clock.advance_seconds(250)
@@ -174,7 +221,8 @@ defmodule IntervalSchedulerTest do
   end
 
   test "steady-state drift-free alignment across many ticks", %{is: is} do
-    :ok = IntervalScheduler.register(is, "j", {:every, 10, :seconds}, {JobSink, :ping, [self(), :f]})
+    :ok =
+      IntervalScheduler.register(is, "j", {:every, 10, :seconds}, {JobSink, :ping, [self(), :f]})
 
     # Run for 5 intervals, each with slight tick latency.
     for i <- 1..5 do
@@ -198,7 +246,9 @@ defmodule IntervalSchedulerTest do
   # -------------------------------------------------------
 
   test "minutes, hours, days intervals work", %{is: is} do
-    :ok = IntervalScheduler.register(is, "m", {:every, 5, :minutes}, {JobSink, :ping, [self(), :m]})
+    :ok =
+      IntervalScheduler.register(is, "m", {:every, 5, :minutes}, {JobSink, :ping, [self(), :m]})
+
     :ok = IntervalScheduler.register(is, "h", {:every, 2, :hours}, {JobSink, :ping, [self(), :h]})
     :ok = IntervalScheduler.register(is, "d", {:every, 1, :days}, {JobSink, :ping, [self(), :d]})
 
@@ -217,7 +267,14 @@ defmodule IntervalSchedulerTest do
 
   test "a crashing job does not kill the scheduler", %{is: is} do
     :ok = IntervalScheduler.register(is, "bad", {:every, 1, :seconds}, {JobSink, :crash, []})
-    :ok = IntervalScheduler.register(is, "good", {:every, 1, :seconds}, {JobSink, :ping, [self(), :g]})
+
+    :ok =
+      IntervalScheduler.register(
+        is,
+        "good",
+        {:every, 1, :seconds},
+        {JobSink, :ping, [self(), :g]}
+      )
 
     Clock.advance_seconds(1)
     tick(is)
@@ -236,7 +293,9 @@ defmodule IntervalSchedulerTest do
   # -------------------------------------------------------
 
   test "unregistered jobs do not fire", %{is: is} do
-    :ok = IntervalScheduler.register(is, "j", {:every, 1, :seconds}, {JobSink, :ping, [self(), :f]})
+    :ok =
+      IntervalScheduler.register(is, "j", {:every, 1, :seconds}, {JobSink, :ping, [self(), :f]})
+
     :ok = IntervalScheduler.unregister(is, "j")
 
     Clock.advance_seconds(10)

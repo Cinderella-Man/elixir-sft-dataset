@@ -171,10 +171,12 @@ defmodule SwrCacheTest do
     :ok = wait_for_idle(c)
 
     # Revalidation happened at t=1500 so fresh until t=2500, stale until t=4500
-    Clock.advance(999)          # t=2499
+    # t=2499
+    Clock.advance(999)
     assert {:ok, :v2, :fresh} = SwrCache.get(c, :a)
 
-    Clock.advance(2)            # t=2501
+    # t=2501
+    Clock.advance(2)
     assert {:ok, :v2, :stale} = SwrCache.get(c, :a)
   end
 
@@ -191,6 +193,7 @@ defmodule SwrCacheTest do
 
     loader = fn ->
       :counters.add(counter, 1, 1)
+
       if :counters.get(counter, 1) == 1 do
         raise "first call always fails"
       else
@@ -222,7 +225,8 @@ defmodule SwrCacheTest do
       SwrCache.put(c, :a, :v1, 1_000, 2_000, fn -> Loader.slow_next_value(100) end)
 
     Clock.advance(1_000)
-    SwrCache.get(c, :a)  # triggers slow revalidation
+    # triggers slow revalidation
+    SwrCache.get(c, :a)
 
     SwrCache.delete(c, :a)
 
@@ -242,7 +246,8 @@ defmodule SwrCacheTest do
       SwrCache.put(c, :a, :v1, 1_000, 2_000, fn -> Loader.slow_next_value(100) end)
 
     Clock.advance(1_000)
-    SwrCache.get(c, :a)  # trigger slow revalidation
+    # trigger slow revalidation
+    SwrCache.get(c, :a)
 
     # User puts a new value before the revalidation completes
     SwrCache.put(c, :a, :user_set, 500, 1_000, fn -> :ignored end)
@@ -266,8 +271,10 @@ defmodule SwrCacheTest do
         sweep_interval_ms: :infinity
       )
 
-    :ok = SwrCache.put(c, :a, 1, 100, 200, fn -> :_ end)    # hard expires at 300
-    :ok = SwrCache.put(c, :b, 2, 1_000, 2_000, fn -> :_ end)   # hard expires at 3000
+    # hard expires at 300
+    :ok = SwrCache.put(c, :a, 1, 100, 200, fn -> :_ end)
+    # hard expires at 3000
+    :ok = SwrCache.put(c, :b, 2, 1_000, 2_000, fn -> :_ end)
 
     Clock.advance(500)
     send(c, :sweep)

@@ -191,13 +191,20 @@ defmodule LRUCacheTest do
     {:ok, c} = LRUCache.start_link(capacity: 3, clock: &Clock.now/0)
 
     # Standard LRU textbook trace.
-    LRUCache.put(c, :a, 1)         # [:a]
-    LRUCache.put(c, :b, 2)         # [:b, :a]
-    LRUCache.put(c, :c, 3)         # [:c, :b, :a]
-    LRUCache.get(c, :a)            # [:a, :c, :b]
-    LRUCache.put(c, :d, 4)         # evicts :b → [:d, :a, :c]
-    LRUCache.get(c, :c)            # [:c, :d, :a]
-    LRUCache.put(c, :e, 5)         # evicts :a → [:e, :c, :d]
+    # [:a]
+    LRUCache.put(c, :a, 1)
+    # [:b, :a]
+    LRUCache.put(c, :b, 2)
+    # [:c, :b, :a]
+    LRUCache.put(c, :c, 3)
+    # [:a, :c, :b]
+    LRUCache.get(c, :a)
+    # evicts :b → [:d, :a, :c]
+    LRUCache.put(c, :d, 4)
+    # [:c, :d, :a]
+    LRUCache.get(c, :c)
+    # evicts :a → [:e, :c, :d]
+    LRUCache.put(c, :e, 5)
 
     assert :miss = LRUCache.get(c, :b)
     assert :miss = LRUCache.get(c, :a)

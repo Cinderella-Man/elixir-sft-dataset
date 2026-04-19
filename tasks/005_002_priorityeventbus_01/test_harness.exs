@@ -54,9 +54,7 @@ defmodule PriorityEventBusTest do
 
   defp spawn_sub(tag, opts \\ []) do
     {:ok, pid} =
-      ScriptedSub.start_link(
-        [test_pid: self(), tag: tag] ++ opts
-      )
+      ScriptedSub.start_link([test_pid: self(), tag: tag] ++ opts)
 
     pid
   end

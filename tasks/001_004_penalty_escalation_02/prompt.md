@@ -1,3 +1,12 @@
+Implement the `handle_call/3` callback for the `{:check, ...}` message. 
+
+First, fetch the current time using the clock in the state and retrieve the tracking data for the `key` (use `empty_entry/0` if the key is new). Apply the strike decay logic to the entry before proceeding.
+
+If a cooldown period was previously active but the current time has passed the `cooldown_end`, clear the cooldown. If the cooldown is still active, return a GenServer reply with `{:error, :cooling_down, retry_after_ms, strike_count}`.
+
+If no cooldown is active, delegate to `evaluate_window/7` to determine if the request should be permitted.
+
+```elixir
 defmodule PenaltyLimiter do
   @moduledoc """
   A GenServer that enforces per-key rate limits with escalating cooldowns for
@@ -59,36 +68,12 @@ defmodule PenaltyLimiter do
 
   @impl true
   def handle_call({:check, key, max_requests, window_ms, ladder}, _from, state) do
-    now = state.clock.()
-    entry = Map.get(state.keys, key, empty_entry())
-
-    # Step 1: decay strikes
-    entry = decay_strikes(entry, now, window_ms)
-
-    # ✅ FIX: expire cooldown if time has passed
-    entry =
-      if entry.cooldown_end && entry.cooldown_end <= now do
-        %{entry | cooldown_end: nil}
-      else
-        entry
-      end
-
-    # Step 2: enforce cooldown if still active
-    cond do
-      entry.cooldown_end != nil and entry.cooldown_end > now ->
-        retry_after = entry.cooldown_end - now
-
-        {:reply, {:error, :cooling_down, retry_after, entry.strikes},
-         %{state | keys: Map.put(state.keys, key, entry)}}
-
-      true ->
-        evaluate_window(state, key, entry, now, max_requests, window_ms, ladder)
-    end
+    # TODO
   end
 
   defp evaluate_window(state, key, entry, now, max_requests, window_ms, ladder) do
     window_start = now - window_ms
-
+    
     # Highly efficient: stops traversing as soon as we hit expired timestamps
     active = Enum.take_while(entry.timestamps, fn ts -> ts > window_start end)
     count = length(active)
@@ -106,7 +91,7 @@ defmodule PenaltyLimiter do
       # List.last is perfectly safe because monotonic time + prepending guarantees order
       oldest = List.last(active)
       window_retry = oldest + window_ms - now
-
+      
       # Calculate the true retry duration
       retry_after = max(max(window_retry, cooldown_ms), 1)
 
@@ -195,3 +180,4 @@ defmodule PenaltyLimiter do
     Process.send_after(self(), :cleanup, interval_ms)
   end
 end
+```

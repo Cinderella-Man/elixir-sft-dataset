@@ -22,17 +22,24 @@ defmodule RetrySchedulerTest do
   # Programmable job that consults an Agent counter to decide whether to
   # succeed on this attempt. Useful for "fail N times, then succeed" tests.
   defmodule Flaky do
-    use Agent # <--- ADDED THIS LINE TO FIX THE child_spec ERROR
+    # <--- ADDED THIS LINE TO FIX THE child_spec ERROR
+    use Agent
 
     def start_link(fail_n) do
       Agent.start_link(fn -> %{remaining_failures: fail_n, attempts: 0} end, name: __MODULE__)
     end
 
     def attempt(test_pid) do
-      state = Agent.get_and_update(__MODULE__, fn s ->
-        new_state = %{s | attempts: s.attempts + 1, remaining_failures: max(0, s.remaining_failures - 1)}
-        {s, new_state}
-      end)
+      state =
+        Agent.get_and_update(__MODULE__, fn s ->
+          new_state = %{
+            s
+            | attempts: s.attempts + 1,
+              remaining_failures: max(0, s.remaining_failures - 1)
+          }
+
+          {s, new_state}
+        end)
 
       send(test_pid, {:flaky_attempt, state.attempts + 1})
 
@@ -47,11 +54,41 @@ defmodule RetrySchedulerTest do
   end
 
   defmodule JobSink do
-    def ok(test_pid), do: (send(test_pid, :ran); :ok)
-    def ok_tuple(test_pid), do: (send(test_pid, :ran); {:ok, :whatever})
-    def err(test_pid), do: (send(test_pid, :ran); {:error, :nope})
-    def err_atom(test_pid), do: (send(test_pid, :ran); :error)
-    def weird_return(test_pid), do: (send(test_pid, :ran); 42)
+    def ok(test_pid),
+      do:
+        (
+          send(test_pid, :ran)
+          :ok
+        )
+
+    def ok_tuple(test_pid),
+      do:
+        (
+          send(test_pid, :ran)
+          {:ok, :whatever}
+        )
+
+    def err(test_pid),
+      do:
+        (
+          send(test_pid, :ran)
+          {:error, :nope}
+        )
+
+    def err_atom(test_pid),
+      do:
+        (
+          send(test_pid, :ran)
+          :error
+        )
+
+    def weird_return(test_pid),
+      do:
+        (
+          send(test_pid, :ran)
+          42
+        )
+
     def crash, do: raise("boom")
     def throw_value, do: throw(:thrown)
   end
@@ -145,7 +182,9 @@ defmodule RetrySchedulerTest do
   end
 
   test "unexpected return values count as failure", %{rs: rs} do
-    :ok = RetryScheduler.schedule(rs, "j", @t0, {JobSink, :weird_return, [self()]}, max_attempts: 1)
+    :ok =
+      RetryScheduler.schedule(rs, "j", @t0, {JobSink, :weird_return, [self()]}, max_attempts: 1)
+
     tick(rs)
 
     assert {:ok, :dead, 1} = RetryScheduler.status(rs, "j")

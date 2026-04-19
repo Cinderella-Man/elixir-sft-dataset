@@ -161,6 +161,7 @@ defmodule GcraLimiterTest do
 
     # At t=100, retry_after should be ~100
     Clock.advance(100)
+
     assert {:error, :rate_exceeded, retry_after_2} =
              GcraLimiter.acquire(gl, "k", 5.0, 5)
 

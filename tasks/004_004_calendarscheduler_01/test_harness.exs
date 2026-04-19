@@ -89,47 +89,73 @@ defmodule CalendarSchedulerTest do
     # n out of range (must be 1..4)
     assert {:error, :invalid_rule} =
              CalendarScheduler.register(
-               cs, "a", {:nth_weekday_of_month, 5, :monday, {9, 0}}, {JobSink, :ping, [self(), :x]}
+               cs,
+               "a",
+               {:nth_weekday_of_month, 5, :monday, {9, 0}},
+               {JobSink, :ping, [self(), :x]}
              )
 
     # unknown weekday
     assert {:error, :invalid_rule} =
              CalendarScheduler.register(
-               cs, "b", {:nth_weekday_of_month, 1, :funday, {9, 0}}, {JobSink, :ping, [self(), :x]}
+               cs,
+               "b",
+               {:nth_weekday_of_month, 1, :funday, {9, 0}},
+               {JobSink, :ping, [self(), :x]}
              )
 
     # hour out of range
     assert {:error, :invalid_rule} =
              CalendarScheduler.register(
-               cs, "c", {:last_day_of_month, {25, 0}}, {JobSink, :ping, [self(), :x]}
+               cs,
+               "c",
+               {:last_day_of_month, {25, 0}},
+               {JobSink, :ping, [self(), :x]}
              )
 
     # minute out of range
     assert {:error, :invalid_rule} =
              CalendarScheduler.register(
-               cs, "d", {:last_day_of_month, {0, 60}}, {JobSink, :ping, [self(), :x]}
+               cs,
+               "d",
+               {:last_day_of_month, {0, 60}},
+               {JobSink, :ping, [self(), :x]}
              )
 
     # day out of range
     assert {:error, :invalid_rule} =
              CalendarScheduler.register(
-               cs, "e", {:nth_day_of_month, 32, {0, 0}}, {JobSink, :ping, [self(), :x]}
+               cs,
+               "e",
+               {:nth_day_of_month, 32, {0, 0}},
+               {JobSink, :ping, [self(), :x]}
              )
 
     # completely malformed
     assert {:error, :invalid_rule} =
-             CalendarScheduler.register(cs, "f", {:random, :nonsense}, {JobSink, :ping, [self(), :x]})
+             CalendarScheduler.register(
+               cs,
+               "f",
+               {:random, :nonsense},
+               {JobSink, :ping, [self(), :x]}
+             )
   end
 
   test "duplicate names rejected", %{cs: cs} do
     :ok =
       CalendarScheduler.register(
-        cs, "j", {:nth_day_of_month, 1, {0, 0}}, {JobSink, :ping, [self(), :j]}
+        cs,
+        "j",
+        {:nth_day_of_month, 1, {0, 0}},
+        {JobSink, :ping, [self(), :j]}
       )
 
     assert {:error, :already_exists} =
              CalendarScheduler.register(
-               cs, "j", {:last_day_of_month, {0, 0}}, {JobSink, :ping, [self(), :j]}
+               cs,
+               "j",
+               {:last_day_of_month, {0, 0}},
+               {JobSink, :ping, [self(), :j]}
              )
   end
 
@@ -139,7 +165,10 @@ defmodule CalendarSchedulerTest do
 
     :ok =
       CalendarScheduler.register(
-        cs, "j", {:nth_day_of_month, 15, {12, 0}}, {JobSink, :ping, [self(), :j]}
+        cs,
+        "j",
+        {:nth_day_of_month, 15, {12, 0}},
+        {JobSink, :ping, [self(), :j]}
       )
 
     assert [{"j", {:nth_day_of_month, 15, {12, 0}}, _}] = CalendarScheduler.jobs(cs)
@@ -155,7 +184,10 @@ defmodule CalendarSchedulerTest do
     test "first Monday of Jan 2025 from Jan 1 is Jan 6", %{cs: cs} do
       :ok =
         CalendarScheduler.register(
-          cs, "j", {:nth_weekday_of_month, 1, :monday, {9, 0}}, {JobSink, :ping, [self(), :j]}
+          cs,
+          "j",
+          {:nth_weekday_of_month, 1, :monday, {9, 0}},
+          {JobSink, :ping, [self(), :j]}
         )
 
       {:ok, next} = CalendarScheduler.next_run(cs, "j")
@@ -166,7 +198,10 @@ defmodule CalendarSchedulerTest do
       # Jan 1 2025 = Wed.  Tuesdays: Jan 7, Jan 14, Jan 21, Jan 28.
       :ok =
         CalendarScheduler.register(
-          cs, "j", {:nth_weekday_of_month, 2, :tuesday, {10, 30}}, {JobSink, :ping, [self(), :j]}
+          cs,
+          "j",
+          {:nth_weekday_of_month, 2, :tuesday, {10, 30}},
+          {JobSink, :ping, [self(), :j]}
         )
 
       {:ok, next} = CalendarScheduler.next_run(cs, "j")
@@ -176,7 +211,10 @@ defmodule CalendarSchedulerTest do
     test "advances to next month after the target passes", %{cs: cs} do
       :ok =
         CalendarScheduler.register(
-          cs, "j", {:nth_weekday_of_month, 1, :monday, {9, 0}}, {JobSink, :ping, [self(), :j]}
+          cs,
+          "j",
+          {:nth_weekday_of_month, 1, :monday, {9, 0}},
+          {JobSink, :ping, [self(), :j]}
         )
 
       # Set clock to Jan 7 (past Jan 6's Monday) — should skip to Feb
@@ -193,7 +231,10 @@ defmodule CalendarSchedulerTest do
     test "last Friday of Jan 2025 is Jan 31 (a Friday)", %{cs: cs} do
       :ok =
         CalendarScheduler.register(
-          cs, "j", {:last_weekday_of_month, :friday, {17, 0}}, {JobSink, :ping, [self(), :j]}
+          cs,
+          "j",
+          {:last_weekday_of_month, :friday, {17, 0}},
+          {JobSink, :ping, [self(), :j]}
         )
 
       {:ok, next} = CalendarScheduler.next_run(cs, "j")
@@ -204,16 +245,23 @@ defmodule CalendarSchedulerTest do
       # Feb 28 2025 = Fri.  Last Sunday = Feb 23.
       :ok =
         CalendarScheduler.register(
-          cs, "j", {:last_weekday_of_month, :sunday, {20, 0}}, {JobSink, :ping, [self(), :j]}
+          cs,
+          "j",
+          {:last_weekday_of_month, :sunday, {20, 0}},
+          {JobSink, :ping, [self(), :j]}
         )
 
       Clock.set(~N[2025-02-01 00:00:00])
 
       # Re-register — next_run is computed at registration time from the clock
       :ok = CalendarScheduler.unregister(cs, "j")
+
       :ok =
         CalendarScheduler.register(
-          cs, "j", {:last_weekday_of_month, :sunday, {20, 0}}, {JobSink, :ping, [self(), :j]}
+          cs,
+          "j",
+          {:last_weekday_of_month, :sunday, {20, 0}},
+          {JobSink, :ping, [self(), :j]}
         )
 
       {:ok, next} = CalendarScheduler.next_run(cs, "j")
@@ -225,7 +273,10 @@ defmodule CalendarSchedulerTest do
     test "15th of January 2025 at noon", %{cs: cs} do
       :ok =
         CalendarScheduler.register(
-          cs, "j", {:nth_day_of_month, 15, {12, 0}}, {JobSink, :ping, [self(), :j]}
+          cs,
+          "j",
+          {:nth_day_of_month, 15, {12, 0}},
+          {JobSink, :ping, [self(), :j]}
         )
 
       {:ok, next} = CalendarScheduler.next_run(cs, "j")
@@ -237,7 +288,10 @@ defmodule CalendarSchedulerTest do
 
       :ok =
         CalendarScheduler.register(
-          cs, "j", {:nth_day_of_month, 31, {12, 0}}, {JobSink, :ping, [self(), :j]}
+          cs,
+          "j",
+          {:nth_day_of_month, 31, {12, 0}},
+          {JobSink, :ping, [self(), :j]}
         )
 
       # Jan 31 12:00 is already past (clock is Jan 31 23:00).
@@ -251,7 +305,10 @@ defmodule CalendarSchedulerTest do
 
       :ok =
         CalendarScheduler.register(
-          cs, "j", {:nth_day_of_month, 31, {0, 0}}, {JobSink, :ping, [self(), :j]}
+          cs,
+          "j",
+          {:nth_day_of_month, 31, {0, 0}},
+          {JobSink, :ping, [self(), :j]}
         )
 
       # Mar 31 00:00 already past.  Apr has 30 → skip.  May 31 exists.
@@ -264,7 +321,10 @@ defmodule CalendarSchedulerTest do
     test "last day of Jan 2025 is the 31st", %{cs: cs} do
       :ok =
         CalendarScheduler.register(
-          cs, "j", {:last_day_of_month, {23, 59}}, {JobSink, :ping, [self(), :j]}
+          cs,
+          "j",
+          {:last_day_of_month, {23, 59}},
+          {JobSink, :ping, [self(), :j]}
         )
 
       {:ok, next} = CalendarScheduler.next_run(cs, "j")
@@ -276,7 +336,10 @@ defmodule CalendarSchedulerTest do
 
       :ok =
         CalendarScheduler.register(
-          cs, "j", {:last_day_of_month, {12, 0}}, {JobSink, :ping, [self(), :j]}
+          cs,
+          "j",
+          {:last_day_of_month, {12, 0}},
+          {JobSink, :ping, [self(), :j]}
         )
 
       {:ok, next} = CalendarScheduler.next_run(cs, "j")
@@ -288,7 +351,10 @@ defmodule CalendarSchedulerTest do
 
       :ok =
         CalendarScheduler.register(
-          cs, "j", {:last_day_of_month, {12, 0}}, {JobSink, :ping, [self(), :j]}
+          cs,
+          "j",
+          {:last_day_of_month, {12, 0}},
+          {JobSink, :ping, [self(), :j]}
         )
 
       {:ok, next} = CalendarScheduler.next_run(cs, "j")
@@ -303,7 +369,10 @@ defmodule CalendarSchedulerTest do
   test "job fires on tick when due, recomputes for next month", %{cs: cs} do
     :ok =
       CalendarScheduler.register(
-        cs, "j", {:nth_day_of_month, 1, {0, 0}}, {JobSink, :ping, [self(), :fired]}
+        cs,
+        "j",
+        {:nth_day_of_month, 1, {0, 0}},
+        {JobSink, :ping, [self(), :fired]}
       )
 
     # Initial next_run: Feb 1 2025 00:00 (since clock is Jan 1 00:00 and we need strictly >).
@@ -324,11 +393,18 @@ defmodule CalendarSchedulerTest do
   test "crashing job does not kill the scheduler", %{cs: cs} do
     :ok =
       CalendarScheduler.register(
-        cs, "bad", {:nth_day_of_month, 1, {0, 0}}, {JobSink, :crash, []}
+        cs,
+        "bad",
+        {:nth_day_of_month, 1, {0, 0}},
+        {JobSink, :crash, []}
       )
+
     :ok =
       CalendarScheduler.register(
-        cs, "good", {:nth_day_of_month, 1, {0, 0}}, {JobSink, :ping, [self(), :ok]}
+        cs,
+        "good",
+        {:nth_day_of_month, 1, {0, 0}},
+        {JobSink, :ping, [self(), :ok]}
       )
 
     Clock.set(~N[2025-02-01 00:00:01])
@@ -345,11 +421,18 @@ defmodule CalendarSchedulerTest do
   test "multiple due jobs all fire on a single tick", %{cs: cs} do
     :ok =
       CalendarScheduler.register(
-        cs, "a", {:nth_day_of_month, 1, {0, 0}}, {JobSink, :ping, [self(), :a]}
+        cs,
+        "a",
+        {:nth_day_of_month, 1, {0, 0}},
+        {JobSink, :ping, [self(), :a]}
       )
+
     :ok =
       CalendarScheduler.register(
-        cs, "b", {:nth_day_of_month, 1, {0, 0}}, {JobSink, :ping, [self(), :b]}
+        cs,
+        "b",
+        {:nth_day_of_month, 1, {0, 0}},
+        {JobSink, :ping, [self(), :b]}
       )
 
     Clock.set(~N[2025-02-01 00:00:01])
@@ -368,7 +451,10 @@ defmodule CalendarSchedulerTest do
 
     :ok =
       CalendarScheduler.register(
-        cs, "j", {:nth_day_of_month, 1, {0, 0}}, {JobSink, :ping, [self(), :j]}
+        cs,
+        "j",
+        {:nth_day_of_month, 1, {0, 0}},
+        {JobSink, :ping, [self(), :j]}
       )
 
     {:ok, next} = CalendarScheduler.next_run(cs, "j")

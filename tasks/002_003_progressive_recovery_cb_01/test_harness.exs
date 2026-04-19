@@ -47,7 +47,7 @@ defmodule ProgressiveRecoveryCircuitBreakerTest do
   # -------------------------------------------------------
 
   test "passes through successes in closed state", %{cb: cb} do
-    for _ <- 1..10, do: assert {:ok, :v} = ProgressiveRecoveryCircuitBreaker.call(cb, ok_fn())
+    for _ <- 1..10, do: assert({:ok, :v} = ProgressiveRecoveryCircuitBreaker.call(cb, ok_fn()))
     assert :closed = ProgressiveRecoveryCircuitBreaker.state(cb)
   end
 
@@ -70,11 +70,13 @@ defmodule ProgressiveRecoveryCircuitBreakerTest do
     for _ <- 1..3, do: ProgressiveRecoveryCircuitBreaker.call(cb, err_fn())
 
     tracker = self()
+
     assert {:error, :circuit_open} =
              ProgressiveRecoveryCircuitBreaker.call(cb, fn ->
                send(tracker, :was_called)
                {:ok, :v}
              end)
+
     refute_received :was_called
   end
 

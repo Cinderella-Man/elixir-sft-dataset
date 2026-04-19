@@ -40,7 +40,10 @@ defmodule PenaltyLimiterTest do
     assert {:ok, 0} = PenaltyLimiter.check(pl, "user:1", 3, 1_000, ladder)
   end
 
-  test "rejects the request that exceeds the limit and records a strike", %{pl: pl, ladder: ladder} do
+  test "rejects the request that exceeds the limit and records a strike", %{
+    pl: pl,
+    ladder: ladder
+  } do
     for _ <- 1..3, do: PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
 
     assert {:error, :rate_limited, retry_after, 1} =
@@ -54,7 +57,10 @@ defmodule PenaltyLimiterTest do
   # Cooldown behaviour
   # -------------------------------------------------------
 
-  test "rejection during cooldown returns :cooling_down without new strike", %{pl: pl, ladder: ladder} do
+  test "rejection during cooldown returns :cooling_down without new strike", %{
+    pl: pl,
+    ladder: ladder
+  } do
     # Burn through the window and earn strike 1
     for _ <- 1..3, do: PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
     assert {:error, :rate_limited, _, 1} = PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)

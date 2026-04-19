@@ -1,3 +1,14 @@
+Implement the private `evaluate_window/7` function. 
+
+Start by filtering the existing timestamps to only those that fall within the current `window_ms`. 
+
+**If the number of active timestamps is less than `max_requests`**: 
+Add the current timestamp to the list, clear any active cooldown, and return an `{:ok, remaining}` reply.
+
+**If the limit is reached**:
+Increment the strike count and look up the new cooldown duration using `ladder_value/2`. Calculate `retry_after` as the maximum of (the time until the oldest timestamp expires) and (the new strike's cooldown). Update the entry with the new strike count, the `last_strike_at` time, and the calculated `cooldown_end`, then return the `{:error, :rate_limited, ...}` reply.
+
+```elixir
 defmodule PenaltyLimiter do
   @moduledoc """
   A GenServer that enforces per-key rate limits with escalating cooldowns for
@@ -87,40 +98,7 @@ defmodule PenaltyLimiter do
   end
 
   defp evaluate_window(state, key, entry, now, max_requests, window_ms, ladder) do
-    window_start = now - window_ms
-
-    # Highly efficient: stops traversing as soon as we hit expired timestamps
-    active = Enum.take_while(entry.timestamps, fn ts -> ts > window_start end)
-    count = length(active)
-
-    if count < max_requests do
-      # O(1) prepend
-      new_entry = %{entry | timestamps: [now | active], cooldown_end: nil}
-      remaining = max_requests - count - 1
-
-      {:reply, {:ok, remaining}, %{state | keys: Map.put(state.keys, key, new_entry)}}
-    else
-      new_strikes = entry.strikes + 1
-      cooldown_ms = ladder_value(ladder, new_strikes)
-
-      # List.last is perfectly safe because monotonic time + prepending guarantees order
-      oldest = List.last(active)
-      window_retry = oldest + window_ms - now
-
-      # Calculate the true retry duration
-      retry_after = max(max(window_retry, cooldown_ms), 1)
-
-      new_entry = %{
-        entry
-        | timestamps: active,          # Do NOT add 'now' for rejected requests
-          strikes: new_strikes,
-          last_strike_at: now,
-          cooldown_end: now + retry_after # Fixed: Align stored state with returned value
-      }
-
-      {:reply, {:error, :rate_limited, retry_after, new_strikes},
-        %{state | keys: Map.put(state.keys, key, new_entry)}}
-    end
+    # TODO
   end
 
   defp ladder_value(ladder, strike_n) when strike_n >= 1 do
@@ -195,3 +173,4 @@ defmodule PenaltyLimiter do
     Process.send_after(self(), :cleanup, interval_ms)
   end
 end
+```

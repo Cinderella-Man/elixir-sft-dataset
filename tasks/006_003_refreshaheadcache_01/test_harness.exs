@@ -230,7 +230,8 @@ defmodule RefreshAheadCacheTest do
       RefreshAheadCache.put(c, :a, :v1, 1_000, fn -> Loader.slow_next_value(100) end)
 
     Clock.advance(850)
-    RefreshAheadCache.get(c, :a)   # triggers slow refresh
+    # triggers slow refresh
+    RefreshAheadCache.get(c, :a)
 
     # User overwrites manually before refresh completes
     RefreshAheadCache.put(c, :a, :user_set, 1_000, fn -> :ignored end)

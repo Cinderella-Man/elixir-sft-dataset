@@ -1,3 +1,12 @@
+Implement the private `decay_strikes/3` function. It should reduce the strike count based on elapsed time.
+
+Use a decay period of `window_ms * 10`. For every full decay period that has passed since `last_strike_at`, reduce the strike count by one.
+
+If the strike count reaches zero, reset the entry to a clean state. If strikes still remain, update the `last_strike_at` to reflect the time accounted for by the decay and—crucially—clear the `cooldown_end` to ensure that stale penalties do not persist after a strike has decayed. 
+
+If no time has passed or no strikes exist, return the entry unchanged.
+
+```elixir
 defmodule PenaltyLimiter do
   @moduledoc """
   A GenServer that enforces per-key rate limits with escalating cooldowns for
@@ -88,7 +97,7 @@ defmodule PenaltyLimiter do
 
   defp evaluate_window(state, key, entry, now, max_requests, window_ms, ladder) do
     window_start = now - window_ms
-
+    
     # Highly efficient: stops traversing as soon as we hit expired timestamps
     active = Enum.take_while(entry.timestamps, fn ts -> ts > window_start end)
     count = length(active)
@@ -106,7 +115,7 @@ defmodule PenaltyLimiter do
       # List.last is perfectly safe because monotonic time + prepending guarantees order
       oldest = List.last(active)
       window_retry = oldest + window_ms - now
-
+      
       # Calculate the true retry duration
       retry_after = max(max(window_retry, cooldown_ms), 1)
 
@@ -132,33 +141,7 @@ defmodule PenaltyLimiter do
   defp decay_strikes(%{last_strike_at: nil} = entry, _now, _window_ms), do: entry
 
   defp decay_strikes(entry, now, window_ms) do
-    decay_period = window_ms * 10
-    elapsed = now - entry.last_strike_at
-    forgive = div(elapsed, decay_period)
-
-    cond do
-      forgive <= 0 ->
-        entry
-
-      forgive >= entry.strikes ->
-        empty_entry()
-
-      true ->
-        new_strikes = entry.strikes - forgive
-        new_last = entry.last_strike_at + forgive * decay_period
-
-        # ✅ Recalculate cooldown based on the NEW strike level
-        # We approximate the "new cooldown" as if it started at new_last
-        # using the ladder logic (same as when strike was created)
-        # BUT since we don't have ladder here, safest option:
-
-        %{
-          entry
-          | strikes: new_strikes,
-            last_strike_at: new_last,
-            cooldown_end: nil   # 🔑 clear stale cooldown
-        }
-    end
+    # TODO
   end
 
   @impl true
@@ -195,3 +178,4 @@ defmodule PenaltyLimiter do
     Process.send_after(self(), :cleanup, interval_ms)
   end
 end
+```
