@@ -1,11 +1,11 @@
 So I have this module which is designed to be single-shot SFT answer.
 I would like to now to create "fill-in-the-middle" tasks out of it.
-I would like to create two tasks for:
-- `handle_call({:check, key, tiers}, _from, state)`
-- `handle_info(:cleanup, state)`
-- `evaluate_tiers(tiers, active, now)`
+I would like to create tasks for:
+- `apply_leak/1`
+- `execute_in_closed/2`
+- `execute_in_half_open/2`
 
-Can you generate two prompts that could be given as tasks to implement those functions (one at the time).
+Can you generate prompts that could be given as tasks to implement those functions (one at the time).
 
 Here's an example of prompt for similar task:
 
