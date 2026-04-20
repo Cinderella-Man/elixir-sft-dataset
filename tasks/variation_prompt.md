@@ -3,7 +3,7 @@ I was told to try to generate variation of my task to multiply the amount of the
 
 Can you propose a variation of the task that will have a meaningful difference to be valuable for SFT? So the attached and the variation can be inside my SFT dataset and they will differ just a little bit but enough to stand on their own as different problems?
 
-Give me 3 variations(three file tripplets) that will correspond to the three files that I've attached and explain your reasoning.
+Give me 3 variations(three file triplets) that will correspond to the three files that I've attached and explain your reasoning.
 
 Additionally I've attached list of 1000+ ideas that I don't want my variations to repeat.
 
