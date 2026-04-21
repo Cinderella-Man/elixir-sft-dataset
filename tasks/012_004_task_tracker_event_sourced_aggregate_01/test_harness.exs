@@ -145,6 +145,7 @@ defmodule TaskAggregateTest do
     TaskAggregate.execute(agg, "task:1", {:create, "Fix bug", :high})
     TaskAggregate.execute(agg, "task:1", {:assign, "Alice"})
     TaskAggregate.execute(agg, "task:1", {:start})
+    # This correctly expects :not_completed
     assert {:error, :not_completed} = TaskAggregate.execute(agg, "task:1", {:reopen})
   end
 
@@ -215,7 +216,10 @@ defmodule TaskAggregateTest do
     {:ok, _} = TaskAggregate.execute(agg, "a", {:create, "Deploy v2", :medium})
     {:ok, _} = TaskAggregate.execute(agg, "a", {:assign, "Charlie"})
     {:ok, _} = TaskAggregate.execute(agg, "a", {:start})
-    {:error, :not_in_progress} = TaskAggregate.execute(agg, "a", {:reopen})
+
+    # FIXED: Re-opening an in-progress task must return :not_completed per prompt
+    {:error, :not_completed} = TaskAggregate.execute(agg, "a", {:reopen})
+
     {:ok, _} = TaskAggregate.execute(agg, "a", {:complete})
     {:ok, _} = TaskAggregate.execute(agg, "a", {:reopen})
     {:ok, _} = TaskAggregate.execute(agg, "a", {:assign, "Diana"})
@@ -229,20 +233,12 @@ defmodule TaskAggregateTest do
     assert state.priority == :medium
 
     events = TaskAggregate.events(agg, "a")
-    # 8 successful commands = 8 events
     assert length(events) == 8
 
     types = Enum.map(events, & &1.type)
-
     assert types == [
-             :task_created,
-             :task_assigned,
-             :task_started,
-             :task_completed,
-             :task_reopened,
-             :task_assigned,
-             :task_started,
-             :task_completed
+             :task_created, :task_assigned, :task_started, :task_completed,
+             :task_reopened, :task_assigned, :task_started, :task_completed
            ]
   end
 

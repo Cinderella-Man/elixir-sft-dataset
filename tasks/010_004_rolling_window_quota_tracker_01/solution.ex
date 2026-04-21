@@ -87,7 +87,9 @@ defmodule QuotaTracker do
   Records `amount` units of usage for `key` against `quota` within `window_ms`.
 
   Returns `{:ok, remaining}` on success, or `{:error, :quota_exceeded, overage}`
-  if recording would push usage above the quota. Rejected recordings are not stored.
+  if recording would push usage above the quota.
+
+  Rejected recordings are not stored.
   """
   @spec record(server(), key(), non_neg_integer(), non_neg_integer(), non_neg_integer()) ::
           {:ok, non_neg_integer()} | {:error, :quota_exceeded, non_neg_integer()}
@@ -115,7 +117,9 @@ defmodule QuotaTracker do
   end
 
   @doc """
-  Clears all usage history for `key`. Returns `:ok` always.
+  Clears all usage history for `key`.
+
+  Returns `:ok` always.
   """
   @spec reset(server(), key()) :: :ok
   def reset(server, key) do
@@ -148,23 +152,40 @@ defmodule QuotaTracker do
     }
 
     schedule_cleanup(cleanup_interval_ms)
+
     {:ok, state}
   end
 
   @impl GenServer
   def handle_call({:record, key, amount, quota, window_ms}, _from, state) do
     now = state.clock.()
-    current_entries = evict_expired(Map.get(state.entries, key, []), now, window_ms)
+    entries = Map.get(state.entries, key, [])
+
+    # Calculate usage specifically for the requested window
+    current_entries = evict_expired(entries, now, window_ms)
     current_usage = sum_usage(current_entries)
 
     if current_usage + amount > quota do
       overage = current_usage + amount - quota
-      new_entries = Map.put(state.entries, key, current_entries)
+
+      # Lazily clean up state using max_window_ms
+      retained_entries = evict_expired(entries, now, state.max_window_ms)
+      new_entries =
+        if retained_entries == [] do
+          Map.delete(state.entries, key)
+        else
+          Map.put(state.entries, key, retained_entries)
+        end
+
       {:reply, {:error, :quota_exceeded, overage}, %{state | entries: new_entries}}
     else
       new_entry = %{amount: amount, recorded_at: now}
-      updated = [new_entry | current_entries]
+
+      # Retain up to max_window_ms, append the new entry
+      retained_entries = evict_expired(entries, now, state.max_window_ms)
+      updated = [new_entry | retained_entries]
       new_entries = Map.put(state.entries, key, updated)
+
       remaining = quota - (current_usage + amount)
       {:reply, {:ok, remaining}, %{state | entries: new_entries}}
     end
@@ -172,14 +193,20 @@ defmodule QuotaTracker do
 
   def handle_call({:remaining, key, quota, window_ms}, _from, state) do
     now = state.clock.()
-    current_entries = evict_expired(Map.get(state.entries, key, []), now, window_ms)
+    entries = Map.get(state.entries, key, [])
+
+    # Calculate usage specifically for the requested window
+    current_entries = evict_expired(entries, now, window_ms)
     current_usage = sum_usage(current_entries)
 
+    # Lazily clean up state using max_window_ms
+    retained_entries = evict_expired(entries, now, state.max_window_ms)
+
     new_entries =
-      if current_entries == [] do
+      if retained_entries == [] do
         Map.delete(state.entries, key)
       else
-        Map.put(state.entries, key, current_entries)
+        Map.put(state.entries, key, retained_entries)
       end
 
     remaining = max(quota - current_usage, 0)
@@ -188,14 +215,20 @@ defmodule QuotaTracker do
 
   def handle_call({:usage, key, window_ms}, _from, state) do
     now = state.clock.()
-    current_entries = evict_expired(Map.get(state.entries, key, []), now, window_ms)
+    entries = Map.get(state.entries, key, [])
+
+    # Calculate usage specifically for the requested window
+    current_entries = evict_expired(entries, now, window_ms)
     total = sum_usage(current_entries)
 
+    # Lazily clean up state using max_window_ms
+    retained_entries = evict_expired(entries, now, state.max_window_ms)
+
     new_entries =
-      if current_entries == [] do
+      if retained_entries == [] do
         Map.delete(state.entries, key)
       else
-        Map.put(state.entries, key, current_entries)
+        Map.put(state.entries, key, retained_entries)
       end
 
     {:reply, {:ok, total}, %{state | entries: new_entries}}
