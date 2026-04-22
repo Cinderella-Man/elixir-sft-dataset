@@ -24,7 +24,7 @@ defmodule LogfmtValidator do
       [
         %{name: "level", required: true, type: :string},
         %{name: "duration", required: true, type: :integer},
-        %{name: "host", format: ~r/^web\\d+$/},
+        %{name: "host", format: ~r/^web\d+$/},
         %{name: "ip", format: :ipv4, required: false}
       ]
   """
@@ -146,7 +146,9 @@ defmodule LogfmtValidator do
 
           case rest do
             "=" <> after_eq ->
-              case parse_value(String.trim_leading(after_eq)) do
+              # Do NOT trim_leading on after_eq here.
+              # If `after_eq` starts with a space, it indicates the value for this key is empty.
+              case parse_value(after_eq) do
                 {:ok, value, remaining} ->
                   do_parse(remaining, Map.put(acc, String.trim(key), String.trim(value)))
 
