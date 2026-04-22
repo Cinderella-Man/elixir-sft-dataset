@@ -72,29 +72,14 @@ defmodule CsvLoader do
   defp strip_bom(other), do: other
 
   defp parse_csv(text) do
-    lines =
-      text
-      |> String.trim_trailing()
-      |> String.split(~r/\r?\n/, parts: 2)
-
-    case lines do
-      [""] ->
+    case CsvLoader.Parser.parse_string(text, skip_headers: false) do
+      [] ->
         {[], []}
 
-      [header_line] ->
-        headers = parse_header(header_line)
-        {headers, []}
-
-      [_header_line | _rest] ->
-        [headers | rows] = CsvLoader.Parser.parse_string(text, skip_headers: false)
+      [headers | rows] ->
         trimmed_headers = Enum.map(headers, &String.trim/1)
         {trimmed_headers, rows}
     end
-  end
-
-  defp parse_header(line) do
-    [row] = CsvLoader.Parser.parse_string(line <> "\n", skip_headers: false)
-    Enum.map(row, &String.trim/1)
   end
 
   defp process_parsed({_headers, []}, _schema), do: {:ok, [], []}
@@ -135,7 +120,8 @@ defmodule CsvLoader do
     |> Map.new(fn {h, v} -> {h, String.trim(v)} end)
   end
 
-  # Validate and coerce a single row. Returns {errors, coerced_map}.
+  # Validate and coerce a single row.
+  # Returns {errors, coerced_map}.
   # coerced_map is only meaningful when errors is empty.
   defp validate_and_coerce_row(row_map, schema, headers) do
     schema

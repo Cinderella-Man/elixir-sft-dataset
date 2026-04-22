@@ -37,51 +37,63 @@ defmodule BudgetRetryWorker do
 
   @impl true
   def handle_call({:execute, func, opts}, from, state) do
-    started_at = state.clock.()
-    base_delay = Keyword.get(opts, :base_delay_ms, 100)
-    exec_state = %{started_at: started_at, prev_delay: base_delay, attempts: 0}
-    do_execute(func, opts, from, exec_state, state)
-    {:noreply, state}
-  end
+    clock_fn = state.clock
+    random_fn = state.random
 
-  @impl true
-  def handle_info({:retry, func, opts, from, exec_state}, state) do
-    do_execute(func, opts, from, exec_state, state)
+    spawn_link(fn ->
+      result = retry_loop(func, opts, clock_fn, random_fn)
+      GenServer.reply(from, result)
+    end)
+
     {:noreply, state}
   end
 
   # --- Private Helpers ---
 
-  defp do_execute(func, opts, from, exec_state, state) do
-    exec_state = %{exec_state | attempts: exec_state.attempts + 1}
+  defp retry_loop(func, opts, clock_fn, random_fn) do
+    started_at = clock_fn.()
+    base_delay = Keyword.get(opts, :base_delay_ms, 100)
+    budget = Keyword.get(opts, :budget_ms, 30_000)
+    max_delay = Keyword.get(opts, :max_delay_ms, 10_000)
+
+    do_attempt(func, clock_fn, random_fn, started_at, base_delay, budget, max_delay, base_delay, 0)
+  end
+
+  defp do_attempt(func, clock_fn, random_fn, started_at, base_delay, budget, max_delay, prev_delay, attempts) do
+    attempts = attempts + 1
 
     case func.() do
       {:ok, result} ->
-        GenServer.reply(from, {:ok, result})
+        {:ok, result}
 
       {:error, reason} ->
-        maybe_schedule_retry(func, opts, from, exec_state, reason, state)
+        now = clock_fn.()
+        elapsed = now - started_at
+
+        jitter_max = prev_delay * 3
+        next_delay = random_fn.(base_delay, jitter_max)
+        capped_delay = min(next_delay, max_delay)
+
+        if elapsed + capped_delay > budget do
+          {:error, :budget_exhausted, reason, attempts}
+        else
+          target_time = now + capped_delay
+          await_clock(target_time, clock_fn)
+
+          do_attempt(
+            func, clock_fn, random_fn, started_at,
+            base_delay, budget, max_delay, capped_delay, attempts
+          )
+        end
     end
   end
 
-  defp maybe_schedule_retry(func, opts, from, exec_state, reason, state) do
-    budget = Keyword.get(opts, :budget_ms, 30_000)
-    base_delay = Keyword.get(opts, :base_delay_ms, 100)
-    max_delay = Keyword.get(opts, :max_delay_ms, 10_000)
-
-    now = state.clock.()
-    elapsed = now - exec_state.started_at
-
-    # Decorrelated jitter: random(base_delay, prev_delay * 3)
-    jitter_max = exec_state.prev_delay * 3
-    next_delay = state.random.(base_delay, jitter_max)
-    capped_delay = min(next_delay, max_delay)
-
-    if elapsed + capped_delay > budget do
-      GenServer.reply(from, {:error, :budget_exhausted, reason, exec_state.attempts})
-    else
-      new_exec_state = %{exec_state | prev_delay: capped_delay}
-      Process.send_after(self(), {:retry, func, opts, from, new_exec_state}, capped_delay)
+  defp await_clock(target_time, clock_fn) do
+    if clock_fn.() < target_time do
+      receive do
+      after
+        0 -> await_clock(target_time, clock_fn)
+      end
     end
   end
 end
