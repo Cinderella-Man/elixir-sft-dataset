@@ -164,11 +164,17 @@ end
 </file>
 
 <file path="lib/my_app_web/router.ex">
-# Add inside your existing :api scope:
+defmodule MyAppWeb.Router do
+  use MyAppWeb, :router
 
-scope "/api", MyAppWeb do
-  pipe_through :api
+  pipeline :api do
+    plug :accepts, ["json"]
+  end
 
-  get "/products", ProductController, :index
+  scope "/api", MyAppWeb do
+    pipe_through :api
+
+    get "/products", ProductController, :index
+  end
 end
 </file>

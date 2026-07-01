@@ -10,14 +10,6 @@ defmodule VersionedApi.RouterTest do
 
   defp call(method, path, headers \\ []) do
     conn =
-      conn(method, path)
-      |> Enum.reduce(headers, fn {key, val}, c ->
-        Plug.Conn.put_req_header(c, key, val)
-      end)
-
-    # ^^ oops, reduce args are flipped in Plug.Test usage;
-    # let's use a straightforward approach instead.
-    conn =
       Enum.reduce(headers, conn(method, path), fn {key, val}, c ->
         Plug.Conn.put_req_header(c, key, val)
       end)

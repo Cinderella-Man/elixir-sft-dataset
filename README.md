@@ -4,22 +4,55 @@ A framework for evaluating AI-generated Elixir code against verified test harnes
 Each solution runs in its own BEAM process — a non-compiling solution cannot affect
 any other task's evaluation.
 
+The evaluator (`lib/eval_task/`, driven by `scripts/eval_task.exs`) auto-detects and grades
+**three task shapes**:
+
+- **single-file** — one module + `test_harness.exs` (`tasks/<name>/`)
+- **multi-file** — a `tasks/<name>/` whose `solution.ex` is a `<file path="…">…</file>` bundle
+  (controller + schema + migration + …); self-contained bundles (Plug/GenServer) run as-is, while
+  Phoenix + Ecto bundles are graded against a generated in-BEAM SQLite host kit
+- **fill-in-the-middle (FIM)** — a `_02+` subtask dir with only a `prompt.md` (module with a
+  `# TODO`) + a single-function `solution.ex`; the evaluator reconstructs the full module from
+  the prompt skeleton and runs the parent `_01` harness against it
+
+Scoring is `tests·0.7 + analysis·0.2 + compilation·0.1`. The analysis component (moduledoc,
+`@spec`, `@doc`, line-length ≤98, no-TODO, no-SQLi; 8 points) is real — a solution missing docs
+scores below 1.0.
+
 ## Prerequisites
 
 - Elixir 1.17+ / OTP 27+
-- PostgreSQL 16+ (only for database-tagged tasks)
+- PostgreSQL 16+ (only for tasks marked `db: :postgres`; SQLite-in-BEAM is the default and needs
+  no external service)
 
 ## Setup
 
 ```bash
 mix deps.get
-mix compile
+mix compile   # required — the evaluator lives in lib/ and is compiled
 ```
 
-Test a single task:
+## Evaluating solutions
 
-```
-mix run ./scripts/eval_task.exs 8 | jq
+```bash
+# a single task — by number, or by directory (any shape auto-detected)
+mix run ./scripts/eval_task.exs 8 | jq                 # single-file, task 8 variation 1
+mix run ./scripts/eval_task.exs 16 1 | jq              # multi-file, addressed by number
+mix run ./scripts/eval_task.exs tasks/001_001_rate_limiter_02 | jq   # a FIM subtask
+# alternate model output: pass a solution filename in the dir
+mix run ./scripts/eval_task.exs tasks/076_001_trie_01 solution_Qwen3.5-4B-Q6_K_gguf.ex | jq
+
+# the whole corpus (single-file + multi-file + FIM), one BEAM per task
+elixir ./scripts/run_all.exs --parallel 6
+#   → results/<task>.json, results/report_<ts>.json, results/summary_<ts>.txt
+
+# quality gate: every reference solution must be green, and every FIM target must be
+# exercised (a raise-body mutant must make the parent harness fail)
+elixir ./scripts/validate.exs             # reference-green + FIM mutation
+elixir ./scripts/validate.exs --fim-only  # just the mutation check
+
+# unit tests for the evaluator itself
+mix test test/eval_task
 ```
 
 ## Naming convention
@@ -35,12 +68,29 @@ c - task name
 d - subtask number(01 - single-hot, 02..0x - fill-in-the-middle functions)
 ```
 
+## Design & internals
+
+The multi-file and FIM auto-testing design, decisions, and the as-built evaluator (module layout,
+scoring, the Phoenix/SQLite host kit, the validator, known issues) are documented in `docs/`:
+
+- `docs/01-multifile-task-support.md` — multi-file design + prototypes
+- `docs/02-multifile-task-breakdown.md` — decisions + task backlog
+- `docs/03-implementation-spec.md` — the definitive how-it-works + per-task status + known issues
+
 ## How to contribute:
 
 There are multiple activities that people can do:
-- implement single file task out of `tasks/tasks.md` file 
+- implement single file task out of `tasks/tasks.md` file
+- implement a multi-file task under `tasks/` (bundle the modules as `<file path="…">…</file>`
+  blocks in `solution.ex`; Phoenix bundles should be *domain-only* — the host kit supplies
+  Repo/Endpoint/ConnCase). Multi-file, single-file, and FIM tasks all share the `a_b_c_d` naming
+  and the same `tasks/` directory; the evaluator auto-detects the shape from the solution content.
 - generate variations of the tasks
-- generate subtasks
+- generate subtasks (fill-in-the-middle)
+
+After adding or changing a task, run `elixir ./scripts/validate.exs` — it evaluates every
+reference solution (catching harness bugs that compile-only checks miss) and confirms each FIM
+target is actually exercised by its parent harness.
 
 ### Implement single file task out of `tasks/tasks.md` file
 
