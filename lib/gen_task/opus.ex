@@ -234,9 +234,15 @@ defmodule GenTask.Opus do
   end
 
   defp command(sys_path, user_path, %Config{} = cfg) do
+    # `--max-turns 1`: this is a NON-AGENTIC, single-shot transport (see @moduledoc) —
+    # a generation with no tools completes in exactly one turn. Allowing 20 turns let the
+    # model occasionally engage the CLI's agentic loop (e.g. attempt a disabled tool) and
+    # burn all turns → `error_max_turns`, which is retried 5× with backoff (~15 min stall).
+    # With one turn, that case fast-fails and the transient-retry gets a clean single-shot
+    # reply. Reminder/repair steps are separate `claude -p` calls, not extra turns here.
     "timeout --signal=KILL #{cfg.call_timeout_s} " <>
       "claude -p --output-format json --model #{shell_quote(cfg.model)} " <>
-      "--max-turns 20 --allowedTools '' " <>
+      "--max-turns 1 --allowedTools '' " <>
       "--system-prompt-file #{shell_quote(sys_path)} " <>
       "--setting-sources '' --strict-mcp-config --no-session-persistence " <>
       "< #{shell_quote(user_path)}"

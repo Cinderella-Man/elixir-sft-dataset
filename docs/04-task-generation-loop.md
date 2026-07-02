@@ -362,9 +362,11 @@ System.cmd("claude",
   ... )
 ```
 
-- **Non-agentic guard:** `--allowedTools ""` ⇒ no tools and no file access — pure text-in/text-out.
-  (Design intent was `--max-turns 1`; the code currently ships `--max-turns 20` — a known
-  deviation tracked as finding #9 in `docs/05-generation-loop-audit.md`, still open.)
+- **Non-agentic guard:** `--allowedTools ""` ⇒ no tools and no file access — pure text-in/text-out,
+  and `--max-turns 1` ⇒ one completion per call (single-shot). **Fixed 2026-07-02** (was `--max-turns 20`,
+  audit finding #9): 20 turns let the model occasionally engage the CLI's agentic loop and burn all
+  turns → `error_max_turns`, which `GenTask.Opus` retries 5× with backoff (~15 min stall). One turn
+  fast-fails that case; the transient-retry then gets a clean single-shot reply.
 - **Clean, reproducible context** (flags exercised end-to-end, §3): `--system-prompt-file`
   **replaces** Claude Code's default agentic system prompt with *only* our SFT-authoring persona
   (better than `--append-system-prompt`, which keeps CC's default; a file avoids argv/shell

@@ -154,8 +154,12 @@ generated the correct `_04`; no writes):
 | **Latent crash** on the backfill path: `warn_if_vacuous_seed` still matched the old bare `:survived` (per-function mutation now returns `{:survived, why}`) — every vacuous-seed check hit the rescue as "self-check failed" | Match `{:survived, why}` and surface the reason. | `cli.ex` |
 | #5 crash-orphaned variation | Added **opt-in** `Catalog.reconcile_variations!/1` (`GEN_RECONCILE=1`): inserts the missing `tasks.md` entry for any variation dir lacking one (name from slug, blurb from `prompt.md`). Off by default — the loop is already correct without it (done-detection is dir-based), and auto-running it would rewrite the curated catalog with derived entries. | `catalog.ex`, `config.ex`, `cli.ex` |
 
-Still open (deferred; none block a long run): #9 (`--max-turns 20` vs doc's 1 — empirically
-self-recovers), #13 (in-flow variation dedup), #16 (leading-prose fence in `prompt.md`), #17
+#9 (`--max-turns 20` vs doc's 1) — **FIXED 2026-07-02**: restored `--max-turns 1` in
+`opus.ex` command. It did NOT always self-recover — a generation that engages the agentic loop
+returns `error_max_turns`, which is retried 5× with backoff (~15 min stall) before the artifact is
+skipped; observed live during the 95–102 backfill.
+
+Still open (deferred; none block a long run): #13 (in-flow variation dedup), #16 (leading-prose fence in `prompt.md`), #17
 (empty/refusal logged as success), #18/#19 (mutant "killed for wrong reason"; `green?` counts
 excluded tests). Corpus-wide `validate.exs` is green **and warning-free**; the pre-existing
 `032_002` failure was fixed (Ecto `on_conflict`/`conflict_target` misuse).
