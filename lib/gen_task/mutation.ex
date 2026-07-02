@@ -54,19 +54,19 @@ defmodule GenTask.Mutation do
   end
 
   @doc """
-  Replace the body of every clause of the public function `name/arity` with `raise`,
-  leaving all other functions intact. Used by the per-function gate. On a parse error
-  the source is returned unchanged (conservative — the mutant grades green and is
-  flagged `:survived`).
+  Replace the body of every clause of the function `name/arity` (of the given `kind`,
+  `:def` by default, `:defp` for a private fn) with `raise`, leaving all other functions
+  intact. Used by the per-function and isolation gates. On a parse error the source is
+  returned unchanged (conservative — the mutant grades green and is flagged `:survived`).
   """
-  @spec mutate_fn(String.t(), atom(), non_neg_integer()) :: String.t()
-  def mutate_fn(solution_src, name, arity) do
+  @spec mutate_fn(String.t(), atom(), non_neg_integer(), :def | :defp) :: String.t()
+  def mutate_fn(solution_src, name, arity, kind \\ :def) do
     solution_src
     |> Code.string_to_quoted!()
     |> Macro.prewalk(fn
-      {:def, m, [head, kw]} = node when is_list(kw) ->
+      {^kind, m, [head, kw]} = node when is_list(kw) ->
         if head_name_arity(head) == {name, arity} and Keyword.has_key?(kw, :do),
-          do: {:def, m, [head, [do: quote(do: raise("MUTATION"))]]},
+          do: {kind, m, [head, [do: quote(do: raise("MUTATION"))]]},
           else: node
 
       other ->
@@ -75,6 +75,32 @@ defmodule GenTask.Mutation do
     |> Macro.to_string()
   rescue
     _ -> solution_src
+  end
+
+  @doc """
+  The `{kind, name, arity}` of every function (`def` **and** `defp`) defined in
+  `solution_src`, de-duplicated across clauses. `[]` on a parse error. Used by the
+  test-FIM isolation gate, where a single test may exercise private helpers only.
+  """
+  @spec all_functions(String.t()) :: [{:def | :defp, atom(), non_neg_integer()}]
+  def all_functions(solution_src) do
+    {_ast, acc} =
+      solution_src
+      |> Code.string_to_quoted!()
+      |> Macro.prewalk([], fn
+        {kind, _m, [head | _]} = node, acc when kind in [:def, :defp] ->
+          case head_name_arity(head) do
+            {n, a} -> {node, [{kind, n, a} | acc]}
+            nil -> {node, acc}
+          end
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    acc |> Enum.reverse() |> Enum.uniq()
+  rescue
+    _ -> []
   end
 
   @doc """
@@ -191,6 +217,53 @@ defmodule GenTask.Mutation do
     else
       Logger.debug("fim mutation gate: killed")
       :killed
+    end
+  end
+
+  @doc """
+  Test-FIM isolation gate. `iso_dir` is a staging dir; `module_src` is the parent
+  reference module; `isolated_harness` is the harness reduced to the single target
+  `test` block plus its helpers/`setup` (all other `test` blocks removed).
+
+  Mutate each function of the module (`def` AND `defp`) to `raise` and run the isolated
+  harness against it; the block is a valid tfim target iff it kills **≥1** mutant
+  (proving it asserts real behavior, not just structure). Early-exits on the first kill.
+  Returns `:killed` or `{:survived, reason}` (a vacuous block — reject the target).
+  """
+  @spec gate_isolation(String.t(), String.t(), String.t(), Config.t()) :: result()
+  def gate_isolation(iso_dir, module_src, isolated_harness, %Config{} = cfg) do
+    # Sanity: the isolated block must itself pass the real module. Otherwise it would
+    # "fail" against every mutant too and be mistaken for a mutant-killer (false pass).
+    Evaluator.stage!(iso_dir, %{"solution.ex" => module_src, "test_harness.exs" => isolated_harness})
+
+    if not Evaluator.green?(Evaluator.grade(iso_dir, cfg)) do
+      {:survived,
+       "the isolated test block is not green against the reference module — it is not " <>
+         "independent (depends on other tests) or is malformed"}
+    else
+      killed? =
+        module_src
+        |> all_functions()
+        |> Enum.reduce_while(false, fn {kind, name, arity}, _acc ->
+          mutant = mutate_fn(module_src, name, arity, kind)
+
+          Evaluator.stage!(iso_dir, %{
+            "solution.ex" => mutant,
+            "test_harness.exs" => isolated_harness
+          })
+
+          if Evaluator.green?(Evaluator.grade(iso_dir, cfg)),
+            do: {:cont, false},
+            else: {:halt, true}
+        end)
+
+      if killed? do
+        :killed
+      else
+        {:survived,
+         "the isolated test block kills no raise-mutant of the module — it asserts nothing " <>
+           "about behavior"}
+      end
     end
   end
 

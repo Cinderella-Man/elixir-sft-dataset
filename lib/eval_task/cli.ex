@@ -43,6 +43,8 @@ defmodule EvalTask.CLI do
                 :single -> Runner.run_single(task_dir, solution_file)
                 :multifile -> Runner.run_multifile(task_dir, solution_file)
                 :fim -> Runner.run_fim(task_dir, solution_file)
+                :write_test -> Runner.run_write_test(task_dir, solution_file)
+                :test_fim -> Runner.run_test_fim(task_dir, solution_file)
               end
 
             emit(result, %{
@@ -58,9 +60,15 @@ defmodule EvalTask.CLI do
   end
 
   @doc "Detect a task's shape from its directory + chosen solution file."
-  @spec detect(String.t(), String.t()) :: :single | :multifile | :fim
+  @spec detect(String.t(), String.t()) :: :single | :multifile | :fim | :write_test | :test_fim
   def detect(task_dir, solution_file) do
+    base = Path.basename(task_dir)
+
     cond do
+      # New derived kinds are keyed by directory prefix (checked before the harness-less
+      # `:fim` default, which a tfim_ dir would otherwise fall into).
+      String.starts_with?(base, "wt_") -> :write_test
+      String.starts_with?(base, "tfim_") -> :test_fim
       not File.regular?(Path.join(task_dir, "test_harness.exs")) -> :fim
       Bundle.bundle?(File.read!(solution_file)) -> :multifile
       true -> :single

@@ -64,5 +64,28 @@ defmodule GenTask.MutationTest do
     test "returns source unchanged on a parse error" do
       assert Mutation.mutate_fn("def broken(", :x, 0) == "def broken("
     end
+
+    test "mutates a private function when kind: :defp is given" do
+      mutated = Mutation.mutate_fn(@src, :helper, 1, :defp)
+      assert mutated =~ ~r/defp helper\(x\) do\s*raise/
+      # public defs untouched
+      assert mutated =~ "a + b"
+      # a :def mutate of the same name/arity is a no-op (helper is private)
+      assert Mutation.mutate_fn(@src, :helper, 1, :def) =~ "x * 2"
+    end
+  end
+
+  describe "all_functions/1" do
+    test "lists public AND private functions with their kind" do
+      fns = Mutation.all_functions(@src)
+      assert {:def, :add, 2} in fns
+      assert {:def, :sub, 2} in fns
+      assert {:def, :double, 1} in fns
+      assert {:defp, :helper, 1} in fns
+    end
+
+    test "[] on a parse error" do
+      assert Mutation.all_functions("defmodule Broken do def") == []
+    end
   end
 end

@@ -168,6 +168,87 @@ defmodule EvalTask.Runner do
     end
   end
 
+  @doc """
+  Run a `wtest` task (`wt_<a>_<b>_<slug>/`): grade the module (`solution.ex`, plain or
+  `<file>` bundle) against the reference `test_harness.exs` — i.e. confirm the gold
+  harness passes and, for a candidate harness, that it is consistent with the module.
+  Structurally identical to `:single`/`:multifile`, dispatched by the module's content.
+  """
+  def run_write_test(task_dir, sol_file) do
+    result =
+      if Bundle.bundle?(File.read!(sol_file)),
+        do: run_multifile(task_dir, sol_file),
+        else: run_single(task_dir, sol_file)
+
+    Map.put(result, :shape, :write_test)
+  end
+
+  @doc """
+  Run a `tfim` task (`tfim_<a>_<b>_<slug>_0N/`): splice the candidate test block into
+  the harness skeleton from `prompt.md`, then run the reconstructed harness against the
+  PARENT `_01`'s reference module (`solution.ex`, plain or bundle). Green ⇔ the completed
+  harness passes the reference module. Analysis is on the candidate block (`:fim` mode).
+  """
+  def run_test_fim(task_dir, sol_file) do
+    parent = Fim.test_fim_parent_dir(task_dir)
+    prompt = File.read!(Path.join(task_dir, "prompt.md"))
+    candidate_raw = File.read!(sol_file)
+    analysis = Analysis.analyze(Fim.extract_candidate(candidate_raw), :fim)
+    extra = %{parent: Path.basename(parent), shape: :test_fim}
+
+    case reconstruct_harness(prompt, candidate_raw) do
+      {:error, reason} ->
+        finish(
+          %{
+            compiled: false,
+            compile_warnings: 0,
+            compile_errors: [%{type: "TestFimReconstruct", message: reason}]
+          },
+          analysis,
+          no_tests(),
+          extra
+        )
+
+      {:ok, harness_src} ->
+        module_src = File.read!(Path.join(parent, "solution.ex"))
+        base = grade_harness_against_module(module_src, harness_src)
+
+        base
+        |> Map.merge(%{analysis: analysis, score: Analysis.score(base, analysis, base)})
+        |> Map.merge(extra)
+    end
+  end
+
+  defp reconstruct_harness(prompt, candidate_raw) do
+    # force_splice: the candidate is a `test` block, never a whole module — always splice
+    # it into the harness skeleton (even if it contains the substring `defmodule`).
+    {:ok, Fim.reconstruct(prompt, candidate_raw, true)}
+  rescue
+    e -> {:error, Exception.message(e)}
+  end
+
+  # Run `harness_src` against a reference module (plain module or `<file>` bundle) by
+  # staging a throwaway task dir and delegating to the existing single/multifile runner.
+  defp grade_harness_against_module(module_src, harness_src) do
+    if Bundle.bundle?(module_src) do
+      tmp = mktemp()
+      File.write!(Path.join(tmp, "solution.ex"), module_src)
+      File.write!(Path.join(tmp, "test_harness.exs"), harness_src)
+      result = run_multifile(tmp, Path.join(tmp, "solution.ex"))
+      File.rm_rf!(tmp)
+      result
+    else
+      mod = Path.join(System.tmp_dir!(), "tfmod_#{uniq_suffix()}.ex")
+      har = Path.join(System.tmp_dir!(), "tfhar_#{uniq_suffix()}.exs")
+      File.write!(mod, module_src)
+      File.write!(har, harness_src)
+      result = run_single_explicit(mod, har)
+      File.rm(mod)
+      File.rm(har)
+      result
+    end
+  end
+
   # ---------- compile / test helpers ----------
 
   defp compile_file(path) do

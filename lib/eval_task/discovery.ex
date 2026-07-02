@@ -9,7 +9,7 @@ defmodule EvalTask.Discovery do
   @type task :: %{
           name: String.t(),
           dir: String.t(),
-          shape: :single | :fim | :multifile,
+          shape: :single | :fim | :multifile | :write_test | :test_fim,
           solution: String.t(),
           found: boolean()
         }
@@ -28,11 +28,20 @@ defmodule EvalTask.Discovery do
   end
 
   defp annotate(dir, sol_name) do
+    base = Path.basename(dir)
     sol = Path.join(dir, sol_name)
     has_harness = File.regular?(Path.join(dir, "test_harness.exs"))
     found = File.regular?(sol)
 
     cond do
+      # Derived kinds keyed by directory prefix (before the content-based rules).
+      # wtest carries its own harness (gold); tfim is harness-less like FIM.
+      String.starts_with?(base, "wt_") ->
+        task(dir, :write_test, sol, found)
+
+      String.starts_with?(base, "tfim_") ->
+        task(dir, :test_fim, sol, found)
+
       # No harness of its own → a FIM subtask (parent _01 has the harness).
       not has_harness ->
         if EvalTask.Fim.fim_dir?(dir), do: task(dir, :fim, sol, found), else: nil

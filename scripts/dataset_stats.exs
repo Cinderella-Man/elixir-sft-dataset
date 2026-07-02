@@ -56,9 +56,14 @@ defmodule DatasetStats do
       idea: idea,
       variant: variant,
       subtask: subtask,
+      # Guard integer comparisons: parse_name returns nil for wt_/tfim_ prefixed dirs, and
+      # `nil > 1` is TRUE in Elixir term ordering (numbers sort below atoms) — without the
+      # is_integer guard every wt_/tfim_ dir would be miscounted as a FIM subtask.
       base?: variant == 1 and subtask == 1,
-      variation?: variant > 1 and subtask == 1,
-      fim?: subtask > 1,
+      variation?: is_integer(variant) and variant > 1 and subtask == 1,
+      fim?: is_integer(subtask) and subtask > 1,
+      wtest?: t.shape == :write_test,
+      tfim?: t.shape == :test_fim,
       has_harness?: harness != "",
       prompt: measure(prompt, cpt),
       sol: measure(sol, cpt),
@@ -150,6 +155,8 @@ defmodule DatasetStats do
       base_tasks: Enum.count(rows, & &1.base?),
       variations: Enum.count(rows, & &1.variation?),
       fim_subtasks: Enum.count(rows, & &1.fim?),
+      write_tests: Enum.count(rows, & &1.wtest?),
+      test_fim_subtasks: Enum.count(rows, & &1.tfim?),
       distinct_ideas: rows |> Enum.map(& &1.idea) |> Enum.reject(&is_nil/1) |> Enum.uniq() |> length(),
       with_prompt: Enum.count(rows, &(&1.prompt.chars > 0)),
       with_harness: Enum.count(rows, & &1.has_harness?),
@@ -162,6 +169,8 @@ defmodule DatasetStats do
       "prompt→solution": length(found),
       "prompt→solution+tests": length(with_harness),
       "FIM prompt→function": Enum.count(rows, & &1.fim?),
+      "module+spec→tests (wtest)": Enum.count(rows, & &1.wtest?),
+      "test-FIM prompt→test block (tfim)": Enum.count(rows, & &1.tfim?),
       "alternate/negative solutions": alternate_solutions() |> Map.values() |> Enum.sum()
     }
   end
@@ -372,6 +381,7 @@ defmodule DatasetStats do
     kv("  missing solution", c.missing_solution)
     kv("By shape", inspect(c.by_shape))
     kv("Base tasks / variations / FIM", "#{c.base_tasks} / #{c.variations} / #{c.fim_subtasks}")
+    kv("Write-tests (wtest) / test-FIM (tfim)", "#{c.write_tests} / #{c.test_fim_subtasks}")
     kv("Distinct ideas covered", c.distinct_ideas)
     kv("Have test_harness.exs", c.with_harness)
     kv("Alternate model solutions", inspect(c.alternate_solutions))

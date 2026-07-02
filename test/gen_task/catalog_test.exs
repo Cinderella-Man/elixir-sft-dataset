@@ -140,24 +140,41 @@ defmodule GenTask.CatalogTest do
       File.mkdir_p!(Path.join(dir, "011_001_delta_02"))
       File.mkdir_p!(Path.join(dir, "011_002_epsilon_01"))
 
-      # idea 12: fully derived -> 3 variations, each _01 with all 3 fim subtasks.
+      # idea 12: fully derived -> 3 variations, each _01 with all 3 fim subtasks, one
+      # wtest (wt_...) and all 3 tfim subtasks (tfim_..._02/03/04).
       for d <- [
             "012_001_zeta_01",
             "012_001_zeta_02",
             "012_001_zeta_03",
             "012_001_zeta_04",
+            "wt_012_001_zeta",
+            "tfim_012_001_zeta_02",
+            "tfim_012_001_zeta_03",
+            "tfim_012_001_zeta_04",
             "012_002_a_01",
             "012_002_a_02",
             "012_002_a_03",
             "012_002_a_04",
+            "wt_012_002_a",
+            "tfim_012_002_a_02",
+            "tfim_012_002_a_03",
+            "tfim_012_002_a_04",
             "012_003_b_01",
             "012_003_b_02",
             "012_003_b_03",
             "012_003_b_04",
+            "wt_012_003_b",
+            "tfim_012_003_b_02",
+            "tfim_012_003_b_03",
+            "tfim_012_003_b_04",
             "012_004_c_01",
             "012_004_c_02",
             "012_004_c_03",
-            "012_004_c_04"
+            "012_004_c_04",
+            "wt_012_004_c",
+            "tfim_012_004_c_02",
+            "tfim_012_004_c_03",
+            "tfim_012_004_c_04"
           ],
           do: File.mkdir_p!(Path.join(dir, d))
 

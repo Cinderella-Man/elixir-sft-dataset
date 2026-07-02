@@ -508,6 +508,7 @@ re-scanning (JSONL is fsynced; no partial `tasks/` dirs are ever left).
 | Model | `GEN_MODEL` | `opus` | `claude --model` alias/id |
 | Repair retries | `GEN_MAX_RETRIES` | `3` | fix iterations per task (base/variation/FIM) |
 | FIM targets/task | `GEN_FIM_MAX_PER_TASK` | `3` | cap on candidate functions per `_01` |
+| tfim targets/task | `GEN_TFIM_MAX_PER_TASK` | `3` | cap on test-FIM subtasks per `_01` (see `docs/06`) |
 | Eval timeout | `GEN_EVAL_TIMEOUT_S` | `120` | wall-clock kill for a hung grade |
 | Call timeout | `GEN_CALL_TIMEOUT_S` | `900` | wall-clock kill for a single `claude -p` |
 | Usage-window wait | `GEN_USAGE_WAIT_MS` | `900000` | sleep between retries while limited (15 min) |
@@ -519,6 +520,7 @@ re-scanning (JSONL is fsynced; no partial `tasks/` dirs are ever left).
 | Range / single | `GEN_FROM`/`GEN_TO`, positional arg | — | restrict idea numbers; positional = one idea |
 | Retry failed | `GEN_RETRY_FAILED` | `0` | re-attempt items in `logs/errors/` |
 | Skip variations/FIM | `GEN_SKIP_VARIATIONS`, `GEN_SKIP_FIM` | `0` | run only part of the chain |
+| Skip wtest/tfim | `GEN_SKIP_WRITE_TEST`, `GEN_SKIP_TEST_FIM` | `0` | skip the deterministic derived kinds (`docs/06`) |
 | Backfill control | `GEN_SKIP_BACKFILL` / `GEN_ONLY` | `0` / — | skip work-list 2; or `GEN_ONLY=backfill`/`bases` to run one work-list (§4) |
 | Reconcile catalog | `GEN_RECONCILE` | `0` | before running, insert a `tasks.md` entry for any variation dir missing one (heals crash-orphans). Off by default so a normal run never rewrites the hand-curated catalog with derived entries; done-detection is dir-based, so the loop is correct either way |
 | Dry run | `GEN_DRY_RUN` | `0` | do everything except promotion / `tasks.md` edits |
@@ -538,10 +540,12 @@ lib/gen_task/
   reply.ex        # parse <file> blocks (EvalTask.Bundle.parse) + sanitize_file_body + per-step contract (§7)
   cycle.ex        # shared task cycle: stage → grade → accept(green → house-style → per-fn mutation) → repair (§6)
   evaluator.ex    # timeout-wrapped eval_task.exs, decode, green?, quality_shortfall, repair_report (§12)
-  mutation.ex     # public_functions + mutate/mutate_fn + grade-the-mutant; per-function base gate & FIM gate (§13)
+  mutation.ex     # public_functions/all_functions + mutate/mutate_fn(+:defp) + base/FIM/isolation gates (§13, docs/06)
   base.ex         # base generator (§8)
   variations.ex   # missing-slot generation, split, per-variation cycle, tasks.md insert (§9)
   fim.ex          # candidate selection (excl. covered/rejected), per-candidate generation, FIM accept via :fim + mutation (§10)
+  write_test.ex   # wtest generator — deterministic repackage of an _01 into wt_<slug>/ (docs/06)
+  test_fim.ex     # tfim generator — carve top-level `test` blocks, isolation-kill gate, tfim_<slug>_0d/ (docs/06)
   cycle_log.ex    # RowLog-equivalent handler + move-to-errors + JSONL ledgers (+ fim_rejected) + console hygiene (§14)
 scripts/generate.exs   # thin entry: GenTask.CLI.main(System.argv())
 ```

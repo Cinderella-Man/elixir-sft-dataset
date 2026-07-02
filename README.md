@@ -74,6 +74,18 @@ c - task name
 d - subtask number(01 - single-hot, 02..0x - fill-in-the-middle functions)
 ```
 
+Two **derived task kinds** are minted from every solved `_01` (deterministically, no LLM — see
+`docs/06-dataset-multiplication.md`), distinguished by a directory **prefix**:
+
+```
+wt_001_001_rate_limiter          # "write tests for this module": prompt = module (+spec) → completion = a harness
+tfim_001_001_rate_limiter_02     # test fill-in-the-middle: prompt = harness with one `test` blanked → that test
+```
+
+`wt_` dirs carry `solution.ex` (the module under test) + `test_harness.exs` (the gold harness).
+`tfim_` dirs carry `solution.ex` (the one gold `test` block) and reconstruct against the parent `_01`.
+The evaluator (`eval_task.exs`) auto-detects these shapes (`:write_test` / `:test_fim`) by prefix.
+
 ## Design & internals
 
 The multi-file and FIM auto-testing design, decisions, and the as-built evaluator (module layout,

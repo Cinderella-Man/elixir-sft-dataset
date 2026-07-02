@@ -138,6 +138,20 @@ Consequences you must internalize:
   the reference `solution.ex` there bundles *multiple* modules inline via `<file path="...">…</file>`
   blocks.
 
+**Two derived task kinds (prefix-named).** Since every `_01` uniquely owns a verified
+`test_harness.exs`, two more SFT framings are minted from it (deterministically, no LLM — see
+`docs/06-dataset-multiplication.md`):
+
+- **`wt_<a>_<b>_<slug>`** — *write tests for this module*: `prompt.md` embeds the module + spec →
+  the completion is a harness. The dir holds `solution.ex` (the module) + `test_harness.exs` (the gold
+  harness). Detected as shape `:write_test`; grades like `:single`/`:multifile`.
+- **`tfim_<a>_<b>_<slug>_0d`** — *test fill-in-the-middle*: `prompt.md` embeds the module + the whole
+  harness with one `test "…"` body blanked to `# TODO`; `solution.ex` is that one gold `test` block
+  (no harness of its own). Detected as `:test_fim`; the harness is reconstructed and run against the
+  parent `_01`'s module. Each target passed an **isolation-kill** gate at authoring (the block, run
+  alone, is green and kills ≥1 raise-mutant). The prefixes are glob-safe against the digit-anchored
+  `_01` enumerators, so backfill/variation/FIM counting ignores them.
+
 ---
 
 ## 4. The three file types

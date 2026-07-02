@@ -49,9 +49,21 @@ defmodule GenTask.Catalog do
             b: pos_integer(),
             base?: boolean(),
             needs_variations?: boolean(),
-            needs_fim?: boolean()
+            needs_fim?: boolean(),
+            needs_write_test?: boolean(),
+            needs_test_fim?: boolean()
           }
-    defstruct [:dir, :task_id, :num, :b, :base?, needs_variations?: false, needs_fim?: false]
+    defstruct [
+      :dir,
+      :task_id,
+      :num,
+      :b,
+      :base?,
+      needs_variations?: false,
+      needs_fim?: false,
+      needs_write_test?: false,
+      needs_test_fim?: false
+    ]
   end
 
   # ---------------------------------------------------------------------------
@@ -191,7 +203,9 @@ defmodule GenTask.Catalog do
     |> Enum.sort()
     |> Enum.map(&seed(&1, cfg))
     |> Enum.reject(&is_nil/1)
-    |> Enum.filter(&(&1.needs_variations? or &1.needs_fim?))
+    |> Enum.filter(
+      &(&1.needs_variations? or &1.needs_fim? or &1.needs_write_test? or &1.needs_test_fim?)
+    )
     |> Enum.filter(&in_scope?(&1.num, cfg))
   end
 
@@ -213,9 +227,12 @@ defmodule GenTask.Catalog do
         base?: base?,
         # Top-up semantics: a base needs variations until all 3 slots (V1/V2/V3 →
         # _002/_003/_004) exist; any _01 needs FIM until it has `fim_max_per_task`
-        # subtasks. A partially-filled batch is therefore revisited, not skipped.
+        # subtasks; any _01 needs a wtest until its `wt_` dir exists and tfim until it has
+        # `tfim_max_per_task` subtasks. A partially-filled batch is revisited, not skipped.
         needs_variations?: base? and count_variations(cfg.tasks_dir, a) < 3,
-        needs_fim?: count_fim(cfg.tasks_dir, a, b) < cfg.fim_max_per_task
+        needs_fim?: count_fim(cfg.tasks_dir, a, b) < cfg.fim_max_per_task,
+        needs_write_test?: not File.dir?("#{cfg.tasks_dir}/wt_#{String.replace_suffix(base, "_01", "")}"),
+        needs_test_fim?: count_tfim(cfg.tasks_dir, a, b) < cfg.tfim_max_per_task
       }
     else
       _ -> nil
@@ -246,6 +263,14 @@ defmodule GenTask.Catalog do
       {n, ""} -> n >= 2
       _ -> false
     end
+  end
+
+  @doc "Number of test-FIM subtask dirs (`tfim_<a>_<b>_*`) present for the `a_b_*_01` task."
+  @spec count_tfim(String.t(), String.t(), String.t()) :: non_neg_integer()
+  def count_tfim(tasks_dir, a, b) do
+    "#{tasks_dir}/tfim_#{a}_#{b}_*"
+    |> Path.wildcard()
+    |> Enum.count(&File.dir?/1)
   end
 
   # ---------------------------------------------------------------------------

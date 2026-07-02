@@ -18,7 +18,7 @@ defmodule GenTask.CLI do
 
   require Logger
 
-  alias GenTask.{Base, Catalog, Config, CycleLog, Fim, Mutation, Variations}
+  alias GenTask.{Base, Catalog, Config, CycleLog, Fim, Mutation, TestFim, Variations, WriteTest}
 
   @doc "Run the generation loop from `argv` + the process environment."
   @spec main([String.t()]) :: :ok
@@ -97,7 +97,10 @@ defmodule GenTask.CLI do
 
           if out.status == :accepted do
             variation_seeds = run_variations(cfg, out.seed)
-            run_fim(cfg, [out.seed | variation_seeds])
+            seeds = [out.seed | variation_seeds]
+            run_fim(cfg, seeds)
+            run_write_test(cfg, seeds)
+            run_test_fim(cfg, seeds)
           end
         rescue
           e ->
@@ -147,22 +150,25 @@ defmodule GenTask.CLI do
           []
         end
 
-      own_fim =
-        if seed.needs_fim? and files do
-          [
-            %{
-              num: seed.num,
-              slug: slug_of(seed.task_id),
-              b: seed.b,
-              task_id: seed.task_id,
-              files: files
-            }
-          ]
-        else
-          []
+      self_seed =
+        if files do
+          %{
+            num: seed.num,
+            slug: slug_of(seed.task_id),
+            b: seed.b,
+            task_id: seed.task_id,
+            files: files
+          }
         end
 
+      own_fim = if seed.needs_fim? and self_seed, do: [self_seed], else: []
       run_fim(cfg, own_fim ++ variation_seeds)
+
+      # wtest/tfim self-gate (idempotent top-up), so derive for the seed itself and any
+      # freshly-created variations unconditionally.
+      derived = if self_seed, do: [self_seed | variation_seeds], else: variation_seeds
+      run_write_test(cfg, derived)
+      run_test_fim(cfg, derived)
     rescue
       e ->
         IO.puts("#{tag} #{seed.task_id} (backfill) ... ERROR (#{Exception.message(e)})")
@@ -215,6 +221,26 @@ defmodule GenTask.CLI do
     end)
   end
 
+  defp run_write_test(%Config{skip_write_test: true}, _seeds), do: :ok
+
+  defp run_write_test(cfg, seeds) do
+    Enum.each(seeds, fn seed ->
+      seed
+      |> WriteTest.run(cfg)
+      |> Enum.each(&record_and_print(cfg, "     ", &1, nil))
+    end)
+  end
+
+  defp run_test_fim(%Config{skip_test_fim: true}, _seeds), do: :ok
+
+  defp run_test_fim(cfg, seeds) do
+    Enum.each(seeds, fn seed ->
+      seed
+      |> TestFim.run(cfg)
+      |> Enum.each(&record_and_print(cfg, "     ", &1, nil))
+    end)
+  end
+
   # ------------------------------------------------------------------
   # Reporting
   # ------------------------------------------------------------------
@@ -257,7 +283,7 @@ defmodule GenTask.CLI do
     IO.puts("""
     =============================================
       GenTask — task generation loop#{mode}
-      model=#{cfg.model}  max_retries=#{cfg.max_retries}  fim_max=#{cfg.fim_max_per_task}
+      model=#{cfg.model}  max_retries=#{cfg.max_retries}  fim_max=#{cfg.fim_max_per_task}  tfim_max=#{cfg.tfim_max_per_task}
       new bases: #{length(plan.bases)}   backfill seeds: #{length(plan.backfill)}
     =============================================
     """)

@@ -14,6 +14,9 @@ defmodule EvalTask.Fim do
 
   @todo ~r/#\s*TODO/i
   @skeleton ~r/```elixir\n(.*?)\n```/s
+  # Openers that begin a spliceable block: Elixir defs AND ExUnit macro blocks
+  # (test-fill-in-the-middle blanks a `test`/`describe`/`setup` body, not a `def`).
+  @block_opener ~r/^\s*(def|defp|defmacro|defmacrop|test|describe|setup_all|setup|property)\b/
 
   @doc "The parent `_01` directory for a FIM dir under `tasks/`."
   @spec parent_dir(String.t()) :: String.t()
@@ -21,6 +24,18 @@ defmodule EvalTask.Fim do
     base = Path.basename(fim_dir)
     parent = (base |> String.split("_") |> Enum.drop(-1) |> Enum.join("_")) <> "_01"
     Path.join(Path.dirname(fim_dir), parent)
+  end
+
+  @doc """
+  The parent `_01` directory for a `tfim_<a>_<b>_<slug>_0N` test-FIM dir: strip the
+  `tfim_` prefix, drop the subtask segment, and append `_01`. The parent holds the
+  reference `solution.ex` (the module the reconstructed harness runs against).
+  """
+  @spec test_fim_parent_dir(String.t()) :: String.t()
+  def test_fim_parent_dir(tfim_dir) do
+    base = Path.basename(tfim_dir) |> String.replace_prefix("tfim_", "")
+    parent = (base |> String.split("_") |> Enum.drop(-1) |> Enum.join("_")) <> "_01"
+    Path.join(Path.dirname(tfim_dir), parent)
   end
 
   @doc "True if `dir` is a FIM subtask (no harness of its own, prompt has a TODO marker)."
@@ -38,11 +53,16 @@ defmodule EvalTask.Fim do
   (if it already contains `defmodule`, it is used verbatim). Returns the module
   source string, or raises if the skeleton/marker cannot be found.
   """
-  @spec reconstruct(String.t(), String.t()) :: String.t()
-  def reconstruct(prompt_md, candidate_raw) do
+  @spec reconstruct(String.t(), String.t(), boolean()) :: String.t()
+  def reconstruct(prompt_md, candidate_raw, force_splice \\ false) do
     candidate = extract_candidate(candidate_raw)
 
-    if String.contains?(candidate, "defmodule") do
+    # The `defmodule` short-circuit is only valid for module-FIM, where a candidate that
+    # is a whole module is used verbatim. For test-FIM the candidate is a `test` block
+    # that must ALWAYS be spliced into the harness skeleton — even if it contains the
+    # substring `defmodule` (an inline module, or a string literal). `force_splice`
+    # selects that behaviour.
+    if not force_splice and String.contains?(candidate, "defmodule") do
       candidate
     else
       skeleton = extract_skeleton(prompt_md)
@@ -59,10 +79,23 @@ defmodule EvalTask.Fim do
     end
   end
 
+  # Pick the ```elixir fence that CONTAINS the `# TODO` marker, not merely the first
+  # fence. A test-FIM prompt has two fenced blocks — the reference module (no TODO)
+  # and the harness skeleton (with the TODO) — so "first fence" would wrongly grab the
+  # module. For a single-fence (sfim) prompt this still selects that one fence.
   defp extract_skeleton(prompt_md) do
-    case Regex.run(@skeleton, prompt_md) do
-      [_, code] -> code
-      _ -> raise "FIM prompt has no ```elixir skeleton fence"
+    # Pick the LAST ```elixir fence containing the marker. A test-FIM prompt places the
+    # reference module fence first and the harness skeleton (with the injected `# TODO`)
+    # last, so "last TODO-fence" robustly selects the harness even if the module fence
+    # happens to contain a `# TODO`-shaped line (e.g. a Markdown heading in a @moduledoc).
+    # For a single-fence (sfim) prompt this still selects that one fence.
+    Regex.scan(@skeleton, prompt_md, capture: :all_but_first)
+    |> Enum.map(&hd/1)
+    |> Enum.filter(&String.match?(&1, @todo))
+    |> List.last()
+    |> case do
+      nil -> raise "FIM prompt has no ```elixir fence containing a `# TODO` marker"
+      code -> code
     end
   end
 
@@ -120,10 +153,10 @@ defmodule EvalTask.Fim do
 
   defp scan_up_for_def(lines, from) do
     Enum.reduce_while((from - 1)..0//-1, nil, fn j, _ ->
-      if String.match?(Enum.at(lines, j), ~r/^\s*(def|defp|defmacro|defmacrop)\s/),
+      if String.match?(Enum.at(lines, j), @block_opener),
         do: {:halt, j},
         else: {:cont, nil}
-    end) || raise "no enclosing def above # TODO"
+    end) || raise "no enclosing def/test block above # TODO"
   end
 
   defp scan_down_for_end(lines, from, indent) do

@@ -1,0 +1,125 @@
+defmodule AggregatorTest do
+  use ExUnit.Case, async: false
+
+  # Starts an Aggregator under the test supervisor whose :on_flush callback
+  # forwards each flushed batch back to the test process as {:flushed, batch}.
+  defp start_agg(opts) do
+    test_pid = self()
+
+    defaults = [on_flush: fn batch -> send(test_pid, {:flushed, batch}) end]
+
+    child_opts = Keyword.merge(defaults, opts)
+    start_supervised!({Aggregator, child_opts})
+  end
+
+  # ---------------------------------------------------------------
+  # Size-triggered flush
+  # ---------------------------------------------------------------
+
+  test "flushes immediately when the batch reaches the configured size" do
+    # Long interval so only the size trigger can fire.
+    agg = start_agg(batch_size: 3, interval_ms: 5_000)
+
+    Aggregator.push(agg, :a)
+    Aggregator.push(agg, :b)
+    Aggregator.push(agg, :c)
+
+    assert_receive {:flushed, [:a, :b, :c]}, 500
+  end
+
+  test "batch_size of 1 flushes every event immediately" do
+    agg = start_agg(batch_size: 1, interval_ms: 5_000)
+
+    Aggregator.push(agg, :x)
+    assert_receive {:flushed, [:x]}, 500
+
+    Aggregator.push(agg, :y)
+    assert_receive {:flushed, [:y]}, 500
+  end
+
+  test "multiple full batches flush in order with fresh buffers" do
+    agg = start_agg(batch_size: 2, interval_ms: 5_000)
+
+    Aggregator.push(agg, 1)
+    Aggregator.push(agg, 2)
+    Aggregator.push(agg, 3)
+    Aggregator.push(agg, 4)
+
+    assert_receive {:flushed, [1, 2]}, 500
+    assert_receive {:flushed, [3, 4]}, 500
+  end
+
+  # ---------------------------------------------------------------
+  # Time-triggered flush
+  # ---------------------------------------------------------------
+
+  test "flushes buffered events after the interval when below batch size" do
+    agg = start_agg(batch_size: 5, interval_ms: 200)
+
+    Aggregator.push(agg, :a)
+    Aggregator.push(agg, :b)
+
+    # Below batch size, so nothing should flush right away.
+    refute_receive {:flushed, _}, 80
+
+    # Eventually the interval elapses and the partial batch is flushed.
+    assert_receive {:flushed, [:a, :b]}, 500
+  end
+
+  test "does not flush empty batches on the interval" do
+    start_agg(batch_size: 5, interval_ms: 150)
+
+    # No pushes at all — the callback must never be invoked, even across
+    # multiple interval periods.
+    refute_receive {:flushed, _}, 400
+  end
+
+  test "keeps aggregating after a time-triggered partial flush" do
+    agg = start_agg(batch_size: 3, interval_ms: 150)
+
+    # First a size flush.
+    Aggregator.push(agg, :a)
+    Aggregator.push(agg, :b)
+    Aggregator.push(agg, :c)
+    assert_receive {:flushed, [:a, :b, :c]}, 500
+
+    # Then a leftover single event that must flush on the timer.
+    Aggregator.push(agg, :d)
+    assert_receive {:flushed, [:d]}, 500
+
+    # And it keeps working afterwards.
+    Aggregator.push(agg, :e)
+    assert_receive {:flushed, [:e]}, 500
+  end
+
+  # ---------------------------------------------------------------
+  # Timer reset after each flush
+  # ---------------------------------------------------------------
+
+  test "the interval timer resets after a size-triggered flush" do
+    # interval 400ms, batch size 3.
+    agg = start_agg(batch_size: 3, interval_ms: 400)
+
+    # t ~= 0: buffer one event.
+    Aggregator.push(agg, :a)
+
+    # Wait ~200ms (half the interval), then complete the batch to force a
+    # size-triggered flush at t ~= 200ms.
+    Process.sleep(200)
+    Aggregator.push(agg, :b)
+    Aggregator.push(agg, :c)
+    assert_receive {:flushed, [:a, :b, :c]}, 300
+
+    # Immediately push a new event (t ~= 200ms).
+    Aggregator.push(agg, :d)
+
+    # If the timer had NOT been reset, a stale timer from start would fire at
+    # t ~= 400ms and flush [:d]. Assert that does NOT happen within the next
+    # ~300ms (up to t ~= 500ms).
+    refute_receive {:flushed, _}, 300
+
+    # With a correct reset, the flush for [:d] happens ~400ms after the flush
+    # at t ~= 200ms, i.e. around t ~= 600ms.
+    assert_receive {:flushed, [:d]}, 400
+  end
+end
