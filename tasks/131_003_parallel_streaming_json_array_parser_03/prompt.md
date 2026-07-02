@@ -1,0 +1,94 @@
+# Fill in the middle: `decode_line/1`
+
+Implement the private `decode_line/1` function. It takes a single already-trimmed
+line (a `String.t()`) and turns it into a decoded JSON value. First, remove a
+single trailing comma from the line using `strip_trailing_comma/1` (element lines
+in the array end with `,` except the last one). Then decode the remaining text as
+one JSON value with the standard library `JSON.decode/1`. Return its result
+directly: `{:ok, item}` when the text is valid JSON, or `{:error, reason}` when it
+is malformed. Do not call the handler or do any counting here — decoding runs
+inside `Task.async_stream/3`, and the caller reduces over the `{:ok, ...}` /
+`{:error, ...}` results to track processed items, errors, and ordering.
+
+```elixir
+defmodule ParallelJsonStreamer do
+  @moduledoc """
+  Streaming parser for very large JSON array files that decodes lines
+  concurrently across schedulers within a bounded concurrency window, while
+  still invoking the caller's handler exactly once per item, in file order.
+
+  Decoding is fanned out with `Task.async_stream/3` using `ordered: true`, so
+  results are consumed back in the original order even though the CPU-bound
+  `JSON.decode/1` work runs in parallel. The file is read lazily with
+  `File.stream!/2` and only a window proportional to `:max_concurrency` is ever
+  in flight, keeping memory roughly constant regardless of file size.
+  """
+
+  @type stats :: %{
+          processed: non_neg_integer(),
+          errors: non_neg_integer(),
+          elapsed_ms: number(),
+          throughput: float(),
+          max_concurrency: pos_integer()
+        }
+
+  @doc """
+  Streams `file_path`, decoding lines concurrently and calling `handler_fn` once
+  per successfully decoded item in file order. Returns `{:ok, stats}`.
+  """
+  @spec process(Path.t(), (term() -> term()), keyword()) :: {:ok, stats()}
+  def process(file_path, handler_fn, opts \\ []) when is_function(handler_fn, 1) do
+    max_concurrency = Keyword.get(opts, :max_concurrency, System.schedulers_online())
+    start = System.monotonic_time(:microsecond)
+
+    {processed, errors} =
+      file_path
+      |> File.stream!([], :line)
+      |> Stream.map(&String.trim/1)
+      |> Stream.reject(&(&1 in ["", "[", "]"]))
+      |> Task.async_stream(&decode_line/1,
+        max_concurrency: max_concurrency,
+        ordered: true
+      )
+      |> Enum.reduce({0, 0}, fn
+        {:ok, {:ok, item}}, {p, e} ->
+          handler_fn.(item)
+          {p + 1, e}
+
+        {:ok, {:error, _reason}}, {p, e} ->
+          {p, e + 1}
+      end)
+
+    elapsed_us = System.monotonic_time(:microsecond) - start
+    elapsed_ms = max(elapsed_us / 1000, 0)
+
+    stats = %{
+      processed: processed,
+      errors: errors,
+      elapsed_ms: elapsed_ms,
+      throughput: throughput(processed, elapsed_ms),
+      max_concurrency: max_concurrency
+    }
+
+    {:ok, stats}
+  end
+
+  @spec decode_line(String.t()) :: {:ok, term()} | {:error, term()}
+  defp decode_line(trimmed) do
+    # TODO
+  end
+
+  @spec strip_trailing_comma(String.t()) :: String.t()
+  defp strip_trailing_comma(text) do
+    case String.ends_with?(text, ",") do
+      true -> String.slice(text, 0..-2//1)
+      false -> text
+    end
+  end
+
+  @spec throughput(non_neg_integer(), number()) :: float()
+  defp throughput(_processed, +0.0), do: 0.0
+  defp throughput(_processed, 0), do: 0.0
+  defp throughput(processed, elapsed_ms), do: processed / (elapsed_ms / 1000)
+end
+```
