@@ -68,15 +68,26 @@ elixir-sft-dataset/
 │   └── test.exs           # logger :error
 ├── lib/elixir_benchmark/
 │   └── application.ex     # Empty supervisor (children = []). App does nothing at runtime.
+├── lib/eval_task/         # ★ The evaluator library (Bundle/Discovery/Runner/Fim/…) that
+│                          #   eval_task.exs drives; grades single-file, multi-file & FIM shapes
+├── lib/gen_task/          # ★ The automated task-generation loop (docs/04). Non-agentic driver
+│                          #   that authors base+variations+FIM via `claude -p`, grades, repairs,
+│                          #   mutation-gates, and promotes. Modules: cli, config, catalog, opus,
+│                          #   reply, cycle, evaluator, mutation, base, variations, fim, cycle_log
 ├── test/
 │   ├── test_helper.exs    # ExUnit.start(exclude: [:skip, :database]); conditionally starts a Repo
 │   └── support/
 │       └── call_tracker.ex# ElixirBenchmark.CallTracker — Agent that records fn calls, for tests
+├── docs/                  # Design docs: 01–03 multi-file support, 04 the generation loop
+├── logs/                  # Generation-loop output: <task_id>.log per cycle, errors/ for failures,
+│                          #   runs.jsonl / usage.jsonl / waits.jsonl ledgers (git-ignored)
 ├── scripts/
 │   ├── eval_task.exs      # ★ Core evaluator: compile one solution + run its harness → JSON score
 │   ├── run_all.exs        # Batch-run eval_task across all tasks → results/*.json + summary
+│   ├── generate.exs       # ★ Entry point for the generation loop → GenTask.CLI.main (docs/04)
+│   ├── validate.exs       # Quality gate: every reference green + every FIM target mutation-killed
 │   └── validate_harnesses.sh # Sanity-compiles every harness (catches harness syntax bugs)
-├── tasks/                 # ★ 165 single-file task dirs (a_b_c_d naming) + the meta files below
+├── tasks/                 # ★ ~312 single-file/FIM task dirs (a_b_c_d naming) + the meta files below
 │   ├── tasks.md           # Master catalog of PURE (stdlib/OTP) task ideas (~558 numbered)
 │   ├── tasks_external.md   # Master catalog of EXTERNAL-dep task ideas (~442 numbered)
 │   ├── single_shot_prompt.md      # Meta-prompt: turn an idea into a task prompt + harness
@@ -243,6 +254,19 @@ documented step-by-step in `README.md` ("How to contribute"):
 
 Git history mirrors this exactly: commits read "Three variations of the task N", "Three subtasks
 added to task 00X_00Y", "Task NN finished", etc. — a steady hand-curation cadence.
+
+**All three workflows are also fully automated** by `scripts/generate.exs` (code in
+`lib/gen_task/**`, design in `docs/04-task-generation-loop.md`). It is a *non-agentic* loop: for
+each todo idea in `tasks.md` it drives Claude Opus through a fixed procedure via the `claude -p`
+CLI subprocess (subscription-backed, tools off — one completion per call), authoring the base
+task, then its 3 variations, then FIM subtasks. Each artifact is graded by shelling out to
+`eval_task.exs` in an isolated OS process, repaired on failure (up to `GEN_MAX_RETRIES`), and
+**gated on a mutation check** — the reference must pass *and* a `raise`-body mutant must make the
+harness fail, so a vacuous harness can never be promoted. It is **add-only and idempotent**:
+existing tasks are never edited or deleted, `tasks.md` inserts are guarded against duplication,
+and a task already on disk is skipped, so a killed run resumes by re-running the command. Run it
+with `mix run scripts/generate.exs [idea_number]` (see the quick reference below and the README's
+"Automated generation loop" section for env knobs); groups 065–108 were produced this way.
 
 ---
 
@@ -1276,11 +1300,21 @@ elixir scripts/run_all.exs solution.ex --parallel 4
 # Sanity-check that every harness at least compiles
 ./scripts/validate_harnesses.sh
 
+# Quality gate: every reference green + every FIM target actually exercised (mutation)
+elixir ./scripts/validate.exs
+
 # Format everything (incl. task .exs files)
 mix format
+
+# Automated generation loop (docs/04) — needs the `claude` CLI logged in, ANTHROPIC_API_KEY unset
+mix run scripts/generate.exs 80          # one idea, end-to-end (base → variations → FIM)
+GEN_DRY_RUN=1 mix run scripts/generate.exs 80   # generate + grade, write nothing
+GEN_LIMIT=5 mix run scripts/generate.exs        # first 5 pending ideas
+nohup mix run scripts/generate.exs > logs/loop_console.log 2>&1 &   # whole catalog, detached
 ```
 
 Adding a task follows the README's contribution workflow (§6 above): expand an idea from `tasks.md`
 with `single_shot_prompt.md`, drop `prompt.md` + `test_harness.exs` into a new `{a}_001_{name}_01/`
 dir, generate a solution, iterate against `eval_task.exs` until green, then optionally add variations
-(`variation_prompt.md`) and FIM subtasks (`fill_in_the_middle_prompt.md`).
+(`variation_prompt.md`) and FIM subtasks (`fill_in_the_middle_prompt.md`). To do all of that
+automatically, run `scripts/generate.exs` (README "Automated generation loop"; design in `docs/04`).

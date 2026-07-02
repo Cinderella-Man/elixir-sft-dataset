@@ -159,3 +159,79 @@ PASTE WHOLE MODULE HERE BUT THE BODY OF THE FUNCTION IN QUESTION NEEDS TO BE REM
 """
 
 Step 6. Inside the `solution.ex` put jsut a single function in question
+
+## Automated generation loop (all three workflows, hands-off)
+
+The three manual workflows above are also fully automated by a single non-agentic command that
+walks `tasks/tasks.md` and, for each idea, authors the base task, its 3 variations, and FIM
+subtasks — grading each with `eval_task.exs`, repairing on failure, and gating on a mutation
+check so a vacuous harness can never ship. The full design is in
+[`docs/04-task-generation-loop.md`](docs/04-task-generation-loop.md); the code is `lib/gen_task/**`.
+
+**It is safe to run and safe to interrupt.** It only *adds* — new `tasks/…` dirs and
+insert-only appends to `tasks.md`; it never edits or deletes an existing task. Progress is
+durable: a task already on disk is skipped, so a killed run resumes cleanly by re-running the
+same command.
+
+### Prerequisites
+
+- `mix compile` has been run (the loop runs under `mix run`).
+- The `claude` CLI is installed and **logged in** (`claude` uses your Claude Max subscription —
+  the loop shells out to `claude -p`, so calls are subscription-backed, not pay-per-token).
+- `ANTHROPIC_API_KEY` is **unset** in your shell, so the CLI uses the subscription login rather
+  than a metered key. Check with `echo $ANTHROPIC_API_KEY` (should be empty); `unset
+  ANTHROPIC_API_KEY` if not.
+
+### Running it
+
+```bash
+# One base idea, end-to-end (base → variations → FIM) — the recommended smoke test first:
+mix run scripts/generate.exs 80
+
+# Dry run — generate + grade + repair but write NOTHING (no promotion, no tasks.md edits):
+GEN_DRY_RUN=1 mix run scripts/generate.exs 80
+
+# The first N pending base ideas (plus their derivatives + backfill):
+GEN_LIMIT=5 mix run scripts/generate.exs
+
+# The whole catalog — leave it running (overnight is fine; it pauses and retries on the
+# 5-hour subscription limit). Detach so it survives your terminal closing:
+nohup mix run scripts/generate.exs > logs/loop_console.log 2>&1 &
+```
+
+The two work-lists run in order: **new bases** (every idea with no `tasks/NNN_001_*_01` yet),
+then **backfill** (existing accepted `_01`s missing variations/FIM). Terminal output is one line
+per generated task, `run_all`-style:
+
+```
+[  7/494] 065_001_saga_coordinator_01 (base) ... ACCEPTED (17 passed, mutant killed, 2 attempt(s))
+```
+
+### Watching / verifying a run
+
+```bash
+tail -f logs/loop_console.log                 # the one-line-per-task progress stream
+ls logs/errors/                               # any task that failed its accept gate lands here
+tail -f logs/runs.jsonl                        # structured ledger: one JSON line per task
+git status --short tasks/                       # every new task + tasks.md insert shows in the diff
+elixir ./scripts/validate.exs                   # after a run: reference-green + FIM-mutation gate
+```
+
+Each generated task also gets a full per-cycle log at `logs/<task_id>.log` (every prompt,
+response, eval JSON, and repair attempt). Failed cycles' logs are moved to `logs/errors/`.
+
+### Common knobs (env vars — full table in docs/04 §15)
+
+| Env | Default | Effect |
+|---|---|---|
+| `GEN_DRY_RUN=1` | off | generate + grade but never write to `tasks/` / `tasks.md` |
+| `GEN_LIMIT=N` | ∞ | process at most N base ideas this run |
+| `GEN_FROM=a` / `GEN_TO=b` | — | restrict to idea numbers in `[a, b]` |
+| `GEN_SKIP_VARIATIONS=1` / `GEN_SKIP_FIM=1` | off | run only part of the per-idea chain |
+| `GEN_SKIP_BACKFILL=1` | off | skip work-list 2; `GEN_ONLY=backfill` runs *only* it |
+| `GEN_RETRY_FAILED=1` | off | re-attempt tasks currently sitting in `logs/errors/` |
+| `GEN_MAX_RETRIES=N` | 3 | repair iterations per task before it's sent to errors |
+| `GEN_MODEL=…` | `opus` | `claude --model` alias/id |
+
+A single positional integer (`mix run scripts/generate.exs 80`) restricts the run to that one
+base idea — the fastest way to try the loop before turning it loose on the catalog.

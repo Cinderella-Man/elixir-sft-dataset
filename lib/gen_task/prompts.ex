@@ -1,0 +1,328 @@
+defmodule GenTask.Prompts do
+  @moduledoc """
+  Pure prompt builders for every `claude -p` step of the generation loop.
+
+  Each builder returns a `{system, user}` tuple of strings — no I/O — so they are
+  directly unit-testable. They adapt the meta-prompts under `tasks/*.md` and append
+  the shared file-only output contract (`docs/04-task-generation-loop.md` §7).
+
+  The task-001 triplet is inlined (read at compile time) as the worked example for
+  base task generation.
+  """
+
+  @external_resource "tasks/001_001_rate_limiter_01/prompt.md"
+  @external_resource "tasks/001_001_rate_limiter_01/test_harness.exs"
+
+  @example_prompt File.read!("tasks/001_001_rate_limiter_01/prompt.md")
+  @example_harness File.read!("tasks/001_001_rate_limiter_01/test_harness.exs")
+
+  @author_persona """
+  You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
+  a coding benchmark. You write precise, self-contained, idiomatic Elixir/OTP tasks
+  and rigorous ExUnit test harnesses. You follow the requested output format exactly
+  and emit nothing outside the requested file blocks.
+  """
+
+  @solver_persona """
+  You are an expert Elixir engineer. You are given a single task description and must
+  implement it completely and correctly using only the specified dependencies. You
+  write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
+  """
+
+  # ---------------------------------------------------------------------------
+  # Shared output contract
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  The shared file-only output contract, listing the exact files the model must emit.
+  `files` is a list of `{path, description}` tuples.
+  """
+  @spec output_contract([{String.t(), String.t()}]) :: String.t()
+  def output_contract(files) do
+    listing = Enum.map_join(files, "\n", fn {path, desc} -> "  - #{path} — #{desc}" end)
+
+    """
+    Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
+    markdown fences around the blocks. Each file must be exactly:
+
+    <file path="RELATIVE/PATH">
+    …verbatim file contents…
+    </file>
+
+    Emit exactly these files and nothing else:
+    #{listing}
+    """
+  end
+
+  # ---------------------------------------------------------------------------
+  # Base — Step A: generate the task (prompt.md + test_harness.exs)
+  # ---------------------------------------------------------------------------
+
+  @doc "Prompts for base Step A: turn an idea into `prompt.md` + `test_harness.exs`."
+  @spec base_task(%{num: integer(), name: String.t(), desc: String.t()}) ::
+          {String.t(), String.t()}
+  def base_task(%{num: num, name: name, desc: desc}) do
+    user = """
+    I've this idea:
+
+    ```
+    ### #{num}. #{name}
+    #{desc}
+    ```
+
+    Convert it into a task prompt I could give to an AI to implement, AND a matching
+    ExUnit test harness that verifies a correct implementation.
+
+    Here is a previously generated prompt as a style example:
+
+    ```
+    #{@example_prompt}
+    ```
+
+    And here is its matching test harness as a template:
+
+    ```elixir
+    #{@example_harness}
+    ```
+
+    Requirements for the test harness you generate:
+    - Define a module `<Module>Test` that does `use ExUnit.Case, async: false`.
+    - Do NOT call `ExUnit.start()` — the evaluator starts ExUnit itself.
+    - It must be self-contained: any fakes, clock Agents, or helpers are defined
+      inline (as the template does). It runs as `elixir test_harness.exs` beside a
+      sibling `solution.ex`.
+    - The prompt.md must NOT reveal the tests; it is the standalone task statement.
+
+    #{output_contract([{"prompt.md", "the standalone task statement"}, {"test_harness.exs", "the ExUnit harness"}])}
+    """
+
+    {@author_persona, user}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Base — Step B: solve blind from prompt.md only
+  # ---------------------------------------------------------------------------
+
+  @doc "Prompts for base Step B: implement `solution.ex` from the prompt alone (blind)."
+  @spec base_solve(String.t()) :: {String.t(), String.t()}
+  def base_solve(prompt_md) do
+    user = """
+    #{prompt_md}
+
+    #{output_contract([{"solution.ex", "the complete implementation module"}])}
+    """
+
+    {@solver_persona, user}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Variations — one call → 3 distinct triplets
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Prompts for the 3-in-one variation generator. `base` is the accepted `_01`
+  triplet map (`prompt.md`, `test_harness.exs`, `solution.ex`); `tasks_md` is the
+  full catalog (freshly read) so the model avoids repeating existing ideas.
+  """
+  @spec variations(
+          %{num: integer(), name: String.t()},
+          %{String.t() => String.t()},
+          String.t()
+        ) :: {String.t(), String.t()}
+  def variations(%{num: num, name: name}, base, tasks_md) do
+    user = """
+    I have this SFT task (idea ##{num} — "#{name}"): its prompt, solution, and harness
+    are below. I want to multiply the dataset with meaningful variations.
+
+    Propose 3 variations, each with a meaningful difference so it stands on its own as a
+    distinct problem (not a trivial rename). For each variation produce a full triplet
+    (prompt.md, test_harness.exs, solution.ex) following the SAME harness rules as the
+    base (`use ExUnit.Case, async: false`; no `ExUnit.start()`; self-contained).
+
+    Also, for each variation, produce a one-line catalog entry in the exact tasks.md
+    format — its `idea.md` file must contain a `### Task #{num} - Vn - <Name>` header on
+    the first line followed by a one-paragraph description (mirroring the entries in the
+    attached catalog).
+
+    === BASE prompt.md ===
+    #{base["prompt.md"]}
+
+    === BASE solution.ex ===
+    #{base["solution.ex"]}
+
+    === BASE test_harness.exs ===
+    #{base["test_harness.exs"]}
+
+    === EXISTING CATALOG (do NOT repeat any of these ideas) ===
+    #{tasks_md}
+
+    #{output_contract(variation_files())}
+    """
+
+    {@author_persona, user}
+  end
+
+  defp variation_files do
+    for n <- 1..3,
+        {f, d} <- [
+          {"prompt.md", "task statement"},
+          {"test_harness.exs", "ExUnit harness"},
+          {"solution.ex", "reference implementation"},
+          {"idea.md", "the `### Task N - Vn - Name` catalog entry + description"}
+        ] do
+      {"v#{n}/#{f}", d}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # FIM — candidate selection
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Prompts for FIM candidate selection: pick up to `max` functions that make the
+  best fill-in-the-middle targets in `module_src`.
+  """
+  @spec fim_select(String.t(), String.t(), pos_integer()) :: {String.t(), String.t()}
+  def fim_select(module_src, prompt_md, max) do
+    user = """
+    Below is a completed Elixir module (a solved SFT task) and the prompt that produced
+    it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
+    asks a model to reimplement it from the surrounding module.
+
+    Pick the #{max} functions (or clauses) that make the best FIM targets — meaningful,
+    self-contained logic that the module's own test harness actually exercises. Prefer
+    private helpers and the core public callbacks over trivial one-liners.
+
+    === ORIGINAL PROMPT ===
+    #{prompt_md}
+
+    === MODULE ===
+    ```elixir
+    #{module_src}
+    ```
+
+    Return ONE file `candidates.md` containing at most #{max} lines, each a single
+    function target written as `name/arity` (e.g. `refill_and_expire/2`), most valuable
+    first, and NOTHING else.
+
+    #{output_contract([{"candidates.md", "one function target (name/arity) per line"}])}
+    """
+
+    {@author_persona, user}
+  end
+
+  # ---------------------------------------------------------------------------
+  # FIM — per-candidate generation
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Prompts to generate a single FIM subtask for `target` (a `name/arity` string):
+  a `prompt.md` (description + whole module with that one body replaced by
+  `# TODO` inside an ```` ```elixir ```` fence) and a `solution.ex` (just that
+  function).
+  """
+  @spec fim_candidate(String.t(), String.t(), String.t()) :: {String.t(), String.t()}
+  def fim_candidate(module_src, prompt_md, target) do
+    user = """
+    I have this module which was a single-shot SFT answer. I want to create a
+    "fill-in-the-middle" task out of it for the function `#{target}`.
+
+    Generate a prompt describing how to implement `#{target}` (one function at a time),
+    similar in spirit to this example:
+
+    ```
+    Implement the private `handle_closed/2` function. It should execute the provided
+    zero-arity function using `execute/1`. If it succeeds, reset `failure_count` to 0 and
+    return the result. If it fails, increment `failure_count`; if the count reaches
+    `failure_threshold`, transition the circuit to `:open` using `trip_open/1`. In all
+    cases return the result in the GenServer reply along with the updated state.
+    ```
+
+    The `prompt.md` you produce must contain:
+      1. a natural-language description of what `#{target}` must do; then
+      2. the WHOLE module inside a single ```` ```elixir ```` fenced block, with ONLY the
+         body of `#{target}` replaced by `# TODO` (every other function intact).
+
+    The `solution.ex` you produce is JUST the `#{target}` function (its full definition).
+
+    === ORIGINAL PROMPT ===
+    #{prompt_md}
+
+    === WHOLE MODULE ===
+    ```elixir
+    #{module_src}
+    ```
+
+    #{output_contract([{"prompt.md", "description + skeleton module with a `# TODO` for #{target}"}, {"solution.ex", "just the #{target} function"}])}
+    """
+
+    {@author_persona, user}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Fix — the debug step (sees everything)
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Prompts for the repair step. `files` is the current staged set; `report` is the
+  failure feedback from the evaluator/mutation gate; `kind` is `:task` (base or
+  variation — may edit `solution.ex` and/or `test_harness.exs`) or `:fim` (may edit
+  `prompt.md` and/or `solution.ex`).
+  """
+  @spec fix(%{String.t() => String.t()}, String.t(), :task | :fim) ::
+          {String.t(), String.t()}
+  def fix(files, report, kind) do
+    {editable, blocks} =
+      case kind do
+        :fim ->
+          {"prompt.md and/or solution.ex",
+           [{"prompt.md", files["prompt.md"]}, {"solution.ex", files["solution.ex"]}]}
+
+        _ ->
+          {"solution.ex and/or test_harness.exs",
+           [
+             {"prompt.md (READ-ONLY — do not return it)", files["prompt.md"]},
+             {"solution.ex", files["solution.ex"]},
+             {"test_harness.exs", files["test_harness.exs"]}
+           ]}
+      end
+
+    contract =
+      case kind do
+        :fim ->
+          output_contract([
+            {"prompt.md", "only if the skeleton was wrong"},
+            {"solution.ex", "the corrected function"}
+          ])
+
+        _ ->
+          output_contract([
+            {"solution.ex", "only if you changed it"},
+            {"test_harness.exs", "only if you changed it"}
+          ])
+      end
+
+    user = """
+    A generated task failed its automated check. Fix it. You may edit #{editable}.
+    Return ONLY the file(s) you changed; do NOT return prompt.md.
+
+    === FAILURE REPORT ===
+    #{report}
+
+    === CURRENT FILES ===
+    #{render_files(blocks)}
+
+    #{contract}
+    """
+
+    {@solver_persona, user}
+  end
+
+  defp render_files(blocks) do
+    blocks
+    |> Enum.reject(fn {_label, body} -> is_nil(body) end)
+    |> Enum.map_join("\n\n", fn {label, body} ->
+      "----- #{label} -----\n#{body}"
+    end)
+  end
+end
