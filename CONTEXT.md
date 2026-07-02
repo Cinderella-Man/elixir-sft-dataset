@@ -1308,6 +1308,10 @@ elixir scripts/run_all.exs solution.ex --parallel 4
 # Quality gate: every reference green + every FIM target actually exercised (mutation)
 elixir ./scripts/validate.exs
 
+# Dataset summary for SFT planning (example counts by shape, token volume, distributions,
+# context-window fit, diversity, quality signals, roadmap coverage; add --json)
+mix run scripts/dataset_stats.exs
+
 # Format everything (incl. task .exs files)
 mix format
 

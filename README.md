@@ -53,6 +53,12 @@ elixir ./scripts/validate.exs --fim-only  # just the mutation check
 
 # unit tests for the evaluator itself
 mix test test/eval_task
+
+# dataset summary for SFT planning — example counts by shape, token volume, length
+# distributions, context-window fit, diversity, quality signals, roadmap coverage
+mix run scripts/dataset_stats.exs                      # pretty report
+mix run scripts/dataset_stats.exs --json               # machine-readable
+mix run scripts/dataset_stats.exs --chars-per-token 3.5   # tune the token estimate
 ```
 
 ## Naming convention
