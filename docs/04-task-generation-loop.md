@@ -306,9 +306,12 @@ Emit only the files listed above.
 
 - Runs for **every accepted `_01`** (base + accepted variations) with **fewer than
   `fim_max_per_task`** FIM subtasks. No text-surgery — grading is the guardrail.
+- **Top-up cap:** a run requests only `fim_max_per_task - existing_fim_count` candidates, so a
+  partially-derived `_01` (backfill) fills only the missing subtasks rather than another full
+  batch — the total per `_01` never exceeds the cap.
 - **Candidate selection:** one `claude -p` call ("which functions/clauses are the best
-  fill-in-the-middle targets for this module?") returns a list, truncated to
-  `GEN_FIM_MAX_PER_TASK` (default 3). The call is told to **exclude** functions already covered by
+  fill-in-the-middle targets for this module?") returns a list, truncated to the top-up cap
+  above. The call is told to **exclude** functions already covered by
   an existing `_0d` (their target is parsed from the `_0d` `solution.ex`) and targets permanently
   rejected on a prior run (`logs/fim_rejected.jsonl`); the same exclusions are re-applied to the
   parsed list, so a top-up run selects genuinely new targets.
@@ -517,6 +520,7 @@ re-scanning (JSONL is fsynced; no partial `tasks/` dirs are ever left).
 | Retry failed | `GEN_RETRY_FAILED` | `0` | re-attempt items in `logs/errors/` |
 | Skip variations/FIM | `GEN_SKIP_VARIATIONS`, `GEN_SKIP_FIM` | `0` | run only part of the chain |
 | Backfill control | `GEN_SKIP_BACKFILL` / `GEN_ONLY` | `0` / — | skip work-list 2; or `GEN_ONLY=backfill`/`bases` to run one work-list (§4) |
+| Reconcile catalog | `GEN_RECONCILE` | `0` | before running, insert a `tasks.md` entry for any variation dir missing one (heals crash-orphans). Off by default so a normal run never rewrites the hand-curated catalog with derived entries; done-detection is dir-based, so the loop is correct either way |
 | Dry run | `GEN_DRY_RUN` | `0` | do everything except promotion / `tasks.md` edits |
 
 No spend cap — subscription. `ANTHROPIC_API_KEY` must be **unset** (auth hygiene).
@@ -566,6 +570,7 @@ Runs under `mix run`; shells `elixir scripts/eval_task.exs …` per grade (that 
 | `tasks.md` double-insert on re-run | idempotent guard (skip if entry already present) |
 | A cycle raises | rescued; log + stacktrace; move to `logs/errors/`; loop continues |
 | Interrupted run | resume by re-scanning `tasks/`; no partial dirs; JSONL fsynced |
+| Variation dir orphaned (crash between promote and `tasks.md` insert) | harmless to the loop (done-detection is dir-based, so backfill still counts it); `GEN_RECONCILE=1` inserts the missing catalog entry when desired (§15) |
 
 **Post-run:** optionally finish by invoking `elixir scripts/validate.exs` (reference-green +
 FIM-mutation gate across the whole corpus) to catch any cross-task regressions.

@@ -239,6 +239,45 @@ defmodule GenTask.CatalogTest do
 
   # ---------------------------------------------------------------------------
 
+  describe "reconcile_variations!/1" do
+    test "inserts missing entries per variation dir (slot→Vn), idempotently" do
+      dir = tmp_dir()
+
+      for d <- ["050_001_widget_maker_01", "050_002_fast_widget_maker_01",
+                "050_003_bulk_widget_maker_01"],
+          do: File.mkdir_p!(Path.join(dir, d))
+
+      File.write!(
+        Path.join(dir, "050_002_fast_widget_maker_01/prompt.md"),
+        "# Task\n\nBuild a fast widget maker.\n"
+      )
+
+      md = Path.join(dir, "tasks.md")
+      File.write!(md, "### 50. Widget Maker\nMakes widgets.\n")
+      cfg = %Config{tasks_dir: dir, tasks_md: md}
+
+      assert Catalog.reconcile_variations!(cfg) == 2
+      content = File.read!(md)
+      assert content =~ "### Task 50 - V1 - Fast Widget Maker"
+      assert content =~ "Build a fast widget maker."
+      assert content =~ "### Task 50 - V2 - Bulk Widget Maker"
+
+      # idempotent second run
+      assert Catalog.reconcile_variations!(cfg) == 0
+    end
+
+    test "skips a variation whose base idea is absent from tasks.md" do
+      dir = tmp_dir()
+      File.mkdir_p!(Path.join(dir, "060_002_orphan_variation_01"))
+      md = Path.join(dir, "tasks.md")
+      File.write!(md, "### 1. Something Else\nUnrelated.\n")
+      cfg = %Config{tasks_dir: dir, tasks_md: md}
+
+      assert Catalog.reconcile_variations!(cfg) == 0
+      refute File.read!(md) =~ "Task 60"
+    end
+  end
+
   defp tmp_dir do
     dir =
       Path.join(

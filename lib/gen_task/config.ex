@@ -36,6 +36,7 @@ defmodule GenTask.Config do
           skip_fim: boolean(),
           skip_backfill: boolean(),
           only: work_scope(),
+          reconcile: boolean(),
           dry_run: boolean(),
           tasks_dir: String.t(),
           tasks_md: String.t(),
@@ -64,6 +65,7 @@ defmodule GenTask.Config do
             skip_fim: false,
             skip_backfill: false,
             only: nil,
+            reconcile: false,
             dry_run: false,
             tasks_dir: "tasks",
             tasks_md: "tasks/tasks.md",
@@ -100,6 +102,7 @@ defmodule GenTask.Config do
       skip_fim: env_bool(env_fun, "GEN_SKIP_FIM"),
       skip_backfill: env_bool(env_fun, "GEN_SKIP_BACKFILL"),
       only: work_scope(env_fun),
+      reconcile: env_bool(env_fun, "GEN_RECONCILE"),
       dry_run: env_bool(env_fun, "GEN_DRY_RUN")
     }
   end

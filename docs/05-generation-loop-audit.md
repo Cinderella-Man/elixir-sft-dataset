@@ -141,10 +141,24 @@ passing. All 83 `test/gen_task` unit tests green.
 | #10 #21 weak whole-module mutation | Base/variation gate now mutates **each public function independently** and requires every one killed (whole-module fallback only when no public fns parse). Disable with `GEN_SKIP_PER_FN_MUTATION=1`. | `mutation.ex`, `cycle.ex` |
 | #2 #6 #20 no top-up; #8 #11 unfixable FIM re-attempted | `needs_variations?`/`needs_fim?` are now **count-based** (fill until 3 variations / `fim_max` FIM); variations fill only free slots and are told existing names; FIM excludes already-covered targets and targets permanently rejected on a prior run (`logs/fim_rejected.jsonl`); rejected candidates no longer collide on one log id. | `catalog.ex`, `variations.ex`, `fim.ex`, `cycle_log.ex`, `prompts.ex`, `reply.ex` |
 
-Still open (not in this batch): #9 (`--max-turns 20` vs doc's 1), #5 (crash-orphaned variation vs
-`tasks.md`), #13 (in-flow variation dedup), #16 (leading-prose fence in `prompt.md`), #17
+### Backfill-hardening pass (2026-07-02, follow-up)
+
+Before running the loop unattended for long stretches (backfill hits code paths the single-idea
+runs don't), a second pass hardened the top-up path — validated with a dry-run FIM top-up on idea
+1 (each `_01` had 2 FIM → the cap requested exactly 1 more, excluding the 2 covered targets, and
+generated the correct `_04`; no writes):
+
+| Issue | Fix | Where |
+|---|---|---|
+| FIM top-up could **overshoot** the cap (selected `fim_max` new candidates ignoring existing ones → up to 4 total) | Request only `fim_max - existing_fim_count`; return early when already at the cap. | `fim.ex` |
+| **Latent crash** on the backfill path: `warn_if_vacuous_seed` still matched the old bare `:survived` (per-function mutation now returns `{:survived, why}`) — every vacuous-seed check hit the rescue as "self-check failed" | Match `{:survived, why}` and surface the reason. | `cli.ex` |
+| #5 crash-orphaned variation | Added **opt-in** `Catalog.reconcile_variations!/1` (`GEN_RECONCILE=1`): inserts the missing `tasks.md` entry for any variation dir lacking one (name from slug, blurb from `prompt.md`). Off by default — the loop is already correct without it (done-detection is dir-based), and auto-running it would rewrite the curated catalog with derived entries. | `catalog.ex`, `config.ex`, `cli.ex` |
+
+Still open (deferred; none block a long run): #9 (`--max-turns 20` vs doc's 1 — empirically
+self-recovers), #13 (in-flow variation dedup), #16 (leading-prose fence in `prompt.md`), #17
 (empty/refusal logged as success), #18/#19 (mutant "killed for wrong reason"; `green?` counts
-excluded tests). And the pre-existing corpus failure **`032_002`** (hand-authored).
+excluded tests). Corpus-wide `validate.exs` is green **and warning-free**; the pre-existing
+`032_002` failure was fixed (Ecto `on_conflict`/`conflict_target` misuse).
 
 ## 3. Recommended order of work
 

@@ -307,6 +307,72 @@ defmodule GenTask.Catalog do
     end
   end
 
+  @doc """
+  Heal any variation directory (`NNN_00{2,3,4}_*_01`) that lacks its
+  `### Task N - Vn - Name` entry in `tasks.md` — e.g. one orphaned by a crash in the
+  window between promoting the directory and inserting its catalog line.
+
+  Insert-only and idempotent: a variation that already has an entry is a no-op
+  (`insert_variation/5`'s guard), and nothing existing is ever modified. The name is
+  recovered from the directory slug and the description from the first paragraph of the
+  variation's `prompt.md`. Returns the number of entries inserted.
+  """
+  @spec reconcile_variations!(Config.t()) :: non_neg_integer()
+  def reconcile_variations!(%Config{} = cfg) do
+    "#{cfg.tasks_dir}/*_01"
+    |> Path.wildcard()
+    |> Enum.filter(&File.dir?/1)
+    |> Enum.map(&variation_ref/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.reduce(0, fn %{num: num, vnum: vnum, name: name, desc: desc}, count ->
+      case insert_variation!(cfg, num, vnum, name, desc) do
+        {:ok, _} -> count + 1
+        _ -> count
+      end
+    end)
+  end
+
+  # A variation `_01` dir (b in 2..4) → the fields needed to (re)catalog it, or nil.
+  defp variation_ref(dir) do
+    parts = dir |> Path.basename() |> String.split("_")
+
+    with [a, b | rest] when rest != [] <- parts,
+         "01" <- List.last(parts),
+         {num, ""} <- Integer.parse(a),
+         {bnum, ""} <- Integer.parse(b),
+         true <- bnum in 2..4 do
+      slug = rest |> Enum.drop(-1) |> Enum.join("_")
+
+      %{
+        num: num,
+        vnum: "V#{bnum - 1}",
+        name: slug |> String.replace("_", " ") |> title_case(),
+        desc: prompt_first_paragraph(Path.join(dir, "prompt.md"), slug)
+      }
+    else
+      _ -> nil
+    end
+  end
+
+  defp title_case(str) do
+    str |> String.split(" ", trim: true) |> Enum.map_join(" ", &String.capitalize/1)
+  end
+
+  # First non-blank, non-heading line of prompt.md (a reasonable catalog blurb), or the
+  # humanized slug when prompt.md is missing/empty.
+  defp prompt_first_paragraph(path, fallback_slug) do
+    with {:ok, body} <- File.read(path),
+         line when is_binary(line) <-
+           body
+           |> String.split("\n")
+           |> Enum.map(&String.trim/1)
+           |> Enum.find(&(&1 != "" and not String.starts_with?(&1, "#"))) do
+      line
+    else
+      _ -> String.replace(fallback_slug, "_", " ")
+    end
+  end
+
   defp base_index(lines, num) do
     Enum.find_index(lines, fn line ->
       case Regex.run(@base_re, line) do

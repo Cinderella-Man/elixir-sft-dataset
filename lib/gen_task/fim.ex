@@ -40,9 +40,16 @@ defmodule GenTask.Fim do
   """
   @spec run(seed(), Config.t()) :: [map()]
   def run(seed, %Config{} = cfg) do
+    # Top-up cap: only generate up to `fim_max_per_task` FIM subtasks per `_01` in
+    # TOTAL, so a partially-derived `_01` (backfill) requests only the missing count
+    # rather than another full `fim_max` batch.
+    limit = max(0, cfg.fim_max_per_task - existing_fim_count(seed, cfg))
     excluded = excluded_targets(seed, cfg)
 
-    case select_candidates(seed, cfg, excluded) do
+    case limit > 0 && select_candidates(seed, cfg, excluded, limit) do
+      false ->
+        []
+
       {[], nil} ->
         []
 
@@ -74,11 +81,18 @@ defmodule GenTask.Fim do
   # `name/arity` of the function each existing `_0d` subtask already fills (its
   # solution.ex is just that one function).
   defp covered_targets(seed, cfg) do
+    seed
+    |> existing_fim_dirs(cfg)
+    |> Enum.flat_map(fn d -> fn_targets(Path.join(d, "solution.ex")) end)
+    |> MapSet.new()
+  end
+
+  defp existing_fim_count(seed, cfg), do: seed |> existing_fim_dirs(cfg) |> length()
+
+  defp existing_fim_dirs(seed, cfg) do
     Path.join(cfg.tasks_dir, "#{prefix(seed)}_*")
     |> Path.wildcard()
     |> Enum.filter(fn d -> File.dir?(d) and fim_subtask_dir?(Path.basename(d)) end)
-    |> Enum.flat_map(fn d -> fn_targets(Path.join(d, "solution.ex")) end)
-    |> MapSet.new()
   end
 
   defp fim_subtask_dir?(basename) do
@@ -119,10 +133,10 @@ defmodule GenTask.Fim do
   # Candidate selection (its own log file)
   # ------------------------------------------------------------------
 
-  defp select_candidates(seed, cfg, excluded) do
+  defp select_candidates(seed, cfg, excluded, limit) do
     sel_id = "#{prefix(seed)}_fim_select"
     handle = CycleLog.open(cfg, sel_id)
-    Logger.info("FIM candidate-select for #{seed.task_id}")
+    Logger.info("FIM candidate-select for #{seed.task_id} (up to #{limit})")
 
     result =
       try do
@@ -130,13 +144,13 @@ defmodule GenTask.Fim do
           Prompts.fim_select(
             seed.files["solution.ex"],
             seed.files["prompt.md"],
-            cfg.fim_max_per_task,
+            limit,
             MapSet.to_list(excluded)
           )
 
         case Cycle.opus(cfg, seed.task_id, "fim_select", system, user) do
           {:ok, text, _meta} ->
-            {:targets, parse_candidates(text, cfg.fim_max_per_task, excluded)}
+            {:targets, parse_candidates(text, limit, excluded)}
 
           {:error, reason} ->
             {:error, select_error(sel_id, seed, inspect(reason))}

@@ -30,6 +30,7 @@ defmodule GenTask.CLI do
     names = Map.new(plan.ideas, &{&1.num, &1.name})
 
     print_header(cfg, plan)
+    maybe_reconcile(cfg)
 
     run_bases(plan.bases, cfg)
     run_backfill(plan.backfill, names, cfg)
@@ -55,6 +56,17 @@ defmodule GenTask.CLI do
       if cfg.skip_backfill or cfg.only == :bases, do: [], else: Catalog.backfill_seeds(cfg)
 
     %{ideas: ideas, bases: bases, backfill: backfill}
+  end
+
+  # Opt-in (`GEN_RECONCILE=1`): heal any variation directory whose `tasks.md` entry is
+  # missing (e.g. crash-orphaned). Off by default so a normal run never rewrites the
+  # hand-curated catalog with machine-derived entries. Done-detection is dir-based, so
+  # the loop is correct with or without this.
+  defp maybe_reconcile(%Config{reconcile: false}), do: :ok
+
+  defp maybe_reconcile(%Config{} = cfg) do
+    n = Catalog.reconcile_variations!(cfg)
+    IO.puts("Reconcile: inserted #{n} missing variation catalog entr#{if n == 1, do: "y", else: "ies"}.")
   end
 
   # ------------------------------------------------------------------
@@ -165,10 +177,10 @@ defmodule GenTask.CLI do
     mutant_dir = Path.join(cfg.staging_dir, seed.task_id <> "_seedmut")
 
     case Mutation.gate_base(mutant_dir, files, cfg) do
-      :survived ->
+      {:survived, why} ->
         Logger.warning(
           "backfill seed #{seed.task_id}: its own harness does NOT kill a mutant " <>
-            "(vacuous) — deriving anyway"
+            "(#{why}) — deriving anyway"
         )
 
       :killed ->
