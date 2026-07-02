@@ -53,7 +53,7 @@ defmodule RankPercentileTest do
     start_server([])
     for v <- 1..10, do: RankPercentile.record(:d, v)
 
-    assert {:ok, 0.0} = RankPercentile.rank(:d, 0)
+    assert {:ok, +0.0} = RankPercentile.rank(:d, 0)
     assert {:ok, 1.0} = RankPercentile.rank(:d, 999)
   end
 
@@ -127,7 +127,7 @@ defmodule RankPercentileTest do
     for v <- 200..209, do: RankPercentile.record(:b, v)
 
     assert {:ok, 0.5} = RankPercentile.rank(:a, 50)
-    assert {:ok, 0.0} = RankPercentile.rank(:b, 100)
+    assert {:ok, +0.0} = RankPercentile.rank(:b, 100)
     assert {:ok, 10} = RankPercentile.count_above(:b, 100)
   end
 end

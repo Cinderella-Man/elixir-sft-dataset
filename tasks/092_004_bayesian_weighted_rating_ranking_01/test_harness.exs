@@ -70,7 +70,7 @@ defmodule RankingTest do
 
   test "an explicit :mean overrides the computed corpus mean" do
     a = item(id: :a, rating: 9.0, vote_count: 100)
-    b = item(id: :b, rating: 9.5, vote_count: 3)
+    _b = item(id: :b, rating: 9.5, vote_count: 3)
 
     # With mean forced very high, the low-vote high-rating item is pulled UP
     # toward the mean less harshly than the high-vote one, but both are near

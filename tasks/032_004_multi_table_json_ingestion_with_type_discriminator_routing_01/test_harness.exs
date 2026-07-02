@@ -41,7 +41,12 @@ defmodule MultiSchemaIngestionTest do
 
   defp write_json!(path, data), do: File.write!(path, Jason.encode!(data))
 
-  defp tmp_path(name), do: Path.join(System.tmp_dir!(), name)
+  defp tmp_path(name),
+    do:
+      Path.join(
+        System.tmp_dir!(),
+        "#{System.pid()}_#{System.unique_integer([:positive])}_#{name}"
+      )
 
   defp routing do
     %{

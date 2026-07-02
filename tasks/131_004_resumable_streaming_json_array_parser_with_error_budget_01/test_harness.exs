@@ -14,7 +14,7 @@ defmodule ResumableJsonStreamerTest do
     path =
       Path.join(
         System.tmp_dir!(),
-        "resumable_json_#{System.unique_integer([:positive])}.json"
+        "resumable_json_#{System.pid()}_#{System.unique_integer([:positive])}.json"
       )
 
     on_exit(fn -> File.rm(path) end)

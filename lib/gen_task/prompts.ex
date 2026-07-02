@@ -104,6 +104,10 @@ defmodule GenTask.Prompts do
       sibling `solution.ex`.
     - It must compile with ZERO warnings: prefix unused variables with `_`, and match
       float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+    - If a test writes temp files, make the path process-unique, e.g.
+      `Path.join(System.tmp_dir!(), "name_\#{System.pid()}_\#{System.unique_integer([:positive])}.ext")`.
+      The corpus is graded with many harnesses running in parallel, so a path that is
+      not unique per OS process will collide and cause flaky failures.
     - The prompt.md must NOT reveal the tests; it is the standalone task statement.
 
     #{output_contract([{"prompt.md", "the standalone task statement"}, {"test_harness.exs", "the ExUnit harness"}])}

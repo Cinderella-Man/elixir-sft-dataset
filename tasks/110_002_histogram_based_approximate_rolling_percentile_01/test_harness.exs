@@ -44,7 +44,7 @@ defmodule HistogramPercentileTest do
     assert {:ok, p95} = HistogramPercentile.query(:d, 0.95)
     assert_in_delta p95, 95.4545, 0.05
 
-    assert {:ok, 0.0} = HistogramPercentile.query(:d, 0.0)
+    assert {:ok, +0.0} = HistogramPercentile.query(:d, 0.0)
     assert {:ok, 100.0} = HistogramPercentile.query(:d, 1.0)
   end
 
@@ -54,7 +54,7 @@ defmodule HistogramPercentileTest do
     HistogramPercentile.record(:c, -5)
     HistogramPercentile.record(:c, 200)
 
-    assert {:ok, 0.0} = HistogramPercentile.query(:c, 0.0)
+    assert {:ok, +0.0} = HistogramPercentile.query(:c, 0.0)
     assert {:ok, 100.0} = HistogramPercentile.query(:c, 1.0)
   end
 

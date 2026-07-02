@@ -7,7 +7,7 @@ defmodule MetricAggregatorTest do
 
   defp tmp_path(name) do
     dir = System.tmp_dir!()
-    Path.join(dir, "metric_agg_test_#{name}_#{System.unique_integer([:positive])}.jsonl")
+    Path.join(dir, "metric_agg_test_#{name}_#{System.pid()}_#{System.unique_integer([:positive])}.jsonl")
   end
 
   defp write_lines(path, lines) do

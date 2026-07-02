@@ -42,7 +42,12 @@ defmodule CsvIngestionTest do
     File.write!(path, lines)
   end
 
-  defp tmp_path(name), do: Path.join(System.tmp_dir!(), name)
+  defp tmp_path(name),
+    do:
+      Path.join(
+        System.tmp_dir!(),
+        "#{System.pid()}_#{System.unique_integer([:positive])}_#{name}"
+      )
 
   defp all_products, do: TestRepo.all(Product)
 

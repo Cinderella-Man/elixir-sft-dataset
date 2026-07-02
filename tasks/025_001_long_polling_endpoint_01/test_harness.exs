@@ -1,6 +1,7 @@
 defmodule NotificationPollerTest do
   use ExUnit.Case, async: false
-  use Plug.Test
+  import Plug.Test
+  import Plug.Conn
 
   # -------------------------------------------------------
   # Setup — start a fresh Notifications server per test

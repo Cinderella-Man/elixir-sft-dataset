@@ -1,6 +1,7 @@
 defmodule FileUploadTest do
   use ExUnit.Case, async: false
-  use Plug.Test
+  import Plug.Test
+  import Plug.Conn
 
   @upload_dir Path.join(System.tmp_dir!(), "file_upload_test_#{:rand.uniform(100_000)}")
 
@@ -44,7 +45,7 @@ defmodule FileUploadTest do
         case Path.extname(filename) do
           ".csv" -> "text/csv"
           ".json" -> "application/json"
-          ext -> "application/octet-stream"
+          _ext -> "application/octet-stream"
         end
 
     upload = %Plug.Upload{

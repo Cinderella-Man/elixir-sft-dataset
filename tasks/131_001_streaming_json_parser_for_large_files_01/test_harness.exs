@@ -17,7 +17,7 @@ defmodule JsonStreamerTest do
     path =
       Path.join(
         System.tmp_dir!(),
-        "json_streamer_#{System.unique_integer([:positive])}.json"
+        "json_streamer_#{System.pid()}_#{System.unique_integer([:positive])}.json"
       )
 
     on_exit(fn -> File.rm(path) end)

@@ -5,7 +5,7 @@ defmodule NdjsonStreamerTest do
     path =
       Path.join(
         System.tmp_dir!(),
-        "ndjson_streamer_#{System.unique_integer([:positive])}.ndjson"
+        "ndjson_streamer_#{System.pid()}_#{System.unique_integer([:positive])}.ndjson"
       )
 
     on_exit(fn -> File.rm(path) end)

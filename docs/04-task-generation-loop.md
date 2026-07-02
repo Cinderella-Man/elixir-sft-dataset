@@ -263,7 +263,11 @@ Emit only the files listed above.
   - **Harness requirements stated in the prompt** (from the corpus invariants): define a
     `<Module>Test` using `use ExUnit.Case, async: false`; **do not call `ExUnit.start()`** (the
     evaluator starts ExUnit); the harness is self-contained and may define fakes/clock Agents
-    inline (as task 001 does); it runs as `elixir test_harness.exs` beside a `solution.ex`.
+    inline (as task 001 does); it runs as `elixir test_harness.exs` beside a `solution.ex`;
+    compiles with **zero warnings** (`_`-prefix unused vars, match `+0.0`/`-0.0`); and makes any
+    **temp-file path process-unique** (`…_#{System.pid()}_#{System.unique_integer([:positive])}…`)
+    since the corpus is graded with many harnesses in parallel — a per-BEAM-only unique name
+    collides across processes and flakes.
 - **Step B (answer):** user = the generated `prompt.md` **verbatim and nothing else** (no
   tests — README Step 5) + the contract requesting `solution.ex`.
 - Then the shared cycle (§6).

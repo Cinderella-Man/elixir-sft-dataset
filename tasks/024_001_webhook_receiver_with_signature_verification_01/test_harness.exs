@@ -1,6 +1,7 @@
 defmodule WebhookReceiverTest do
   use ExUnit.Case, async: true
-  use Plug.Test
+  import Plug.Test
+  import Plug.Conn
 
   # --- Helpers -----------------------------------------------------------
 
@@ -17,19 +18,6 @@ defmodule WebhookReceiverTest do
       "type" => type,
       "data" => %{"amount" => 2500, "currency" => "usd"}
     })
-  end
-
-  defp call_webhook(router, payload, signature) do
-    conn(:post, "/api/webhooks/stripe", payload)
-    |> put_req_header("content-type", "application/json")
-    |> put_req_header("stripe-signature", signature)
-    |> router.call(router.init([]))
-  end
-
-  defp call_webhook_no_sig(router, payload) do
-    conn(:post, "/api/webhooks/stripe", payload)
-    |> put_req_header("content-type", "application/json")
-    |> router.call(router.init([]))
   end
 
   defp json_body(conn) do

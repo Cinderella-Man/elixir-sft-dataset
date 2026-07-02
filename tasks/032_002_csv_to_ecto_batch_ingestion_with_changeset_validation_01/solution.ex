@@ -265,10 +265,15 @@ defmodule CsvIngestion do
 
   @spec process_batch(repo(), schema(), [map()], map(), stats()) :: stats()
   defp process_batch(repo, schema, batch, cfg, acc) do
-    insert_opts = [
-      on_conflict:     cfg.on_conflict,
-      conflict_target: cfg.conflict_target
-    ]
+    # Ecto forbids `:conflict_target` together with `on_conflict: :raise` (the
+    # default), so only attach a conflict target for the conflict-handling modes.
+    # With `:raise`, a duplicate key surfaces as a normal constraint error (caught
+    # below and counted against this batch).
+    insert_opts =
+      case cfg.on_conflict do
+        :raise -> [on_conflict: :raise]
+        other -> [on_conflict: other, conflict_target: cfg.conflict_target]
+      end
 
     batch_size = length(batch)
 

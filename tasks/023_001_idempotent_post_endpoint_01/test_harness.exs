@@ -194,7 +194,7 @@ defmodule IdempotentPaymentsTest do
     assert length(IdempotentPayments.get_payments(pid)) == 50
 
     # But idempotency keys should be gone — replaying a key creates a new record
-    {:ok, resp} = IdempotentPayments.process_payment(pid, @valid_params, "batch-1")
+    {:ok, _resp} = IdempotentPayments.process_payment(pid, @valid_params, "batch-1")
     assert length(IdempotentPayments.get_payments(pid)) == 51
 
     # Verify the internal idempotency map is cleaned

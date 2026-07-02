@@ -1,5 +1,3 @@
-Code.require_file("solution.ex", __DIR__)
-
 defmodule MoneyTest do
   use ExUnit.Case, async: false
 
