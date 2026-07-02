@@ -78,7 +78,7 @@ elixir-sft-dataset/
 │   ├── test_helper.exs    # ExUnit.start(exclude: [:skip, :database]); conditionally starts a Repo
 │   └── support/
 │       └── call_tracker.ex# ElixirBenchmark.CallTracker — Agent that records fn calls, for tests
-├── docs/                  # Design docs: 01–03 multi-file support, 04 the generation loop
+├── docs/                  # Design docs: 01–03 multi-file support, 04 the generation loop, 05 loop audit
 ├── logs/                  # Generation-loop output: <task_id>.log per cycle, errors/ for failures,
 │                          #   runs.jsonl / usage.jsonl / waits.jsonl ledgers (git-ignored)
 ├── scripts/
@@ -259,14 +259,19 @@ added to task 00X_00Y", "Task NN finished", etc. — a steady hand-curation cade
 `lib/gen_task/**`, design in `docs/04-task-generation-loop.md`). It is a *non-agentic* loop: for
 each todo idea in `tasks.md` it drives Claude Opus through a fixed procedure via the `claude -p`
 CLI subprocess (subscription-backed, tools off — one completion per call), authoring the base
-task, then its 3 variations, then FIM subtasks. Each artifact is graded by shelling out to
+task, then its variations, then FIM subtasks. Each artifact is graded by shelling out to
 `eval_task.exs` in an isolated OS process, repaired on failure (up to `GEN_MAX_RETRIES`), and
-**gated on a mutation check** — the reference must pass *and* a `raise`-body mutant must make the
-harness fail, so a vacuous harness can never be promoted. It is **add-only and idempotent**:
-existing tasks are never edited or deleted, `tasks.md` inserts are guarded against duplication,
-and a task already on disk is skipped, so a killed run resumes by re-running the command. Run it
-with `mix run scripts/generate.exs [idea_number]` (see the quick reference below and the README's
-"Automated generation loop" section for env knobs); groups 065–108 were produced this way.
+**gated on three checks** before promotion: it must be **green**, meet the **house style**
+(`@moduledoc`/`@spec`/`@doc`, no TODO, zero compile warnings), and have **every public function**
+killed by a `raise`-body mutant (a per-function mutation gate — a harness that tests only some of a
+module's public API is rejected). The house-style and per-function gates are skippable
+(`GEN_SKIP_QUALITY_GATE`, `GEN_SKIP_PER_FN_MUTATION`). It is **add-only and idempotent**: existing
+tasks are never edited or deleted, `tasks.md` inserts are guarded against duplication, and a task
+already on disk is skipped — and partially-derived ideas are **topped up** (missing variations /
+FIM subtasks are filled on a later run, not skipped). Run it with `mix run scripts/generate.exs
+[idea_number]` (see the quick reference below and the README's "Automated generation loop" section
+for env knobs); groups 065–131 were produced this way. Design + an audit of the loop's quality/yield
+are in `docs/04-task-generation-loop.md` and `docs/05-generation-loop-audit.md`.
 
 ---
 

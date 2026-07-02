@@ -19,7 +19,11 @@ defmodule GenTask.Opus do
 
   alias GenTask.{Config, CycleLog}
 
-  @usage_re ~r/usage limit|rate.?limit|limit reached|resets? at|try again/i
+  # Strong, usage-window-specific phrases only. Deliberately excludes generic
+  # phrases like "try again" / bare "resets at" that also appear in 5xx/gateway
+  # bodies — a transient error must NOT be misread as a usage limit, because the
+  # usage-limit branch sleeps for 15 minutes per attempt (see `do_call/5`).
+  @usage_re ~r/usage limit|rate.?limit|limit reached|quota (?:exceeded|reached)|too many requests/i
   @transient_re ~r/overloaded|timeout|timed out|network|connection|econn|502|503|504|internal server|temporar|error_max_turns|max.?turns|error_during_execution/i
 
   @type meta :: %{
@@ -58,13 +62,26 @@ defmodule GenTask.Opus do
       {:usage_limit, _meta} ->
         attempt = usage_n + 1
 
-        Logger.warning(
-          "usage limit reached — waiting #{cfg.usage_wait_ms}ms (attempt #{attempt})"
-        )
+        # Bound the total time we will wait on usage-limit signals. The legitimate
+        # case is riding out a 5-hour subscription window; the cap (default 6h)
+        # covers a full reset while ensuring a *misclassified* persistent transient
+        # error can never hang the whole run indefinitely.
+        if attempt * cfg.usage_wait_ms > cfg.usage_max_wait_ms do
+          Logger.error(
+            "usage limit persisted past the #{cfg.usage_max_wait_ms}ms cap " <>
+              "(#{attempt} attempts) — giving up on this call"
+          )
 
-        CycleLog.record_wait(cfg, cfg.usage_wait_ms, attempt, "usage_limit")
-        Process.sleep(cfg.usage_wait_ms)
-        do_call(system, user, cfg, transient_n, attempt)
+          {:error, {:usage_limit, :exhausted}}
+        else
+          Logger.warning(
+            "usage limit reached — waiting #{cfg.usage_wait_ms}ms (attempt #{attempt})"
+          )
+
+          CycleLog.record_wait(cfg, cfg.usage_wait_ms, attempt, "usage_limit")
+          Process.sleep(cfg.usage_wait_ms)
+          do_call(system, user, cfg, transient_n, attempt)
+        end
 
       {:truncated, _meta} ->
         if transient_n < cfg.transient_retries do

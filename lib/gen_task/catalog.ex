@@ -211,26 +211,33 @@ defmodule GenTask.Catalog do
         num: num,
         b: bnum,
         base?: base?,
-        needs_variations?: base? and not has_variations?(cfg.tasks_dir, a),
-        needs_fim?: not has_fim?(cfg.tasks_dir, a, b)
+        # Top-up semantics: a base needs variations until all 3 slots (V1/V2/V3 →
+        # _002/_003/_004) exist; any _01 needs FIM until it has `fim_max_per_task`
+        # subtasks. A partially-filled batch is therefore revisited, not skipped.
+        needs_variations?: base? and count_variations(cfg.tasks_dir, a) < 3,
+        needs_fim?: count_fim(cfg.tasks_dir, a, b) < cfg.fim_max_per_task
       }
     else
       _ -> nil
     end
   end
 
-  defp has_variations?(tasks_dir, a) do
-    "#{tasks_dir}/#{a}_002_*_01"
-    |> Path.wildcard()
-    |> Enum.any?(&File.dir?/1)
+  @doc "Number of variation `_01` dirs (V1..V3 → `_002`.._004`) present for idea `a`."
+  @spec count_variations(String.t(), String.t()) :: non_neg_integer()
+  def count_variations(tasks_dir, a) do
+    Enum.count(2..4, fn b ->
+      "#{tasks_dir}/#{a}_#{pad3(b)}_*_01"
+      |> Path.wildcard()
+      |> Enum.any?(&File.dir?/1)
+    end)
   end
 
-  defp has_fim?(tasks_dir, a, b) do
+  @doc "Number of FIM subtask dirs (`_02+`) present under the `a_b_*_01` task."
+  @spec count_fim(String.t(), String.t(), String.t()) :: non_neg_integer()
+  def count_fim(tasks_dir, a, b) do
     "#{tasks_dir}/#{a}_#{b}_*"
     |> Path.wildcard()
-    |> Enum.any?(fn d ->
-      File.dir?(d) and fim_subtask?(Path.basename(d))
-    end)
+    |> Enum.count(fn d -> File.dir?(d) and fim_subtask?(Path.basename(d)) end)
   end
 
   # A FIM subtask directory ends in a subtask index >= 2 (e.g. `_02`, `_10`).

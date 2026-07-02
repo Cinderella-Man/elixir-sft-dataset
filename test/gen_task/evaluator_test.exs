@@ -53,6 +53,43 @@ defmodule GenTask.EvaluatorTest do
     end
   end
 
+  describe "quality_shortfall/1" do
+    @full %{
+      "compile_warnings" => 0,
+      "analysis" => %{
+        "has_moduledoc" => true,
+        "has_typespecs" => true,
+        "has_doc_on_public_fns" => true,
+        "todo_count" => 0
+      }
+    }
+
+    test "nil when the solution meets the house style" do
+      assert Evaluator.quality_shortfall(@full) == nil
+    end
+
+    test "flags a missing @spec" do
+      json = put_in(@full, ["analysis", "has_typespecs"], false)
+      assert Evaluator.quality_shortfall(json) =~ "@spec"
+    end
+
+    test "flags compile warnings" do
+      assert Evaluator.quality_shortfall(%{@full | "compile_warnings" => 3}) =~ "compile warning"
+    end
+
+    test "flags a TODO marker and joins multiple shortfalls" do
+      json =
+        @full
+        |> put_in(["analysis", "has_moduledoc"], false)
+        |> put_in(["analysis", "todo_count"], 1)
+
+      report = Evaluator.quality_shortfall(json)
+      assert report =~ "@moduledoc"
+      assert report =~ "TODO"
+      assert report =~ ";"
+    end
+  end
+
   describe "repair_report/1" do
     test "describes a timeout/crash" do
       report = Evaluator.repair_report(:timeout_or_crash)
@@ -64,10 +101,21 @@ defmodule GenTask.EvaluatorTest do
     end
 
     test "describes a vacuous harness (mutant survived)" do
-      report = Evaluator.repair_report({:vacuous, {:ok, @green}})
-      assert report =~ "vacuous"
-      assert report =~ "raise"
+      report =
+        Evaluator.repair_report(
+          {:vacuous, "the raise-mutant of `split/2` still passes the tests"}
+        )
+
+      assert report =~ "Mutation gate failed"
+      assert report =~ "split/2"
       assert report =~ "test_harness.exs"
+    end
+
+    test "describes a house-style quality shortfall" do
+      report = Evaluator.repair_report({:quality, "no @spec on any public function"})
+      assert report =~ "house style"
+      assert report =~ "@spec"
+      assert report =~ "ZERO warnings"
     end
 
     test "shapes compile errors from the json" do

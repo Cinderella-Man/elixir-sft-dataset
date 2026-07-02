@@ -74,14 +74,27 @@ defmodule GenTask.Cycle do
 
   defp accept?(:timeout_or_crash, _ctx, _files, _cfg), do: {:reject, :timeout_or_crash}
 
-  defp accept?({:ok, _} = grade, ctx, files, cfg) do
+  defp accept?({:ok, json} = grade, ctx, files, cfg) do
     if Evaluator.green?(grade) do
-      case Mutation.gate_base(ctx.mutant_dir, files, cfg) do
-        :killed -> :accept
-        :survived -> {:reject, {:vacuous, grade}}
-      end
+      accept_green(json, ctx, files, cfg)
     else
       {:reject, {:failed, grade}}
+    end
+  end
+
+  # Green: apply the house-style/zero-warning quality gate (unless disabled), then the
+  # mutation gate. Ordering fails fast — the cheap JSON check runs before the expensive
+  # per-function mutation grades.
+  defp accept_green(json, ctx, files, cfg) do
+    shortfall = if cfg.quality_gate, do: Evaluator.quality_shortfall(json), else: nil
+
+    if shortfall do
+      {:reject, {:quality, shortfall}}
+    else
+      case Mutation.gate_base(ctx.mutant_dir, files, cfg) do
+        :killed -> :accept
+        {:survived, why} -> {:reject, {:vacuous, why}}
+      end
     end
   end
 

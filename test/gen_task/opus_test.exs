@@ -58,6 +58,26 @@ defmodule GenTask.OpusTest do
       out = json(%{"is_error" => true, "result" => "rate limit exceeded, try again later"})
       assert {:usage_limit, _meta} = Opus.classify(out, 1)
     end
+
+    test "call/3 gives up once the cumulative usage-wait cap is exceeded" do
+      logs = Path.join(System.tmp_dir!(), "opus_test_#{System.unique_integer([:positive])}")
+
+      runner = fn _sys, _user, _cfg ->
+        {json(%{"is_error" => true, "api_error_status" => 429, "result" => "usage limit reached"}),
+         1}
+      end
+
+      cfg = %GenTask.Config{
+        opus_runner: runner,
+        usage_wait_ms: 1,
+        usage_max_wait_ms: 2,
+        logs_dir: logs
+      }
+
+      assert {:error, {:usage_limit, :exhausted}} = Opus.call("sys", "user", cfg)
+    after
+      :ok
+    end
   end
 
   describe "classify/2 — transient" do
@@ -65,6 +85,20 @@ defmodule GenTask.OpusTest do
       out = json(%{"is_error" => true, "subtype" => "error", "result" => "server overloaded"})
       assert {:transient, reason} = Opus.classify(out, 1)
       assert reason =~ "overloaded"
+    end
+
+    test "a gateway error saying 'try again' is transient, NOT a usage limit" do
+      # Regression guard: bare "try again" must never route to the uncapped
+      # usage-limit sleep loop (it appears in 5xx/gateway bodies).
+      out =
+        json(%{
+          "is_error" => true,
+          "api_error_status" => 503,
+          "subtype" => "error",
+          "result" => "upstream error, please try again later"
+        })
+
+      assert {:transient, _reason} = Opus.classify(out, 1)
     end
 
     test "detected via a 5xx api_error_status" do

@@ -112,21 +112,59 @@ defmodule GenTask.Evaluator do
   end
 
   @doc """
-  Human-readable repair feedback for a failed cycle. Handles a timeout/crash, a
-  vacuous harness (the mutant survived), and ordinary compile/test failures.
+  House-style / warning shortfall for a **green** base/variation grade, or `nil` when
+  the solution already meets the bar. Used by the quality gate (`GenTask.Cycle`): a
+  green, mutant-killing solution should still carry a `@moduledoc`, at least one
+  `@spec` and `@doc`, no `TODO`, and compile with zero warnings — the house style the
+  reference corpus models. Returns a `; `-joined description of every shortfall.
   """
-  @spec repair_report(:timeout_or_crash | {:vacuous, grade()} | {:failed, grade()}) ::
-          String.t()
+  @spec quality_shortfall(map()) :: String.t() | nil
+  def quality_shortfall(%{} = json) do
+    a = json["analysis"] || %{}
+    warnings = json["compile_warnings"] || 0
+
+    []
+    |> add_if(warnings > 0, "#{warnings} compile warning(s) — silence them")
+    |> add_if(a["has_moduledoc"] != true, "no @moduledoc")
+    |> add_if(a["has_typespecs"] != true, "no @spec on any public function")
+    |> add_if(a["has_doc_on_public_fns"] != true, "no @doc on any public function")
+    |> add_if((a["todo_count"] || 0) > 0, "#{a["todo_count"]} TODO/FIXME marker(s) in the code")
+    |> case do
+      [] -> nil
+      reasons -> reasons |> Enum.reverse() |> Enum.join("; ")
+    end
+  end
+
+  defp add_if(list, true, msg), do: [msg | list]
+  defp add_if(list, false, _msg), do: list
+
+  @doc """
+  Human-readable repair feedback for a failed cycle. Handles a timeout/crash, a
+  vacuous harness (the mutant survived), a house-style/warning shortfall, and ordinary
+  compile/test failures.
+  """
+  @spec repair_report(
+          :timeout_or_crash
+          | {:vacuous, String.t()}
+          | {:quality, String.t()}
+          | {:failed, grade()}
+        ) :: String.t()
   def repair_report(:timeout_or_crash) do
     "The evaluation timed out or crashed (likely an infinite loop or a process that " <>
       "never returns). Ensure every code path terminates and the harness does not block."
   end
 
-  def repair_report({:vacuous, _grade}) do
-    "The tests still PASS even after every function body in solution.ex is replaced by " <>
-      "`raise` (mutation gate). This means the harness is vacuous — it does not actually " <>
-      "exercise the behavior. Strengthen test_harness.exs so it fails when the " <>
-      "implementation is gutted."
+  def repair_report({:vacuous, why}) do
+    "Mutation gate failed: #{why}. Strengthen test_harness.exs so it fails when that " <>
+      "code is gutted (add assertions that actually exercise the behavior) — do not " <>
+      "weaken the implementation."
+  end
+
+  def repair_report({:quality, shortfall}) do
+    "The solution is green but does not meet the house style: #{shortfall}. Fix " <>
+      "solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, " <>
+      "no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical " <>
+      "and do not weaken test_harness.exs."
   end
 
   def repair_report({:failed, :timeout_or_crash}), do: repair_report(:timeout_or_crash)

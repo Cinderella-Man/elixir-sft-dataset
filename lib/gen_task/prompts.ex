@@ -29,6 +29,17 @@ defmodule GenTask.Prompts do
   write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
   """
 
+  # House style every reference solution must follow (mirrors the analysis rubric the
+  # evaluator scores: @moduledoc/@spec/@doc, ≤98 cols, no TODO, zero compile warnings).
+  @house_style """
+  House style — the solution MUST satisfy all of these:
+    - a module `@moduledoc` describing the module;
+    - an `@spec` AND `@doc` on every public function;
+    - every line ≤ 98 columns; no `TODO`/`FIXME`/`HACK` markers;
+    - compile with ZERO warnings — e.g. prefix unused variables with `_`, and match
+      float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+  """
+
   # ---------------------------------------------------------------------------
   # Shared output contract
   # ---------------------------------------------------------------------------
@@ -91,6 +102,8 @@ defmodule GenTask.Prompts do
     - It must be self-contained: any fakes, clock Agents, or helpers are defined
       inline (as the template does). It runs as `elixir test_harness.exs` beside a
       sibling `solution.ex`.
+    - It must compile with ZERO warnings: prefix unused variables with `_`, and match
+      float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
     - The prompt.md must NOT reveal the tests; it is the standalone task statement.
 
     #{output_contract([{"prompt.md", "the standalone task statement"}, {"test_harness.exs", "the ExUnit harness"}])}
@@ -109,6 +122,7 @@ defmodule GenTask.Prompts do
     user = """
     #{prompt_md}
 
+    #{@house_style}
     #{output_contract([{"solution.ex", "the complete implementation module"}])}
     """
 
@@ -127,17 +141,31 @@ defmodule GenTask.Prompts do
   @spec variations(
           %{num: integer(), name: String.t()},
           %{String.t() => String.t()},
-          String.t()
+          String.t(),
+          pos_integer(),
+          [String.t()]
         ) :: {String.t(), String.t()}
-  def variations(%{num: num, name: name}, base, tasks_md) do
+  def variations(%{num: num, name: name}, base, tasks_md, count \\ 3, existing \\ []) do
+    already =
+      case existing do
+        [] ->
+          ""
+
+        names ->
+          "\n\nThis task ALREADY has these variations — your new ones must be distinct " <>
+            "from them too:\n" <> Enum.map_join(names, "\n", &"  - #{&1}")
+      end
+
     user = """
     I have this SFT task (idea ##{num} — "#{name}"): its prompt, solution, and harness
     are below. I want to multiply the dataset with meaningful variations.
 
-    Propose 3 variations, each with a meaningful difference so it stands on its own as a
-    distinct problem (not a trivial rename). For each variation produce a full triplet
-    (prompt.md, test_harness.exs, solution.ex) following the SAME harness rules as the
-    base (`use ExUnit.Case, async: false`; no `ExUnit.start()`; self-contained).
+    Propose #{count} variation(s), each with a meaningful difference so it stands on its
+    own as a distinct problem (not a trivial rename), differing from the base and from
+    each other along a real axis (data structure, concurrency model, failure semantics,
+    …). For each variation produce a full triplet (prompt.md, test_harness.exs,
+    solution.ex) following the SAME harness rules as the base (`use ExUnit.Case,
+    async: false`; no `ExUnit.start()`; self-contained; ZERO compile warnings).#{already}
 
     Also, for each variation, produce a one-line catalog entry in the exact tasks.md
     format — its `idea.md` file must contain a `### Task #{num} - Vn - <Name>` header on
@@ -156,14 +184,14 @@ defmodule GenTask.Prompts do
     === EXISTING CATALOG (do NOT repeat any of these ideas) ===
     #{tasks_md}
 
-    #{output_contract(variation_files())}
+    #{output_contract(variation_files(count))}
     """
 
     {@author_persona, user}
   end
 
-  defp variation_files do
-    for n <- 1..3,
+  defp variation_files(count) do
+    for n <- 1..count,
         {f, d} <- [
           {"prompt.md", "task statement"},
           {"test_harness.exs", "ExUnit harness"},
@@ -182,8 +210,19 @@ defmodule GenTask.Prompts do
   Prompts for FIM candidate selection: pick up to `max` functions that make the
   best fill-in-the-middle targets in `module_src`.
   """
-  @spec fim_select(String.t(), String.t(), pos_integer()) :: {String.t(), String.t()}
-  def fim_select(module_src, prompt_md, max) do
+  @spec fim_select(String.t(), String.t(), pos_integer(), [String.t()]) ::
+          {String.t(), String.t()}
+  def fim_select(module_src, prompt_md, max, exclude \\ []) do
+    exclusions =
+      case exclude do
+        [] ->
+          ""
+
+        targets ->
+          "\n\nDo NOT pick any of these — they are already covered or known to be " <>
+            "untested by the harness:\n" <> Enum.map_join(targets, "\n", &"  - #{&1}")
+      end
+
     user = """
     Below is a completed Elixir module (a solved SFT task) and the prompt that produced
     it. I want to create "fill-in-the-middle" subtasks: each erases ONE function body and
@@ -191,7 +230,7 @@ defmodule GenTask.Prompts do
 
     Pick the #{max} functions (or clauses) that make the best FIM targets — meaningful,
     self-contained logic that the module's own test harness actually exercises. Prefer
-    private helpers and the core public callbacks over trivial one-liners.
+    private helpers and the core public callbacks over trivial one-liners.#{exclusions}
 
     === ORIGINAL PROMPT ===
     #{prompt_md}
@@ -302,13 +341,15 @@ defmodule GenTask.Prompts do
           ])
       end
 
+    style_note = if kind == :task, do: "\n#{@house_style}", else: ""
+
     user = """
     A generated task failed its automated check. Fix it. You may edit #{editable}.
     Return ONLY the file(s) you changed; do NOT return prompt.md.
 
     === FAILURE REPORT ===
     #{report}
-
+    #{style_note}
     === CURRENT FILES ===
     #{render_files(blocks)}
 

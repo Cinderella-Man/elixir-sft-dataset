@@ -109,13 +109,13 @@ defmodule GenTask.Reply do
   end
 
   @doc """
-  Validate a variations reply: for each of `v1`, `v2`, `v3`, a path-prefixed
+  Validate a variations reply: for each of `v1`..`vN` (default 3), a path-prefixed
   triplet (`vN/prompt.md`, `vN/test_harness.exs`, `vN/solution.ex`) plus an idea
   entry (`vN/idea.md`).
   """
-  @spec validate_variations(files()) :: :ok | {:error, String.t()}
-  def validate_variations(files) do
-    Enum.reduce_while(1..3, :ok, fn n, _acc ->
+  @spec validate_variations(files(), pos_integer()) :: :ok | {:error, String.t()}
+  def validate_variations(files, count \\ 3) do
+    Enum.reduce_while(1..count, :ok, fn n, _acc ->
       prefix = "v#{n}/"
 
       case validate_variation_dir(files, prefix) do

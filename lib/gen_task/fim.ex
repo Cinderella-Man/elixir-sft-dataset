@@ -30,10 +30,19 @@ defmodule GenTask.Fim do
           files: %{String.t() => String.t()}
         }
 
-  @doc "Select FIM candidates for `seed` and generate/promote a subtask for each."
+  @doc """
+  Select FIM candidates for `seed` and generate/promote a subtask for each.
+
+  Targets already covered by an existing `_0d` subtask, or permanently rejected on a
+  prior run (recorded in `logs/fim_rejected.jsonl` — the parent harness does not
+  exercise them), are excluded from selection so a top-up run picks NEW targets and an
+  unfixable candidate is never re-attempted.
+  """
   @spec run(seed(), Config.t()) :: [map()]
   def run(seed, %Config{} = cfg) do
-    case select_candidates(seed, cfg) do
+    excluded = excluded_targets(seed, cfg)
+
+    case select_candidates(seed, cfg, excluded) do
       {[], nil} ->
         []
 
@@ -44,8 +53,10 @@ defmodule GenTask.Fim do
         start_d = next_subtask_index(seed, cfg)
 
         {outs, _next} =
-          Enum.reduce(targets, {[], start_d}, fn target, {acc, d} ->
-            {out, promoted?} = build_candidate(seed, target, d, cfg)
+          targets
+          |> Enum.with_index()
+          |> Enum.reduce({[], start_d}, fn {target, i}, {acc, d} ->
+            {out, promoted?} = build_candidate(seed, target, d, i, cfg)
             {[out | acc], if(promoted?, do: d + 1, else: d)}
           end)
 
@@ -53,11 +64,62 @@ defmodule GenTask.Fim do
     end
   end
 
+  # Targets we must NOT select: functions already turned into a `_0d` subtask, plus
+  # targets permanently rejected on a prior run.
+  defp excluded_targets(seed, cfg) do
+    rejected = MapSet.new(CycleLog.rejected_fim_targets(cfg, prefix(seed)))
+    MapSet.union(covered_targets(seed, cfg), rejected)
+  end
+
+  # `name/arity` of the function each existing `_0d` subtask already fills (its
+  # solution.ex is just that one function).
+  defp covered_targets(seed, cfg) do
+    Path.join(cfg.tasks_dir, "#{prefix(seed)}_*")
+    |> Path.wildcard()
+    |> Enum.filter(fn d -> File.dir?(d) and fim_subtask_dir?(Path.basename(d)) end)
+    |> Enum.flat_map(fn d -> fn_targets(Path.join(d, "solution.ex")) end)
+    |> MapSet.new()
+  end
+
+  defp fim_subtask_dir?(basename) do
+    case subtask_index(basename) do
+      n when is_integer(n) -> n >= 2
+      _ -> false
+    end
+  end
+
+  # Parse a (single-function) solution.ex into `["name/arity", ...]`.
+  defp fn_targets(path) do
+    with {:ok, src} <- File.read(path),
+         {:ok, ast} <- Code.string_to_quoted(src) do
+      {_ast, acc} =
+        Macro.prewalk(ast, [], fn
+          {op, _m, [head | _]} = node, acc when op in [:def, :defp] ->
+            case na(head) do
+              {n, a} -> {node, ["#{n}/#{a}" | acc]}
+              nil -> {node, acc}
+            end
+
+          node, acc ->
+            {node, acc}
+        end)
+
+      acc
+    else
+      _ -> []
+    end
+  end
+
+  defp na({:when, _, [inner | _]}), do: na(inner)
+  defp na({name, _, args}) when is_atom(name) and is_list(args), do: {name, length(args)}
+  defp na({name, _, nil}) when is_atom(name), do: {name, 0}
+  defp na(_), do: nil
+
   # ------------------------------------------------------------------
   # Candidate selection (its own log file)
   # ------------------------------------------------------------------
 
-  defp select_candidates(seed, cfg) do
+  defp select_candidates(seed, cfg, excluded) do
     sel_id = "#{prefix(seed)}_fim_select"
     handle = CycleLog.open(cfg, sel_id)
     Logger.info("FIM candidate-select for #{seed.task_id}")
@@ -68,12 +130,13 @@ defmodule GenTask.Fim do
           Prompts.fim_select(
             seed.files["solution.ex"],
             seed.files["prompt.md"],
-            cfg.fim_max_per_task
+            cfg.fim_max_per_task,
+            MapSet.to_list(excluded)
           )
 
         case Cycle.opus(cfg, seed.task_id, "fim_select", system, user) do
           {:ok, text, _meta} ->
-            {:targets, parse_candidates(text, cfg.fim_max_per_task)}
+            {:targets, parse_candidates(text, cfg.fim_max_per_task, excluded)}
 
           {:error, reason} ->
             {:error, select_error(sel_id, seed, inspect(reason))}
@@ -106,7 +169,7 @@ defmodule GenTask.Fim do
     )
   end
 
-  defp parse_candidates(text, max) do
+  defp parse_candidates(text, max, excluded) do
     text
     |> Reply.parse()
     |> Map.get("candidates.md", "")
@@ -114,6 +177,7 @@ defmodule GenTask.Fim do
     |> Enum.map(&clean_candidate/1)
     |> Enum.reject(&(&1 == ""))
     |> Enum.filter(&String.contains?(&1, "/"))
+    |> Enum.reject(&MapSet.member?(excluded, &1))
     |> Enum.take(max)
   end
 
@@ -129,30 +193,34 @@ defmodule GenTask.Fim do
   # Per-candidate generation + accept loop (each in its own log file)
   # ------------------------------------------------------------------
 
-  defp build_candidate(seed, target, d, cfg) do
+  # `d` is the contiguous promotion slot (advances only on accept, so promoted `_0d`
+  # dirs stay gap-free); `i` is the candidate's 0-based ordinal, used to give every
+  # attempt a unique log id so distinct rejects don't overwrite each other's log.
+  defp build_candidate(seed, target, d, i, cfg) do
     fim_id = "#{prefix(seed)}_#{pad2(d)}"
-    handle = CycleLog.open(cfg, fim_id)
-    Logger.info("FIM #{fim_id}: target #{target}")
+    log_id = "#{prefix(seed)}_fim#{pad2(i + 1)}"
+    handle = CycleLog.open(cfg, log_id)
+    Logger.info("FIM #{log_id} → #{fim_id}: target #{target}")
 
     {outcome, promoted?} =
       try do
         {system, user} =
           Prompts.fim_candidate(seed.files["solution.ex"], seed.files["prompt.md"], target)
 
-        case gen_fim(cfg, fim_id, system, user) do
+        case gen_fim(cfg, log_id, system, user) do
           {:ok, ff} ->
-            run_attempts(seed, target, fim_id, ff, cfg)
+            run_attempts(seed, target, fim_id, log_id, ff, cfg)
 
           {:error, reason} ->
-            {reject(seed, fim_id, target, Cycle.grade_stats(:timeout_or_crash), inspect(reason)),
+            {reject(seed, log_id, target, Cycle.grade_stats(:timeout_or_crash), inspect(reason)),
              false}
         end
       rescue
         e ->
-          Logger.error("fim #{fim_id} crashed: " <> Exception.format(:error, e, __STACKTRACE__))
+          Logger.error("fim #{log_id} crashed: " <> Exception.format(:error, e, __STACKTRACE__))
 
           {Cycle.outcome(
-             id: fim_id,
+             id: log_id,
              kind: :fim,
              num: seed.num,
              name: target,
@@ -166,8 +234,10 @@ defmodule GenTask.Fim do
   end
 
   # Stage the parent `_01` (its harness) beside the `_0d` candidate so the eval's
-  # FIM shape resolves the parent harness, then loop grade → gate → repair.
-  defp run_attempts(seed, target, fim_id, ff0, cfg) do
+  # FIM shape resolves the parent harness, then loop grade → gate → repair. `fim_id`
+  # names the staged `_0d` + the promotion target; `log_id` tags the ledger/outcome
+  # for a non-promoted candidate.
+  defp run_attempts(seed, target, fim_id, log_id, ff0, cfg) do
     stage_parent = Path.join(cfg.staging_dir, "fim_#{fim_id}")
     Evaluator.stage!(Path.join(stage_parent, seed.task_id), seed.files)
     fim_dir = Path.join(stage_parent, fim_id)
@@ -185,14 +255,14 @@ defmodule GenTask.Fim do
       cond do
         not Evaluator.green?(grade) ->
           if attempt >= cfg.max_retries do
-            {:halt, {reject(seed, fim_id, target, stats, Cycle.reason_for(grade)), false}}
+            {:halt, {reject(seed, log_id, target, stats, Cycle.reason_for(grade)), false}}
           else
-            case repair_fim(ff, grade, fim_id, cfg) do
+            case repair_fim(ff, grade, log_id, cfg) do
               {:ok, ff2} ->
                 {:cont, ff2}
 
               :error ->
-                {:halt, {reject(seed, fim_id, target, stats, "repair call failed"), false}}
+                {:halt, {reject(seed, log_id, target, stats, "repair call failed"), false}}
             end
           end
 
@@ -207,13 +277,17 @@ defmodule GenTask.Fim do
 
               {:halt, {accept(seed, fim_id, target, stats, attempt + 1), true}}
 
-            :survived ->
+            {:survived, _why} ->
               Logger.info(
-                "fim #{fim_id}: parent harness does not cover #{target} — rejecting candidate"
+                "fim #{log_id}: parent harness does not cover #{target} — rejecting candidate"
               )
 
+              # Unfixable here (we may not edit the parent harness): record it so it is
+              # not re-selected on a later run.
+              CycleLog.record_fim_rejected(cfg, prefix(seed), target)
+
               {:halt,
-               {reject(seed, fim_id, target, stats, "parent harness does not cover #{target}"),
+               {reject(seed, log_id, target, stats, "parent harness does not cover #{target}"),
                 false}}
           end
       end

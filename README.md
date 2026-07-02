@@ -231,7 +231,14 @@ response, eval JSON, and repair attempt). Failed cycles' logs are moved to `logs
 | `GEN_SKIP_BACKFILL=1` | off | skip work-list 2; `GEN_ONLY=backfill` runs *only* it |
 | `GEN_RETRY_FAILED=1` | off | re-attempt tasks currently sitting in `logs/errors/` |
 | `GEN_MAX_RETRIES=N` | 3 | repair iterations per task before it's sent to errors |
+| `GEN_SKIP_QUALITY_GATE=1` | off | stop requiring house style (`@moduledoc`/`@spec`/`@doc`, no TODO, zero warnings) on a green base/variation |
+| `GEN_SKIP_PER_FN_MUTATION=1` | off | use a single whole-module raise-mutant instead of mutating each public function |
 | `GEN_MODEL=…` | `opus` | `claude --model` alias/id |
+
+By default a generated base/variation must be **green, meet the house style (moduledoc/spec/doc,
+no TODO, zero compile warnings), and have every public function killed by a raise-mutant** — the
+loop repairs shortfalls before accepting. Partially-filled ideas are **topped up** on later runs
+(missing variations / FIM subtasks are filled, not skipped).
 
 A single positional integer (`mix run scripts/generate.exs 80`) restricts the run to that one
 base idea — the fastest way to try the loop before turning it loose on the catalog.

@@ -128,17 +128,38 @@ defmodule GenTask.CatalogTest do
   end
 
   describe "backfill_seeds/1 enumeration" do
-    test "flags bases needing variations+fim and variations needing fim; excludes complete ones" do
+    test "flags partially-derived tasks for top-up and excludes fully-complete ones" do
       dir = tmp_dir()
 
       # idea 10: bare base -> needs variations AND fim
       File.mkdir_p!(Path.join(dir, "010_001_gamma_01"))
 
-      # idea 11: base with a variation and a fim subtask -> base is complete,
-      # but the variation itself still lacks fim.
+      # idea 11: base with only 1 of 3 variations and 1 of 3 fim -> STILL needs both
+      # (top-up semantics: a partial batch is revisited, not treated as complete).
       File.mkdir_p!(Path.join(dir, "011_001_delta_01"))
       File.mkdir_p!(Path.join(dir, "011_001_delta_02"))
       File.mkdir_p!(Path.join(dir, "011_002_epsilon_01"))
+
+      # idea 12: fully derived -> 3 variations, each _01 with all 3 fim subtasks.
+      for d <- [
+            "012_001_zeta_01",
+            "012_001_zeta_02",
+            "012_001_zeta_03",
+            "012_001_zeta_04",
+            "012_002_a_01",
+            "012_002_a_02",
+            "012_002_a_03",
+            "012_002_a_04",
+            "012_003_b_01",
+            "012_003_b_02",
+            "012_003_b_03",
+            "012_003_b_04",
+            "012_004_c_01",
+            "012_004_c_02",
+            "012_004_c_03",
+            "012_004_c_04"
+          ],
+          do: File.mkdir_p!(Path.join(dir, d))
 
       cfg = %Config{tasks_dir: dir}
       seeds = Catalog.backfill_seeds(cfg)
@@ -148,15 +169,19 @@ defmodule GenTask.CatalogTest do
       assert %Seed{num: 10, base?: true, needs_variations?: true, needs_fim?: true} =
                by_id["010_001_gamma_01"]
 
-      # delta base is fully derived -> not a seed
-      refute Map.has_key?(by_id, "011_001_delta_01")
+      # delta base has only 1/3 variations and 1/3 fim -> top-up both
+      assert %Seed{num: 11, base?: true, needs_variations?: true, needs_fim?: true} =
+               by_id["011_001_delta_01"]
 
       # epsilon variation still needs fim
       assert %Seed{num: 11, base?: false, needs_variations?: false, needs_fim?: true} =
                by_id["011_002_epsilon_01"]
 
+      # idea 12 is fully derived -> no seeds at all
+      refute Enum.any?(seeds, &(&1.num == 12))
+
       assert MapSet.new(Map.keys(by_id)) ==
-               MapSet.new(["010_001_gamma_01", "011_002_epsilon_01"])
+               MapSet.new(["010_001_gamma_01", "011_001_delta_01", "011_002_epsilon_01"])
     end
 
     test "respects idea-number scope" do

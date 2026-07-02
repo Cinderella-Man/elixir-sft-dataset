@@ -110,6 +110,42 @@ defmodule GenTask.CycleLog do
     })
   end
 
+  @doc """
+  Record a permanently-rejected FIM target (`prefix` = the parent `_01` id without the
+  `_01` suffix; `target` = the `name/arity`). These are candidates whose function the
+  parent harness does not cover — unfixable without editing the parent harness — so
+  they must not be re-selected on later runs.
+  """
+  @spec record_fim_rejected(Config.t(), String.t(), String.t()) :: :ok
+  def record_fim_rejected(%Config{logs_dir: logs_dir}, prefix, target) do
+    append_jsonl(Path.join(logs_dir, "fim_rejected.jsonl"), %{
+      ts: ts(),
+      prefix: prefix,
+      target: target
+    })
+  end
+
+  @doc "Previously-rejected FIM targets for `prefix` (from `fim_rejected.jsonl`), as a list."
+  @spec rejected_fim_targets(Config.t(), String.t()) :: [String.t()]
+  def rejected_fim_targets(%Config{logs_dir: logs_dir}, prefix) do
+    path = Path.join(logs_dir, "fim_rejected.jsonl")
+
+    case File.read(path) do
+      {:ok, content} ->
+        content
+        |> String.split("\n", trim: true)
+        |> Enum.flat_map(fn line ->
+          case Jason.decode(line) do
+            {:ok, %{"prefix" => ^prefix, "target" => t}} -> [t]
+            _ -> []
+          end
+        end)
+
+      {:error, _} ->
+        []
+    end
+  end
+
   defp append_jsonl(path, map) do
     File.mkdir_p!(Path.dirname(path))
     {:ok, io} = :file.open(String.to_charlist(path), [:append, :raw, :binary])

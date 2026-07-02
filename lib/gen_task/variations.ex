@@ -19,36 +19,88 @@ defmodule GenTask.Variations do
 
   @variation_header ~r/^###\s+Task\s+\d+\s+-\s+V\d+\s+-\s+(.+?)\s*$/
 
-  @doc "Generate up to three variations of `base` and cycle/promote each."
+  @doc """
+  Generate the variations `base` still lacks and cycle/promote each.
+
+  Only the **free** slots (of V1/V2/V3 → `_002`/`_003`/`_004`) are filled, so a base
+  that already has one or two variations is topped up rather than skipped; a base with
+  all three yields `[]`. The generation call requests exactly the missing count and is
+  told the names of any existing variations so the new ones stay distinct.
+  """
   @spec run(GenTask.Base.seed(), Config.t()) :: [map()]
   def run(base, %Config{} = cfg) do
-    case gen_variations(base, cfg) do
-      {:ok, files} -> Enum.map(1..3, fn n -> build_variation(n, files, base, cfg) end)
-      {:error, out} -> [out]
+    {free_slots, existing_names} = variation_gaps(base, cfg)
+
+    case free_slots do
+      [] ->
+        []
+
+      slots ->
+        case gen_variations(base, cfg, length(slots), existing_names) do
+          {:ok, files} ->
+            slots
+            |> Enum.with_index(1)
+            |> Enum.map(fn {slot, i} -> build_variation(i, slot, files, base, cfg) end)
+
+          {:error, out} ->
+            [out]
+        end
     end
   end
 
+  # Which of the V1/V2/V3 slots (b = 2/3/4) are still free, and the display names of
+  # the variations that already exist (for the distinctness hint).
+  defp variation_gaps(base, %Config{tasks_dir: tasks_dir}) do
+    a = Catalog.pad3(base.num)
+
+    occupied =
+      for b <- 2..4,
+          dir <- Path.wildcard("#{tasks_dir}/#{a}_#{Catalog.pad3(b)}_*_01"),
+          File.dir?(dir),
+          into: %{},
+          do: {b, dir_display_name(dir)}
+
+    free = Enum.reject(2..4, &Map.has_key?(occupied, &1))
+    {free, Map.values(occupied)}
+  end
+
+  # "110_002_histogram_based_..._01" -> "histogram based ..."
+  defp dir_display_name(dir) do
+    dir
+    |> Path.basename()
+    |> String.split("_")
+    |> Enum.drop(2)
+    |> Enum.drop(-1)
+    |> Enum.join(" ")
+  end
+
   # ------------------------------------------------------------------
-  # The shared 3-in-one generation call (its own log file)
+  # The shared N-in-one generation call (its own log file)
   # ------------------------------------------------------------------
 
-  defp gen_variations(base, cfg) do
+  defp gen_variations(base, cfg, count, existing_names) do
     gen_id = "#{Catalog.pad3(base.num)}_variations"
     handle = CycleLog.open(cfg, gen_id)
-    Logger.info("VARIATIONS gen for #{base.task_id}")
+    Logger.info("VARIATIONS gen for #{base.task_id} (#{count} slot(s))")
 
     result =
       try do
         tasks_md = File.read!(cfg.tasks_md)
 
         {system, user} =
-          Prompts.variations(%{num: base.num, name: base.name}, base.files, tasks_md)
+          Prompts.variations(
+            %{num: base.num, name: base.name},
+            base.files,
+            tasks_md,
+            count,
+            existing_names
+          )
 
         case Cycle.opus(cfg, base.task_id, "variations", system, user) do
           {:ok, text, _meta} ->
             files = Reply.parse(text)
 
-            case Reply.validate_variations(files) do
+            case Reply.validate_variations(files, count) do
               :ok ->
                 {:ok, files}
 
@@ -85,11 +137,15 @@ defmodule GenTask.Variations do
   # Per-variation cycle + promotion (each in its own log file)
   # ------------------------------------------------------------------
 
-  defp build_variation(n, files, base, cfg) do
-    prefix = "v#{n}/"
-    {vname, vdesc} = parse_idea(files[prefix <> "idea.md"], base.name, n)
+  # `i` is the 1-based index within THIS generation call (which file block: v1, v2…);
+  # `slot` is the target b-index on disk (2/3/4), which may differ when topping up.
+  # The catalog label is `V{slot-1}` (slot 2 → V1).
+  defp build_variation(i, slot, files, base, cfg) do
+    prefix = "v#{i}/"
+    vnum = slot - 1
+    {vname, vdesc} = parse_idea(files[prefix <> "idea.md"], base.name, vnum)
     vslug = Catalog.slug(vname)
-    b = n + 1
+    b = slot
     vtask_id = "#{Catalog.pad3(base.num)}_#{Catalog.pad3(b)}_#{vslug}_01"
 
     handle = CycleLog.open(cfg, vtask_id)
@@ -114,7 +170,7 @@ defmodule GenTask.Variations do
 
         if result.status == :accepted do
           _ = Cycle.promote(cfg, vtask_id, result.files)
-          _ = Catalog.insert_variation!(cfg, base.num, "V#{n}", vname, vdesc)
+          _ = Catalog.insert_variation!(cfg, base.num, "V#{vnum}", vname, vdesc)
 
           seed = %{
             num: base.num,
