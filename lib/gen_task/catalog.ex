@@ -218,6 +218,7 @@ defmodule GenTask.Catalog do
          {bnum, ""} <- Integer.parse(b),
          "01" <- List.last(parts) do
       base? = bnum == 1
+      skip? = gradable_skip?(dir)
 
       %Seed{
         dir: dir,
@@ -229,10 +230,14 @@ defmodule GenTask.Catalog do
         # _002/_003/_004) exist; any _01 needs FIM until it has `fim_max_per_task`
         # subtasks; any _01 needs a wtest until its `wt_` dir exists and tfim until it has
         # `tfim_max_per_task` subtasks. A partially-filled batch is revisited, not skipped.
+        # A gradable-skip (Postgres-tier) `_01` is excluded from wtest/tfim: its parent
+        # grades `skipped`, so neither derivative can ever be minted green (docs/06 §6).
         needs_variations?: base? and count_variations(cfg.tasks_dir, a) < 3,
         needs_fim?: count_fim(cfg.tasks_dir, a, b) < cfg.fim_max_per_task,
-        needs_write_test?: not File.dir?("#{cfg.tasks_dir}/wt_#{String.replace_suffix(base, "_01", "")}"),
-        needs_test_fim?: count_tfim(cfg.tasks_dir, a, b) < cfg.tfim_max_per_task
+        needs_write_test?:
+          not skip? and
+            not File.dir?("#{cfg.tasks_dir}/wt_#{String.replace_suffix(base, "_01", "")}"),
+        needs_test_fim?: not skip? and count_tfim(cfg.tasks_dir, a, b) < cfg.tfim_max_per_task
       }
     else
       _ -> nil
@@ -271,6 +276,17 @@ defmodule GenTask.Catalog do
     "#{tasks_dir}/tfim_#{a}_#{b}_*"
     |> Path.wildcard()
     |> Enum.count(&File.dir?/1)
+  end
+
+  # A `_01` whose evaluator run is `skipped` — Postgres-tier (`manifest.exs` carries
+  # `db: :postgres`) with no host to grade against — can never mint a green wtest or a
+  # gated tfim (both stage the parent, which grades `skipped`, not green). Excluding it
+  # keeps such a seed out of the wtest/tfim backfill; otherwise it is re-attempted every
+  # run and its derivatives land in `logs/errors/` forever (docs/06 §6 `gradable_skip?`).
+  @spec gradable_skip?(String.t()) :: boolean()
+  defp gradable_skip?(dir) do
+    manifest = Path.join(dir, "manifest.exs")
+    File.regular?(manifest) and File.read!(manifest) =~ ~r/db:\s*:postgres/
   end
 
   # ---------------------------------------------------------------------------

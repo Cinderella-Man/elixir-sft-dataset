@@ -1,0 +1,177 @@
+Implement the private `comparator/2` function. It takes the validated `sort` key
+(one of `"relevance"`, `"name"`, or `"price"`) and the raw `order` value (`"asc"`,
+`"desc"`, or `nil`) and returns a **2-arity comparison function** suitable for
+`Enum.sort/2`. That function receives two `{product, score}` tuples and returns a
+boolean deciding whether the first should come before the second.
+
+Provide one clause per sort key:
+
+- **`"relevance"`** — sorts by `score`. The default direction is **descending**
+  (highest score first); an explicit `order` of `"asc"` reverses it to ascending.
+  When two scores are equal, break the tie by `name` ascending, and when names are
+  also equal, by `id` ascending.
+- **`"name"`** — sorts by the product's `name`. The default direction is
+  **ascending**; an `order` of `"desc"` reverses it. Ties (equal names) are broken
+  by `id` ascending.
+- **`"price"`** — sorts by the product's `price_cents`. The default direction is
+  **ascending**; an `order` of `"desc"` reverses it. Ties (equal prices) are broken
+  by `id` ascending.
+
+Because `Enum.sort/2` expects a "less-than-or-equal"-style comparator, remember that
+the final tie-breaking clause must return `true` when the two elements are considered
+equal so the sort stays stable.
+
+```elixir
+defmodule Catalog.Ranked do
+  @moduledoc """
+  Relevance-ranked full-text search over an in-memory product catalog.
+
+  `search/2` tokenizes a free-text query, scores each product across weighted
+  fields (name weighted 3×, description 1×) using prefix matching, applies
+  category and price pre-filters, and orders the results by the requested sort
+  key. Prices are stored as integer cents and rendered as two-decimal dollar
+  strings.
+  """
+
+  @allowed_sort ~w(relevance name price)
+
+  @type product :: %{
+          required(:id) => integer(),
+          required(:name) => String.t(),
+          required(:category) => String.t(),
+          required(:price_cents) => integer(),
+          optional(:description) => String.t()
+        }
+
+  @type result_item :: %{
+          id: integer(),
+          name: String.t(),
+          category: String.t(),
+          price: String.t(),
+          score: non_neg_integer()
+        }
+
+  @doc """
+  Searches `products` using the string-keyed `params` map.
+
+  Returns `{:ok, %{data: [item]}}` where each item is
+  `%{id, name, category, price, score}`, or `{:error, :invalid_sort_field}` when
+  `"sort"` is not one of `"relevance"`, `"name"`, or `"price"`.
+  """
+  @spec search([product()], map()) ::
+          {:ok, %{data: [result_item()]}} | {:error, :invalid_sort_field}
+  def search(products, params \\ %{}) when is_list(products) and is_map(params) do
+    if invalid_sort?(params) do
+      {:error, :invalid_sort_field}
+    else
+      query = tokenize(Map.get(params, "q"))
+
+      filtered =
+        Enum.filter(products, fn p ->
+          category_match?(p, params) and price_match?(p, params)
+        end)
+
+      scored = Enum.map(filtered, fn p -> {p, score(p, query)} end)
+
+      scored =
+        if query == [] do
+          scored
+        else
+          Enum.filter(scored, fn {_p, s} -> s > 0 end)
+        end
+
+      sort = Map.get(params, "sort", "relevance")
+      order = Map.get(params, "order")
+      sorted = Enum.sort(scored, comparator(sort, order))
+
+      {:ok, %{data: Enum.map(sorted, fn {p, s} -> render(p, s) end)}}
+    end
+  end
+
+  # -- Sort validation ------------------------------------------------------
+
+  defp invalid_sort?(%{"sort" => s}), do: s not in @allowed_sort
+  defp invalid_sort?(_), do: false
+
+  # -- Tokenizing & scoring -------------------------------------------------
+
+  defp tokenize(nil), do: []
+
+  defp tokenize(str) when is_binary(str) do
+    str
+    |> String.downcase()
+    |> String.split(~r/[^a-z0-9]+/, trim: true)
+  end
+
+  defp tokenize(_), do: []
+
+  defp score(_p, []), do: 0
+
+  defp score(p, query) do
+    name_tokens = tokenize(p.name)
+    desc_tokens = tokenize(Map.get(p, :description))
+
+    Enum.reduce(query, 0, fn qt, acc ->
+      acc + 3 * count_prefix(name_tokens, qt) + count_prefix(desc_tokens, qt)
+    end)
+  end
+
+  defp count_prefix(tokens, qt) do
+    Enum.count(tokens, fn t -> String.starts_with?(t, qt) end)
+  end
+
+  # -- Ordering -------------------------------------------------------------
+
+  defp comparator(sort, order) do
+    # TODO
+  end
+
+  # -- Filtering ------------------------------------------------------------
+
+  defp category_match?(p, %{"category" => c}) when is_binary(c) and c != "" do
+    p.category == c
+  end
+
+  defp category_match?(_, _), do: true
+
+  defp price_match?(p, params) do
+    min_ok =
+      case parse_price(Map.get(params, "min_price")) do
+        {:ok, cents} -> p.price_cents >= cents
+        :error -> true
+      end
+
+    max_ok =
+      case parse_price(Map.get(params, "max_price")) do
+        {:ok, cents} -> p.price_cents <= cents
+        :error -> true
+      end
+
+    min_ok and max_ok
+  end
+
+  defp parse_price(nil), do: :error
+  defp parse_price(v) when is_integer(v), do: {:ok, v}
+
+  defp parse_price(v) when is_binary(v) do
+    case Integer.parse(String.trim(v)) do
+      {n, ""} -> {:ok, n}
+      _ -> :error
+    end
+  end
+
+  defp parse_price(_), do: :error
+
+  # -- Rendering ------------------------------------------------------------
+
+  defp render(p, s) do
+    %{id: p.id, name: p.name, category: p.category, price: format_price(p.price_cents), score: s}
+  end
+
+  defp format_price(cents) do
+    dollars = div(cents, 100)
+    remainder = String.pad_leading(Integer.to_string(rem(cents, 100)), 2, "0")
+    "#{dollars}.#{remainder}"
+  end
+end
+```

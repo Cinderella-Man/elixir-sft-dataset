@@ -209,6 +209,23 @@ defmodule GenTask.CatalogTest do
       cfg = %Config{tasks_dir: dir, from: 15}
       assert Catalog.backfill_seeds(cfg) |> Enum.map(& &1.num) == [20]
     end
+
+    test "excludes Postgres-tier (gradable-skip) seeds from wtest/tfim backfill" do
+      dir = tmp_dir()
+
+      # A base whose eval is `skipped` (manifest db: :postgres): variations/fim may still
+      # apply (a variation is a NEW triplet with no such manifest), but wtest/tfim can
+      # never be minted green from this parent, so they must not be flagged for backfill.
+      File.mkdir_p!(Path.join(dir, "017_001_search_01"))
+      File.write!(Path.join(dir, "017_001_search_01/manifest.exs"), "%{db: :postgres}\n")
+
+      cfg = %Config{tasks_dir: dir}
+      seed = Catalog.backfill_seeds(cfg) |> Enum.find(&(&1.num == 17))
+
+      # Still a seed (kept for variations + fim), but wtest/tfim are suppressed.
+      assert %Seed{needs_write_test?: false, needs_test_fim?: false} = seed
+      assert seed.needs_variations? and seed.needs_fim?
+    end
   end
 
   describe "insert_variation/5 placement + idempotency" do
