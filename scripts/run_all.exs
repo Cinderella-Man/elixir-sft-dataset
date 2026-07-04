@@ -106,12 +106,29 @@ defmodule RunAll do
   end
 
   defp status_of(json) do
+    # PASS demands positive evidence: at least one test ran and passed, no failures,
+    # no harness-load errors. A 0-test or all-skipped run must not print PASS.
     case Jason.decode(json) do
-      {:ok, %{"skipped" => reason}} -> "SKIP (#{reason})"
-      {:ok, %{"compiled" => false}} -> "COMPILE_FAIL"
-      {:ok, %{"tests_failed" => 0, "tests_passed" => p}} -> "PASS (#{p})"
-      {:ok, %{"tests_failed" => f, "tests_passed" => p}} -> "FAIL (#{f} failed, #{p} passed)"
-      _ -> "?"
+      {:ok, %{"skipped" => reason}} ->
+        "SKIP (#{reason})"
+
+      {:ok, %{"compiled" => false}} ->
+        "COMPILE_FAIL"
+
+      {:ok, %{"tests_errors" => e}} when e > 0 ->
+        "ERROR (#{e} harness error(s))"
+
+      {:ok, %{"tests_failed" => 0, "tests_passed" => p}} when p > 0 ->
+        "PASS (#{p})"
+
+      {:ok, %{"tests_failed" => 0, "tests_passed" => 0}} ->
+        "NO_TESTS_RAN"
+
+      {:ok, %{"tests_failed" => f, "tests_passed" => p}} ->
+        "FAIL (#{f} failed, #{p} passed)"
+
+      _ ->
+        "?"
     end
   end
 
@@ -139,7 +156,8 @@ defmodule RunAll do
     full_pass =
       Enum.count(
         graded,
-        &(&1["compiled"] == true and &1["tests_failed"] == 0 and (&1["tests_total"] || 0) > 0)
+        &(&1["compiled"] == true and &1["tests_failed"] == 0 and
+            (&1["tests_errors"] || 0) == 0 and (&1["tests_passed"] || 0) > 0)
       )
 
     scores = Enum.map(graded, &get_in(&1, ["score", "overall"])) |> Enum.reject(&is_nil/1)

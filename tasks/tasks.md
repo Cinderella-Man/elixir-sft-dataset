@@ -218,6 +218,15 @@ Build a GenServer that retries failed operations with exponential backoff, where
 ### 14. Priority Queue Processor
 Build a GenServer that processes tasks based on priority. The interface is `PriorityQueue.enqueue(name, task, priority)` where priority is `:high`, `:normal`, or `:low`, and the GenServer processes tasks one at a time, always picking the highest priority available. Provide `PriorityQueue.status(name)` returning the count of pending tasks per priority level. Verify by enqueueing tasks in mixed priority order, capturing the processing order, and asserting high-priority tasks were processed before normal, and normal before low. Test that within the same priority, tasks are processed FIFO.
 
+### Task 14 - V1 - Expiring Priority Queue With Per Task Ttl
+Write me an Elixir GenServer module called `ExpiringPriorityQueue` that processes tasks based on priority levels, but also supports per-task TTL (time-to-live) so that stale tasks are skipped rather than processed.
+
+### Task 14 - V2 - Cancellable Priority Queue With Numeric Priorities
+Write me an Elixir GenServer module called `CancellablePriorityQueue` that processes tasks based on numeric priority levels and supports cancelling pending tasks by reference.
+
+### Task 14 - V3 - Concurrent Priority Queue With Configurable Parallelism
+Write me an Elixir GenServer module called `ConcurrentPriorityQueue` that processes tasks based on priority levels with configurable concurrency — up to N tasks can be processed simultaneously.
+
 
 ### 15. Heartbeat Monitor
 Build a GenServer that monitors registered services via periodic heartbeat checks. The interface is `Monitor.register(service_name, check_func, interval_ms)` where `check_func` is a function returning `:ok` or `{:error, reason}`. The monitor calls each check function on its interval and maintains a status map. If a check fails N consecutive times, the service is marked `:down` and a notification function is called. Provide `Monitor.status(service_name)` and `Monitor.statuses()`. Verify by registering services with deterministic check functions that fail after a certain count, asserting status transitions from `:up` to `:down`, and confirming the notification was triggered exactly once per transition.
@@ -235,6 +244,135 @@ Build a GenServer that monitors registered services where each periodic check ru
 Build a GenServer that monitors registered services via periodic heartbeat checks with additional **pause/resume** and **timed maintenance window** controls. Health (`:pending`/`:up`/`:down`) is tracked separately from mode (`:active`/`:paused`/`:maintenance`); the reported status is a function of both. `pause(server, service_name)` causes check timers to fire but the check function to be skipped — reported status becomes `:paused`, health is frozen. `resume(server, service_name)` restores the health-based status. `maintenance(server, service_name, duration_ms)` enters maintenance mode: checks execute but failures do NOT increment the counter or trigger `:down`; successes still reset failures and update health to `:up`. After `duration_ms` a `{:maintenance_end, service_name}` timer fires and mode reverts to `:active`. The `:notify` callback is a 3-arity function `fn service_name, event, detail -> end` called for four events: `(:down, reason)`, `(:recovered, nil)`, `(:maintenance_started, duration_ms)`, `(:maintenance_ended, nil)`. Verify that failures during maintenance are suppressed, that successes during maintenance heal the service, that maintenance auto-expires correctly, that manual resume before expiry discards the stale timer, that pause truly skips check execution, and that the down-notification semantics (exactly once, re-arms on recovery) are preserved in active mode.
 
 ---
+
+
+## Phoenix / API Base Entries (16–25)
+
+Base lines mirrored from `tasks_external.md` so the generation loop can catalog
+variations of these already-realized external ideas here (`insert_variation!`
+searches only this file — without a base line new variations were silently
+discarded; see BACKFILL_PROGRESS.md Finding E). The authoritative descriptions
+remain in `tasks_external.md`.
+
+### 16. Paginated List Endpoint
+Build a Phoenix controller endpoint `GET /api/items` that returns paginated results from an Ecto schema. Support `page` and `page_size` query parameters with defaults (page=1, page_size=20) and a maximum page_size of 100. The response JSON must include `data` (list of items), `meta.current_page`, `meta.page_size`, `meta.total_count`, and `meta.total_pages`. Verify with controller tests: seeding the database with known records and asserting correct pagination metadata, that exceeding max page_size is clamped, that page beyond total returns empty data with correct metadata, and that the default pagination works when no parameters are given.
+
+### Task 16 - V1 - Cursor Based List Pagination
+Write me a self-contained Elixir module `CursorPaginator` that implements **cursor-based (keyset) pagination** — the pagination model used by large feeds and APIs where offset pagination is too expensive and unstable. This is the pagination core of a `GET /api/items` list endpoint, but implemented as a pure function over an in-memory list so it can be tested without a database.
+
+### Task 16 - V2 - Validated Sortable Filterable List Pagination
+Write me a self-contained Elixir module `QueryPaginator` that implements **offset pagination with multi-field sorting, filtering, and strict validation**. This is the query core of a `GET /api/items` list endpoint, implemented as a pure function over an in-memory list so it can be tested without a database. Unlike a plain paginator, this one validates its inputs and returns tagged error tuples on bad requests instead of silently coercing them.
+
+### Task 16 - V3 - Concurrent Ets Backed List Pagination With Page Clamping
+Write me a self-contained Elixir module `EtsCatalog` that implements **offset pagination over a concurrent, shared ETS-backed store**, with clamp-to-last-page semantics. This is the storage-and-listing core of a `GET /api/items` endpoint where many processes may be inserting items concurrently while pages are read. It must use ETS (not a database) so it stays self-contained and testable.
+
+
+### 17. Search Endpoint with Filtering and Sorting
+Build a Phoenix endpoint `GET /api/products` that supports searching by name (partial, case-insensitive), filtering by category (exact match), filtering by price range (min_price, max_price), and sorting by any allowed field with direction (`sort=price&order=desc`). Invalid sort fields should return 400. Verify by seeding products and testing each filter independently and in combination. Test that SQL injection via sort field is prevented, that empty results return 200 with an empty list, and that price range boundaries are inclusive.
+
+### Task 17 - V1 - Keyset Cursor Pagination Search
+Write me a self-contained Elixir context module `Catalog.KeysetSearch` that searches, filters, sorts, and **paginates** a product catalog using **keyset (cursor) pagination** instead of returning the whole result set.
+
+### Task 17 - V2 - Faceted Search With Facet Counts
+Write me a self-contained Elixir context module `Catalog.Faceted` that implements **faceted search** over a product catalog: multi-value (OR) category filters, multi-tag (AND) filters, and — the defining feature — **facet counts** returned alongside the results so a UI can render "drill-down" filters without dead-ends.
+
+### Task 17 - V3 - Relevance Ranked Full Text Search
+Write me a self-contained Elixir context module `Catalog.Ranked` that searches a product catalog by **free-text relevance**: it tokenizes a query, scores each product across weighted fields (name weighted higher than description), and orders results by that relevance score — replacing the base task's simple `ILIKE` substring filter with an actual ranking algorithm.
+
+
+### 18. CRUD with Soft Delete
+Build a full CRUD Phoenix JSON API for a `Document` resource where delete is a soft delete (sets `deleted_at` timestamp). `GET /api/documents` excludes soft-deleted records by default but supports `?include_deleted=true`. `GET /api/documents/:id` returns 404 for soft-deleted records unless `?include_deleted=true`. `DELETE /api/documents/:id` sets `deleted_at`. Add `POST /api/documents/:id/restore` to undo soft delete. Verify that deleted documents are hidden by default, visible with the flag, restorable, and that restoring a non-deleted document is a no-op 200.
+
+### Task 18 - V1 - Trash And Purge Soft Delete With Retention Window
+Build me a self-contained Elixir in-memory context module for a `Document` resource with **trash-and-purge soft delete** governed by a retention window. This is a pure Elixir/OTP task — no Phoenix, no Ecto, no database. State lives in a `GenServer` and time is injectable so retention can be tested deterministically.
+
+### Task 18 - V3 - Optimistic Concurrency Soft Delete With Version Guards
+Build me a self-contained Elixir in-memory context module for a `Document` resource with soft delete guarded by **optimistic concurrency** (version-checked writes). This is a pure Elixir/OTP task — no Phoenix, no Ecto, no database. State lives in a `GenServer`, which serializes writes so lost updates are provably impossible.
+
+
+### 19. Bulk Create Endpoint with Partial Failure Reporting
+Build `POST /api/items/bulk` that accepts a JSON array of items to create. Each item is validated independently. The response reports which items succeeded and which failed with per-item errors. Use `Ecto.Multi` or `Repo.transaction` to make it all-or-nothing, or optionally support a `?partial=true` query param that inserts valid items and reports failures. Verify by sending a mix of valid and invalid items, asserting correct success/failure counts, that the database state matches, and that the response includes position indices so the caller knows which items failed.
+
+### Task 19 - V1 - Dependency Ordered Bulk Create With Cascade Skip
+Write me a self-contained Elixir context module `Catalog` that performs **dependency-ordered bulk creation** of catalog entries into an in-memory store, with per-item, index-aware result reporting.
+
+### Task 19 - V2 - Bulk Upsert With Conflict Resolution Policies
+Write me a self-contained Elixir context module `Inventory` that performs a **bulk upsert** into an in-memory store keyed by a unique `"sku"`, with configurable conflict-resolution policies and per-item, index-aware result reporting.
+
+### Task 19 - V3 - Concurrent Bulk Create With Bounded Concurrency And Timeouts
+Write me a self-contained Elixir context module `ConcurrentCatalog` that performs **concurrent bulk creation** of items into an in-memory store using a bounded concurrency pool, with per-item timeouts and index-aware result reporting that preserves the original input order.
+
+
+### 20. File Upload with Validation
+Build `POST /api/uploads` that accepts a multipart file upload. Validate file type (only `.csv` and `.json` allowed), file size (max 5MB), and content validity (CSV must have a header row, JSON must be valid). Store the file metadata (original name, size, content type, uploaded_at) in the database and the file in a configurable directory. Return the metadata with a download URL. Verify by uploading valid files and asserting metadata is correct, uploading oversized files and getting 413, uploading wrong types and getting 422, and uploading malformed CSV/JSON and getting 422 with descriptive errors.
+
+### Task 20 - V1 - Content Addressable Deduplicating Upload
+Write me an Elixir application composed of a few modules that implements a **content-addressable, deduplicating** file upload endpoint with validation, using only `Plug` (no Phoenix). The main entry point is a `Plug.Router` module called `FileUpload.Router` that exposes `POST /api/uploads`.
+
+### Task 20 - V2 - Per Tenant Quota Enforced Upload
+Write me an Elixir application composed of a few modules that implements a **multi-tenant, quota-enforced** file upload endpoint with validation, using only `Plug` (no Phoenix). The main entry point is a `Plug.Router` module called `FileUpload.Router` that exposes `POST /api/uploads` and `DELETE /api/uploads/:id`.
+
+### Task 20 - V3 - Asynchronous Validation Pipeline Upload
+Write me an Elixir application composed of a few modules that implements an **asynchronous, status-polled** file upload endpoint with validation, using only `Plug` (no Phoenix). The main entry point is a `Plug.Router` module called `FileUpload.Router` that exposes `POST /api/uploads` and `GET /api/uploads/:id`.
+
+
+### 21. Versioned API with Content Negotiation
+Build an API endpoint `GET /api/users/:id` that returns different response shapes depending on the `Accept-Version` header. Version 1 returns `{name, email}`. Version 2 returns `{first_name, last_name, email, created_at}`. No version header defaults to the latest version. An unsupported version returns 406 Not Acceptable. Implement this via a plug that extracts and validates the version. Verify by making requests with each version header and asserting response shapes differ, that the default matches the latest, and that an unknown version returns 406.
+
+### Task 21 - V1 - Media Type Content Negotiation With Quality Values
+Write me an Elixir Plug-based API module called `MediaVersionApi.Router` that serves a `GET /api/users/:id` endpoint, but instead of a custom `Accept-Version` header it performs **proper HTTP content negotiation** on the standard `Accept` header using vendor media types and quality (`q`) values.
+
+### Task 21 - V2 - Url Path Versioning With Downgrade Migration Chain
+Write me an Elixir Plug-based API module called `PathVersionApi.Router` that serves `GET /api/:version/users/:id` where the version lives in the **URL path** (e.g. `/api/v1/users/1`), and where older representations are produced by a **downgrade migration chain** applied to a single canonical latest document rather than by hand-written per-version render functions.
+
+### Task 21 - V3 - Versioned Api With Deprecation Sunset Lifecycle
+Write me an Elixir Plug-based API module called `LifecycleApi.Router` that serves `GET /api/users/:id` with version selection via the `Accept-Version` header, but where each version has a **lifecycle status** that changes the response semantics: active versions serve normally, deprecated versions serve with sunset/deprecation headers, and retired versions are refused with `410 Gone`.
+
+
+### 22. Nested Resource Endpoint with Authorization
+Build endpoints for `GET /api/teams/:team_id/members` and `POST /api/teams/:team_id/members`. A user (identified by a bearer token resolved to a user record via a plug) can only list and add members to teams they belong to. Adding a member who is already on the team returns 409 Conflict. Adding to a non-existent team returns 404. Verify by creating test users and teams, asserting that authorized users get 200/201, unauthorized users get 403, and the edge cases return the correct error codes.
+
+### Task 22 - V1 - Role-Scoped Nested Membership Endpoint
+A nested `/api/teams/:team_id/members` resource where every membership carries a role (`owner`, `admin`, or `member`) and authorization is role-scoped rather than binary. Read access (`GET`) is open to any member, but `POST` (add) and `DELETE` (remove) require an `owner` or `admin` role, and owners are protected — an `admin` may not remove an `owner`, only another `owner` can. The GenServer store tracks role-tagged memberships, exposes `role_of/3` and `remove_member_safe/3`, and the router layers 404 (missing team) → 403 (insufficient role) → 409/404 (conflict/absent target) precedence on top of bearer-token auth, exercising a realistic RBAC-flavored resource hierarchy.
+
+
+### 23. Idempotent POST Endpoint
+Build `POST /api/payments` that accepts an `Idempotency-Key` header. If the same key is sent twice, the second request must return the same response as the first without creating a duplicate record. The idempotency key and its response are stored in the database with a 24-hour TTL. Requests without the header are always processed. Verify by sending the same request twice with the same key and asserting only one database record exists and both responses are identical. Test that different keys create different records, and that expired keys allow reprocessing.
+
+### Task 23 - V1 - In Flight Coalescing Idempotent Payments
+Write me an Elixir GenServer module called `CoalescingPayments` that simulates an idempotent payment processing system with in-memory storage **and in-flight request coalescing**. Unlike a plain idempotent endpoint, the defining property here is the concurrency model: when several callers hit the same idempotency key *while the first one is still being processed*, only ONE payment is processed and all the concurrent waiters receive that single shared result.
+
+### Task 23 - V2 - Fingerprint Conflict Idempotent Payments
+Write me an Elixir GenServer module called `StrictIdempotentPayments` that simulates an idempotent payment processing system with in-memory storage **and request-fingerprint conflict detection**. The key behavioral difference from a naive idempotent endpoint: replaying an idempotency key with a *different request body* is treated as a client error rather than silently returning the original cached response.
+
+### Task 23 - V3 - Lru Bounded Idempotent Payments
+Write me an Elixir GenServer module called `BoundedIdempotentPayments` that simulates an idempotent payment processing system with in-memory storage where the idempotency store is **capacity-bounded with LRU eviction instead of TTL expiry**. Rather than remembering keys for a fixed time window and sweeping expired ones, the store keeps at most a configured number of idempotency keys; when a brand-new key would overflow that budget, the least-recently-used key is evicted first. There is no clock-based expiry and no periodic cleanup.
+
+
+### 24. Webhook Receiver with Signature Verification
+Build `POST /api/webhooks/stripe` that receives webhook payloads, verifies the HMAC-SHA256 signature from the `Stripe-Signature` header against a configured secret, and stores the event in the database with a status of `:pending`. Duplicate event IDs (from the payload) should be ignored (return 200 but don't re-store). Verify by constructing payloads with valid and invalid signatures, asserting valid ones return 200 and are stored, invalid ones return 401, and duplicate event IDs return 200 without creating a second record.
+
+### Task 24 - V1 - Replay-Protected Timestamped Webhook Receiver
+A Plug-based webhook receiver that verifies Stripe-style timestamped signatures of the form `t=<unix>,v1=<hex>`, where the HMAC-SHA256 is computed over the concatenation `"<timestamp>.<payload>"` rather than the raw body alone. Beyond signature validity, the router enforces a configurable tolerance window (default 300s) against an injectable clock (`:now` integer or 0-arity function), rejecting deliveries whose timestamp drifts too far with a distinct `timestamp_expired` error while still returning `invalid_signature` for genuine mismatches — adding replay-attack semantics on top of the base's plain-HMAC verification. It retains the pending-status idempotent store, duplicate detection, and bad-payload handling of the base task.
+
+### Task 24 - V2 - Multi-Provider Webhook Receiver with Key Rotation
+A Plug-based webhook receiver that serves many providers from a single `POST /api/webhooks/:provider` route, each provider carrying its own configuration: signature header name, an optional signature prefix (e.g. GitHub's `sha256=`), and a *list* of accepted secrets. Verification succeeds if the payload's HMAC-SHA256 matches ANY secret in the list, modelling zero-downtime secret rotation where a newly-issued key and a being-retired key are both honoured. The event store is namespaced by `{provider, id}` so identical ids from different providers never collide, and unknown providers are rejected with a distinct `unknown_provider` 404 — shifting the base task along the data-structure/configuration axis into a routed, multi-tenant design.
+
+### Task 24 - V3 - Ordered-Stream Webhook Receiver with Gap Buffering
+A Plug-based webhook receiver where every payload carries a `stream_id` and a monotonic `sequence`, and events must be applied strictly in order within each stream. After HMAC-SHA256 verification, the store compares the incoming sequence to the stream's last delivered value: an exactly-next event is delivered (`received`, 200) and then triggers a drain of any consecutive buffered successors; an already-seen or already-buffered sequence is a `duplicate` (200); and a future event is held back with `buffered` (202) until the gap ahead of it is filled. This replaces the base task's simple id-keyed idempotency with per-stream ordering semantics, out-of-order buffering, gapless draining, and independent stream cursors — a shift along the delivery-guarantee/failure-semantics axis.
+
+
+### 25. Long-Polling Endpoint
+Build `GET /api/notifications/poll` that holds the connection open for up to 30 seconds waiting for new notifications for the authenticated user. If a notification arrives within the timeout, return it immediately. If the timeout expires with no new notifications, return 204 No Content. Notifications are published via `Notifications.publish(user_id, payload)` which uses a PubSub mechanism. Verify by starting a poll request in a test Task, publishing a notification after 100ms, and asserting the poll returns the notification. Also test the timeout case by not publishing and asserting 204 is returned after the timeout.
+
+### Task 25 - V2 - Coalescing Batch Long Poll With Linger Window
+Write me a set of Elixir modules that implement a **coalescing (batching) long-polling notifications endpoint**. Unlike a plain long-poll that returns the single first notification, this one waits for the first notification and then keeps the connection open for a short "linger" window to gather any additional notifications that arrive in that burst, returning them all in one batched response. I need three pieces:
+
+### Task 25 - V3 - Multi Channel Fan In Long Poll
+Write me a set of Elixir modules that implement a **multi-channel fan-in long-polling notifications endpoint**. Instead of one stream per user, each client subscribes to several named channels at once and the long-poll returns the first notification that arrives on **any** of them, tagged with which channel it came from. I need three pieces:
+
+### Task 25 - V1 - Cursor-Resumable Gap-Free Long Poll
+A long-polling notifications endpoint that eliminates the missed-message window of the naive version by assigning every event a strictly increasing per-user sequence number and retaining recent events in a bounded per-user replay buffer. The `Notifications` module is reimplemented as a sequencing `GenServer` (rather than a `Registry`) exposing `publish/3` (returns `{:ok, seq}`), `subscribe/2` (delivers `{:notification, seq, payload}` and monitors subscribers so dead ones are pruned), and `events_since/3` (returns buffered `{seq, payload}` tuples strictly newer than a cursor, oldest first). The `GET /api/notifications/poll` Plug reads a `since` cursor query parameter, subscribes *before* consulting the buffer to close the race, immediately replays any buffered events newer than the cursor as a `{"cursor": max_seq, "events": [...]}` JSON body (with an `x-notification-cursor` header), and otherwise blocks on a `receive` for a live event; on timeout it returns 204 while echoing the request cursor so the client resumes exactly where it left off. This exercises monotonic sequencing, bounded history/eviction, and at-least-once resumable delivery semantics — a distinct failure-semantics axis from the coalescing-batch and multi-channel fan-in variants.
 
 
 ## Data Processing / ETL Tasks
@@ -279,27 +417,103 @@ Build a module that takes two lists of records (e.g., from two systems) and reco
 ### 35. Time Series Resampler
 Build a module that takes a list of `{timestamp, value}` tuples at irregular intervals and resamples them into fixed-interval buckets (e.g., every 5 minutes). Support aggregation modes: `:last`, `:first`, `:mean`, `:sum`, `:count`, `:max`, `:min`. Handle gaps (buckets with no data) by either filling with nil or carrying the last known value forward (`fill: :nil` or `fill: :forward`). Verify by providing a known irregular time series, resampling at a fixed interval, and asserting each bucket's aggregated value matches hand-computed results. Test the gap-filling modes.
 
+### Task 35 - V1 - Multi-Series Aligned Resampler
+A variation of the Time Series Resampler that aligns *several* named `{timestamp, value}` series onto one shared fixed-interval grid. Instead of returning `{bucket_start, value}` tuples, `MultiSeriesResampler.resample/3` takes a `%{name => points}` map and returns `{bucket_start, %{name => aggregated_value}}` rows whose grid spans the earliest-to-latest timestamp across *all* series, so every row contains every series name. Aggregation (`:last`, `:first`, `:mean`, `:sum`, `:count`, `:max`, `:min`) and gap-filling (`:nil` or per-series `:forward`) are computed independently per series, with leading gaps and present-but-empty series handled correctly. The distinct axis is the data structure and cross-series alignment/join, exercising joint grid computation and per-series carry-forward state rather than single-stream bucketing.
+
+### Task 35 - V2 - Streaming Watermark Resampler
+A concurrency/failure-semantics variation of the Time Series Resampler implemented as a `GenServer` that resamples an *online* point stream instead of a finished list. Points are `push/3`-ed one at a time; an event-time watermark (the max timestamp seen) drives contiguous finalization of buckets once `watermark >= bucket_end + allowed_lateness`, emitting empty buckets under `:nil`/`:forward` fill just like the batch version. The distinct axis is stateful stream processing with late-data handling: an `:allowed_lateness` window keeps recently-closed buckets open for out-of-order arrivals, while points landing in already-emitted buckets become tracked late drops surfaced via `stats/1`, and `flush/1` force-closes the tail. It exercises GenServer lifecycle, incremental aggregation state, watermark bookkeeping, and drop accounting rather than one-shot bucketing.
+
+### Task 35 - V3 - Counter Rate Resampler
+A numeric-semantics variation of the Time Series Resampler for *cumulative* monotonic counters (Prometheus-style totals) rather than instantaneous gauge values. `CounterResampler.resample/3` derives each bucket's value from the *change* between consecutive samples: increments are computed pairwise, attributed to the bucket of the later sample, and summed, then emitted either as a per-interval `:delta` or a per-second `:rate` (increase divided by `interval_ms/1000`). The distinctive axis is counter-reset handling and rate computation — under `reset: :detect` a decrease between samples is read as a counter reset (the increment becomes the post-reset value, mirroring `rate()`/`increase()`), while `reset: :raw` permits negative deltas; empty buckets fill with `:zero` (`0`/`0.0`) or `:nil`, and the first sample contributes no measured increase. It exercises differencing, reset detection, and rate projection instead of the base's direct value aggregation.
+
 
 ### 36. Markdown-to-Structured-Data Parser
 Build a module that parses a Markdown document and extracts structured data from it. Specifically, parse a document where H2 headings are category names and bullet lists underneath are items with a specific format like `- **Item Name**: description (tag1, tag2)`. Return a list of `%{category: ..., items: [%{name: ..., description: ..., tags: [...]}]}`. Verify by providing Markdown documents with known structures and asserting the parsed output matches. Test edge cases: empty categories, items without tags, nested lists (should be ignored or flattened), and headings with no items.
+
+### Task 36 - V1 - Hierarchical Heading Outline Parser
+Reworks the Markdown-to-structured-data parser along the data-structure axis: instead of a flat list of H2 categories, it builds a nested outline **tree** from ATX heading depth (`#`..`######`). Each node carries a `title`, its numeric `level`, its bullet `items`, and a list of `children`; nesting is relative, so a `#` followed directly by a `###` makes the deeper heading a child of the shallower one without requiring the intermediate level. Same-or-shallower headings close the current branch and open a sibling. Bullet items (`- **Name**: description (tags)`) attach to the deepest open node, items before the first heading are discarded, headings with seven-plus `#` are ignored, and empty input yields `[]`. The reference solution uses an explicit stack of open nodes with a close-until-level fold to assemble the tree in document order.
+
+### Task 36 - V2 - Error-Reporting Markdown Parser with Line Diagnostics
+Reworks the Markdown parser along the failure-semantics axis: instead of silently discarding anything it cannot interpret, it returns `%{categories: [...], errors: [...]}` where each error carries a 1-indexed line number, the offending line content, and a reason atom. The parser distinguishes `:unsupported_heading` (H1/H3+ headings — reported but they neither open nor close a category), `:malformed_item` (a column-zero `- ` bullet that fails the `- **Name**: description` shape, while space-indented bullets stay silently ignored), `:orphan_item` (a well-formed item appearing before any `##` heading), and `:duplicate_category` (a repeated `##` title, which flushes the prior section and then suppresses the duplicate's items without further orphan noise). Categories and items preserve document order, tags are trimmed, errors are emitted in ascending line order, and empty input yields `%{categories: [], errors: []}`. The reference solution folds `Enum.with_index/2`-numbered lines through a small state machine tracking the open category, a suppressed marker, seen titles, and accumulated diagnostics.
+
+### Task 36 - V3 - GFM Table Parser to Row Maps
+Reworks the Markdown parser along the data-format axis: instead of heading-and-bullet sections, it targets GitHub-Flavored-Markdown tables and returns each as `%{headers: [...], alignments: [...], rows: [%{header => value}]}`. A table is recognized only when a pipe-delimited header row is immediately followed by a separator row whose cells all match `:?-+:?` and whose count equals the header width; otherwise scanning skips the line and continues, so stray pipe lines and prose are ignored. The parser makes leading/trailing pipes optional, treats `\|` as a literal escaped pipe that does not split a cell, trims each cell, derives per-column alignment (`:left`/`:right`/`:center`/`:none`) from the separator, and normalizes ragged rows by padding missing columns with `""` and dropping extra cells. Multiple tables are returned in document order, and empty or table-free input yields `[]`. The reference solution recursively scans the line list for header+separator pairs and consumes the trailing run of pipe rows per table.
 
 
 ### 37. Data Anonymizer
 Build a module that takes a list of maps (representing records) and anonymizes specified fields according to rules: `:hash` (SHA256 the value), `:mask` (keep first and last character, replace middle with asterisks), `:redact` (replace with "[REDACTED]"), `:fake` (generate a deterministic fake value from a seed). Preserve referential integrity: the same input value with the same seed must always produce the same anonymized output. Verify by anonymizing test records and asserting each field is transformed correctly, that referential integrity holds (same email anonymizes to the same hash across records), and that the original value cannot be trivially recovered from masked output.
 
+### Task 37 - V1 - Path-Addressed Nested Record Anonymizer
+A pure-functional anonymizer that targets fields inside deeply nested record maps by string path instead of flat top-level keys, supporting dot-notation descent (`"user.email"`) and list-element descent (`"orders[].card"`, `"tags[]"`). It reuses the four core rules (`:hash`, `:mask`, `:redact`, `{:fake, seed}`), handles both atom- and string-keyed maps, and gracefully skips paths that fail to resolve (missing keys or type mismatches) while preserving global referential integrity so identical original values anywhere in the structure map to identical anonymized outputs. This differs from the base along the data-structure axis: the challenge shifts from flat field mapping to compiling and safely walking arbitrary nested/collection paths.
+
+### Task 37 - V2 - Reversible Tokenization Vault Anonymizer
+A pseudonymization module that swaps the base's one-way transforms for a fully reversible tokenization scheme: `tokenize/2` replaces each unique field value with a stable, namespaced opaque token (`"TOK_<FIELD>_<n>"`) and returns an accompanying vault, while `detokenize/2` uses that vault to reconstruct the originals losslessly, leaving any non-token value untouched. Referential integrity is preserved (identical values share a token; distinct fields occupy distinct token namespaces), and the guaranteed round-trip property makes this a distinct problem along the failure/reversibility-semantics axis — the hard part is maintaining a bidirectional mapping and a first-seen counter rather than computing an irreversible digest.
+
+### Task 37 - V3 - Stateful Concurrent Consistent Pseudonymizer
+A GenServer-backed anonymizer that processes record streams concurrently with `Task.async_stream` while serializing pseudonym assignment through server state, so identical values receive stable sequential pseudonyms (`"<prefix>_<n>"`) that stay consistent across every batch and never collide under parallel load. Alongside pseudonymization it supports `:hash` and `:redact`, preserves input order, and exposes the accumulated `original -> pseudonym` mapping for inspection. This differs from the base along the concurrency/statefulness axis: instead of a pure per-call function, referential integrity must be maintained by a long-lived process that guarantees race-free, cross-batch stable mappings even while records are transformed in parallel.
+
 
 ### 38. Tree Structure Builder from Flat List
 Build a module that takes a flat list of items with `id` and `parent_id` fields and builds a nested tree structure. Handle multiple roots (parent_id is nil), detect cycles (return error), and handle orphans (parent_id points to a non-existent record — configurable to either discard or attach to root). Return the tree as nested maps with a `children` key. Verify by providing flat lists with known hierarchies and asserting the tree structure matches, testing the cycle detection, orphan handling modes, and multiple root nodes.
 
+### Task 38 - V1 - Materialized-Path Tree Annotator
+A variation of the flat-list tree builder that changes the output data structure from a nested forest to a flat, pre-order-ordered list of "materialized path" nodes. Instead of nesting children inside parents, `TreePaths.build/2` walks the hierarchy depth-first and annotates every node with a `:depth` integer (0 for roots) and a `:path` — the list of ancestor ids from the root down to and including the node — while preserving original fields and input ordering for roots and siblings. It keeps the base task's cycle detection and `:orphan_strategy` (`:discard` / `:raise_to_root`) semantics, and adds a `subtree/2` helper that extracts any node together with all of its descendants by filtering on the materialized path. This exercises pre-order traversal, path accumulation, and slice-based subtree queries rather than recursive nesting.
+
+### Task 38 - V2 - Incremental Streaming Tree Builder
+A concurrency-model variation of the flat-list tree builder implemented as a stateful GenServer. Instead of a single pure `build/1` over a complete list, `TreeStream` accumulates nodes over time via `add/2` and `add_many/2` (rejecting duplicate ids) and computes the nested forest on demand with `forest/1`, so nodes may arrive in any order — a child or grandchild can be added before its parent and still be nested correctly once the ancestor appears, while root and sibling ordering follow insertion order. The process exposes `count/1` and `stop/1`, applies the `:orphan_strategy` (`:discard` / `:raise_to_root`) at query time, and retains full direct/indirect cycle detection over whatever node set is currently held. This shifts the exercise toward OTP process lifecycle, mutable-but-encapsulated state, and order-independent tree assembly.
+
+### Task 38 - V3 - Diagnostic Tree Validator with Best-Effort Repair
+A failure-semantics variation of the flat-list tree builder that replaces fail-fast behavior with collect-all diagnostics plus best-effort repair. Instead of returning on the first cycle, `TreeValidator.build/1` scans the whole input and gathers every structural problem — duplicate ids (keeping the first occurrence), nodes missing a `:parent_id` key (treated as roots), orphans whose parent is absent (raised to roots), and one entry per distinct cycle (whose nodes are removed, potentially demoting their non-cyclic children to orphans) — then always returns a usable forest built from the healthy remainder. It returns `{:ok, forest}` for clean input or `{:issues, forest, issues}` otherwise, with issues emitted in a deterministic order (duplicates, missing-parent, orphans, cycles). This shifts the exercise toward exhaustive validation, deterministic diagnostic reporting, and graceful degradation over partially corrupt data.
+
 
 ### 39. Diff Generator for Record Lists
 Build a module that compares two versions of a record list (old and new) keyed by ID and produces a diff: `added` (in new, not in old), `removed` (in old, not in new), and `changed` (in both but with field differences, listing which fields changed from what to what). Verify by providing old and new lists with known additions, removals, and modifications, and asserting the diff output is correct. Test with identical lists (empty diff), completely disjoint lists, and lists with only field-level changes.
+
+### Task 39 - V1 - Nested Path-Addressed Record Diff
+A depth-aware variant of the record-list diff generator: records may contain nested maps to arbitrary depth, and the diff must descend into any field that is a map on both sides, reporting each changed leaf by a dotted path string (e.g. `"address.city"`, `"a.b.c"`) instead of a flat field name. Added and removed records are still returned whole, and the `:changed` set maps every record's id to a `%{path => {old, new}}` sub-map. The recursion rules force careful handling of the boundaries — a map replaced by a scalar reports the whole value at that field's path rather than recursing, and leaves that appear on only one side use `:missing` as the absent-side placeholder — making this a distinct structural problem from the shallow base task.
+
+### Task 39 - V2 - Ordered Record Diff with Move Detection
+An order-sensitive variant of the record-list diff generator: the two lists are treated as ordered sequences rather than sets, so the diff gains a fourth category, `:moved`, alongside added/removed/changed. Move detection is done properly — the ids common to both lists are extracted in old order and new order, a Longest Common Subsequence identifies the stable anchors, and every common id outside the LCS is reported as `%{id => id, from: old_index, to: new_index}` with absolute positions. A record can be simultaneously moved and changed, and removals of interior records must not spuriously flag the survivors as moved. The LCS/DP core and the ambiguity tie-break rule make this a meaningfully different algorithmic problem from the set-based base task.
+
+### Task 39 - V3 - Three-Way Record Merge with Conflict Detection
+A failure-semantics variant of the record-list diff generator: instead of diffing two versions, it performs a diff3-style three-way merge of a common ancestor plus two independently edited record lists, returning both the auto-merged result and a structured list of conflicts. Resolution operates at two levels — record existence (add/add, delete/modify, and clean one-sided add or delete) and, for records present in all three versions, a per-field three-way rule (take the side that changed, keep agreement, otherwise flag the field). Conflicts are surfaced as typed descriptors (`:add_add`, `:delete_modify`, `:modify_modify`) while conflict-free records fall through to a clean merge, making convergence and conflict classification — not set membership — the core of the problem.
 
 
 ### 40. Configuration Merger with Override Rules
 Build a module that deep-merges configuration maps with a specific override strategy: later sources override earlier ones, lists can be configured to either replace or append, and certain keys can be marked as "locked" (not overridable). The interface is `ConfigMerger.merge(base_config, override_config, opts)`. Verify by merging configs with known overlapping keys, asserting the correct values survive, that list merge strategies work, and that locked keys are not overridden. Test deeply nested configs (3+ levels).
 
 ---
+
+### Task 40 - V1 - Provenance-Tracking Layered Config Merger
+Merge an ordered stack of named configuration layers (base → files → environment, in
+increasing precedence) into a single effective configuration while recording the
+provenance of every value — a map from leaf key-path to the layer that supplied the
+winning value. It keeps the base task's deep-merge, per-key/global list strategies
+(`:replace`/`:append`, where appended leaves accumulate a list of contributing layer
+names), and locked-key semantics (earliest value and its provenance preserved), but
+shifts the axis from a two-map merge to an N-source fold with an auditable trail of
+where each effective value originated.
+
+### Task 40 - V2 - Stateful Layered Config Store GenServer
+Reframe the configuration merger as a long-lived GenServer that owns a base config
+plus a dynamic, ordered set of named override layers, recomputing the deep-merged
+effective view on demand. It supports `put_layer`/`drop_layer` mutations (re-putting a
+name updates a layer in place without changing its precedence position), `layers`
+introspection, `get_config` for the full merge, and `get/2` for key-path lookups,
+while preserving the base task's deep-merge, per-key/global list strategies, and
+locked-path rules. The axis moves from a pure two-map function to a concurrent,
+stateful process whose merge inputs evolve over its lifetime.
+
+### Task 40 - V3 - Conflict-Detecting Strict Config Merger
+Turn the silent "override always wins" merger into one with explicit failure
+semantics: `merge/3` returns `{:ok, merged}` or `{:error, conflicts}` (a list sorted
+by key-path). A `:strict` flag makes cross-type overrides (integer-vs-string,
+map-vs-scalar, list-vs-scalar) into `:type_mismatch` conflicts instead of coercions;
+`:locked` paths raise `:locked_violation` when an override tries to change them; and a
+`:required` list yields `:missing_required` conflicts for absent paths — while keeping
+deep-merge and `:replace`/`:append` list strategies. The axis shifts from
+best-effort merging to validation-style conflict reporting where the merge can refuse
+to produce a result.
 
 
 ## ETS / In-Memory Storage Tasks

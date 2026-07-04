@@ -81,7 +81,14 @@ defmodule GenTask.Base do
         _ = Cycle.promote(cfg, idea.task_id, result.files)
         base_outcome(idea, :accepted, result, stats, seed(idea, result.files))
       else
-        base_outcome(idea, :rejected, result, stats, nil, Cycle.reason_for(result.grade))
+        base_outcome(
+          idea,
+          :rejected,
+          result,
+          stats,
+          nil,
+          result.reason || Cycle.reason_for(result.grade)
+        )
       end
     else
       {:error, reason} ->

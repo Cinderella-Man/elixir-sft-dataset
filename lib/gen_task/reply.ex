@@ -125,6 +125,25 @@ defmodule GenTask.Reply do
     end)
   end
 
+  @doc """
+  Per-slot variation validation for salvage: returns `{valid_ns, errors}` where
+  `valid_ns` are the reply indices (1..count) whose `vN/` group passes the full
+  contract, and `errors` describe the rest. One malformed group used to discard the
+  whole (large, expensive) reply — the valid groups are worth keeping.
+  """
+  @spec valid_variation_slots(files(), pos_integer()) :: {[pos_integer()], [String.t()]}
+  def valid_variation_slots(files, count \\ 3) do
+    {valid, errors} =
+      Enum.reduce(1..count, {[], []}, fn n, {ok, errs} ->
+        case validate_variation_dir(files, "v#{n}/") do
+          :ok -> {[n | ok], errs}
+          {:error, msg} -> {ok, ["v#{n}: #{msg}" | errs]}
+        end
+      end)
+
+    {Enum.reverse(valid), Enum.reverse(errors)}
+  end
+
   defp validate_variation_dir(files, prefix) do
     with :ok <- require_nonempty(files, prefix <> "prompt.md"),
          :ok <- require_nonempty(files, prefix <> "test_harness.exs"),

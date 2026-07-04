@@ -286,7 +286,7 @@ defmodule FileUploadTest do
   import Plug.Test
   import Plug.Conn
 
-  @upload_dir Path.join(System.tmp_dir!(), "file_upload_async_test_#{:rand.uniform(100_000)}")
+  @upload_dir Path.join(System.tmp_dir!(), "file_upload_async_test_#{System.pid()}_#{System.unique_integer([:positive])}")
 
   setup_all do
     File.mkdir_p!(@upload_dir)
@@ -309,7 +309,7 @@ defmodule FileUploadTest do
   end
 
   defp post_upload(opts, filename, content, content_type \\ nil) do
-    tmp_path = Path.join(System.tmp_dir!(), "upl_#{:rand.uniform(1_000_000)}_#{filename}")
+    tmp_path = Path.join(System.tmp_dir!(), "upl_#{System.pid()}_#{System.unique_integer([:positive])}_#{filename}")
     File.write!(tmp_path, content)
 
     ct =

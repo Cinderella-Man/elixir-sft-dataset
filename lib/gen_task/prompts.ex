@@ -53,6 +53,8 @@ defmodule GenTask.Prompts do
     listing = Enum.map_join(files, "\n", fn {path, desc} -> "  - #{path} — #{desc}" end)
 
     """
+    You have NO tools available in this session — do not attempt to read, write,
+    edit, or run anything; reply directly with the file contents in your message.
     Return your answer as one or more file blocks and NOTHING ELSE — no prose, no
     markdown fences around the blocks. Each file must be exactly:
 
@@ -185,13 +187,23 @@ defmodule GenTask.Prompts do
     === BASE test_harness.exs ===
     #{base["test_harness.exs"]}
 
-    === EXISTING CATALOG (do NOT repeat any of these ideas) ===
-    #{tasks_md}
+    === EXISTING CATALOG TITLES (do NOT repeat any of these ideas) ===
+    #{catalog_titles(tasks_md)}
 
     #{output_contract(variation_files(count))}
     """
 
     {@author_persona, user}
+  end
+
+  # Heading lines only: enough signal for the no-repeat constraint, without the prompt
+  # growing linearly with the full catalog text (descriptions are ~10× the titles and
+  # were inlined into EVERY variations call — docs/07 §6.2).
+  defp catalog_titles(tasks_md) do
+    tasks_md
+    |> String.split("\n")
+    |> Enum.filter(&String.starts_with?(&1, ["## ", "### "]))
+    |> Enum.join("\n")
   end
 
   defp variation_files(count) do

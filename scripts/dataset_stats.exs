@@ -74,7 +74,16 @@ defmodule DatasetStats do
       moduledoc?: String.contains?(sol, "@moduledoc"),
       spec?: Regex.match?(~r/@spec\s/, sol),
       doc?: Regex.match?(~r/@doc\s/, sol),
-      ex_tokens: measure(prompt, cpt).tokens + measure(sol, cpt).tokens
+      # The SFT pair is prompt -> COMPLETION, and the completion differs by shape:
+      # for wtest the completion is the harness (solution.ex is the module already
+      # embedded in the prompt) — sizing it as prompt+solution both double-counts the
+      # module and omits the real completion (docs/07 §6.1 #7).
+      ex_tokens:
+        measure(prompt, cpt).tokens +
+          if(t.shape == :write_test,
+            do: measure(harness, cpt).tokens,
+            else: measure(sol, cpt).tokens
+          )
     }
   end
 

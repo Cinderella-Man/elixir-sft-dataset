@@ -43,6 +43,38 @@ The production versions of this logic belong inside `scripts/eval_task.exs` +
 NOTE: `eval_task_v2.exs` reproduces the current (buggy) analysis-scoring for backward-compat; the
 production fix (award by pass/fail, drop Credo) is task T-SCORE-FIX (docs/02 §G, docs/03 §3.1).
 
+## Dataset-multiplication prototypes (docs/07, verified 2026-07-03)
+
+Feasibility proofs for the roadmap in `docs/07-dataset-audit-and-growth-roadmap.md` §11.
+All run from the repo root with `mix run docs/prototypes/<name>.exs`.
+
+- `proto_mutant_repair.exs` — §4.3 mutant-repair minting: mutates one public function of
+  002_001 via `GenTask.Mutation.mutate_fn`, grades the mutant (14/15 fail, failures
+  captured), assembles a repair `prompt.md`, and re-grades the gold (15/15, 1.0).
+  **VIABLE**; caveat: raise-mutant failure messages are uniform ("MUTATION") — production
+  wants subtler operators for realistic repair prompts.
+- `proto_dedoc.exs` — §4.4 de-documentation pairs: heredoc-aware strip of
+  `@moduledoc`/`@doc`/`@spec`, verified green on 3 tasks with overall dropping
+  1.0 → 0.85–0.87 (the docs are the training delta). **VIABLE**, self-filtering via grading.
+- `proto_det_sfim.exs` — §4.6 deterministic code-FIM: carves multi-clause `handle_call/3`
+  from 002_001 without any LLM, builds a FIM dir, and the real evaluator reconstructs +
+  passes 15/15. **VIABLE**; production must blank all clauses into a single stub (this
+  prototype leaves one stub per clause, which the splice leaves dangling).
+- `proto_tfim_yield.exs` — §4.1 yield measurement with the production carver
+  (`GenTask.TestFim.test_blocks/1`): 3,003 carvable blocks over 204 harnesses (median 14),
+  cap-3 predicts 582 vs 579 actual; cap 10 → 1,897; cap 15 → 2,514 (upper bounds before
+  the isolation-kill gate).
+- `proto_vacuous_green.exs` — demonstrates docs/07 §6.1 #1: an all-`@tag :skip` harness
+  with FALSE assertions grades `passed=2, overall=1.0` and `GenTask.Evaluator.green?/1`
+  returns true — skipped tests are counted as *passed* (`runner.ex` never subtracts
+  ExUnit's `skipped` count). **FIXED 2026-07-03 (docs/08)** — re-running it now prints
+  `passed=0, overall=0.3, green?=false / not reproduced`.
+- `proto_attempt_capture.exs` — end-to-end demo of attempt capture (docs/08 §4): drives
+  `GenTask.Cycle.run` through a green ACCEPT (quality + per-fn mutation gates) and a
+  raise-mutant REJECT with `logs_dir` in a tmp dir, then prints the captured
+  `logs/attempts/<id>/attempt_NN/{files/,grade.json,meta.json}` tree and verifies
+  reset-on-rerun semantics.
+
 ## SUPERSEDED — production implementation lives in lib/eval_task/
 
 As of branch `multifile-fim-eval`, the plan is **implemented**: the evaluator is now in

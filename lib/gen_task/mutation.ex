@@ -167,12 +167,21 @@ defmodule GenTask.Mutation do
     Evaluator.stage!(mutant_dir, mutant_files)
     grade = Evaluator.grade(mutant_dir, cfg)
 
-    if Evaluator.green?(grade) do
-      Logger.debug("base mutation gate (whole-module): survived")
-      {:survived, "the tests still pass after every function body is replaced by `raise`"}
-    else
-      Logger.debug("base mutation gate (whole-module): killed")
-      :killed
+    case fate(grade) do
+      :killed ->
+        Logger.debug("base mutation gate (whole-module): killed")
+        :killed
+
+      :survived ->
+        Logger.debug("base mutation gate (whole-module): survived")
+        {:survived, "the tests still pass after every function body is replaced by `raise`"}
+
+      :inconclusive ->
+        Logger.debug("base mutation gate (whole-module): inconclusive")
+
+        {:survived,
+         "the whole-module raise-mutant graded inconclusively (mutant compile failure, " <>
+           "harness load error, or eval timeout) — coverage cannot be verified"}
     end
   end
 
@@ -182,15 +191,25 @@ defmodule GenTask.Mutation do
       Evaluator.stage!(mutant_dir, mutant_files)
       grade = Evaluator.grade(mutant_dir, cfg)
 
-      if Evaluator.green?(grade) do
-        Logger.debug("base mutation gate (per-fn): #{name}/#{arity} survived")
+      case fate(grade) do
+        :killed ->
+          {:cont, :killed}
 
-        {:halt,
-         {:survived,
-          "the raise-mutant of `#{name}/#{arity}` still passes the tests — that public " <>
-            "function is not exercised by test_harness.exs"}}
-      else
-        {:cont, :killed}
+        :survived ->
+          Logger.debug("base mutation gate (per-fn): #{name}/#{arity} survived")
+
+          {:halt,
+           {:survived,
+            "the raise-mutant of `#{name}/#{arity}` still passes the tests — that public " <>
+              "function is not exercised by test_harness.exs"}}
+
+        :inconclusive ->
+          Logger.debug("base mutation gate (per-fn): #{name}/#{arity} inconclusive")
+
+          {:halt,
+           {:survived,
+            "the raise-mutant of `#{name}/#{arity}` graded inconclusively (mutant compile " <>
+              "failure, harness load error, or eval timeout) — coverage cannot be verified"}}
       end
     end)
   end
@@ -211,12 +230,21 @@ defmodule GenTask.Mutation do
     File.write!(mutant_path, EvalTask.Fim.mutate(candidate_src))
     grade = Evaluator.grade(fim_dir, cfg, mutant_path)
 
-    if Evaluator.green?(grade) do
-      Logger.debug("fim mutation gate: survived")
-      {:survived, "the parent harness still passes with the candidate function gutted"}
-    else
-      Logger.debug("fim mutation gate: killed")
-      :killed
+    case fate(grade) do
+      :killed ->
+        Logger.debug("fim mutation gate: killed")
+        :killed
+
+      :survived ->
+        Logger.debug("fim mutation gate: survived")
+        {:survived, "the parent harness still passes with the candidate function gutted"}
+
+      :inconclusive ->
+        Logger.debug("fim mutation gate: inconclusive")
+
+        {:survived,
+         "the gutted-candidate mutant graded inconclusively (mutant compile failure, " <>
+           "harness load error, or eval timeout) — coverage cannot be verified"}
     end
   end
 
@@ -252,9 +280,12 @@ defmodule GenTask.Mutation do
             "test_harness.exs" => isolated_harness
           })
 
-          if Evaluator.green?(Evaluator.grade(iso_dir, cfg)),
-            do: {:cont, false},
-            else: {:halt, true}
+          # A kill needs positive evidence (the block RAN and failed); an
+          # inconclusive grade (mutant compile failure / timeout) proves nothing,
+          # so keep scanning the remaining functions.
+          if Evaluator.killed_by_tests?(Evaluator.grade(iso_dir, cfg)),
+            do: {:halt, true},
+            else: {:cont, false}
         end)
 
       if killed? do
@@ -264,6 +295,20 @@ defmodule GenTask.Mutation do
          "the isolated test block kills no raise-mutant of the module — it asserts nothing " <>
            "about behavior"}
       end
+    end
+  end
+
+  # A mutant's fate needs POSITIVE evidence in both directions (docs/05 #18):
+  # :killed only when the harness ran and failed (`killed_by_tests?`), :survived
+  # only when it ran and passed (`green?`). Everything else — the mutant failing
+  # to compile, the harness failing to load against it, or the eval timing out —
+  # is :inconclusive: the harness never observed the mutated behavior, so it must
+  # not count as coverage.
+  defp fate(grade) do
+    cond do
+      Evaluator.killed_by_tests?(grade) -> :killed
+      Evaluator.green?(grade) -> :survived
+      true -> :inconclusive
     end
   end
 

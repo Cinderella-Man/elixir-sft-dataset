@@ -3,12 +3,16 @@ defmodule GenTask.CLI do
   Entry point for `scripts/generate.exs` (see `docs/04-task-generation-loop.md` §4, §16).
 
   `main/1` resolves the run config, captures an in-memory catalog snapshot, and drives
-  the two sequential work-lists:
+  the two sequential work-lists — **catch-up first, then new ground**:
 
-    1. **new bases** — each todo idea is generated, and only if accepted are its
-       variations and FIM subtasks chained from it;
-    2. **backfill** — existing accepted `_01`s that lack variations and/or FIM get just
-       the missing derivatives.
+    1. **backfill** — existing accepted `_01`s that lack any registered work
+       (`GenTask.Work`) get exactly the missing derivatives;
+    2. **new bases** — each todo idea is generated, and only if accepted are its
+       variations and FIM subtasks chained from it.
+
+  Both lists are recomputed from disk on every run and every step is idempotent, so
+  the plain `mix run scripts/generate.exs` invocation repeatedly converges: it first
+  brings the existing record up to date, then progresses to new ideas.
 
   Each item is wrapped in a rescue so one failure never kills the loop. Terminal
   progress is printed with `IO.puts` (`run_all.exs` style); full prompts/responses go
@@ -18,7 +22,7 @@ defmodule GenTask.CLI do
 
   require Logger
 
-  alias GenTask.{Base, Catalog, Config, CycleLog, Fim, Mutation, TestFim, Variations, WriteTest}
+  alias GenTask.{Base, Catalog, Config, CycleLog, Fim, Mutation, Variations, Work}
 
   @doc "Run the generation loop from `argv` + the process environment."
   @spec main([String.t()]) :: :ok
@@ -32,8 +36,11 @@ defmodule GenTask.CLI do
     print_header(cfg, plan)
     maybe_reconcile(cfg)
 
-    run_bases(plan.bases, cfg)
+    # Catch up the existing record before breaking new ground: backfill first, so a
+    # freshly raised cap / new work type is applied corpus-wide before LLM budget is
+    # spent on new base ideas.
     run_backfill(plan.backfill, names, cfg)
+    run_bases(plan.bases, cfg)
 
     IO.puts("\nDone.")
     :ok
@@ -58,19 +65,23 @@ defmodule GenTask.CLI do
     %{ideas: ideas, bases: bases, backfill: backfill}
   end
 
-  # Opt-in (`GEN_RECONCILE=1`): heal any variation directory whose `tasks.md` entry is
-  # missing (e.g. crash-orphaned). Off by default so a normal run never rewrites the
-  # hand-curated catalog with machine-derived entries. Done-detection is dir-based, so
-  # the loop is correct with or without this.
+  # Default-ON (opt out with `GEN_RECONCILE=0`): heal any variation directory whose
+  # `tasks.md` entry is missing (crash-orphaned, or discarded by the pre-fix Finding E
+  # gap). Insert-only and idempotent, so a normal run keeps the catalog consistent
+  # automatically; skipped in dry-run. Done-detection is dir-based, so the loop is
+  # correct with or without this.
   defp maybe_reconcile(%Config{reconcile: false}), do: :ok
+  defp maybe_reconcile(%Config{dry_run: true}), do: :ok
 
   defp maybe_reconcile(%Config{} = cfg) do
-    n = Catalog.reconcile_variations!(cfg)
-    IO.puts("Reconcile: inserted #{n} missing variation catalog entr#{if n == 1, do: "y", else: "ies"}.")
+    case Catalog.reconcile_variations!(cfg) do
+      0 -> :ok
+      n -> IO.puts("Reconcile: inserted #{n} missing variation catalog entr#{if n == 1, do: "y", else: "ies"}.")
+    end
   end
 
   # ------------------------------------------------------------------
-  # Work-list 1: new bases (chained)
+  # Work-list 2: new bases (chained; runs after backfill)
   # ------------------------------------------------------------------
 
   defp run_bases([], _cfg), do: :ok
@@ -99,8 +110,7 @@ defmodule GenTask.CLI do
             variation_seeds = run_variations(cfg, out.seed)
             seeds = [out.seed | variation_seeds]
             run_fim(cfg, seeds)
-            run_write_test(cfg, seeds)
-            run_test_fim(cfg, seeds)
+            run_derived_works(cfg, seeds)
           end
         rescue
           e ->
@@ -111,7 +121,7 @@ defmodule GenTask.CLI do
   end
 
   # ------------------------------------------------------------------
-  # Work-list 2: backfill
+  # Work-list 1: backfill (runs first — catch up before new ground)
   # ------------------------------------------------------------------
 
   defp run_backfill([], _names, _cfg), do: :ok
@@ -164,11 +174,16 @@ defmodule GenTask.CLI do
       own_fim = if seed.needs_fim? and self_seed, do: [self_seed], else: []
       run_fim(cfg, own_fim ++ variation_seeds)
 
-      # wtest/tfim self-gate (idempotent top-up), so derive for the seed itself and any
-      # freshly-created variations unconditionally.
-      derived = if self_seed, do: [self_seed | variation_seeds], else: variation_seeds
-      run_write_test(cfg, derived)
-      run_test_fim(cfg, derived)
+      # Derived-stage works run for fresh variations unconditionally, but the
+      # self-seed only when the registry says something is missing — a gradable-skip
+      # (Postgres) seed has 0 missing for every derived work and must not re-attempt
+      # un-mintable derivatives (BACKFILL Finding A).
+      self_derive =
+        if self_seed != nil and Enum.any?(Work.derived(cfg), &(&1.missing.(seed, cfg) > 0)),
+          do: [self_seed],
+          else: []
+
+      run_derived_works(cfg, self_derive ++ variation_seeds)
     rescue
       e ->
         IO.puts("#{tag} #{seed.task_id} (backfill) ... ERROR (#{Exception.message(e)})")
@@ -180,17 +195,26 @@ defmodule GenTask.CLI do
   # can't kill a raise-mutant we log a warning — a vacuous seed harness is a smell even
   # though we still derive from it.
   defp warn_if_vacuous_seed(cfg, seed, files) do
-    mutant_dir = Path.join(cfg.staging_dir, seed.task_id <> "_seedmut")
+    # The verdict is deterministic for fixed content (fixed eval seed, immutable
+    # tasks), and the check costs one eval subprocess per public function — cache it
+    # keyed by content hash so each seed pays once, not on every backfill run.
+    sha = CycleLog.content_sha(files["solution.ex"] <> (files["test_harness.exs"] || ""))
 
-    case Mutation.gate_base(mutant_dir, files, cfg) do
-      {:survived, why} ->
-        Logger.warning(
-          "backfill seed #{seed.task_id}: its own harness does NOT kill a mutant " <>
-            "(#{why}) — deriving anyway"
-        )
+    case CycleLog.cached_seed_verdict(cfg, seed.task_id, sha) do
+      {:ok, verdict} ->
+        emit_seed_verdict(seed, verdict)
 
-      :killed ->
-        :ok
+      :miss ->
+        mutant_dir = Path.join(cfg.staging_dir, seed.task_id <> "_seedmut")
+
+        verdict =
+          case Mutation.gate_base(mutant_dir, files, cfg) do
+            {:survived, why} -> %{"vacuous" => true, "why" => why}
+            :killed -> %{"vacuous" => false}
+          end
+
+        CycleLog.record_seed_verdict(cfg, seed.task_id, sha, verdict)
+        emit_seed_verdict(seed, verdict)
     end
   rescue
     e ->
@@ -198,6 +222,15 @@ defmodule GenTask.CLI do
         "backfill seed #{seed.task_id}: mutation self-check failed: #{Exception.message(e)}"
       )
   end
+
+  defp emit_seed_verdict(seed, %{"vacuous" => true, "why" => why}) do
+    Logger.warning(
+      "backfill seed #{seed.task_id}: its own harness does NOT kill a mutant " <>
+        "(#{why}) — deriving anyway"
+    )
+  end
+
+  defp emit_seed_verdict(_seed, _verdict), do: :ok
 
   # ------------------------------------------------------------------
   # Derivative drivers
@@ -221,24 +254,19 @@ defmodule GenTask.CLI do
     end)
   end
 
-  defp run_write_test(%Config{skip_write_test: true}, _seeds), do: :ok
+  # Run every registered `:derived`-stage work type (see `GenTask.Work`) on each
+  # seed. Adding a new deterministic derivative requires ONLY a registry entry —
+  # this driver, the backfill planner, and work_status.exs pick it up automatically.
+  defp run_derived_works(cfg, seeds) do
+    for work <- Work.derived(cfg), seed <- seeds do
+      {mod, fun} = work.runner
 
-  defp run_write_test(cfg, seeds) do
-    Enum.each(seeds, fn seed ->
-      seed
-      |> WriteTest.run(cfg)
+      mod
+      |> apply(fun, [seed, cfg])
       |> Enum.each(&record_and_print(cfg, "     ", &1, nil))
-    end)
-  end
+    end
 
-  defp run_test_fim(%Config{skip_test_fim: true}, _seeds), do: :ok
-
-  defp run_test_fim(cfg, seeds) do
-    Enum.each(seeds, fn seed ->
-      seed
-      |> TestFim.run(cfg)
-      |> Enum.each(&record_and_print(cfg, "     ", &1, nil))
-    end)
+    :ok
   end
 
   # ------------------------------------------------------------------
@@ -283,10 +311,39 @@ defmodule GenTask.CLI do
     IO.puts("""
     =============================================
       GenTask — task generation loop#{mode}
-      model=#{cfg.model}  max_retries=#{cfg.max_retries}  fim_max=#{cfg.fim_max_per_task}  tfim_max=#{cfg.tfim_max_per_task}
-      new bases: #{length(plan.bases)}   backfill seeds: #{length(plan.backfill)}
+      model=#{cfg.model}  max_retries=#{cfg.max_retries}  max_turns=#{cfg.max_turns}  fim_max=#{cfg.fim_max_per_task}  tfim_max=#{cfg.tfim_max_per_task}
+      1. backfill seeds: #{backfill_line(plan.backfill, cfg)}
+      2. new bases:      #{bases_line(plan.bases, cfg)}
     =============================================
     """)
+  end
+
+  # "1 → next: 135_001_data_quality_scorer_01" — say WHICH ideas are queued and why
+  # the list starts where it does (a base is pending iff its idea is in tasks.md and
+  # tasks/<nnn>_001_* does not exist; already-built and external-catalog ideas are
+  # not pending).
+  defp bases_line(_ideas, %Config{only: :backfill}), do: "skipped (GEN_ONLY=backfill)"
+
+  defp bases_line([], _cfg), do: "0 (every tasks.md idea already has a tasks/ dir)"
+
+  defp bases_line(ideas, _cfg) do
+    preview = ideas |> Enum.take(3) |> Enum.map_join(", ", & &1.task_id)
+    more = if length(ideas) > 3, do: ", …", else: ""
+    "#{length(ideas)} → next: #{preview}#{more}"
+  end
+
+  defp backfill_line(_seeds, %Config{skip_backfill: true}),
+    do: "skipped (GEN_SKIP_BACKFILL=1)"
+
+  defp backfill_line(_seeds, %Config{only: :bases}),
+    do: "skipped (GEN_ONLY=bases)"
+
+  defp backfill_line([], _cfg), do: "0 (no existing task needs variations/fim/wtest/tfim top-up)"
+
+  defp backfill_line(seeds, _cfg) do
+    preview = seeds |> Enum.take(3) |> Enum.map_join(", ", & &1.task_id)
+    more = if length(seeds) > 3, do: ", …", else: ""
+    "#{length(seeds)} needing top-up → next: #{preview}#{more}"
   end
 
   # ------------------------------------------------------------------

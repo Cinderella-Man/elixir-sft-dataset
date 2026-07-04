@@ -318,7 +318,9 @@ defmodule EvalTask.Runner do
       Application.ensure_all_started(app)
     end
 
-    ExUnit.start(autorun: false, formatters: [EvalTask.FailureCollector])
+    # seed: 0 pins test order (and StreamData generation) — without it a flaky
+    # harness can pass its accept-grade once and fail forever after in validate.exs.
+    ExUnit.start(autorun: false, seed: 0, formatters: [EvalTask.FailureCollector])
 
     compile_result =
       try do
@@ -339,14 +341,19 @@ defmodule EvalTask.Runner do
         }
 
       :ok ->
-        %{failures: failures, total: total, excluded: excluded} = ExUnit.run()
+        # `skipped` (@tag :skip) must be subtracted like `excluded` — a skipped test
+        # never ran and MUST NOT count as passed (an all-skip harness used to grade
+        # tests_passed == total and score 1.0).
+        %{failures: failures, total: total, excluded: excluded, skipped: skipped} =
+          ExUnit.run()
 
         %{
           tests_ran: true,
-          tests_passed: max(total - failures - excluded, 0),
+          tests_passed: max(total - failures - excluded - skipped, 0),
           tests_failed: failures,
           tests_errors: 0,
           tests_excluded: excluded,
+          tests_skipped: skipped,
           tests_total: total,
           test_failures: EvalTask.FailureCollector.get_failures()
         }
@@ -369,6 +376,7 @@ defmodule EvalTask.Runner do
       tests_failed: 0,
       tests_errors: 0,
       tests_excluded: 0,
+      tests_skipped: 0,
       tests_total: 0,
       test_failures: []
     }

@@ -37,9 +37,13 @@ defmodule GenTask.Variations do
 
       slots ->
         case gen_variations(base, cfg, length(slots), existing_names) do
-          {:ok, files} ->
+          {:ok, files, valid_ns} ->
+            # Salvage: only the reply groups that passed the contract are built; a
+            # malformed vN forfeits its slot (topped up on a later run) instead of
+            # discarding the sibling groups from the same expensive call.
             slots
             |> Enum.with_index(1)
+            |> Enum.filter(fn {_slot, i} -> i in valid_ns end)
             |> Enum.map(fn {slot, i} -> build_variation(i, slot, files, base, cfg) end)
 
           {:error, out} ->
@@ -100,13 +104,21 @@ defmodule GenTask.Variations do
           {:ok, text, _meta} ->
             files = Reply.parse(text)
 
-            case Reply.validate_variations(files, count) do
-              :ok ->
-                {:ok, files}
-
-              {:error, msg} ->
+            case Reply.valid_variation_slots(files, count) do
+              {[], errors} ->
+                msg = Enum.join(errors, "; ")
                 Logger.error("variations (#{base.task_id}): contract violation: #{msg}")
                 {:error, gen_error(gen_id, base, msg)}
+
+              {valid_ns, errors} ->
+                if errors != [] do
+                  Logger.warning(
+                    "variations (#{base.task_id}): salvaged #{length(valid_ns)}/#{count} " <>
+                      "group(s); dropped: #{Enum.join(errors, "; ")}"
+                  )
+                end
+
+                {:ok, files, valid_ns}
             end
 
           {:error, reason} ->
@@ -118,7 +130,7 @@ defmodule GenTask.Variations do
           {:error, gen_error(gen_id, base, Exception.message(e))}
       end
 
-    CycleLog.close(handle, if(match?({:ok, _}, result), do: :ok, else: :error))
+    CycleLog.close(handle, if(match?({:ok, _, _}, result), do: :ok, else: :error))
     result
   end
 
@@ -191,7 +203,7 @@ defmodule GenTask.Variations do
             result,
             stats,
             nil,
-            Cycle.reason_for(result.grade)
+            result.reason || Cycle.reason_for(result.grade)
           )
         end
       rescue

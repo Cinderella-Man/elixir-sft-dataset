@@ -97,8 +97,13 @@ defmodule GenTask.Evaluator do
   end
 
   @doc """
-  True when the reference passed: compiled, at least one test, and no failures or
-  errors. Accepts either a grade tuple or the decoded JSON map.
+  True when the reference passed: compiled, **at least one test actually ran and
+  passed**, and no failures or errors. Accepts either a grade tuple or the decoded
+  JSON map.
+
+  `tests_passed > 0` is required — `tests_total > 0` alone is satisfiable by a
+  harness whose tests are all excluded or `@tag :skip` (docs/05 #19, demonstrated
+  in `docs/prototypes/proto_vacuous_green.exs`).
   """
   @spec green?(grade() | map()) :: boolean()
   def green?(:timeout_or_crash), do: false
@@ -107,16 +112,36 @@ defmodule GenTask.Evaluator do
   def green?(%{} = json) do
     json["compiled"] == true and
       (json["tests_total"] || 0) > 0 and
+      (json["tests_passed"] || 0) > 0 and
       (json["tests_failed"] || 0) == 0 and
       (json["tests_errors"] || 0) == 0
+  end
+
+  @doc """
+  True when a mutant's grade proves the harness **exercised** the mutation: the
+  mutant compiled and at least one test ran and failed.
+
+  This is deliberately stricter than `not green?/1`: a mutant that fails to
+  compile, a harness that fails to load against it, or an eval timeout are all
+  non-green without the harness ever observing the mutated behavior — counting
+  those as kills lets a vacuous harness through the mutation gate (docs/05 #18).
+  """
+  @spec killed_by_tests?(grade() | map()) :: boolean()
+  def killed_by_tests?(:timeout_or_crash), do: false
+  def killed_by_tests?({:ok, json}), do: killed_by_tests?(json)
+
+  def killed_by_tests?(%{} = json) do
+    json["compiled"] == true and (json["tests_failed"] || 0) > 0
   end
 
   @doc """
   House-style / warning shortfall for a **green** base/variation grade, or `nil` when
   the solution already meets the bar. Used by the quality gate (`GenTask.Cycle`): a
   green, mutant-killing solution should still carry a `@moduledoc`, at least one
-  `@spec` and `@doc`, no `TODO`, and compile with zero warnings — the house style the
-  reference corpus models. Returns a `; `-joined description of every shortfall.
+  `@spec` and `@doc`, no `TODO`, stay within 98 columns, avoid SQL-interpolation, and
+  compile with zero warnings — every check the analysis rubric scores, so an accepted
+  reference banks the full analysis subscore. Returns a `; `-joined description of
+  every shortfall.
   """
   @spec quality_shortfall(map()) :: String.t() | nil
   def quality_shortfall(%{} = json) do
@@ -129,6 +154,14 @@ defmodule GenTask.Evaluator do
     |> add_if(a["has_typespecs"] != true, "no @spec on any public function")
     |> add_if(a["has_doc_on_public_fns"] != true, "no @doc on any public function")
     |> add_if((a["todo_count"] || 0) > 0, "#{a["todo_count"]} TODO/FIXME marker(s) in the code")
+    |> add_if(
+      (a["lines_over_98"] || 0) > 0,
+      "#{a["lines_over_98"]} line(s) over 98 columns — wrap them"
+    )
+    |> add_if(
+      a["sql_injection_risk"] == true,
+      "string interpolation inside SQL — use parameterized queries"
+    )
     |> case do
       [] -> nil
       reasons -> reasons |> Enum.reverse() |> Enum.join("; ")
@@ -192,9 +225,15 @@ defmodule GenTask.Evaluator do
         "Compilation failed (no diagnostics captured)."
 
       true ->
-        "The reference did not pass: " <>
-          "compiled=#{json["compiled"]}, tests_total=#{json["tests_total"]}, " <>
-          "tests_failed=#{json["tests_failed"]}, tests_errors=#{json["tests_errors"]}."
+        # Reachable e.g. when no test actually ran and passed (all @tag :skip /
+        # excluded) — say so explicitly, or the fixer sees only zeros and cannot
+        # tell what to repair.
+        "The reference did not pass: compiled=#{json["compiled"]}, " <>
+          "tests_total=#{json["tests_total"]}, tests_passed=#{json["tests_passed"]}, " <>
+          "tests_failed=#{json["tests_failed"]}, tests_errors=#{json["tests_errors"]}, " <>
+          "tests_skipped=#{json["tests_skipped"]}, tests_excluded=#{json["tests_excluded"]}. " <>
+          "At least one test must RUN and pass — remove @tag :skip / excluded tags " <>
+          "or fix the harness so its tests execute."
     end
   end
 

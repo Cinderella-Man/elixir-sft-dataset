@@ -50,7 +50,11 @@ defmodule Validate do
         Map.has_key?(json, "skipped") ->
           IO.write("s")
 
-        json["compiled"] == true and json["tests_failed"] == 0 and (json["tests_total"] || 0) > 0 ->
+        # Same bar as GenTask.Evaluator.green?/1: at least one test must have RUN
+        # and passed (all-@tag-:skip harnesses report tests_total > 0 with zero
+        # passed), and harness-load errors (tests_errors) fail too.
+        json["compiled"] == true and json["tests_failed"] == 0 and
+          (json["tests_errors"] || 0) == 0 and (json["tests_passed"] || 0) > 0 ->
           IO.write(".")
 
         true ->
@@ -70,16 +74,21 @@ defmodule Validate do
       mutant = mutant_file(task)
       json = eval(task.dir, mutant)
       File.rm(mutant)
-      # A raise-body mutant MUST make the harness fail (or not compile).
-      exercised? = json["compiled"] != true or (json["tests_failed"] || 0) > 0
+      # A raise-body mutant MUST make the harness RUN and fail. A mutant that does
+      # not compile proves nothing about coverage (docs/05 #18) — the harness never
+      # observed it — so it is reported as a distinct failure, not counted exercised.
+      cond do
+        json["compiled"] == true and (json["tests_failed"] || 0) > 0 ->
+          IO.write(".")
 
-      if exercised?,
-        do: IO.write("."),
-        else:
-          (
-            IO.write("U")
-            {:fail, task.name, "mutant PASSED — target under-tested"}
-          )
+        json["compiled"] != true ->
+          IO.write("C")
+          {:fail, task.name, "mutant did not COMPILE — coverage unverifiable"}
+
+        true ->
+          IO.write("U")
+          {:fail, task.name, "mutant PASSED — target under-tested"}
+      end
     end)
     |> collect()
   end

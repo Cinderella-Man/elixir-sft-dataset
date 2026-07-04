@@ -257,20 +257,29 @@ defmodule GenTask.Fim do
     fim_dir = Path.join(stage_parent, fim_id)
     mutant_path = Path.join(stage_parent, "mutant.ex")
 
+    CycleLog.reset_attempts(cfg, log_id)
+
     Enum.reduce_while(0..cfg.max_retries, ff0, fn attempt, ff ->
-      Evaluator.stage!(fim_dir, %{
+      candidate = %{
         "prompt.md" => ff["prompt.md"],
         "solution.ex" => ff["solution.ex"]
-      })
+      }
+
+      Evaluator.stage!(fim_dir, candidate)
 
       grade = Evaluator.grade(fim_dir, cfg)
       stats = Cycle.grade_stats(grade)
 
       cond do
         not Evaluator.green?(grade) ->
+          report = Evaluator.repair_report({:failed, grade})
+
           if attempt >= cfg.max_retries do
+            CycleLog.record_attempt(cfg, log_id, attempt, candidate, grade, :rejected_final, report)
             {:halt, {reject(seed, log_id, target, stats, Cycle.reason_for(grade)), false}}
           else
+            CycleLog.record_attempt(cfg, log_id, attempt, candidate, grade, :rejected, report)
+
             case repair_fim(ff, grade, log_id, cfg) do
               {:ok, ff2} ->
                 {:cont, ff2}
@@ -283,15 +292,22 @@ defmodule GenTask.Fim do
         true ->
           case Mutation.gate_fim(fim_dir, ff["solution.ex"], mutant_path, cfg) do
             :killed ->
-              _ =
-                Cycle.promote(cfg, fim_id, %{
-                  "prompt.md" => ff["prompt.md"],
-                  "solution.ex" => ff["solution.ex"]
-                })
+              CycleLog.record_attempt(cfg, log_id, attempt, candidate, grade, :accepted, nil)
+              _ = Cycle.promote(cfg, fim_id, candidate)
 
               {:halt, {accept(seed, fim_id, target, stats, attempt + 1), true}}
 
-            {:survived, _why} ->
+            {:survived, why} ->
+              CycleLog.record_attempt(
+                cfg,
+                log_id,
+                attempt,
+                candidate,
+                grade,
+                :rejected_final,
+                Evaluator.repair_report({:vacuous, why})
+              )
+
               Logger.info(
                 "fim #{log_id}: parent harness does not cover #{target} — rejecting candidate"
               )

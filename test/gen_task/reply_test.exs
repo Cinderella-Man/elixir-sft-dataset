@@ -137,6 +137,35 @@ defmodule GenTask.ReplyTest do
     end
   end
 
+  describe "valid_variation_slots/2 (salvage)" do
+    test "keeps the well-formed groups and reports the malformed ones" do
+      files =
+        %{
+          "v1/prompt.md" => "Do 1.",
+          "v1/test_harness.exs" => @harness,
+          "v1/solution.ex" => @solution,
+          "v1/idea.md" => "### Task 1 - V1 - Variant 1\nDesc.",
+          # v2 is malformed: missing solution.ex
+          "v2/prompt.md" => "Do 2.",
+          "v2/test_harness.exs" => @harness,
+          "v2/idea.md" => "### Task 1 - V2 - Variant 2\nDesc.",
+          # v3 complete
+          "v3/prompt.md" => "Do 3.",
+          "v3/test_harness.exs" => @harness,
+          "v3/solution.ex" => @solution,
+          "v3/idea.md" => "### Task 1 - V3 - Variant 3\nDesc."
+        }
+
+      assert {[1, 3], [error]} = Reply.valid_variation_slots(files, 3)
+      assert error =~ "v2"
+    end
+
+    test "returns no valid slots for an empty reply" do
+      assert {[], errors} = Reply.valid_variation_slots(%{}, 3)
+      assert length(errors) == 3
+    end
+  end
+
   describe "validate_variations/1" do
     test "accepts three complete path-prefixed triplets + idea entries" do
       files =

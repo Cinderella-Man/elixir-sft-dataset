@@ -1,0 +1,350 @@
+# Fill in the middle: implement the blanked test
+
+Below is a module and its ExUnit test harness with the body of ONE `test` removed
+(marked `# TODO`). The test's name states what it must verify. Implement just that one
+test so the harness passes for a correct implementation of the module.
+
+## Module under test
+
+```elixir
+defmodule RateLimiter do
+  @moduledoc """
+  A GenServer that enforces per-key rate limits using a sliding window algorithm.
+
+  Each key is tracked independently via a list of request timestamps.
+  On every `check/4` call, timestamps outside the current window are pruned,
+  and the request is allowed only if the remaining count is within the limit.
+
+  Expired entries are garbage-collected on a configurable periodic sweep so the
+  process never leaks memory for keys that stop receiving traffic.
+
+  ## Options
+
+    * `:name`                 – process registration name (optional)
+    * `:clock`                – zero-arity function returning current time in ms
+                                (default: `fn -> System.monotonic_time(:millisecond) end`)
+    * `:cleanup_interval_ms`  – how often the periodic sweep runs in ms (default: 60_000)
+
+  ## Examples
+
+      iex> {:ok, pid} = RateLimiter.start_link([])
+      iex> {:ok, 4} = RateLimiter.check(pid, "user:1", 5, 1_000)
+      iex> {:ok, 3} = RateLimiter.check(pid, "user:1", 5, 1_000)
+
+  """
+
+  use GenServer
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Starts the RateLimiter process and links it to the caller.
+
+  ## Options
+
+    * `:name`                 – optional registered name
+    * `:clock`                – `(-> integer())` returning now in milliseconds
+    * `:cleanup_interval_ms`  – sweep interval (default `60_000`)
+
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {name, opts} = Keyword.pop(opts, :name)
+
+    server_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, server_opts)
+  end
+
+  @doc """
+  Checks whether a request for `key` is allowed under the given limits.
+
+  Returns `{:ok, remaining}` when the request is accepted, where `remaining`
+  is the number of additional requests the caller may make in this window.
+
+  Returns `{:error, :rate_limited, retry_after_ms}` when the limit has been
+  reached.  `retry_after_ms` is the minimum wait (in milliseconds) before the
+  oldest tracked request falls outside the window.
+  """
+  @spec check(GenServer.server(), term(), pos_integer(), pos_integer()) ::
+          {:ok, non_neg_integer()} | {:error, :rate_limited, non_neg_integer()}
+  def check(server, key, max_requests, window_ms)
+      when is_integer(max_requests) and max_requests > 0 and
+           is_integer(window_ms) and window_ms > 0 do
+    GenServer.call(server, {:check, key, max_requests, window_ms})
+  end
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @default_cleanup_interval_ms 60_000
+
+  @impl true
+  def init(opts) do
+    clock = Keyword.get(opts, :clock, fn -> System.monotonic_time(:millisecond) end)
+    cleanup_interval = Keyword.get(opts, :cleanup_interval_ms, @default_cleanup_interval_ms)
+
+    schedule_cleanup(cleanup_interval)
+
+    {:ok,
+     %{
+       # %{key => {[timestamp], window_ms}}
+       keys: %{},
+       clock: clock,
+       cleanup_interval_ms: cleanup_interval
+     }}
+  end
+
+  @impl true
+  def handle_call({:check, key, max_requests, window_ms}, _from, state) do
+    now = state.clock.()
+
+    # Fetch existing timestamps for this key (or empty list).
+    {timestamps, _old_window} = Map.get(state.keys, key, {[], window_ms})
+
+    # Prune timestamps that have fallen outside the sliding window.
+    window_start = now - window_ms
+    active = Enum.filter(timestamps, fn ts -> ts > window_start end)
+
+    count = length(active)
+
+    if count < max_requests do
+      # Allow the request – record its timestamp.
+      updated = [now | active]
+      remaining = max_requests - count - 1
+
+      new_keys = Map.put(state.keys, key, {updated, window_ms})
+      {:reply, {:ok, remaining}, %{state | keys: new_keys}}
+    else
+      # Denied – compute how long until the oldest active entry expires.
+      oldest = List.last(active)
+      retry_after = oldest + window_ms - now
+      retry_after = max(retry_after, 1)
+
+      # Update state with the pruned list even on failure
+      new_state = put_in(state.keys[key], {active, window_ms})
+
+      {:reply, {:error, :rate_limited, retry_after}, new_state}
+    end
+  end
+
+  @impl true
+  def handle_info(:cleanup, state) do
+    now = state.clock.()
+
+    cleaned =
+      state.keys
+      |> Enum.reduce(%{}, fn {key, {timestamps, window_ms}}, acc ->
+        window_start = now - window_ms
+        active = Enum.filter(timestamps, fn ts -> ts > window_start end)
+
+        # Drop the key entirely when no active timestamps remain.
+        if active == [] do
+          acc
+        else
+          Map.put(acc, key, {active, window_ms})
+        end
+      end)
+
+    schedule_cleanup(state.cleanup_interval_ms)
+
+    {:noreply, %{state | keys: cleaned}}
+  end
+
+  # Catch-all so unexpected messages don't crash the process.
+  def handle_info(_msg, state), do: {:noreply, state}
+
+  # ---------------------------------------------------------------------------
+  # Internal helpers
+  # ---------------------------------------------------------------------------
+
+  defp schedule_cleanup(:infinity), do: :ok
+
+  defp schedule_cleanup(interval_ms) when is_integer(interval_ms) do
+    Process.send_after(self(), :cleanup, interval_ms)
+  end
+end
+```
+
+## Test harness — implement the `# TODO` test
+
+```elixir
+defmodule RateLimiterTest do
+  use ExUnit.Case, async: false
+
+  # --- Fake clock for deterministic testing ---
+
+  defmodule Clock do
+    use Agent
+
+    def start_link(initial \\ 0) do
+      Agent.start_link(fn -> initial end, name: __MODULE__)
+    end
+
+    def now, do: Agent.get(__MODULE__, & &1)
+    def advance(ms), do: Agent.update(__MODULE__, &(&1 + ms))
+    def set(ms), do: Agent.update(__MODULE__, fn _ -> ms end)
+  end
+
+  setup do
+    # Start fresh clock at time 0 for each test
+    start_supervised!({Clock, 0})
+
+    {:ok, pid} =
+      RateLimiter.start_link(
+        clock: &Clock.now/0,
+        # disable auto-cleanup in tests
+        cleanup_interval_ms: :infinity
+      )
+
+    %{rl: pid}
+  end
+
+  # -------------------------------------------------------
+  # Basic allow / reject
+  # -------------------------------------------------------
+
+  test "allows requests within the limit", %{rl: rl} do
+    assert {:ok, 2} = RateLimiter.check(rl, "user:1", 3, 1_000)
+    assert {:ok, 1} = RateLimiter.check(rl, "user:1", 3, 1_000)
+    assert {:ok, 0} = RateLimiter.check(rl, "user:1", 3, 1_000)
+  end
+
+  test "rejects the request that exceeds the limit", %{rl: rl} do
+    for _ <- 1..3, do: RateLimiter.check(rl, "k", 3, 1_000)
+
+    assert {:error, :rate_limited, retry_after} =
+             RateLimiter.check(rl, "k", 3, 1_000)
+
+    assert is_integer(retry_after)
+    assert retry_after > 0
+    assert retry_after <= 1_000
+  end
+
+  # -------------------------------------------------------
+  # Window sliding
+  # -------------------------------------------------------
+
+  test "allows requests again after the window slides", %{rl: rl} do
+    for _ <- 1..3, do: RateLimiter.check(rl, "k", 3, 1_000)
+    assert {:error, :rate_limited, _} = RateLimiter.check(rl, "k", 3, 1_000)
+
+    # Advance past the window
+    Clock.advance(1_001)
+
+    assert {:ok, _remaining} = RateLimiter.check(rl, "k", 3, 1_000)
+  end
+
+  test "sliding window drops old requests correctly", %{rl: rl} do
+    # Time 0: first request
+    assert {:ok, 2} = RateLimiter.check(rl, "k", 3, 1_000)
+
+    # Time 400: second request
+    Clock.advance(400)
+    assert {:ok, 1} = RateLimiter.check(rl, "k", 3, 1_000)
+
+    # Time 800: third request
+    Clock.advance(400)
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 3, 1_000)
+
+    # Time 800: fourth request — rejected
+    assert {:error, :rate_limited, _} = RateLimiter.check(rl, "k", 3, 1_000)
+
+    # Time 1001: first request (from time 0) has expired, one slot free
+    Clock.advance(201)
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 3, 1_000)
+
+    # Still blocked (requests from 400 and 800 still in window)
+    assert {:error, :rate_limited, _} = RateLimiter.check(rl, "k", 3, 1_000)
+  end
+
+  # -------------------------------------------------------
+  # Key independence
+  # -------------------------------------------------------
+
+  test "different keys are completely independent", %{rl: rl} do
+    # TODO
+  end
+
+  # -------------------------------------------------------
+  # retry_after accuracy
+  # -------------------------------------------------------
+
+  test "retry_after tells the caller how long until a slot opens", %{rl: rl} do
+    # Request at time 0
+    RateLimiter.check(rl, "k", 1, 1_000)
+
+    # Advance to time 300
+    Clock.advance(300)
+
+    assert {:error, :rate_limited, retry_after} =
+             RateLimiter.check(rl, "k", 1, 1_000)
+
+    # The earliest request (at time 0) expires at time 1000.
+    # We're at time 300, so retry_after should be ~700
+    assert retry_after >= 600 and retry_after <= 800
+  end
+
+  # -------------------------------------------------------
+  # Edge cases
+  # -------------------------------------------------------
+
+  test "max_requests of 1 allows exactly one call", %{rl: rl} do
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 500)
+    assert {:error, :rate_limited, _} = RateLimiter.check(rl, "k", 1, 500)
+  end
+
+  test "works with very large window", %{rl: rl} do
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 86_400_000)
+    assert {:error, :rate_limited, _} = RateLimiter.check(rl, "k", 1, 86_400_000)
+
+    Clock.advance(86_400_001)
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 86_400_000)
+  end
+
+  # -------------------------------------------------------
+  # Multiple keys interleaved
+  # -------------------------------------------------------
+
+  test "interleaved operations on multiple keys", %{rl: rl} do
+    assert {:ok, 1} = RateLimiter.check(rl, "x", 2, 1_000)
+    assert {:ok, 4} = RateLimiter.check(rl, "y", 5, 2_000)
+    assert {:ok, 0} = RateLimiter.check(rl, "x", 2, 1_000)
+    assert {:ok, 3} = RateLimiter.check(rl, "y", 5, 2_000)
+
+    assert {:error, :rate_limited, _} = RateLimiter.check(rl, "x", 2, 1_000)
+    assert {:ok, 2} = RateLimiter.check(rl, "y", 5, 2_000)
+  end
+
+  # -------------------------------------------------------
+  # Cleanup (memory leak prevention)
+  # -------------------------------------------------------
+
+  test "expired keys are cleaned up and don't accumulate", %{rl: rl} do
+    # Create entries for 100 different keys
+    for i <- 1..100 do
+      RateLimiter.check(rl, "key:#{i}", 1, 100)
+    end
+
+    # Advance past all windows
+    Clock.advance(200)
+
+    # Trigger cleanup manually via a message
+    # The GenServer should handle a :cleanup message
+    send(rl, :cleanup)
+    # Give it a moment to process
+    :sys.get_state(rl)
+
+    # Now the internal state should not hold 100 keys worth of data
+    state = :sys.get_state(rl)
+    assert map_size(state.keys) == 0
+
+    # The state is implementation-dependent, but we can check it's a
+    # map/struct and that expired keys are gone. We verify by checking
+    # that new requests for those keys work fresh (remaining = max - 1)
+    assert {:ok, 0} = RateLimiter.check(rl, "key:1", 1, 100)
+  end
+end
+```

@@ -59,6 +59,13 @@ mix test test/eval_task
 mix run scripts/dataset_stats.exs                      # pretty report
 mix run scripts/dataset_stats.exs --json               # machine-readable
 mix run scripts/dataset_stats.exs --chars-per-token 3.5   # tune the token estimate
+
+# what work still needs to happen on which task sets (re-runnable; rows come from
+# the GenTask.Work registry — docs/09 §12). generate.exs performs exactly the
+# missing units, so status → generate → status converges.
+mix run scripts/work_status.exs             # work-type × corpus matrix
+mix run scripts/work_status.exs --pending   # per-seed detail
+mix run scripts/work_status.exs --counts    # one compact progress line
 ```
 
 ## Naming convention
@@ -217,9 +224,14 @@ GEN_LIMIT=5 mix run scripts/generate.exs
 nohup mix run scripts/generate.exs > logs/loop_console.log 2>&1 &
 ```
 
-The two work-lists run in order: **new bases** (every idea with no `tasks/NNN_001_*_01` yet),
-then **backfill** (existing accepted `_01`s missing variations/FIM). Terminal output is one line
-per generated task, `run_all`-style:
+The two work-lists run in order — **catch-up first, then new ground**:
+**backfill** (existing accepted `_01`s missing any registered work — variations, FIM,
+wtest, tfim; see `GenTask.Work`), then **new bases** (every idea with no
+`tasks/NNN_001_*_01` yet). Both are recomputed from disk each run and every step is
+idempotent, so the plain no-flag command repeatedly converges: it brings the existing
+record fully up to date, then progresses to new ideas. Catalog reconciliation
+(healing missing variation entries) also runs by default (`GEN_RECONCILE=0` to
+disable). Terminal output is one line per generated task, `run_all`-style:
 
 ```
 [  7/494] 065_001_saga_coordinator_01 (base) ... ACCEPTED (17 passed, mutant killed, 2 attempt(s))
@@ -238,16 +250,28 @@ elixir ./scripts/validate.exs                   # after a run: reference-green +
 Each generated task also gets a full per-cycle log at `logs/<task_id>.log` (every prompt,
 response, eval JSON, and repair attempt). Failed cycles' logs are moved to `logs/errors/`.
 
+Every graded attempt is additionally **captured** to `logs/attempts/<id>/attempt_NN/`
+(the exact candidate files + grade JSON + the repair report — docs/08 §4). After a run,
+mint verified bug→fix repair tasks from them, deterministically and with no LLM:
+
+```bash
+mix run scripts/mint_repairs.exs --dry-run   # see what's mintable
+mix run scripts/mint_repairs.exs             # mint tasks/repair_* dirs
+```
+
 ### Common knobs (env vars — full table in docs/04 §15)
 
 | Env | Default | Effect |
 |---|---|---|
 | `GEN_DRY_RUN=1` | off | generate + grade but never write to `tasks/` / `tasks.md` |
-| `GEN_LIMIT=N` | ∞ | process at most N base ideas this run |
+| `GEN_LIMIT=N` | ∞ | at most N items per work-list (N base ideas AND N backfill seeds) |
+| `GEN_TFIM_MAX_PER_TASK=N` | 10 | tfim subtasks carved per `_01` (deterministic, no LLM) |
+| `GEN_MAX_TURNS=N` | 2 | `claude -p --max-turns` — 2 absorbs a stray (denied) tool attempt before the real reply |
 | `GEN_FROM=a` / `GEN_TO=b` | — | restrict to idea numbers in `[a, b]` |
 | `GEN_SKIP_VARIATIONS=1` / `GEN_SKIP_FIM=1` | off | run only part of the per-idea chain |
-| `GEN_SKIP_BACKFILL=1` | off | skip work-list 2; `GEN_ONLY=backfill` runs *only* it |
+| `GEN_SKIP_BACKFILL=1` | off | skip the (first-running) backfill work-list; `GEN_ONLY=backfill` runs *only* it |
 | `GEN_RETRY_FAILED=1` | off | re-attempt tasks currently sitting in `logs/errors/` |
+| `GEN_RECONCILE=0` | on | disable the default catalog healing (insert-only variation entries) |
 | `GEN_MAX_RETRIES=N` | 3 | repair iterations per task before it's sent to errors |
 | `GEN_SKIP_QUALITY_GATE=1` | off | stop requiring house style (`@moduledoc`/`@spec`/`@doc`, no TODO, zero warnings) on a green base/variation |
 | `GEN_SKIP_PER_FN_MUTATION=1` | off | use a single whole-module raise-mutant instead of mutating each public function |

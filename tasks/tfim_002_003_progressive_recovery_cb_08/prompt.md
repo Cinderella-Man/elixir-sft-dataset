@@ -1,0 +1,526 @@
+# Fill in the middle: implement the blanked test
+
+Below is a module and its ExUnit test harness with the body of ONE `test` removed
+(marked `# TODO`). The test's name states what it must verify. Implement just that one
+test so the harness passes for a correct implementation of the module.
+
+## Module under test
+
+```elixir
+defmodule ProgressiveRecoveryCircuitBreaker do
+  @moduledoc """
+  A four-state circuit breaker that replaces the standard instant-recovery
+  behavior (a single successful probe flips back to closed) with a multi-stage
+  trust rebuild.
+
+  ## State machine
+
+      :closed ──(failure_threshold consecutive failures)──▶ :open
+      :open ──(reset_timeout_ms elapsed)──▶ :half_open
+      :half_open ──(probe success)──▶ :recovering (stage 0)
+      :half_open ──(probe failure)──▶ :open
+      :recovering ──(stage cleared, not last)──▶ :recovering (next stage)
+      :recovering ──(last stage cleared)──▶ :closed
+      :recovering ──(stage_failures > tolerated)──▶ :open
+
+  Each recovery stage is a `{calls_required, failures_tolerated}` pair.  The
+  circuit must complete `calls_required` calls at the stage with no more than
+  `failures_tolerated` failures to advance.  The default ladder
+  `[{5, 0}, {15, 1}, {30, 2}]` requires progressively more evidence of
+  stability at progressively higher permitted failure rates.
+
+  Every call in `:recovering` executes normally — this variant does not
+  sample or reject traffic during recovery, it just uses the additional
+  observations to decide when to declare full health.
+
+  ## Options
+
+    * `:name`                  – required registered name
+    * `:failure_threshold`     – default 5
+    * `:reset_timeout_ms`      – default 30_000
+    * `:half_open_max_probes`  – default 1
+    * `:recovery_stages`       – default `[{5, 0}, {15, 1}, {30, 2}]`
+    * `:clock`                 – `(-> integer())` current time in ms
+
+  """
+
+  use GenServer
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts) do
+    name = Keyword.fetch!(opts, :name)
+    GenServer.start_link(__MODULE__, opts, name: name)
+  end
+
+  @spec call(GenServer.server(), (-> any())) :: any()
+  def call(name, func) when is_function(func, 0) do
+    GenServer.call(name, {:call, func})
+  end
+
+  @spec state(GenServer.server()) :: :closed | :open | :half_open | :recovering
+  def state(name), do: GenServer.call(name, :get_state)
+
+  @spec reset(GenServer.server()) :: :ok
+  def reset(name), do: GenServer.call(name, :reset)
+
+  # ---------------------------------------------------------------------------
+  # GenServer callbacks
+  # ---------------------------------------------------------------------------
+
+  @default_recovery_stages [{5, 0}, {15, 1}, {30, 2}]
+
+  @impl true
+  def init(opts) do
+    clock = Keyword.get(opts, :clock, fn -> System.monotonic_time(:millisecond) end)
+
+    stages = Keyword.get(opts, :recovery_stages, @default_recovery_stages)
+
+    if stages == [] do
+      raise ArgumentError, ":recovery_stages must be a non-empty list"
+    end
+
+    config = %{
+      failure_threshold: Keyword.get(opts, :failure_threshold, 5),
+      reset_timeout_ms: Keyword.get(opts, :reset_timeout_ms, 30_000),
+      half_open_max_probes: Keyword.get(opts, :half_open_max_probes, 1),
+      recovery_stages: stages
+    }
+
+    {:ok,
+     %{
+       state: :closed,
+       failure_count: 0,
+       opened_at: nil,
+       probes_in_flight: 0,
+       recovery_stage: 0,
+       stage_calls: 0,
+       stage_failures: 0,
+       clock: clock,
+       config: config
+     }}
+  end
+
+  @impl true
+  def handle_call({:call, func}, _from, state) do
+    state = maybe_expire_open(state)
+
+    case state.state do
+      :closed ->
+        {reply, new_state} = execute_in_closed(state, func)
+        {:reply, reply, new_state}
+
+      :open ->
+        {:reply, {:error, :circuit_open}, state}
+
+      :half_open ->
+        if state.probes_in_flight < state.config.half_open_max_probes do
+          state = %{state | probes_in_flight: state.probes_in_flight + 1}
+          {reply, new_state} = execute_in_half_open(state, func)
+          {:reply, reply, new_state}
+        else
+          {:reply, {:error, :circuit_open}, state}
+        end
+
+      :recovering ->
+        {reply, new_state} = execute_in_recovering(state, func)
+        {:reply, reply, new_state}
+    end
+  end
+
+  def handle_call(:get_state, _from, state) do
+    state = maybe_expire_open(state)
+    {:reply, state.state, state}
+  end
+
+  def handle_call(:reset, _from, state) do
+    {:reply, :ok, reset_state(state)}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Per-state execution
+  # ---------------------------------------------------------------------------
+
+  defp execute_in_closed(state, func) do
+    case execute_and_classify(func) do
+      {:ok, reply} ->
+        # Consecutive failure run is broken — reset counter.
+        {reply, %{state | failure_count: 0}}
+
+      {:error, reply} ->
+        new_count = state.failure_count + 1
+
+        if new_count >= state.config.failure_threshold do
+          {reply,
+           %{state | state: :open, opened_at: state.clock.(), failure_count: 0}}
+        else
+          {reply, %{state | failure_count: new_count}}
+        end
+    end
+  end
+
+  defp execute_in_half_open(state, func) do
+    case execute_and_classify(func) do
+      {:ok, reply} ->
+        # Probe cleared — begin staged recovery from stage 0.
+        {reply,
+         %{
+           state
+           | state: :recovering,
+             recovery_stage: 0,
+             stage_calls: 0,
+             stage_failures: 0,
+             probes_in_flight: 0,
+             opened_at: nil,
+             failure_count: 0
+         }}
+
+      {:error, reply} ->
+        {reply,
+         %{state | state: :open, opened_at: state.clock.(), probes_in_flight: 0}}
+    end
+  end
+
+  defp execute_in_recovering(state, func) do
+    {outcome, reply} = execute_and_classify(func)
+
+    # 1. Calculate updated counters based on the latest call
+    new_stage_calls = state.stage_calls + 1
+    new_stage_failures =
+      case outcome do
+        :error -> state.stage_failures + 1
+        :ok -> state.stage_failures
+      end
+
+    # 2. Extract limits once using pattern matching
+    {required_calls, tolerated_failures} =
+      Enum.at(state.config.recovery_stages, state.recovery_stage)
+
+    # 3. Create a temporary state that reflects the current progress
+    # This ensures any delegation (like advance_stage) has the "truth"
+    updated_state = %{state | stage_calls: new_stage_calls, stage_failures: new_stage_failures}
+
+    cond do
+      # Scenario A: Failure limit exceeded -> Crash back to :open
+      new_stage_failures > tolerated_failures ->
+        new_state = %{
+          updated_state # Start with updated counts, then override for :open
+          | state: :open,
+            opened_at: state.clock.(),
+            recovery_stage: 0,
+            stage_calls: 0,
+            stage_failures: 0
+        }
+        {reply, new_state}
+
+      # Scenario B: Target reached -> Try to move to next stage or close
+      new_stage_calls >= required_calls ->
+        advance_stage(updated_state, reply)
+
+      # Scenario C: Progressing -> Stay in :recovering with new counts
+      true ->
+        {reply, updated_state}
+    end
+  end
+
+  defp advance_stage(state, reply) do
+    next_stage = state.recovery_stage + 1
+
+    if next_stage >= length(state.config.recovery_stages) do
+      # Final stage cleared → full closure.
+      {reply,
+       %{
+         state
+         | state: :closed,
+           recovery_stage: 0,
+           stage_calls: 0,
+           stage_failures: 0,
+           failure_count: 0
+       }}
+    else
+      # Move to next stage with fresh counters.
+      {reply,
+       %{state | recovery_stage: next_stage, stage_calls: 0, stage_failures: 0}}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Helpers
+  # ---------------------------------------------------------------------------
+
+  # Returns `{:ok | :error, reply}` where the atom is the outcome for state
+  # bookkeeping and `reply` is what the caller sees.
+  defp execute_and_classify(func) do
+    try do
+      case func.() do
+        {:ok, _value} = ok -> {:ok, ok}
+        {:error, _reason} = err -> {:error, err}
+        other -> {:error, {:error, {:unexpected_return, other}}}
+      end
+    rescue
+      exception -> {:error, {:error, exception}}
+    end
+  end
+
+  defp maybe_expire_open(%{state: :open} = state) do
+    if state.clock.() - state.opened_at >= state.config.reset_timeout_ms do
+      %{state | state: :half_open, probes_in_flight: 0}
+    else
+      state
+    end
+  end
+
+  defp maybe_expire_open(state), do: state
+
+  defp reset_state(state) do
+    %{
+      state
+      | state: :closed,
+        failure_count: 0,
+        opened_at: nil,
+        probes_in_flight: 0,
+        recovery_stage: 0,
+        stage_calls: 0,
+        stage_failures: 0
+    }
+  end
+end
+```
+
+## Test harness — implement the `# TODO` test
+
+```elixir
+defmodule ProgressiveRecoveryCircuitBreakerTest do
+  use ExUnit.Case, async: false
+
+  # --- Fake clock for deterministic testing ---
+
+  defmodule Clock do
+    use Agent
+
+    def start_link(initial \\ 0) do
+      Agent.start_link(fn -> initial end, name: __MODULE__)
+    end
+
+    def now, do: Agent.get(__MODULE__, & &1)
+    def advance(ms), do: Agent.update(__MODULE__, &(&1 + ms))
+    def set(ms), do: Agent.update(__MODULE__, fn _ -> ms end)
+  end
+
+  setup do
+    start_supervised!({Clock, 0})
+
+    # Smaller stage numbers for test tractability
+    {:ok, _pid} =
+      ProgressiveRecoveryCircuitBreaker.start_link(
+        name: :test_cb,
+        failure_threshold: 3,
+        reset_timeout_ms: 1_000,
+        recovery_stages: [{3, 0}, {5, 1}, {10, 2}],
+        half_open_max_probes: 1,
+        clock: &Clock.now/0
+      )
+
+    %{cb: :test_cb}
+  end
+
+  defp ok_fn, do: fn -> {:ok, :v} end
+  defp err_fn, do: fn -> {:error, :f} end
+
+  # Trips the breaker and advances time so it's in :half_open.
+  defp trip_to_half_open(cb) do
+    for _ <- 1..3, do: ProgressiveRecoveryCircuitBreaker.call(cb, err_fn())
+    Clock.advance(1_000)
+    assert :half_open = ProgressiveRecoveryCircuitBreaker.state(cb)
+  end
+
+  # -------------------------------------------------------
+  # Baseline closed behavior (matches standard CB)
+  # -------------------------------------------------------
+
+  test "passes through successes in closed state", %{cb: cb} do
+    for _ <- 1..10, do: assert({:ok, :v} = ProgressiveRecoveryCircuitBreaker.call(cb, ok_fn()))
+    assert :closed = ProgressiveRecoveryCircuitBreaker.state(cb)
+  end
+
+  test "trips on threshold consecutive failures", %{cb: cb} do
+    for _ <- 1..3, do: ProgressiveRecoveryCircuitBreaker.call(cb, err_fn())
+    assert :open = ProgressiveRecoveryCircuitBreaker.state(cb)
+  end
+
+  test "success between failures resets consecutive failure count", %{cb: cb} do
+    ProgressiveRecoveryCircuitBreaker.call(cb, err_fn())
+    ProgressiveRecoveryCircuitBreaker.call(cb, err_fn())
+    # Non-consecutive — reset
+    ProgressiveRecoveryCircuitBreaker.call(cb, ok_fn())
+    ProgressiveRecoveryCircuitBreaker.call(cb, err_fn())
+    ProgressiveRecoveryCircuitBreaker.call(cb, err_fn())
+    assert :closed = ProgressiveRecoveryCircuitBreaker.state(cb)
+  end
+
+  test "open state rejects calls without executing", %{cb: cb} do
+    for _ <- 1..3, do: ProgressiveRecoveryCircuitBreaker.call(cb, err_fn())
+
+    tracker = self()
+
+    assert {:error, :circuit_open} =
+             ProgressiveRecoveryCircuitBreaker.call(cb, fn ->
+               send(tracker, :was_called)
+               {:ok, :v}
+             end)
+
+    refute_received :was_called
+  end
+
+  # -------------------------------------------------------
+  # The defining behavior: probe success → :recovering (not :closed)
+  # -------------------------------------------------------
+
+  test "successful probe enters :recovering, not :closed directly", %{cb: cb} do
+    trip_to_half_open(cb)
+
+    assert {:ok, :v} = ProgressiveRecoveryCircuitBreaker.call(cb, ok_fn())
+    assert :recovering = ProgressiveRecoveryCircuitBreaker.state(cb)
+  end
+
+  test "probe failure → :open with restarted reset timeout", %{cb: cb} do
+    trip_to_half_open(cb)
+
+    assert {:error, :f} = ProgressiveRecoveryCircuitBreaker.call(cb, err_fn())
+    assert :open = ProgressiveRecoveryCircuitBreaker.state(cb)
+
+    # Reset timer restarts from the new :open transition, not from original
+    Clock.advance(500)
+    assert :open = ProgressiveRecoveryCircuitBreaker.state(cb)
+    Clock.advance(500)
+    assert :half_open = ProgressiveRecoveryCircuitBreaker.state(cb)
+  end
+
+  # -------------------------------------------------------
+  # Progressive recovery path — the full ladder
+  # -------------------------------------------------------
+
+  test "clears every recovery stage → :closed", %{cb: cb} do
+    # TODO
+  end
+
+  test "failure within stage tolerance stays in stage", %{cb: cb} do
+    trip_to_half_open(cb)
+    ProgressiveRecoveryCircuitBreaker.call(cb, ok_fn())
+
+    # Clear stage 0 (3 calls, 0 failures)
+    for _ <- 1..3, do: ProgressiveRecoveryCircuitBreaker.call(cb, ok_fn())
+
+    # Now in stage 1: 5 calls, 1 failure tolerated
+    # 2 successes + 1 failure = stage_calls=3, stage_failures=1, still under limit
+    for _ <- 1..2, do: ProgressiveRecoveryCircuitBreaker.call(cb, ok_fn())
+    ProgressiveRecoveryCircuitBreaker.call(cb, err_fn())
+    assert :recovering = ProgressiveRecoveryCircuitBreaker.state(cb)
+
+    # 2 more successes: stage_calls=5, advance to stage 2
+    for _ <- 1..2, do: ProgressiveRecoveryCircuitBreaker.call(cb, ok_fn())
+    assert :recovering = ProgressiveRecoveryCircuitBreaker.state(cb)
+  end
+
+  test "failure in stage 0 exceeds tolerance → :open", %{cb: cb} do
+    trip_to_half_open(cb)
+    ProgressiveRecoveryCircuitBreaker.call(cb, ok_fn())
+
+    # Stage 0 tolerates 0 failures — a single error bounces back to :open
+    ProgressiveRecoveryCircuitBreaker.call(cb, err_fn())
+    assert :open = ProgressiveRecoveryCircuitBreaker.state(cb)
+  end
+
+  test "second failure in stage 1 exceeds tolerance → :open", %{cb: cb} do
+    trip_to_half_open(cb)
+    ProgressiveRecoveryCircuitBreaker.call(cb, ok_fn())
+    # Clear stage 0
+    for _ <- 1..3, do: ProgressiveRecoveryCircuitBreaker.call(cb, ok_fn())
+
+    # Stage 1: 1 failure is fine, 2 is too many
+    ProgressiveRecoveryCircuitBreaker.call(cb, err_fn())
+    assert :recovering = ProgressiveRecoveryCircuitBreaker.state(cb)
+
+    ProgressiveRecoveryCircuitBreaker.call(cb, err_fn())
+    assert :open = ProgressiveRecoveryCircuitBreaker.state(cb)
+  end
+
+  test "reopening from :recovering restarts reset timeout", %{cb: cb} do
+    trip_to_half_open(cb)
+    ProgressiveRecoveryCircuitBreaker.call(cb, ok_fn())
+
+    # Trigger recovery failure → :open
+    ProgressiveRecoveryCircuitBreaker.call(cb, err_fn())
+    assert :open = ProgressiveRecoveryCircuitBreaker.state(cb)
+
+    # Reset timer must be fresh (1s), not carried over
+    Clock.advance(500)
+    assert :open = ProgressiveRecoveryCircuitBreaker.state(cb)
+    Clock.advance(500)
+    assert :half_open = ProgressiveRecoveryCircuitBreaker.state(cb)
+  end
+
+  # -------------------------------------------------------
+  # Exception handling
+  # -------------------------------------------------------
+
+  test "raised exception is a failure and doesn't crash the GenServer", %{cb: cb} do
+    raise_fn = fn -> raise "boom" end
+
+    assert {:error, %RuntimeError{message: "boom"}} =
+             ProgressiveRecoveryCircuitBreaker.call(cb, raise_fn)
+
+    pid = Process.whereis(cb)
+    assert Process.alive?(pid)
+
+    # 2 more raises (threshold=3) → trip
+    for _ <- 1..2, do: ProgressiveRecoveryCircuitBreaker.call(cb, raise_fn)
+    assert :open = ProgressiveRecoveryCircuitBreaker.state(cb)
+  end
+
+  test "raised exception in :recovering counts as a stage failure", %{cb: cb} do
+    trip_to_half_open(cb)
+    ProgressiveRecoveryCircuitBreaker.call(cb, ok_fn())
+    # Stage 0: zero tolerance
+
+    assert {:error, %RuntimeError{}} =
+             ProgressiveRecoveryCircuitBreaker.call(cb, fn -> raise "boom" end)
+
+    assert :open = ProgressiveRecoveryCircuitBreaker.state(cb)
+  end
+
+  # -------------------------------------------------------
+  # Manual reset
+  # -------------------------------------------------------
+
+  test "reset returns to :closed from :open", %{cb: cb} do
+    for _ <- 1..3, do: ProgressiveRecoveryCircuitBreaker.call(cb, err_fn())
+    assert :open = ProgressiveRecoveryCircuitBreaker.state(cb)
+
+    ProgressiveRecoveryCircuitBreaker.reset(cb)
+    assert :closed = ProgressiveRecoveryCircuitBreaker.state(cb)
+  end
+
+  test "reset returns to :closed from :recovering and clears stage counters", %{cb: cb} do
+    trip_to_half_open(cb)
+    ProgressiveRecoveryCircuitBreaker.call(cb, ok_fn())
+    # Advance into stage 1 with some progress
+    for _ <- 1..3, do: ProgressiveRecoveryCircuitBreaker.call(cb, ok_fn())
+    for _ <- 1..2, do: ProgressiveRecoveryCircuitBreaker.call(cb, ok_fn())
+    assert :recovering = ProgressiveRecoveryCircuitBreaker.state(cb)
+
+    ProgressiveRecoveryCircuitBreaker.reset(cb)
+    assert :closed = ProgressiveRecoveryCircuitBreaker.state(cb)
+
+    # After reset, failure count should be fresh — need full 3 consecutive
+    # failures to trip again (not some leftover count).
+    for _ <- 1..2, do: ProgressiveRecoveryCircuitBreaker.call(cb, err_fn())
+    assert :closed = ProgressiveRecoveryCircuitBreaker.state(cb)
+    ProgressiveRecoveryCircuitBreaker.call(cb, err_fn())
+    assert :open = ProgressiveRecoveryCircuitBreaker.state(cb)
+  end
+end
+```

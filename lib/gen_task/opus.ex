@@ -75,7 +75,8 @@ defmodule GenTask.Opus do
           {:error, {:usage_limit, :exhausted}}
         else
           Logger.warning(
-            "usage limit reached — waiting #{cfg.usage_wait_ms}ms (attempt #{attempt})"
+            "usage limit reached on #{call_label()} — waiting #{cfg.usage_wait_ms}ms " <>
+              "(attempt #{attempt})"
           )
 
           CycleLog.record_wait(cfg, cfg.usage_wait_ms, attempt, "usage_limit")
@@ -99,7 +100,11 @@ defmodule GenTask.Opus do
       {:transient, reason} ->
         if transient_n < cfg.transient_retries do
           backoff = 2000 * Integer.pow(2, transient_n)
-          Logger.warning("transient error (#{reason}) — backing off #{backoff}ms")
+
+          Logger.warning(
+            "transient error (#{reason}) on #{call_label()} — " <>
+              "retry #{transient_n + 1}/#{cfg.transient_retries} after #{backoff}ms"
+          )
           Process.sleep(backoff)
           do_call(system, user, cfg, transient_n + 1, usage_n)
         else
@@ -234,19 +239,35 @@ defmodule GenTask.Opus do
   end
 
   defp command(sys_path, user_path, %Config{} = cfg) do
-    # `--max-turns 1`: this is a NON-AGENTIC, single-shot transport (see @moduledoc) —
-    # a generation with no tools completes in exactly one turn. Allowing 20 turns let the
-    # model occasionally engage the CLI's agentic loop (e.g. attempt a disabled tool) and
-    # burn all turns → `error_max_turns`, which is retried 5× with backoff (~15 min stall).
-    # With one turn, that case fast-fails and the transient-retry gets a clean single-shot
-    # reply. Reminder/repair steps are separate `claude -p` calls, not extra turns here.
+    # `--max-turns` (default 2, `GEN_MAX_TURNS`): this is a NON-AGENTIC transport
+    # (see @moduledoc) — a clean generation completes in one turn. But on fix/repair
+    # prompts the model routinely *attempts* a (disabled) tool call first; with
+    # `--max-turns 1` that fast-fails as `error_max_turns` and the transient retry
+    # tends to re-sample the same behavior (observed live: 5/5 retries failed,
+    # ~3.5 min wasted — docs/09 §11). Two turns lets the denied tool attempt be
+    # followed by the real single-shot reply, while still bounding a runaway
+    # agentic loop (20 turns used to stall ~15 min). Reminder/repair steps are
+    # separate `claude -p` calls, not extra turns here.
     "timeout --signal=KILL #{cfg.call_timeout_s} " <>
       "claude -p --output-format json --model #{shell_quote(cfg.model)} " <>
-      "--max-turns 1 --allowedTools '' " <>
+      "--max-turns #{cfg.max_turns} --allowedTools '' " <>
       "--system-prompt-file #{shell_quote(sys_path)} " <>
       "--setting-sources '' --strict-mcp-config --no-session-persistence " <>
       "< #{shell_quote(user_path)}"
   end
+
+  @doc """
+  Label the current process's in-flight call (set by `GenTask.Cycle.opus/5`) so
+  transport-level retry warnings say WHICH call is stalling — "fix 135_001_…" beats
+  an anonymous "transient error" on the console.
+  """
+  @spec put_call_label(String.t()) :: :ok
+  def put_call_label(label) do
+    Process.put(:gen_task_call_label, label)
+    :ok
+  end
+
+  defp call_label, do: Process.get(:gen_task_call_label) || "call"
 
   defp temp_write(content, prefix) do
     name = "#{prefix}_#{System.pid()}_#{System.unique_integer([:positive])}.txt"

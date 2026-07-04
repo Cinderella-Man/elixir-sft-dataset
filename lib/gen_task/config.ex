@@ -30,6 +30,7 @@ defmodule GenTask.Config do
           skip_write_test: boolean(),
           skip_test_fim: boolean(),
           tfim_max_per_task: pos_integer(),
+          max_turns: pos_integer(),
           limit: pos_integer() | nil,
           from: pos_integer() | nil,
           to: pos_integer() | nil,
@@ -61,7 +62,8 @@ defmodule GenTask.Config do
             per_fn_mutation: true,
             skip_write_test: false,
             skip_test_fim: false,
-            tfim_max_per_task: 3,
+            tfim_max_per_task: 10,
+            max_turns: 2,
             limit: nil,
             from: nil,
             to: nil,
@@ -71,7 +73,7 @@ defmodule GenTask.Config do
             skip_fim: false,
             skip_backfill: false,
             only: nil,
-            reconcile: false,
+            reconcile: true,
             dry_run: false,
             tasks_dir: "tasks",
             tasks_md: "tasks/tasks.md",
@@ -101,7 +103,8 @@ defmodule GenTask.Config do
       per_fn_mutation: not env_bool(env_fun, "GEN_SKIP_PER_FN_MUTATION"),
       skip_write_test: env_bool(env_fun, "GEN_SKIP_WRITE_TEST"),
       skip_test_fim: env_bool(env_fun, "GEN_SKIP_TEST_FIM"),
-      tfim_max_per_task: env_int(env_fun, "GEN_TFIM_MAX_PER_TASK", 3),
+      tfim_max_per_task: env_int(env_fun, "GEN_TFIM_MAX_PER_TASK", 10),
+      max_turns: env_int(env_fun, "GEN_MAX_TURNS", 2),
       limit: env_int(env_fun, "GEN_LIMIT", nil),
       from: env_int(env_fun, "GEN_FROM", nil),
       to: env_int(env_fun, "GEN_TO", nil),
@@ -111,7 +114,7 @@ defmodule GenTask.Config do
       skip_fim: env_bool(env_fun, "GEN_SKIP_FIM"),
       skip_backfill: env_bool(env_fun, "GEN_SKIP_BACKFILL"),
       only: work_scope(env_fun),
-      reconcile: env_bool(env_fun, "GEN_RECONCILE"),
+      reconcile: env_bool_default(env_fun, "GEN_RECONCILE", true),
       dry_run: env_bool(env_fun, "GEN_DRY_RUN")
     }
   end
@@ -129,8 +132,22 @@ defmodule GenTask.Config do
 
   defp work_scope(env_fun) do
     case env_fun.("GEN_ONLY") do
-      nil -> nil
-      v -> if String.downcase(v) =~ ~r/backfill/, do: :backfill, else: :bases
+      nil ->
+        nil
+
+      v ->
+        case String.downcase(String.trim(v)) do
+          "backfill" ->
+            :backfill
+
+          b when b in ["bases", "base"] ->
+            :bases
+
+          other ->
+            # A typo like GEN_ONLY=fim used to silently mean :bases — refuse instead.
+            raise ArgumentError,
+                  "GEN_ONLY=#{inspect(other)} is not recognized (expected \"bases\" or \"backfill\")"
+        end
     end
   end
 
@@ -148,9 +165,13 @@ defmodule GenTask.Config do
         default
 
       v ->
-        case Integer.parse(v) do
-          {n, _} -> n
-          :error -> default
+        case Integer.parse(String.trim(v)) do
+          {n, ""} ->
+            n
+
+          _ ->
+            # GEN_LIMIT=5x used to silently mean 5 — a config typo should stop the run.
+            raise ArgumentError, "#{key}=#{inspect(v)} is not an integer"
         end
     end
   end
@@ -159,6 +180,15 @@ defmodule GenTask.Config do
     case env_fun.(key) do
       nil -> false
       v -> String.downcase(String.trim(v)) in ["1", "true", "yes", "on"]
+    end
+  end
+
+  # A boolean knob that is ON unless explicitly disabled (`KEY=0/false/no/off`) —
+  # for behaviors that should be opt-OUT (the default run does everything).
+  defp env_bool_default(env_fun, key, default) do
+    case env_fun.(key) do
+      nil -> default
+      v -> String.downcase(String.trim(v)) not in ["0", "false", "no", "off"]
     end
   end
 end

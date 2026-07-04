@@ -524,7 +524,7 @@ re-scanning (JSONL is fsynced; no partial `tasks/` dirs are ever left).
 | Skip variations/FIM | `GEN_SKIP_VARIATIONS`, `GEN_SKIP_FIM` | `0` | run only part of the chain |
 | Skip wtest/tfim | `GEN_SKIP_WRITE_TEST`, `GEN_SKIP_TEST_FIM` | `0` | skip the deterministic derived kinds (`docs/06`) |
 | Backfill control | `GEN_SKIP_BACKFILL` / `GEN_ONLY` | `0` / — | skip work-list 2; or `GEN_ONLY=backfill`/`bases` to run one work-list (§4) |
-| Reconcile catalog | `GEN_RECONCILE` | `0` | before running, insert a `tasks.md` entry for any variation dir missing one (heals crash-orphans). Off by default so a normal run never rewrites the hand-curated catalog with derived entries; done-detection is dir-based, so the loop is correct either way |
+| Reconcile catalog | `GEN_RECONCILE` | `1` (on; `GEN_RECONCILE=0` disables — flipped in docs/09 §13) | before running, insert a `tasks.md` entry for any variation dir missing one (heals crash-orphans / pre-Finding-E losses). Insert-only + idempotent; skipped in dry-run; done-detection is dir-based, so the loop is correct either way |
 | Dry run | `GEN_DRY_RUN` | `0` | do everything except promotion / `tasks.md` edits |
 
 No spend cap — subscription. `ANTHROPIC_API_KEY` must be **unset** (auth hygiene).

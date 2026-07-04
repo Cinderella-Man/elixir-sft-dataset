@@ -37,8 +37,36 @@ defmodule GenTask.EvaluatorTest do
       refute Evaluator.green?(%{@green | "tests_errors" => 1})
     end
 
+    test "false when no test actually passed (all skipped/excluded \u2014 docs/05 #19)" do
+      # tests_total > 0 alone is satisfiable by an all-@tag-:skip harness whose
+      # tests never ran; green? must demand positive evidence of a passing run.
+      refute Evaluator.green?(%{@green | "tests_passed" => 0})
+    end
+
     test "tolerates missing count keys (treated as zero)" do
       refute Evaluator.green?(%{"compiled" => true})
+    end
+  end
+
+  describe "killed_by_tests?/1" do
+    @killed %{"compiled" => true, "tests_total" => 10, "tests_passed" => 3, "tests_failed" => 7}
+
+    test "true when the mutant compiled and tests ran and failed" do
+      assert Evaluator.killed_by_tests?(@killed)
+      assert Evaluator.killed_by_tests?({:ok, @killed})
+    end
+
+    test "false when the mutant did not compile (docs/05 #18)" do
+      refute Evaluator.killed_by_tests?(%{@killed | "compiled" => false})
+    end
+
+    test "false when no test failed (harness load error / all skipped)" do
+      refute Evaluator.killed_by_tests?(%{@killed | "tests_failed" => 0})
+      refute Evaluator.killed_by_tests?(%{"compiled" => true, "tests_errors" => 1})
+    end
+
+    test "false on eval timeout" do
+      refute Evaluator.killed_by_tests?(:timeout_or_crash)
     end
   end
 
@@ -75,6 +103,17 @@ defmodule GenTask.EvaluatorTest do
 
     test "flags compile warnings" do
       assert Evaluator.quality_shortfall(%{@full | "compile_warnings" => 3}) =~ "compile warning"
+    end
+
+    test "flags over-98-column lines and SQL interpolation" do
+      json =
+        @full
+        |> put_in(["analysis", "lines_over_98"], 2)
+        |> put_in(["analysis", "sql_injection_risk"], true)
+
+      report = Evaluator.quality_shortfall(json)
+      assert report =~ "98 columns"
+      assert report =~ "parameterized"
     end
 
     test "flags a TODO marker and joins multiple shortfalls" do

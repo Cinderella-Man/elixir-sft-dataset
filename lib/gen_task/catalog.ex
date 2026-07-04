@@ -48,6 +48,7 @@ defmodule GenTask.Catalog do
             num: pos_integer(),
             b: pos_integer(),
             base?: boolean(),
+            skip?: boolean(),
             needs_variations?: boolean(),
             needs_fim?: boolean(),
             needs_write_test?: boolean(),
@@ -59,6 +60,7 @@ defmodule GenTask.Catalog do
       :num,
       :b,
       :base?,
+      skip?: false,
       needs_variations?: false,
       needs_fim?: false,
       needs_write_test?: false,
@@ -197,16 +199,24 @@ defmodule GenTask.Catalog do
   """
   @spec backfill_seeds(Config.t()) :: [Seed.t()]
   def backfill_seeds(%Config{} = cfg) do
+    cfg
+    |> all_seeds()
+    |> Enum.filter(&(GenTask.Work.pending(&1, cfg) != %{}))
+    |> Enum.filter(&in_scope?(&1.num, cfg))
+    # GEN_LIMIT bounds each work-list: at most N base ideas AND at most N backfill
+    # seeds per run (docs/05 #7 — it used to bound only new bases).
+    |> maybe_limit(cfg.limit)
+  end
+
+  @doc "Every accepted `_01` seed on disk (whether or not it needs work) — for status."
+  @spec all_seeds(Config.t()) :: [Seed.t()]
+  def all_seeds(%Config{} = cfg) do
     "#{cfg.tasks_dir}/*_01"
     |> Path.wildcard()
     |> Enum.filter(&File.dir?/1)
     |> Enum.sort()
     |> Enum.map(&seed(&1, cfg))
     |> Enum.reject(&is_nil/1)
-    |> Enum.filter(
-      &(&1.needs_variations? or &1.needs_fim? or &1.needs_write_test? or &1.needs_test_fim?)
-    )
-    |> Enum.filter(&in_scope?(&1.num, cfg))
   end
 
   defp seed(dir, %Config{} = cfg) do
@@ -218,26 +228,25 @@ defmodule GenTask.Catalog do
          {bnum, ""} <- Integer.parse(b),
          "01" <- List.last(parts) do
       base? = bnum == 1
-      skip? = gradable_skip?(dir)
 
-      %Seed{
+      # Which work each seed still needs is defined ONCE, in the `GenTask.Work`
+      # registry (top-up semantics, gradable-skip exclusions — see its moduledoc);
+      # the flags here are a convenience projection of `Work.missing/3`.
+      bare = %Seed{
         dir: dir,
         task_id: base,
         num: num,
         b: bnum,
         base?: base?,
-        # Top-up semantics: a base needs variations until all 3 slots (V1/V2/V3 →
-        # _002/_003/_004) exist; any _01 needs FIM until it has `fim_max_per_task`
-        # subtasks; any _01 needs a wtest until its `wt_` dir exists and tfim until it has
-        # `tfim_max_per_task` subtasks. A partially-filled batch is revisited, not skipped.
-        # A gradable-skip (Postgres-tier) `_01` is excluded from wtest/tfim: its parent
-        # grades `skipped`, so neither derivative can ever be minted green (docs/06 §6).
-        needs_variations?: base? and count_variations(cfg.tasks_dir, a) < 3,
-        needs_fim?: count_fim(cfg.tasks_dir, a, b) < cfg.fim_max_per_task,
-        needs_write_test?:
-          not skip? and
-            not File.dir?("#{cfg.tasks_dir}/wt_#{String.replace_suffix(base, "_01", "")}"),
-        needs_test_fim?: not skip? and count_tfim(cfg.tasks_dir, a, b) < cfg.tfim_max_per_task
+        skip?: gradable_skip?(dir)
+      }
+
+      %Seed{
+        bare
+        | needs_variations?: GenTask.Work.missing(:variations, bare, cfg) > 0,
+          needs_fim?: GenTask.Work.missing(:fim, bare, cfg) > 0,
+          needs_write_test?: GenTask.Work.missing(:write_test, bare, cfg) > 0,
+          needs_test_fim?: GenTask.Work.missing(:test_fim, bare, cfg) > 0
       }
     else
       _ -> nil

@@ -48,11 +48,16 @@ defmodule GenTask.TestFim do
 
       true ->
         covered = covered_names(seed, cfg)
+        rejected = CycleLog.rejected_tfim_targets(cfg, prefix(seed), CycleLog.content_sha(harness))
 
         candidates =
           harness
           |> test_blocks()
           |> Enum.reject(&MapSet.member?(covered, &1.name))
+          # Negative cache: blocks that already failed the gates against THIS harness
+          # content are permanent rejects (deterministic gates) — do not re-gate them
+          # on every backfill pass.
+          |> Enum.reject(&MapSet.member?(rejected, &1.name))
           # Drop any block whose carved source does not parse (heredoc `  end` boundary,
           # etc.) so a truncated/invalid gold is never promoted.
           |> Enum.filter(&parses?(block_src(harness, &1)))
@@ -114,10 +119,14 @@ defmodule GenTask.TestFim do
 
     cond do
       not Evaluator.green?(recon) ->
+        record_rejected(seed, cand, cfg)
+
         {outcome(tfim_id, seed, cand.name, :rejected,
            reason: "reconstruct not green: " <> Cycle.reason_for(recon)), false}
 
       not gate_ok?(module_src, files["solution.ex"], iso_harness, Path.join(stage_root, "iso"), cfg) ->
+        record_rejected(seed, cand, cfg)
+
         {outcome(tfim_id, seed, cand.name, :rejected,
            reason: "vacuous test block (no mutant killed / not independent)"), false}
 
@@ -126,6 +135,14 @@ defmodule GenTask.TestFim do
         stats = Cycle.grade_stats(recon)
         {outcome(tfim_id, seed, cand.name, :accepted, stats: stats), true}
     end
+  end
+
+  # Both reject classes are deterministic for fixed content (fixed eval seed,
+  # immutable tasks): remember them keyed by the parent-harness hash so later
+  # backfill passes skip the block instead of re-running the gates.
+  defp record_rejected(seed, cand, cfg) do
+    sha = CycleLog.content_sha(seed.files["test_harness.exs"])
+    CycleLog.record_tfim_rejected(cfg, prefix(seed), cand.name, sha)
   end
 
   # Single-file → isolation-kill; multifile (bundle) → static assertion on the GOLD BLOCK

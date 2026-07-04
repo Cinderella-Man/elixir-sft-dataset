@@ -25,7 +25,8 @@ defmodule GenTask.Cycle do
           files: files(),
           grade: Evaluator.grade(),
           attempts: pos_integer(),
-          mutant_failed: boolean()
+          mutant_failed: boolean(),
+          reason: String.t() | nil
         }
 
   # ---------------------------------------------------------------------------
@@ -41,36 +42,102 @@ defmodule GenTask.Cycle do
   """
   @spec run(files(), ctx(), Config.t()) :: result()
   def run(files, ctx, %Config{} = cfg) do
+    CycleLog.reset_attempts(cfg, ctx.id)
+
     Enum.reduce_while(0..cfg.max_retries, {files, :timeout_or_crash}, fn attempt, {files, _} ->
       Evaluator.stage!(ctx.dir, files)
       grade = Evaluator.grade(ctx.dir, cfg)
 
       case accept?(grade, ctx, files, cfg) do
         :accept ->
+          CycleLog.record_attempt(cfg, ctx.id, attempt, files, grade, :accepted, nil)
+          progress(attempt, "#{grade_line(grade)} — all gates passed")
           Logger.info("cycle #{ctx.id}: ACCEPTED on attempt #{attempt}")
-          {:halt, mk(:accepted, files, grade, attempt + 1)}
+          {:halt, mk(:accepted, files, grade, attempt + 1, nil)}
 
         {:reject, reason} ->
+          report = Evaluator.repair_report(reason)
+          why = reason_text(reason)
+
           cond do
             attempt >= cfg.max_retries ->
+              CycleLog.record_attempt(cfg, ctx.id, attempt, files, grade, :rejected_final, report)
+              progress(attempt, "#{why} — retries exhausted")
               Logger.info("cycle #{ctx.id}: REJECTED after #{attempt + 1} attempt(s)")
-              {:halt, mk(:rejected, files, grade, attempt + 1)}
+              {:halt, mk(:rejected, files, grade, attempt + 1, why)}
 
             true ->
-              case repair(files, reason, ctx, cfg) do
-                {:ok, files} -> {:cont, {files, grade}}
-                :error -> {:halt, mk(:rejected, files, grade, attempt + 1)}
+              CycleLog.record_attempt(cfg, ctx.id, attempt, files, grade, :rejected, report)
+              progress(attempt, "#{why} — asking for a fix")
+
+              case repair(files, report, ctx, cfg) do
+                :error ->
+                  progress(attempt, "the fix call itself failed — giving up")
+                  {:halt, mk(:rejected, files, grade, attempt + 1, why <> "; repair call failed")}
+
+                {:ok, files} ->
+                  {:cont, {files, grade}}
               end
           end
       end
     end)
   end
 
-  defp mk(:accepted, files, grade, attempts),
-    do: %{status: :accepted, files: files, grade: grade, attempts: attempts, mutant_failed: true}
+  defp mk(:accepted, files, grade, attempts, _reason),
+    do: %{
+      status: :accepted,
+      files: files,
+      grade: grade,
+      attempts: attempts,
+      mutant_failed: true,
+      reason: nil
+    }
 
-  defp mk(:rejected, files, grade, attempts),
-    do: %{status: :rejected, files: files, grade: grade, attempts: attempts, mutant_failed: false}
+  defp mk(:rejected, files, grade, attempts, reason),
+    do: %{
+      status: :rejected,
+      files: files,
+      grade: grade,
+      attempts: attempts,
+      mutant_failed: false,
+      reason: reason
+    }
+
+  # One indented terminal line per graded attempt — the console used to show nothing
+  # between the task header and the final verdict, so a 4-attempt cycle looked hung
+  # and the verdict could not say WHICH gate rejected.
+  defp progress(attempt, msg) do
+    IO.puts("    · attempt #{attempt}: #{shorten(msg)}")
+  end
+
+  defp shorten(msg) do
+    one_line = msg |> String.replace(~r/\s+/, " ") |> String.trim()
+    if String.length(one_line) > 160, do: String.slice(one_line, 0, 157) <> "…", else: one_line
+  end
+
+  defp grade_line(grade) do
+    s = grade_stats(grade)
+    "green (#{s.tests_passed}/#{s.tests_total})"
+  end
+
+  @doc """
+  Human text for a reject reason — the SPECIFIC gate and detail, unlike
+  `reason_for/1` which only sees the grade (and so mislabels a quality-gate or
+  fix-transport failure as "vacuous harness").
+  """
+  @spec reason_text(term()) :: String.t()
+  def reason_text(:timeout_or_crash), do: "evaluation timed out or crashed"
+  def reason_text({:quality, shortfall}), do: "house style: " <> shortfall
+  def reason_text({:vacuous, why}), do: "mutation gate: " <> why
+
+  def reason_text({:failed, grade}) do
+    s = grade_stats(grade)
+
+    case reason_for(grade) do
+      "tests failed" -> "tests failed (#{s.tests_passed}/#{s.tests_total} passed)"
+      other -> other
+    end
+  end
 
   defp accept?(:timeout_or_crash, _ctx, _files, _cfg), do: {:reject, :timeout_or_crash}
 
@@ -98,8 +165,7 @@ defmodule GenTask.Cycle do
     end
   end
 
-  defp repair(files, reason, ctx, cfg) do
-    report = Evaluator.repair_report(reason)
+  defp repair(files, report, ctx, cfg) do
     Logger.info("cycle #{ctx.id}: repairing — #{report}")
     {system, user} = Prompts.fix(files, report, :task)
 
@@ -133,6 +199,7 @@ defmodule GenTask.Cycle do
   @spec opus(Config.t(), String.t(), String.t(), String.t(), String.t()) ::
           {:ok, String.t(), map()} | {:error, term()}
   def opus(%Config{} = cfg, id, step, system, user) do
+    GenTask.Opus.put_call_label("#{step} (#{id})")
     started = System.monotonic_time(:millisecond)
 
     case cfg.opus.call(system, user, cfg) do

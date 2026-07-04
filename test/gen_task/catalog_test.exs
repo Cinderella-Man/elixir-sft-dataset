@@ -129,6 +129,8 @@ defmodule GenTask.CatalogTest do
 
   describe "backfill_seeds/1 enumeration" do
     test "flags partially-derived tasks for top-up and excludes fully-complete ones" do
+      # The fixture below is "complete" at 3 fim + 3 tfim per _01 — pin those caps
+      # (the default tfim cap is now 10; completeness is relative to the cap).
       dir = tmp_dir()
 
       # idea 10: bare base -> needs variations AND fim
@@ -178,7 +180,7 @@ defmodule GenTask.CatalogTest do
           ],
           do: File.mkdir_p!(Path.join(dir, d))
 
-      cfg = %Config{tasks_dir: dir}
+      cfg = %Config{tasks_dir: dir, fim_max_per_task: 3, tfim_max_per_task: 3}
       seeds = Catalog.backfill_seeds(cfg)
 
       by_id = Map.new(seeds, &{&1.task_id, &1})
@@ -213,18 +215,20 @@ defmodule GenTask.CatalogTest do
     test "excludes Postgres-tier (gradable-skip) seeds from wtest/tfim backfill" do
       dir = tmp_dir()
 
-      # A base whose eval is `skipped` (manifest db: :postgres): variations/fim may still
-      # apply (a variation is a NEW triplet with no such manifest), but wtest/tfim can
-      # never be minted green from this parent, so they must not be flagged for backfill.
+      # A base whose eval is `skipped` (manifest db: :postgres): variations may still
+      # apply (a variation is a NEW triplet with no such manifest), but FIM, wtest and
+      # tfim all grade against this parent's harness — which can only ever grade
+      # `skipped` — so none can be minted green and none may be flagged for backfill
+      # (Finding A: FIM would additionally burn LLM repair calls on every run).
       File.mkdir_p!(Path.join(dir, "017_001_search_01"))
       File.write!(Path.join(dir, "017_001_search_01/manifest.exs"), "%{db: :postgres}\n")
 
       cfg = %Config{tasks_dir: dir}
       seed = Catalog.backfill_seeds(cfg) |> Enum.find(&(&1.num == 17))
 
-      # Still a seed (kept for variations + fim), but wtest/tfim are suppressed.
-      assert %Seed{needs_write_test?: false, needs_test_fim?: false} = seed
-      assert seed.needs_variations? and seed.needs_fim?
+      # Still a seed (kept for variations), but fim/wtest/tfim are all suppressed.
+      assert %Seed{needs_fim?: false, needs_write_test?: false, needs_test_fim?: false} = seed
+      assert seed.needs_variations?
     end
   end
 
