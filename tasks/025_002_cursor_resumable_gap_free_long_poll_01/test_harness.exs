@@ -23,7 +23,7 @@ defmodule CursorLongPollTest do
   # Helpers
   # -------------------------------------------------------
 
-  defp poll(opts, user_id, since \\ 0) do
+  defp poll(opts, user_id, since) do
     :get
     |> conn("/api/notifications/poll?since=#{since}")
     |> assign(:user_id, user_id)

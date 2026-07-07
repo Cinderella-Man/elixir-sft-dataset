@@ -52,7 +52,7 @@ defmodule JsonStreamer do
 
     {processed, errors} =
       file_path
-      |> File.stream!([], :line)
+      |> File.stream!(:line, [])
       |> Enum.reduce({0, 0}, fn line, {processed, errors} ->
         line
         |> String.trim()

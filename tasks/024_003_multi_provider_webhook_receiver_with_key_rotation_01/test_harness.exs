@@ -31,7 +31,7 @@ defmodule WebhookReceiverMultiProviderTest do
     %{store: store, opts: [providers: providers, store: store]}
   end
 
-  defp do_request(opts, method, path, payload, headers \\ []) do
+  defp do_request(opts, method, path, payload, headers) do
     conn = conn(method, path, payload)
 
     conn =

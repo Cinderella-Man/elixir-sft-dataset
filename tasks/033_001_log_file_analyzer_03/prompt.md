@@ -46,7 +46,7 @@ defmodule LogAnalyzer do
   def analyze(path) do
     stream =
       path
-      |> File.stream!([], :line)
+      |> File.stream!(:line, [])
 
     # File.stream!/3 is lazy; it only raises on the first pull if the file is
     # missing, so we attempt to stat the file eagerly to produce a clean error.

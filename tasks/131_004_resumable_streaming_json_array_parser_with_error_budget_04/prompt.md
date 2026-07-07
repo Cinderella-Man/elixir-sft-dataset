@@ -59,7 +59,7 @@ defmodule ResumableJsonStreamer do
 
     result =
       file_path
-      |> File.stream!([], :line)
+      |> File.stream!(:line, [])
       |> Stream.map(&String.trim/1)
       |> Stream.reject(&(&1 in ["", "[", "]"]))
       |> Enum.reduce_while(init, fn line, acc ->

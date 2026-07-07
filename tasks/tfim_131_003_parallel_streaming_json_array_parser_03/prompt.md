@@ -39,7 +39,7 @@ defmodule ParallelJsonStreamer do
 
     {processed, errors} =
       file_path
-      |> File.stream!([], :line)
+      |> File.stream!(:line, [])
       |> Stream.map(&String.trim/1)
       |> Stream.reject(&(&1 in ["", "[", "]"]))
       |> Task.async_stream(&decode_line/1,
