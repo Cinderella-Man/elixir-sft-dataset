@@ -414,21 +414,22 @@ Work one task family at a time; after EACH family run
   SQLite tier-B kit. Recommend the faithful-fake option (self-contained, no infra).
 - Same cascade rules as R2a (this is a multifile bundle; children: `grep 102_001`).
 
-**R2c. `623_001_mini_elasticsearch_like_inverted_index` — vacuous tests + stemmer.**
-- Two tests (test_harness.exs:124-131, 150-159) have all tf-idf scores 0.0 because
-  idf = log(2/2) = 0 with 2 docs both containing the term; they pass only via
-  map-order + stable-sort accident under `seed: 0`. Fix: add a third document that
-  does NOT contain the term so idf > 0 and the intended ranking is real; assert the
-  full ordered id list.
-- Prompt/harness contradiction: prompt.md:7 lists the stemmer minimum
-  (-ing/-ed/-s/-ly/-tion/-ment) but test_harness.exs:186-187 requires "runner" to
-  match "running" (needs "-er" + double-consonant dedup). Align the HARNESS to the
-  PROMPT (drop the "runner" expectation) — the prompt is the contract; alternatively
-  extend the prompt, but then any trained model must infer more. Recommend harness edit.
-- Stemmer inconsistency (`meetings`→`meeting` vs `meeting`→`meet`) is then untested
-  either way; optionally normalize (iterate suffix stripping to fixpoint) — only if
-  the prompt is updated to say so.
-- Cascade as above (children: `grep 623_001`).
+**R2c. `623_001_mini_elasticsearch_like_inverted_index` — vacuous tests + stemmer.
+✅ DONE 2026-07-08 (test names kept stable so tfim skeletons stay valid).**
+- The two all-zero-idf tests ("title boost…", "term in multiple fields…") each gained
+  a third document WITHOUT the query term (idf = log(3/2) > 0), assert the exact
+  ordered id list, and assert `hd.score > last.score` — an all-zero tie now fails by
+  construction instead of passing by map-order accident.
+- The stemming test no longer requires un-spec'd "-er"/double-consonant stemming:
+  "running"/"runner" became "walking"/"walked" + "jumps"/"jumped", derivable from the
+  prompt's "-ing"/"-ed"/"-s" alone; ids asserted as a sorted set (scores tie at equal
+  tf, so ordering is deliberately not asserted there).
+- Synced all FIVE carriers of the harness text: parent + wt_ `test_harness.exs`, and
+  the three tfim `prompt.md` embeds (none of the tfim gold blocks target the edited
+  tests — verified before editing). Family green under perfect + mutants.
+- Still open (needs a prompt change first): the reference stemmer's
+  `meetings`→`meeting` vs `meeting`→`meet` inconsistency remains untested; normalize
+  only if the prompt is extended to specify fixpoint stripping.
 
 **R2d. `wt_131_004_resumable_streaming_json_array_parser_with_error_budget` — spec
 contradicts gold. ✅ DONE 2026-07-08.**

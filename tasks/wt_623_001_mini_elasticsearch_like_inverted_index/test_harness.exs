@@ -124,10 +124,13 @@ defmodule InvertedIndexTest do
   test "title boost makes title matches rank higher", %{idx: idx} do
     :ok = InvertedIndex.index(idx, "doc1", %{title: "fox", body: "an animal that runs fast"})
     :ok = InvertedIndex.index(idx, "doc2", %{title: "animals", body: "fox quick clever"})
+    # a third doc without the term keeps idf = log(3/2) > 0, so the scores are
+    # real numbers — not an all-zero tie ranked by map-order accident
+    :ok = InvertedIndex.index(idx, "doc3", %{title: "birds", body: "sparrow feathers sky"})
 
     boosted = InvertedIndex.search(idx, "fox", boosts: %{title: 5, body: 1})
-    assert length(boosted) == 2
-    assert hd(boosted).id == "doc1"
+    assert Enum.map(boosted, & &1.id) == ["doc1", "doc2"]
+    assert hd(boosted).score > List.last(boosted).score
   end
 
   test "boosted score is higher than default score for the same doc", %{idx: idx} do
@@ -152,10 +155,12 @@ defmodule InvertedIndexTest do
       InvertedIndex.index(idx, "doc1", %{title: "python guide", body: "learn python programming"})
 
     :ok = InvertedIndex.index(idx, "doc2", %{title: "java guide", body: "learn python basics"})
+    # a third doc without the term keeps idf > 0, so the field-sum comparison is real
+    :ok = InvertedIndex.index(idx, "doc3", %{title: "ruby guide", body: "learn ruby basics"})
 
     results = InvertedIndex.search(idx, "python")
-    assert length(results) == 2
-    assert hd(results).id == "doc1"
+    assert Enum.map(results, & &1.id) == ["doc1", "doc2"]
+    assert hd(results).score > List.last(results).score
   end
 
   # -------------------------------------------------------
@@ -179,15 +184,17 @@ defmodule InvertedIndexTest do
   # -------------------------------------------------------
 
   test "stemmed search matches morphological variants", %{idx: idx} do
-    :ok = InvertedIndex.index(idx, "doc1", %{body: "running jumps quickly"}, stem: true)
-    :ok = InvertedIndex.index(idx, "doc2", %{body: "jumped runner slowly"}, stem: true)
+    :ok = InvertedIndex.index(idx, "doc1", %{body: "walking jumps quickly"}, stem: true)
+    :ok = InvertedIndex.index(idx, "doc2", %{body: "jumped walked slowly"}, stem: true)
     :ok = InvertedIndex.index(idx, "doc3", %{body: "unrelated content here"}, stem: true)
 
-    run_results = InvertedIndex.search(idx, "running", stem: true)
-    assert length(run_results) >= 2
+    # "walking"/"walked" → "walk" and "jumps"/"jumped" → "jump" need only the
+    # spec-listed "-ing"/"-ed"/"-s" suffixes — no stemming beyond the prompt
+    walk_results = InvertedIndex.search(idx, "walking", stem: true)
+    assert walk_results |> Enum.map(& &1.id) |> Enum.sort() == ["doc1", "doc2"]
 
     jump_results = InvertedIndex.search(idx, "jumped", stem: true)
-    assert length(jump_results) >= 2
+    assert jump_results |> Enum.map(& &1.id) |> Enum.sort() == ["doc1", "doc2"]
   end
 
   test "unstemmed query does not match stemmed index", %{idx: idx} do
