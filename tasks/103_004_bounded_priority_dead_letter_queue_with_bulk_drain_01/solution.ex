@@ -18,6 +18,10 @@ defmodule PriorityDLQ do
     GenServer.start_link(__MODULE__, opts, gen_opts)
   end
 
+  @doc """
+  Pushes a dead-lettered `message` (with its `error_reason`, `metadata`, and `priority`)
+  onto `queue_name`. Drops the lowest-priority entry when the bounded queue is full.
+  """
   @spec push(GenServer.server(), term(), term(), term(), map(), :high | :normal | :low) ::
           {:ok, term()} | {:error, :full}
   def push(server, queue_name, message, error_reason, metadata, priority)
@@ -91,7 +95,8 @@ defmodule PriorityDLQ do
     to_visit = entries |> ordered() |> Enum.take(count)
 
     {outcomes, stats} =
-      Enum.reduce(to_visit, {%{}, %{succeeded: 0, failed: 0, processed: []}}, fn entry, {out, acc} ->
+      Enum.reduce(to_visit, {%{}, %{succeeded: 0, failed: 0, processed: []}}, fn
+        entry, {out, acc} ->
         acc = %{acc | processed: acc.processed ++ [entry.id]}
 
         case run_handler(handler, entry.message) do

@@ -133,20 +133,7 @@ defmodule StreamingResampler do
     {:ok, state}
   end
 
-  @impl true
   def handle_call({:push, ts, value}, _from, state) do
-    # TODO
-  end
-
-  def handle_call(:finalized, _from, state) do
-    # TODO
-  end
-
-  def handle_call(:flush, _from, state) do
-    # TODO
-  end
-
-  def handle_call(:stats, _from, state) do
     # TODO
   end
 

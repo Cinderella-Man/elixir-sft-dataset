@@ -71,18 +71,7 @@ defmodule SubscriptionAggregate do
   @impl true
   def init(initial_state), do: {:ok, initial_state}
 
-  @impl true
   def handle_call({:execute, id, command}, _from, store) do
-    # TODO
-  end
-
-  @impl true
-  def handle_call({:get_state, id}, _from, store) do
-    # TODO
-  end
-
-  @impl true
-  def handle_call({:get_events, id}, _from, store) do
     # TODO
   end
 
@@ -147,4 +136,5 @@ defmodule SubscriptionAggregate do
     %{state | status: :active, reason: nil}
   end
 end
+
 ```

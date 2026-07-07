@@ -138,12 +138,7 @@ defmodule StrictIdempotentPayments do
     end
   end
 
-  @impl true
   def handle_info(:cleanup, state) do
-    # TODO
-  end
-
-  def handle_info(_msg, state) do
     # TODO
   end
 

@@ -18,39 +18,99 @@ defmodule GenTask.Mutation do
 
   require Logger
 
+  alias EvalTask.Bundle
   alias GenTask.{Config, Evaluator}
 
   @type result :: :killed | {:survived, String.t()}
 
   @doc """
-  Produce a whole-module mutant of `solution_src` (every `def/defp/defmacro(p)`
+  Produce a whole-solution mutant of `solution_src` (every `def/defp/defmacro(p)`
   body → `raise`).
 
-  Unlike `EvalTask.Fim.mutate/1` this does **not** run the FIM candidate
-  extraction (`extract_candidate/1`) first: on a whole module that regex would grab
-  the first column-0 ```` ```elixir ```` fence — commonly a `@moduledoc`/`@doc`
-  example — and discard the entire module, yielding a non-compiling "mutant" that is
-  always `:killed` and so silently defeats the gate. We mutate the raw source AST
-  directly. On a rescue we return the source **unchanged** so the mutant grades
-  green (`:survived`) and is flagged as a vacuous harness — a conservative outcome
-  that never wrongly accepts.
+  Handles both shapes:
+
+    * **plain module** — mutate the raw source AST directly. Unlike
+      `EvalTask.Fim.mutate/1` this does **not** run the FIM candidate extraction
+      (`extract_candidate/1`) first: on a whole module that regex would grab the
+      first column-0 ```` ```elixir ```` fence — commonly a `@moduledoc`/`@doc`
+      example — and discard the entire module, yielding a non-compiling "mutant"
+      that is always `:killed` and so silently defeats the gate.
+    * **`<file>` bundle** — the raw bundle string is not valid Elixir, so parsing it
+      whole raises and (historically) fell through to the rescue below, returning the
+      source **unchanged** → the "mutant" was byte-identical to the solution, always
+      graded `:survived`, and every multi-file harness was mislabelled vacuous. We now
+      parse the bundle and gut the `lib/**/*.ex` module bodies file-by-file, leaving
+      migrations/config intact, then re-emit the bundle.
+
+  On a rescue we return the source **unchanged** so the mutant grades green
+  (`:survived`) and is flagged as a vacuous harness — a conservative outcome that
+  never wrongly accepts.
   """
   @spec mutate(String.t()) :: String.t()
   def mutate(solution_src) do
-    solution_src
-    |> Code.string_to_quoted!()
-    |> Macro.prewalk(fn
-      {d, m, [head, kw]} when d in [:def, :defp, :defmacro, :defmacrop] and is_list(kw) ->
-        if Keyword.has_key?(kw, :do),
-          do: {d, m, [head, [do: quote(do: raise("MUTATION"))]]},
-          else: {d, m, [head, kw]}
-
-      other ->
-        other
-    end)
-    |> Macro.to_string()
+    if Bundle.bundle?(solution_src),
+      do: mutate_bundle(solution_src),
+      else: mutate_module_src(solution_src)
   rescue
     _ -> solution_src
+  end
+
+  # Gut every `def/defp/defmacro(p)` body of a single module source to `raise`,
+  # except compile-time-invoked callbacks (see `compile_time_callback?/1`).
+  defp mutate_module_src(module_src) do
+    module_src
+    |> Code.string_to_quoted!()
+    |> Macro.prewalk(&mutate_module_node/1)
+    |> Macro.to_string()
+  end
+
+  defp mutate_module_node({d, m, [head, kw]})
+       when d in [:def, :defp, :defmacro, :defmacrop] and is_list(kw) do
+    if Keyword.has_key?(kw, :do) and not compile_time_callback?(head),
+      do: {d, m, [head, [do: quote(do: raise("MUTATION"))]]},
+      else: {d, m, [head, kw]}
+  end
+
+  defp mutate_module_node(node), do: blank_docs(node)
+
+  # `@doc`/`@moduledoc`/`@typedoc` bodies are re-serialized by `Macro.to_string`, and an
+  # interpolated or heredoc doc with `iex>` code examples can round-trip to *invalid*
+  # syntax — the mutant then fails to parse/compile and is misread as inconclusive (a
+  # false "vacuous" flag). Docs never affect runtime behavior, so blank them to `false`
+  # before re-emitting. Matches every value shape (string, sigil, interpolation).
+  defp blank_docs({:@, m, [{doc, dm, [_v]}]}) when doc in [:doc, :moduledoc, :typedoc],
+    do: {:@, m, [{doc, dm, [false]}]}
+
+  defp blank_docs(node), do: node
+
+  # `Plug.Builder` invokes each plug's `init/1` at COMPILE time and inlines the result,
+  # so a gutted `init/1` raises *during compilation* — the mutant never compiles and the
+  # gate reads it as inconclusive rather than killed. Leave `init/1` intact: the tested
+  # request logic lives in `call/2`/handlers, which are still gutted, so a genuine harness
+  # is still killed. (A solution whose only real logic is `init/1` is vanishingly rare and
+  # would merely be flagged vacuous — the safe direction.)
+  defp compile_time_callback?(head), do: head_name_arity(head) == {:init, 1}
+
+  # Mutate a `<file>` bundle: gut the module bodies of every `lib/**/*.ex` file and
+  # re-emit the bundle unchanged elsewhere (migrations/config/priv left intact so the
+  # mutant still compiles and boots — only the solution *logic* is destroyed). A bundle
+  # that parses to no blocks is returned unchanged (conservative → survived).
+  defp mutate_bundle(bundle_src) do
+    case Bundle.parse(bundle_src) do
+      [] ->
+        bundle_src
+
+      files ->
+        files
+        |> Enum.map_join("\n\n", fn {path, body} ->
+          new_body =
+            if String.starts_with?(path, "lib/") and String.ends_with?(path, ".ex"),
+              do: mutate_module_src(body),
+              else: body
+
+          ~s(<file path="#{path}">\n#{new_body}\n</file>)
+        end)
+    end
   end
 
   @doc """
@@ -69,8 +129,9 @@ defmodule GenTask.Mutation do
           do: {kind, m, [head, [do: quote(do: raise("MUTATION"))]]},
           else: node
 
+      # blank docs so the surrounding module still round-trips to valid syntax
       other ->
-        other
+        blank_docs(other)
     end)
     |> Macro.to_string()
   rescue
@@ -152,14 +213,38 @@ defmodule GenTask.Mutation do
   """
   @spec gate_base(String.t(), %{String.t() => String.t()}, Config.t()) :: result()
   def gate_base(mutant_dir, files, %Config{per_fn_mutation: true} = cfg) do
-    case public_functions(files["solution.ex"]) do
-      [] -> gate_base_whole(mutant_dir, files, cfg)
-      fns -> gate_base_per_fn(mutant_dir, files, fns, cfg)
+    cond do
+      # A bundle's public API spans several modules; `public_functions`/`mutate_fn`
+      # are single-module only, so per-fn mutation cannot address it. `mutate/1`
+      # gutting every lib module is the whole-solution coverage check for bundles.
+      Bundle.bundle?(files["solution.ex"]) ->
+        gate_base_whole(mutant_dir, files, cfg)
+
+      true ->
+        case files["solution.ex"] |> public_functions() |> Enum.reject(&skip_fn?/1) do
+          [] -> gate_base_whole(mutant_dir, files, cfg)
+          fns -> gate_base_per_fn(mutant_dir, files, fns, cfg)
+        end
     end
   end
 
   def gate_base(mutant_dir, files, %Config{} = cfg) do
     gate_base_whole(mutant_dir, files, cfg)
+  end
+
+  # Public functions the per-function gate must not require the harness to kill:
+  #   * `init/1` — Plug invokes it at COMPILE time and inlines the result, so a gutted
+  #     `init/1` raises *during compilation*; the mutant is inconclusive, not a kill.
+  #   * `__foo__/n` — the leading-and-trailing double-underscore convention marks an
+  #     internal / injected seam (e.g. a default clock deliberately overridden in every
+  #     test via a `:clock` option), not public behavior a test is meant to exercise.
+  # Both survive raise-mutation for structural reasons, not because the harness is
+  # vacuous — requiring their kill produces a false smell.
+  defp skip_fn?({:init, 1}), do: true
+
+  defp skip_fn?({name, _arity}) do
+    s = Atom.to_string(name)
+    String.starts_with?(s, "__") and String.ends_with?(s, "__")
   end
 
   defp gate_base_whole(mutant_dir, files, cfg) do

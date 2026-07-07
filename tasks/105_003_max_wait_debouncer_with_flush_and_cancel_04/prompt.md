@@ -84,12 +84,7 @@ defmodule MaxWaitDebouncer do
     {:noreply, Map.put(state, key, entry)}
   end
 
-  @impl true
   def handle_call({:flush, key}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:cancel, key}, _from, state) do
     # TODO
   end
 

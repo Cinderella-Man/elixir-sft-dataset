@@ -90,20 +90,7 @@ defmodule DedupDLQ do
     {:ok, %{clock: clock, next_id: 0, queues: %{}}}
   end
 
-  @impl true
   def handle_call({:push, queue, key, message, error_reason, metadata}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:peek, queue, count}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:retry, queue, key, handler}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:purge, queue, older_than}, _from, state) do
     # TODO
   end
 

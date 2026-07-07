@@ -163,10 +163,6 @@ defmodule IntervalScheduler do
     # TODO
   end
 
-  def handle_info(_msg, state) do
-    # TODO
-  end
-
   # ---------------------------------------------------------------------------
   # Core scheduling math — the whole point of this module
   # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-  test "multiple pollers for the same user each receive the full batch", %{server: server, opts: opts} do
+  test "all pollers for one user receive the full batch", %{server: server, opts: opts} do
     task1 = Task.async(fn -> poll(opts, "user:1") end)
     task2 = Task.async(fn -> poll(opts, "user:1") end)
     Process.sleep(100)

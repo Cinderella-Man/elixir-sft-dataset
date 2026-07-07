@@ -234,9 +234,6 @@ defmodule DAG do
   defp do_dfs([], _visited, _out_edges, _target) do
     # TODO
   end
-
-  defp do_dfs([node | stack], visited, out_edges, target) do
-    # TODO
-  end
 end
+
 ```

@@ -2,7 +2,9 @@
     test = self()
 
     :ok =
-      EscalatingWatchdog.register(:w, dummy_pid(), 50, 10_000, warn_notifier(test), timeout_notifier(test))
+      EscalatingWatchdog.register(
+        :w, dummy_pid(), 50, 10_000, warn_notifier(test), timeout_notifier(test)
+      )
 
     assert {:ok, :healthy} = EscalatingWatchdog.phase(:w)
     assert_receive {:warned, :w}, 1_000

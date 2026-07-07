@@ -112,7 +112,12 @@ defmodule BiMap do
 
     case Map.fetch(forward, key) do
       {:ok, value} ->
-        {:reply, :ok, %{state | forward: Map.delete(forward, key), reverse: Map.delete(reverse, value)}}
+        new_state = %{
+          state
+          | forward: Map.delete(forward, key),
+            reverse: Map.delete(reverse, value)
+        }
+        {:reply, :ok, new_state}
 
       :error ->
         {:reply, :ok, state}

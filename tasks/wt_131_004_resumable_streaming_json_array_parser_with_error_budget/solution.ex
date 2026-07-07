@@ -65,7 +65,13 @@ defmodule ResumableJsonStreamer do
     end
   end
 
-  @spec step(String.t(), map(), (term() -> term()), non_neg_integer(), non_neg_integer() | :infinity) ::
+  @spec step(
+          String.t(),
+          map(),
+          (term() -> term()),
+          non_neg_integer(),
+          non_neg_integer() | :infinity
+        ) ::
           {:cont, map()} | {:halt, map()}
   defp step(_line, %{index: index} = acc, _handler_fn, resume_from, _max_errors)
        when index <= resume_from do

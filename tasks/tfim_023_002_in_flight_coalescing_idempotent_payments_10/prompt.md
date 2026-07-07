@@ -376,7 +376,7 @@ defmodule CoalescingPaymentsTest do
     assert Calls.count() == 0
   end
 
-  test "processor errors are cached under the idempotency key", %{pid: pid} do
+  test "processor errors are cached under the idempotency key", %{} do
     # TODO
   end
 

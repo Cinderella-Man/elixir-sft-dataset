@@ -173,20 +173,7 @@ defmodule CoalescingPayments do
     {:reply, key_pending + map_size(state.nil_pending), state}
   end
 
-  @impl true
   def handle_info({:work_done, {:nil_req, ref}, params, outcome}, state) do
-    # TODO
-  end
-
-  def handle_info({:work_done, {:key, key}, params, outcome}, state) do
-    # TODO
-  end
-
-  def handle_info(:cleanup, state) do
-    # TODO
-  end
-
-  def handle_info(_msg, state) do
     # TODO
   end
 

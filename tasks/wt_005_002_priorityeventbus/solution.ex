@@ -100,7 +100,8 @@ defmodule PriorityEventBus do
 
     sub = %{ref: ref, pid: pid, priority: priority, seq: seq}
 
-    new_subs_for_topic = insert_sorted([sub | Map.get(state.topics, topic, []) |> without(ref)], sub)
+    existing = Map.get(state.topics, topic, []) |> without(ref)
+    new_subs_for_topic = insert_sorted([sub | existing], sub)
 
     monitors = Map.update(state.monitors, ref, {pid, [topic]}, fn {p, topics} ->
       {p, Enum.uniq([topic | topics])}

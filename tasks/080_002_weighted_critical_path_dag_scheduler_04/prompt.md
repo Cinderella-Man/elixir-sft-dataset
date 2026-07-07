@@ -264,10 +264,6 @@ defmodule WeightedDAG do
     # TODO
   end
 
-  defp kahn([v | rest], in_degree, out_edges, acc) do
-    # TODO
-  end
-
   defp require_task(dag, id) do
     if Map.has_key?(dag.durations, id), do: :ok, else: {:error, :task_not_found}
   end

@@ -223,7 +223,7 @@ defmodule GenTask.Fim do
 
         case gen_fim(cfg, log_id, system, user) do
           {:ok, ff} ->
-            run_attempts(seed, target, fim_id, log_id, ff, cfg)
+            run_attempts(seed, target, fim_id, log_id, deterministic_skeleton(ff, seed), cfg)
 
           {:error, reason} ->
             {reject(seed, log_id, target, Cycle.grade_stats(:timeout_or_crash), inspect(reason)),
@@ -251,6 +251,24 @@ defmodule GenTask.Fim do
   # FIM shape resolves the parent harness, then loop grade → gate → repair. `fim_id`
   # names the staged `_0d` + the promotion target; `log_id` tags the ledger/outcome
   # for a non-promoted candidate.
+  # Replace the model's hand-written skeleton with a deterministic one built from the
+  # clean parent module + the candidate. The model over-stubs multi-clause functions,
+  # leaving redundant clauses that warn; building from the parent guarantees a clean
+  # reconstruction. Falls back to the model's `prompt.md` for multifile parents or when
+  # the candidate can't be located verbatim in the parent.
+  defp deterministic_skeleton(ff, seed) do
+    parent = seed.files["solution.ex"]
+
+    if EvalTask.Bundle.bundle?(parent) do
+      ff
+    else
+      skeleton = EvalTask.Fim.build_skeleton(parent, ff["solution.ex"])
+      Map.update!(ff, "prompt.md", &EvalTask.Fim.rewrite_skeleton(&1, skeleton))
+    end
+  rescue
+    _ -> ff
+  end
+
   defp run_attempts(seed, target, fim_id, log_id, ff0, cfg) do
     stage_parent = Path.join(cfg.staging_dir, "fim_#{fim_id}")
     Evaluator.stage!(Path.join(stage_parent, seed.task_id), seed.files)

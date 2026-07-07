@@ -16,5 +16,5 @@
 
   defp validate_edges(other) do
     raise ArgumentError,
-          ":edges must be a strictly increasing list of at least two numbers, got: #{inspect(other)}"
+          ":edges must be a strictly increasing list of >= 2 numbers, got: #{inspect(other)}"
   end

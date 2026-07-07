@@ -1,4 +1,4 @@
-  test "returns notification immediately when one is published during poll", %{server: server, opts: opts} do
+  test "returns a notification published mid-poll", %{server: server, opts: opts} do
     payload = %{"type" => "message", "body" => "hello"}
 
     # Start the long-poll in a background task

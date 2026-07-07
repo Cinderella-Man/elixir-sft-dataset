@@ -143,7 +143,8 @@ defmodule CsvIngestion do
   # Row processing
   # ---------------------------------------------------------------------------
 
-  @spec process_rows(repo(), schema(), {[String.t()], [[String.t()]]}, map() | nil, map()) :: stats()
+  @spec process_rows(repo(), schema(), {[String.t()], [[String.t()]]}, map() | nil, map()) ::
+          stats()
   defp process_rows(repo, schema, {headers, data_rows}, field_mapping, cfg) do
     atom_headers = map_headers(headers, field_mapping)
     schema_keys  = schema_field_set(schema)

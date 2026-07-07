@@ -25,8 +25,17 @@ defmodule TreeBuilder do
   """
 
   @type id :: term()
-  @type node_map :: %{required(:id) => id(), required(:parent_id) => id() | nil, optional(atom()) => term()}
-  @type tree_node :: %{required(:id) => id(), required(:parent_id) => id() | nil, required(:children) => [tree_node()], optional(atom()) => term()}
+  @type node_map :: %{
+          required(:id) => id(),
+          required(:parent_id) => id() | nil,
+          optional(atom()) => term()
+        }
+  @type tree_node :: %{
+          required(:id) => id(),
+          required(:parent_id) => id() | nil,
+          required(:children) => [tree_node()],
+          optional(atom()) => term()
+        }
   @type forest :: [tree_node()]
   @type orphan_strategy :: :discard | :raise_to_root
   @type build_opt :: {:orphan_strategy, orphan_strategy()}

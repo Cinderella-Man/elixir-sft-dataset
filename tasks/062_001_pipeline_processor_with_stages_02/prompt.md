@@ -99,13 +99,9 @@ defmodule Pipeline do
   # Private helpers
   # ---------------------------------------------------------------------------
 
-  # Base case — all stages completed successfully.
   defp execute([], value, meta_acc) do
     # TODO
   end
-
-  defp execute([{name, fun} | rest], value, meta_acc) do
-    # TODO
-  end
 end
+
 ```

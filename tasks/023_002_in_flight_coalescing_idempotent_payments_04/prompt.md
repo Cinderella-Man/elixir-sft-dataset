@@ -226,10 +226,6 @@ defmodule CoalescingPayments do
     # TODO
   end
 
-  defp finalize(state, _params, {:error, reason}) do
-    # TODO
-  end
-
   defp valid_params?(params) do
     is_map(params) and
       Map.has_key?(params, :amount) and

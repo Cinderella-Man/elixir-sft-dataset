@@ -64,10 +64,6 @@ defmodule Trie do
     # TODO
   end
 
-  defp do_insert(node, [char | rest]) do
-    # TODO
-  end
-
   # ---------------------------------------------------------------------------
   # Membership
   # ---------------------------------------------------------------------------
@@ -185,4 +181,5 @@ defmodule Trie do
     collect(root, "") |> Enum.sort()
   end
 end
+
 ```

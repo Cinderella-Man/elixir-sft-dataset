@@ -2,7 +2,8 @@
     p = products()
 
     {:ok, %{data: d1, next_cursor: c1}} = KeysetSearch.search(p, %{"sort" => "price"})
-    {:ok, %{data: d2, next_cursor: c2}} = KeysetSearch.search(p, %{"sort" => "price", "cursor" => c1})
+    {:ok, %{data: d2, next_cursor: c2}} =
+      KeysetSearch.search(p, %{"sort" => "price", "cursor" => c1})
 
     {:ok, %{data: d3, next_cursor: c3, has_more: more3}} =
       KeysetSearch.search(p, %{"sort" => "price", "cursor" => c2})

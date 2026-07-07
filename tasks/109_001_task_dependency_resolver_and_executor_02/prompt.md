@@ -170,10 +170,6 @@ defmodule TaskRunner do
     # TODO
   end
 
-  defp build_layers(in_degree, dependents, layers) do
-    # TODO
-  end
-
   # ── Execution ───────────────────────────────────────────────────────────
 
   defp execute(layers, tasks) do

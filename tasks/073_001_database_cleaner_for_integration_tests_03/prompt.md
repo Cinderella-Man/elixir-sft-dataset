@@ -92,14 +92,6 @@ defmodule DBCleaner do
     # TODO
   end
 
-  def start(:truncation, opts) do
-    # TODO
-  end
-
-  def start(unknown, _opts) do
-    # TODO
-  end
-
   @doc """
   Cleans up database state based on the strategy passed to `start/2`.
 
@@ -210,4 +202,5 @@ defmodule DBCleaner do
   defp get_state,        do: Process.get(@state_key)
   defp clear_state,      do: Process.delete(@state_key)
 end
+
 ```

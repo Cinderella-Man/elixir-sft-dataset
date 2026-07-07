@@ -83,10 +83,6 @@ defmodule CommandGenerators do
     # TODO
   end
 
-  defp stack_build(n, size, acc) do
-    # TODO
-  end
-
   defp stack_command(size) do
     push = SD.map(SD.integer(-1000..1000), fn v -> {:push, v} end)
     base = [push, SD.constant(:clear)]

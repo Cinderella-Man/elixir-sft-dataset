@@ -187,8 +187,9 @@ defmodule QuotaTracker do
     {:ok, state}
   end
 
-  @impl GenServer
-  # TODO: implement handle_call/3
+  def handle_call({:record, key, amount, quota, window_ms}, _from, state) do
+    # TODO
+  end
 
   @impl GenServer
   def handle_info(:cleanup, state) do
@@ -236,4 +237,5 @@ defmodule QuotaTracker do
     Enum.reduce(entries, 0, fn entry, acc -> acc + entry.amount end)
   end
 end
+
 ```

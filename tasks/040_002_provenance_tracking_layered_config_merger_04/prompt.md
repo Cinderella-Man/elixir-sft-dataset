@@ -172,10 +172,6 @@ defmodule LayeredConfig do
     # TODO
   end
 
-  defp leaf_provenance(_value, name, path, pr) do
-    # TODO
-  end
-
   defp locked?(kpath, %{locked_paths: locked}), do: kpath in locked
 
   defp list_strategy_for(kpath, %{per_key_strategies: per_key, global_list_strategy: global}) do

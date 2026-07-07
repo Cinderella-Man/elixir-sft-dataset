@@ -96,7 +96,7 @@ defmodule TOTP do
 
   defp dynamic_truncate(<<_::binary-size(19), last::8>> = hmac) do
     offset = last &&& 0x0F
-    <<_::binary-size(offset), b0, b1, b2, b3, _::binary>> = hmac
+    <<_::binary-size(^offset), b0, b1, b2, b3, _::binary>> = hmac
 
     ((b0 &&& 0x7F) <<< 24) ||| (b1 <<< 16) ||| (b2 <<< 8) ||| b3
   end
@@ -139,7 +139,7 @@ defmodule TOTP do
   defp base32_decode!(str) when is_binary(str) do
     bits = decode_bits(String.upcase(str), <<>>)
     byte_count = div(bit_size(bits), 8)
-    <<bytes::binary-size(byte_count), _::bitstring>> = bits
+    <<bytes::binary-size(^byte_count), _::bitstring>> = bits
     bytes
   end
 

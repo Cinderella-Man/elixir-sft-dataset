@@ -1,4 +1,4 @@
-  test "poll returns only the first notification even if multiple arrive", %{server: server, opts: opts} do
+  test "poll returns only the first of several", %{server: server, opts: opts} do
     task = Task.async(fn -> poll(opts, "user:1") end)
 
     Process.sleep(100)

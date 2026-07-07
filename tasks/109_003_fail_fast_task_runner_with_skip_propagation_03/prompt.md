@@ -128,10 +128,6 @@ defmodule ResilientRunner do
     # TODO
   end
 
-  defp build_layers(in_degree, dependents, layers) do
-    # TODO
-  end
-
   # ── Execution with failure containment ──────────────────────────────────
 
   defp execute(layers, tasks) do

@@ -143,10 +143,6 @@ defmodule DBCleaner do
     # TODO
   end
 
-  defp do_clean(%{strategy: :truncation, repo: repo, tables: tables}) do
-    # TODO
-  end
-
   # ---------------------------------------------------------------------------
   # Private helpers – validation
   # ---------------------------------------------------------------------------
@@ -196,4 +192,5 @@ defmodule DBCleaner do
   defp get_state,        do: Process.get(@state_key)
   defp clear_state,      do: Process.delete(@state_key)
 end
+
 ```

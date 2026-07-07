@@ -12,7 +12,8 @@ defmodule RetryScheduler do
   Terminal jobs remain in the registry for inspection via `status/2` and
   `jobs/1`.  They are never re-executed but can be removed via `cancel/2`.
 
-  Retry delays grow geometrically: delay_ms = base_delay_ms * backoff_factor^(attempts_so_far - 1).
+  Retry delays grow geometrically:
+  `delay_ms = base_delay_ms * backoff_factor^(attempts_so_far - 1)`.
   So the first retry (after failure #1) waits `base_delay_ms`, the second
   retry waits `base_delay_ms * backoff_factor`, and so on.
 
@@ -43,8 +44,18 @@ defmodule RetryScheduler do
     GenServer.start_link(__MODULE__, opts, server_opts)
   end
 
-  @spec schedule(GenServer.server(), term(), NaiveDateTime.t(), {module(), atom(), list()}, keyword()) ::
+  @spec schedule(
+          GenServer.server(),
+          term(),
+          NaiveDateTime.t(),
+          {module(), atom(), list()},
+          keyword()
+        ) ::
           :ok | {:error, :already_exists | :invalid_opts}
+  @doc """
+  Schedules `mfa` to run at `run_at` under `job_name`, retrying with geometric backoff
+  per `opts`. Returns `:ok` or `{:error, :already_scheduled}`.
+  """
   def schedule(server, job_name, %NaiveDateTime{} = run_at, {mod, fun, args} = mfa, opts \\ [])
       when is_atom(mod) and is_atom(fun) and is_list(args) do
     GenServer.call(server, {:schedule, job_name, run_at, mfa, opts})

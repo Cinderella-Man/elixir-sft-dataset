@@ -139,10 +139,6 @@ defmodule DataFlowRunner do
     # TODO
   end
 
-  defp build_layers(in_degree, dependents, layers) do
-    # TODO
-  end
-
   # ── Execution (data-flow: pass dependency results as input) ──────────────
 
   defp execute(layers, tasks) do

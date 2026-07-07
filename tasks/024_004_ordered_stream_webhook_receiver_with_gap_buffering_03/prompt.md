@@ -149,27 +149,7 @@ defmodule WebhookReceiver.MemoryStore do
   @impl GenServer
   def init(_opts), do: {:ok, %{streams: %{}}}
 
-  @doc """
-  Handles synchronous store operations: delivery and per-stream inspection.
-  """
-  @spec handle_call(term(), GenServer.from(), map()) :: {:reply, term(), map()}
-  @impl GenServer
   def handle_call({:deliver, event}, _from, %{streams: streams} = state) do
-    # TODO
-  end
-
-  @impl GenServer
-  def handle_call({:last_sequence, sid}, _from, %{streams: streams} = state) do
-    # TODO
-  end
-
-  @impl GenServer
-  def handle_call({:delivered_events, sid}, _from, %{streams: streams} = state) do
-    # TODO
-  end
-
-  @impl GenServer
-  def handle_call({:buffered_sequences, sid}, _from, %{streams: streams} = state) do
     # TODO
   end
 

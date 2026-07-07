@@ -229,9 +229,5 @@ defmodule DAGServer do
   defp kahn([], _in_degree, _out_edges, acc) do
     # TODO
   end
-
-  defp kahn([v | rest], in_degree, out_edges, acc) do
-    # TODO
-  end
 end
 ```

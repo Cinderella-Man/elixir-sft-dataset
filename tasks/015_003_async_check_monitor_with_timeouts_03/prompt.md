@@ -183,26 +183,7 @@ defmodule AsyncMonitor do
     end
   end
 
-  @impl GenServer
   def handle_info({:schedule_check, name}, state) do
-    # TODO
-  end
-
-  def handle_info({:check_result, name, ref, result}, state) do
-    # TODO
-  end
-
-  def handle_info({:check_timeout, name, ref}, state) do
-    # TODO
-  end
-
-  # Handle DOWN messages from monitored tasks — just ignore them.
-  # We handle lifecycle via check_result/check_timeout.
-  def handle_info({:DOWN, _monitor_ref, :process, _pid, _reason}, state) do
-    # TODO
-  end
-
-  def handle_info(_msg, state) do
     # TODO
   end
 
@@ -262,4 +243,5 @@ defmodule AsyncMonitor do
   defp fire_notify(nil, _name, _reason), do: :ok
   defp fire_notify(notify_fn, name, reason), do: notify_fn.(name, reason)
 end
+
 ```

@@ -186,24 +186,7 @@ defmodule OneTimeTokenStore do
     {:ok, state}
   end
 
-  @impl GenServer
   def handle_call({:mint, payload, opts}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:verify, token_id}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:redeem, token_id}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:revoke, token_id}, _from, state) do
-    # TODO
-  end
-
-  def handle_call(:active_count, _from, state) do
     # TODO
   end
 
@@ -259,4 +242,5 @@ defmodule OneTimeTokenStore do
     end
   end
 end
+
 ```

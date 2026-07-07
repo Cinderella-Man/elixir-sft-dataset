@@ -215,7 +215,6 @@ defmodule StackablePromoCodes do
   # --- usage accounting ---
 
   defp total_uses(state, cs), do: Map.get(state.total_uses, cs, 0)
-  defp user_uses(_state, _cs, nil), do: 0
   defp user_uses(state, cs, uid), do: Map.get(state.user_uses, {cs, uid}, 0)
 
   defp record_use(state, cs, user_id) do

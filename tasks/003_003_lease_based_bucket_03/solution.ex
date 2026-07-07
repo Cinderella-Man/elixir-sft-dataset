@@ -1,5 +1,9 @@
 @impl true
-def handle_call({:acquire_lease, bucket_name, capacity, refill_rate, tokens, timeout_ms}, _from, state) do
+def handle_call(
+      {:acquire_lease, bucket_name, capacity, refill_rate, tokens, timeout_ms},
+      _from,
+      state
+    ) do
   now = state.clock.()
 
   bucket = get_bucket(state, bucket_name, capacity, refill_rate, now)

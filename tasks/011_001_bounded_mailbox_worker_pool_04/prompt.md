@@ -88,13 +88,7 @@ defmodule WorkerPool do
     {:ok, new_state}
   end
 
-  @impl true
   def handle_call({:submit, task_func}, {from_pid, _}, state) do
-    # TODO
-  end
-
-  @impl true
-  def handle_call(:status, _from, state) do
     # TODO
   end
 
@@ -175,4 +169,5 @@ defmodule WorkerPool do
     end
   end
 end
+
 ```

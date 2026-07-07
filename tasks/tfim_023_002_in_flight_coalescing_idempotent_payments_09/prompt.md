@@ -375,7 +375,7 @@ defmodule CoalescingPaymentsTest do
     # TODO
   end
 
-  test "processor errors are cached under the idempotency key", %{pid: pid} do
+  test "processor errors are cached under the idempotency key", %{} do
     {:ok, decline_pid} =
       CoalescingPayments.start_link(
         clock: &Clock.now/0,

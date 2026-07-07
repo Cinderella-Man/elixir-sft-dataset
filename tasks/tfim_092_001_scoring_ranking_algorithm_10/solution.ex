@@ -6,5 +6,6 @@
 
     assert_in_delta Ranking.score(engaged, now: @now, weights: w), 0.5, 1.0e-9
     assert_in_delta Ranking.score(meh, now: @now, weights: w), 0.1, 1.0e-9
-    assert Ranking.score(engaged, now: @now, weights: w) > Ranking.score(meh, now: @now, weights: w)
+    assert Ranking.score(engaged, now: @now, weights: w) >
+             Ranking.score(meh, now: @now, weights: w)
   end

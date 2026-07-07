@@ -103,9 +103,7 @@ defmodule Leaderboard do
   entries.  Each element is a `{player_id, score}` tuple.
   """
   @spec top(board(), non_neg_integer()) :: [{player_id(), score()}]
-  def top(_board, 0), do: # TODO
-
-  def top(board, n) when is_integer(n) and n > 0 do
+  def top(_board, 0) do
     # TODO
   end
 
@@ -143,4 +141,5 @@ defmodule Leaderboard do
     end
   end
 end
+
 ```

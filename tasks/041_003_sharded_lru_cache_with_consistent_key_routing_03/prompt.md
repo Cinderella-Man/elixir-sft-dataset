@@ -228,12 +228,7 @@ defmodule LRUCacheSharded.Shard do
      %{data_table: data_table, order_table: order_table, max_size: max_size, counter: 0}}
   end
 
-  @impl true
   def handle_call({:touch, key}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:put, key, value}, _from, state) do
     # TODO
   end
 

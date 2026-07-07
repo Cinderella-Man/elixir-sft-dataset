@@ -148,12 +148,7 @@ defmodule LFUCache do
     {:ok, state}
   end
 
-  @impl true
   def handle_call({:touch, key}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:put, key, value}, _from, state) do
     # TODO
   end
 

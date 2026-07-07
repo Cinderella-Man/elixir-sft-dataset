@@ -116,18 +116,6 @@ defmodule SwrCache do
     # TODO
   end
 
-  def handle_call({:get, key}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:delete, key}, _from, state) do
-    # TODO
-  end
-
-  def handle_call(:stats, _from, state) do
-    # TODO
-  end
-
   @impl true
   def handle_info({:revalidate_complete, key, task_ref, new_value}, state) do
     case {Map.fetch(state.entries, key), Map.fetch(state.in_flight, key)} do
@@ -217,4 +205,5 @@ defmodule SwrCache do
     Process.send_after(self(), :sweep, ms)
   end
 end
+
 ```

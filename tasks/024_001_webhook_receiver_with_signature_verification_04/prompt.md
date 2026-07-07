@@ -97,18 +97,7 @@ defmodule WebhookReceiver.MemoryStore do
   @impl GenServer
   def init(_opts), do: {:ok, %{events: %{}}}
 
-  @impl GenServer
   def handle_call({:store_event, event_id, payload}, _from, %{events: events} = state) do
-    # TODO
-  end
-
-  @impl GenServer
-  def handle_call({:get_event, event_id}, _from, %{events: events} = state) do
-    # TODO
-  end
-
-  @impl GenServer
-  def handle_call(:all_events, _from, %{events: events} = state) do
     # TODO
   end
 end
@@ -173,4 +162,5 @@ defmodule WebhookReceiver.Router do
     |> send_resp(status, Jason.encode!(data))
   end
 end
+
 ```

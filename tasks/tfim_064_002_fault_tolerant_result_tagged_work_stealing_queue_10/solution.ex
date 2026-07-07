@@ -30,5 +30,5 @@
     max_count = counts_by_worker |> Map.values() |> Enum.max()
 
     assert max_count > min_count,
-           "Expected work stealing to cause unequal distribution, got: #{inspect(counts_by_worker)}"
+           "Expected unequal distribution, got: #{inspect(counts_by_worker)}"
   end

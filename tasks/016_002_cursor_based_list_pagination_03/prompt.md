@@ -63,10 +63,6 @@ defmodule CursorPaginator do
     # TODO
   end
 
-  defp build_result(sorted, window, limit) do
-    # TODO
-  end
-
   @doc """
   Encodes an integer `id` into an opaque, URL-safe cursor string.
   """

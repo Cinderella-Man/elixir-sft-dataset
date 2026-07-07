@@ -81,16 +81,7 @@ defmodule FileUpload.Store do
   Handles the store's `save`, `get` and `list` synchronous calls.
   """
   @spec handle_call(term(), GenServer.from(), map()) :: {:reply, term(), map()}
-  @impl true
   def handle_call({:save, hash, metadata}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:get, id}, _from, state) do
-    # TODO
-  end
-
-  def handle_call(:list, _from, state) do
     # TODO
   end
 end

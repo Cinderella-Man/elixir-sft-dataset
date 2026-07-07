@@ -93,10 +93,6 @@ defmodule Money do
     # TODO
   end
 
-  def multiply(%__MODULE__{}, _factor) do
-    raise ArgumentError, "factor must be a number"
-  end
-
   @doc """
   Splits a money value evenly among `n` parties (a positive integer).
 

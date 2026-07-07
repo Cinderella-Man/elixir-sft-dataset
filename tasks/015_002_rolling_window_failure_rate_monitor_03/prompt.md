@@ -247,7 +247,7 @@ defmodule RateMonitor do
         new_status == :down -> service.notified_down || notify?
         # When recovering from :down, reset the flag so future transitions
         # trigger a fresh notification.
-        service.status == :down && new_status != :down -> false
+        service.status == :down -> false
         true -> service.notified_down
       end
 

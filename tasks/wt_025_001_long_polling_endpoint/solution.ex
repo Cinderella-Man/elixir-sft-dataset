@@ -1,4 +1,3 @@
-<file path="lib/notifications.ex">
 defmodule Notifications do
   @moduledoc """
   In-memory pub/sub for user notifications backed by a `Registry` in
@@ -9,6 +8,7 @@ defmodule Notifications do
   Starts the backing `Registry`. Accepts a `:name` option (default
   `Notifications`) used both for registration and as the server reference.
   """
+  @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
     name = Keyword.get(opts, :name, __MODULE__)
     Registry.start_link(keys: :duplicate, name: name)
@@ -104,4 +104,3 @@ defmodule NotificationRouter do
     send_resp(conn, 404, "not found")
   end
 end
-</file>

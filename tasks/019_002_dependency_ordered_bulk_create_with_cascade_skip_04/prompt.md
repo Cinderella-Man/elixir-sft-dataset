@@ -160,10 +160,6 @@ defmodule Catalog do
     # TODO
   end
 
-  defp follow(node, po, target, seen) do
-    # TODO
-  end
-
   # -- status resolution ----------------------------------------------------
 
   defp status_of(i, parent_of, bad_reason) do

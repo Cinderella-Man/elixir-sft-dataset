@@ -13,6 +13,10 @@ defmodule RetryPool do
     GenServer.start_link(__MODULE__, opts, name: name)
   end
 
+  @doc """
+  Submits `task_func` with a per-task timeout and retry policy from `opts`. Returns
+  `{:ok, ref}`; await the result with `await/3`.
+  """
   @spec submit(GenServer.server(), (-> any()), keyword()) ::
           {:ok, reference()} | {:error, :queue_full}
   def submit(pool, task_func, opts \\ []) when is_function(task_func, 0) do
@@ -163,7 +167,8 @@ defmodule RetryPool do
         # The :DOWN handler will handle replacement and retry/failure
         # But we need to mark this as a timeout, not a crash
         # We do this by storing the timeout info before the :DOWN arrives
-        {:noreply, %{state | busy_workers: Map.put(state.busy_workers, worker_pid, {:timed_out, task_info})}}
+        busy = Map.put(state.busy_workers, worker_pid, {:timed_out, task_info})
+        {:noreply, %{state | busy_workers: busy}}
 
       _ ->
         {:noreply, state}

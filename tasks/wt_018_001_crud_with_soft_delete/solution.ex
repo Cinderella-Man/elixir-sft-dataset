@@ -12,6 +12,7 @@ defmodule SoftCrud.Documents.Document do
   end
 
   @doc "Changeset for creating and updating title/content."
+  @spec changeset(struct(), map()) :: Ecto.Changeset.t()
   def changeset(document, attrs) do
     document
     |> cast(attrs, [:title, :content])

@@ -1,0 +1,32 @@
+# Postgres for tasks whose manifest.exs declares `db: :postgres`
+# (e.g. 017_001_search_endpoint_with_filtering_and_sorting — it uses ILIKE,
+# which SQLite rejects).
+#
+# The evaluator provisions a fresh throwaway database per run against this
+# server. If it is NOT running, those tasks grade RED with a message telling
+# you to start it — they are no longer silently skipped.
+#
+#   Start:   docker compose up -d db
+#   Check:   docker compose ps
+#   Stop:    docker compose down
+#
+# Connection defaults match what the evaluator expects; override via
+# EVAL_PG_HOST / EVAL_PG_PORT / EVAL_PG_USER / EVAL_PG_PASSWORD.
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: elixir_benchmark_pg
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    # Throwaway test data — keep it in RAM for speed and auto-wipe on restart.
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 20

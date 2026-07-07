@@ -26,7 +26,7 @@
     #   raw_4 = 2*(11/3) - 3 = 22/3 - 9/3 = 13/3
     #
     # raw_buffer (newest-first, trimmed to 2): [13/3, 3.0]
-    # HMA = WMA([13/3, 3.0], period 2) = (2*13/3 + 1*3.0)/3 = (26/3 + 3)/3 = (26/3 + 9/3)/3 = (35/3)/3 = 35/9
+    # HMA = WMA([13/3, 3.0], period 2) = (2*13/3 + 3.0)/3 = (35/3)/3 = 35/9
 
     expected = 35 / 9
     {:ok, result} = WeightedMovingAverage.get(s, "a", :hma, 4)

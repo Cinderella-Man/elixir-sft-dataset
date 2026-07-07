@@ -165,10 +165,6 @@ defmodule Trie do
     # TODO
   end
 
-  defp do_delete(node, [char | rest]) do
-    # TODO
-  end
-
   # ---------------------------------------------------------------------------
   # Size / Words
   # ---------------------------------------------------------------------------
@@ -183,4 +179,5 @@ defmodule Trie do
     collect(root, "") |> Enum.sort()
   end
 end
+
 ```

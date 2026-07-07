@@ -191,10 +191,6 @@ defmodule RoleRegistry do
     # TODO
   end
 
-  defp do_reach(inherits, [node | rest], seen, target) do
-    # TODO
-  end
-
   # The set containing `role` and every role reachable via inheritance edges.
   defp closure(inherits, role) do
     build_closure(inherits, [role], MapSet.new())

@@ -133,13 +133,7 @@ defmodule Money do
     raise ArgumentError, "ratios must be a non-empty list of non-negative integers"
   end
 
-  @doc """
-  Splits a money value evenly among `n` parties (a positive integer).
-
-  Equivalent to `allocate/2` with `n` equal weights.
-  """
-  @spec split(t(), pos_integer()) :: [t()]
-  def split(money, n) do
+  def split(%__MODULE__{} = money, n) when is_integer(n) and n > 0 do
     # TODO
   end
 end

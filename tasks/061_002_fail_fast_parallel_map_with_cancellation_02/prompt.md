@@ -169,12 +169,7 @@ defmodule FailFastMap do
     {ref, pid, mon}
   end
 
-  # All tasks accounted for and none failed.
   defp loop(running, _queue, _func, _parent, results) when map_size(running) == 0 do
-    # TODO
-  end
-
-  defp loop(running, queue, func, parent, results) do
     # TODO
   end
 

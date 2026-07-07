@@ -51,6 +51,7 @@ defmodule CusumAnomaly do
     GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
   end
 
+  @doc "Pushes `value` into the CUSUM detector for `name`. Returns `:ok` or a change signal."
   @spec push(GenServer.server(), term(), number()) ::
           :ok | :warming_up | {:alert, :upward_shift | :downward_shift}
   def push(server, name, value) when is_number(value) do

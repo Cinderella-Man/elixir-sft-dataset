@@ -102,13 +102,8 @@ defmodule Money do
     raise ArgumentError, "factor must be a number"
   end
 
-  @doc """
-  Splits a money value evenly among `n` parties (a positive integer), working
-  in whole minor units. The remainder is given to the first `rem(amount, n)`
-  parties so shares sum back to the original.
-  """
-  @spec split(t(), pos_integer()) :: [t()]
-  def split(money, n) do
+  def split(%__MODULE__{amount: amount, currency: currency}, n)
+      when is_integer(n) and n > 0 do
     # TODO
   end
 

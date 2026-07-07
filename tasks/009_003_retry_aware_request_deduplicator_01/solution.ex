@@ -41,6 +41,10 @@ defmodule RetryDedup do
     GenServer.start_link(__MODULE__, %{}, server_opts)
   end
 
+  @doc """
+  Runs `func` under `key`, coalescing concurrent duplicate calls into one execution
+  and retrying per `opts`. Returns the function's result.
+  """
   @spec execute(GenServer.server(), term(), (() -> term()), keyword()) ::
           {:ok, term()} | {:error, term()}
   def execute(server, key, func, opts \\ []) when is_function(func, 0) do
@@ -57,7 +61,8 @@ defmodule RetryDedup do
     GenServer.call(server, {:execute, key, func, retry_config}, :infinity)
   end
 
-  @spec status(GenServer.server(), term()) :: :idle | {:retrying, pos_integer(), non_neg_integer()}
+  @spec status(GenServer.server(), term()) ::
+          :idle | {:retrying, pos_integer(), non_neg_integer()}
   def status(server, key) do
     GenServer.call(server, {:status, key})
   end

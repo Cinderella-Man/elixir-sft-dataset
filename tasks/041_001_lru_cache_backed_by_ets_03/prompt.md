@@ -193,12 +193,7 @@ defmodule LRUCache do
     {:ok, state}
   end
 
-  @impl GenServer
   def handle_call({:touch, key}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:put, key, value}, _from, state) do
     # TODO
   end
 
@@ -236,4 +231,5 @@ defmodule LRUCache do
   @spec order_table_name(name()) :: atom()
   defp order_table_name(name), do: :"#{name}_order"
 end
+
 ```

@@ -215,10 +215,6 @@ defmodule Catalog.KeysetSearch do
     # TODO
   end
 
-  defp compare_key(:desc, {v1, id1}, {v2, id2}) do
-    # TODO
-  end
-
   # -- Cursor ---------------------------------------------------------------
 
   defp encode_cursor(p, params) do

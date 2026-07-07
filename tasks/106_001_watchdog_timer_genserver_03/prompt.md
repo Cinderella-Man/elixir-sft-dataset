@@ -106,18 +106,7 @@ defmodule Watchdog do
     {:ok, %{}}
   end
 
-  @impl true
   def handle_call({:register, name, pid, interval_ms, on_timeout_fn}, _from, state) do
-    # TODO
-  end
-
-  @impl true
-  def handle_call({:heartbeat, name}, _from, state) do
-    # TODO
-  end
-
-  @impl true
-  def handle_call({:unregister, name}, _from, state) do
     # TODO
   end
 

@@ -139,20 +139,7 @@ defmodule Clock.Fake do
     end
   end
 
-  @impl GenServer
   def handle_call(:now, _from, %{script: script, index: index, policy: policy} = state) do
-    # TODO
-  end
-
-  def handle_call(:remaining, _from, %{script: script, index: index} = state) do
-    # TODO
-  end
-
-  def handle_call(:reset, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:push, datetimes}, _from, state) do
     # TODO
   end
 end

@@ -22,14 +22,20 @@ scores below 1.0.
 ## Prerequisites
 
 - Elixir 1.17+ / OTP 27+
-- PostgreSQL 16+ (only for tasks marked `db: :postgres`; SQLite-in-BEAM is the default and needs
-  no external service)
+- PostgreSQL 16+ (only for tasks marked `db: :postgres` — currently
+  `017_001_search_endpoint_with_filtering_and_sorting`, which uses `ILIKE`). SQLite-in-BEAM is
+  the default and needs no external service. The easiest way to provide Postgres is the bundled
+  `docker compose up -d db`. **If it is not running, those tasks grade RED (not skipped)** with a
+  message telling you to start it — so you never silently miss coverage.
 
 ## Setup
 
 ```bash
 mix deps.get
 mix compile   # required — the evaluator lives in lib/ and is compiled
+
+# Only needed to grade `db: :postgres` tasks (else they go red):
+docker compose up -d db      # throwaway Postgres on localhost:5432; `docker compose down` to stop
 ```
 
 ## Evaluating solutions

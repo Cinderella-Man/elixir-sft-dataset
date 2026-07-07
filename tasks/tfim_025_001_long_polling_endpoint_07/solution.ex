@@ -1,4 +1,4 @@
-  test "multiple pollers for the same user all receive the notification", %{server: server, opts: opts} do
+  test "all pollers for one user receive it", %{server: server, opts: opts} do
     task1 = Task.async(fn -> poll(opts, "user:1") end)
     task2 = Task.async(fn -> poll(opts, "user:1") end)
 

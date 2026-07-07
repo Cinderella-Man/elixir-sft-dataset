@@ -11,7 +11,10 @@ defmodule MyApp.Catalog.Item do
     timestamps()
   end
 
-  @doc "Validates a catalog item: name 1-255 chars, price integer > 0, optional description <= 1000 chars."
+  @doc """
+  Validates a catalog item: name 1-255 chars, price integer > 0, optional
+  description <= 1000 chars.
+  """
   def changeset(item, attrs) do
     item
     |> cast(attrs, [:name, :price, :description])
@@ -46,6 +49,7 @@ defmodule MyApp.Catalog do
     * `partial: true` — inserts each valid item individually (each inside its own
       transaction) and skips invalid ones, returning `{:ok, results}`.
   """
+  @spec bulk_create_items([map()], keyword()) :: %{created: [map()], errors: [map()]}
   def bulk_create_items(list_of_attrs, opts \\ []) do
     if Keyword.get(opts, :partial, false) do
       partial_create(list_of_attrs)

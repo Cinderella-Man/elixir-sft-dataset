@@ -177,8 +177,6 @@ defmodule FilteredEventBus do
     Enum.all?(filter, &valid_clause?/1)
   end
 
-  defp valid_filter?(_), do: false
-
   defp valid_clause?(clause) do
     # TODO
   end

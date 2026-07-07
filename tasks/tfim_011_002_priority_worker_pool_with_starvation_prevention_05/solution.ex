@@ -10,9 +10,16 @@
     assert_receive {:ready, w2}, 1_000
 
     # Queue tasks in reverse priority order
-    {:ok, _} = PriorityWorkerPool.submit(pool, fn -> send(collector, {:executed, :low}); :low end, :low)
-    {:ok, _} = PriorityWorkerPool.submit(pool, fn -> send(collector, {:executed, :normal}); :normal end, :normal)
-    {:ok, _} = PriorityWorkerPool.submit(pool, fn -> send(collector, {:executed, :high}); :high end, :high)
+    {:ok, _} =
+      PriorityWorkerPool.submit(pool, fn -> send(collector, {:executed, :low}); :low end, :low)
+    {:ok, _} =
+      PriorityWorkerPool.submit(
+        pool,
+        fn -> send(collector, {:executed, :normal}); :normal end,
+        :normal
+      )
+    {:ok, _} =
+      PriorityWorkerPool.submit(pool, fn -> send(collector, {:executed, :high}); :high end, :high)
 
     # Release one worker at a time
     release(w1)

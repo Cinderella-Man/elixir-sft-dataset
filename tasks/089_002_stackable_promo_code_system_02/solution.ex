@@ -63,8 +63,12 @@
 
     rejected_all =
       rejected ++
-        Enum.map(extra_pcts, fn {cs, _c} -> %{code: cs, reason: :percentage_already_applied} end) ++
-        Enum.map(extra_ships, fn {cs, _c} -> %{code: cs, reason: :free_shipping_already_applied} end)
+        Enum.map(extra_pcts, fn {cs, _c} ->
+          %{code: cs, reason: :percentage_already_applied}
+        end) ++
+        Enum.map(extra_ships, fn {cs, _c} ->
+          %{code: cs, reason: :free_shipping_already_applied}
+        end)
 
     result = %{
       total_discount: order_total - remaining,

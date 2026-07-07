@@ -291,7 +291,7 @@ defmodule DBCleanerTest do
 
   test "truncation: clean/0 is safe to call without a prior start (no crash)" do
     # Should either be a no-op or raise a clear error, but must not crash the test process
-    assert_raise(RuntimeError, fn -> DBCleaner.clean() end) or true
+    DBCleaner.clean()
   rescue
     _ -> :ok
   end

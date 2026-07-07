@@ -103,24 +103,7 @@ defmodule BackoffDLQ do
     {:ok, state}
   end
 
-  @impl true
   def handle_call({:push, queue, message, error_reason, metadata}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:peek, queue, count}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:ready, queue, count}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:retry, queue, id, handler}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:purge, queue, older_than}, _from, state) do
     # TODO
   end
 

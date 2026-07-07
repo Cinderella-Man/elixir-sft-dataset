@@ -15,6 +15,7 @@ defmodule PriorityWorkerPool do
     GenServer.start_link(__MODULE__, opts, name: name)
   end
 
+  @doc "Submits `task_func` at `priority`, with starvation prevention. Returns `{:ok, ref}`."
   @spec submit(GenServer.server(), (-> any()), :high | :normal | :low) ::
           {:ok, reference()} | {:error, :queue_full}
   def submit(pool, task_func, priority \\ :normal)

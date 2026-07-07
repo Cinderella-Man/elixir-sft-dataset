@@ -196,20 +196,7 @@ defmodule RefreshAheadCache do
   end
 
   # Refresh result: apply only if entry still exists AND task_ref still matches.
-  @impl true
   def handle_info({:refresh_complete, key, task_ref, new_value}, state) do
-    # TODO
-  end
-
-  def handle_info({:refresh_failed, key, task_ref, _reason}, state) do
-    # TODO
-  end
-
-  def handle_info(:sweep, state) do
-    # TODO
-  end
-
-  def handle_info(_msg, state) do
     # TODO
   end
 
@@ -246,4 +233,5 @@ defmodule RefreshAheadCache do
     Process.send_after(self(), :sweep, ms)
   end
 end
+
 ```

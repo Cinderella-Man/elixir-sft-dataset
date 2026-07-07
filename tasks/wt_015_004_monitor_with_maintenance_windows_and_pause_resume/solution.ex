@@ -53,6 +53,7 @@ defmodule ManagedMonitor do
     GenServer.start_link(__MODULE__, opts, gen_opts ++ name_opt)
   end
 
+  @doc "Registers `service_name` with `check_func` every `interval_ms`. Returns `:ok`."
   @spec register(
           GenServer.server(),
           service_name(),

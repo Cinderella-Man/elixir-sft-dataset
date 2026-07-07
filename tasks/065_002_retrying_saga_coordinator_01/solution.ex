@@ -41,7 +41,8 @@ defmodule RetrySaga do
     max_attempts = Keyword.get(opts, :max_attempts, 1)
 
     unless is_integer(max_attempts) and max_attempts >= 1 do
-      raise ArgumentError, "max_attempts must be a positive integer, got: #{inspect(max_attempts)}"
+      raise ArgumentError,
+            "max_attempts must be a positive integer, got: #{inspect(max_attempts)}"
     end
 
     step = %{name: name, action: action, compensation: compensation, max_attempts: max_attempts}

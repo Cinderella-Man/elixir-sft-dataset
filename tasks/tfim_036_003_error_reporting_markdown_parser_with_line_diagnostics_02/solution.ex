@@ -9,7 +9,9 @@
              categories: [
                %{
                  category: "Tools",
-                 items: [%{name: "Hammer", description: "Drives nails", tags: ["hardware", "manual"]}]
+                 items: [
+                   %{name: "Hammer", description: "Drives nails", tags: ["hardware", "manual"]}
+                 ]
                }
              ],
              errors: []

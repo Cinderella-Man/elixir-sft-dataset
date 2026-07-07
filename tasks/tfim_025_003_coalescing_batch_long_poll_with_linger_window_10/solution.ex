@@ -7,5 +7,6 @@
 
     conn = Task.await(task, 2_000)
     body = Jason.decode!(conn.resp_body)
-    assert body["notifications"] == [%{"nested" => %{"a" => [1, 2, 3]}}, %{"unicode" => "héllo 🌍"}]
+    assert body["notifications"] ==
+             [%{"nested" => %{"a" => [1, 2, 3]}}, %{"unicode" => "héllo 🌍"}]
   end

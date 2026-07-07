@@ -148,17 +148,7 @@ defmodule CacheLayer do
     {:ok, %{tables: %{}}}
   end
 
-  @impl GenServer
-  # Fetch — serialised write path (also handles first-time table creation).
   def handle_call({:fetch, table, key, fallback_fn}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:invalidate, table, key}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:invalidate_all, table}, _from, state) do
     # TODO
   end
 
@@ -212,4 +202,5 @@ defmodule CacheLayer do
     end
   end
 end
+
 ```

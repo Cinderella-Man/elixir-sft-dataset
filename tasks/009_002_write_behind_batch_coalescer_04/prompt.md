@@ -137,18 +137,7 @@ defmodule BatchCollector do
     {:reply, count, state}
   end
 
-  @impl GenServer
   def handle_info({:flush_timer, key}, state) do
-    # TODO
-  end
-
-  @impl GenServer
-  def handle_info({:batch_done, callers, result}, state) do
-    # TODO
-  end
-
-  @impl GenServer
-  def handle_info(_msg, state) do
     # TODO
   end
 
@@ -188,4 +177,5 @@ defmodule BatchCollector do
     %{state | batches: new_batches}
   end
 end
+
 ```

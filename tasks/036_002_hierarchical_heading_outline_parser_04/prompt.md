@@ -122,12 +122,7 @@ defmodule MarkdownOutline do
 
   defp close_until(_level, roots, stack), do: {roots, stack}
 
-  # Finalise `node` and attach it as a child of the next open node, or as a root.
   defp attach(node, roots, [parent | rest]) do
-    # TODO
-  end
-
-  defp attach(node, roots, []) do
     # TODO
   end
 

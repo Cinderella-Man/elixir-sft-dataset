@@ -152,16 +152,7 @@ defmodule CacheLayer do
     {:ok, %{tables: %{}, negative_hits: neg}}
   end
 
-  @impl GenServer
   def handle_call({:fetch, table, key, fallback_fn}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:invalidate, table, key}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:invalidate_all, table}, _from, state) do
     # TODO
   end
 

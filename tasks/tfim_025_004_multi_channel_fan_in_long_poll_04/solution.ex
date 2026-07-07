@@ -1,4 +1,4 @@
-  test "a publish to an unsubscribed channel does not wake the poll", %{server: server, opts: opts} do
+  test "publish to an unsubscribed channel doesn't wake poll", %{server: server, opts: opts} do
     task = Task.async(fn -> poll(opts, "user:1", ["a", "b"]) end)
     Process.sleep(100)
     Notifications.publish(server, "user:1", "c", %{"ignored" => true})

@@ -106,12 +106,9 @@ defmodule TTLCache do
     {:reply, :ok, %{state | entries: Map.delete(state.entries, key)}}
   end
 
-  @impl true
   def handle_info(:sweep, state) do
     # TODO
   end
-
-  def handle_info(_msg, state), do: {:noreply, state}
 
   # ---------------------------------------------------------------------------
   # Internal helpers
@@ -123,4 +120,5 @@ defmodule TTLCache do
 
   defp schedule_sweep(_), do: :ok
 end
+
 ```

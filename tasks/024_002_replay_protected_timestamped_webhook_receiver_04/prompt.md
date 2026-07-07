@@ -154,23 +154,7 @@ defmodule WebhookReceiver.MemoryStore do
   @impl GenServer
   def init(_opts), do: {:ok, %{events: %{}}}
 
-  @doc """
-  Handles store, fetch and list calls against the in-memory event map.
-  """
-  @spec handle_call(term(), GenServer.from(), %{events: map()}) ::
-          {:reply, term(), %{events: map()}}
-  @impl GenServer
   def handle_call({:store_event, event_id, payload}, _from, %{events: events} = state) do
-    # TODO
-  end
-
-  @impl GenServer
-  def handle_call({:get_event, event_id}, _from, %{events: events} = state) do
-    # TODO
-  end
-
-  @impl GenServer
-  def handle_call(:all_events, _from, %{events: events} = state) do
     # TODO
   end
 end

@@ -1,4 +1,4 @@
-  test "notification for user A is not delivered to user B's poll", %{server: server, opts: opts} do
+  test "user A notification not delivered to user B", %{server: server, opts: opts} do
     # User B starts polling
     task_b =
       Task.async(fn ->

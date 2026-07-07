@@ -219,10 +219,6 @@ defmodule BudgetPromoCodes do
     # TODO
   end
 
-  defp draw(state, cs, %{budget: budget}, raw) do
-    # TODO
-  end
-
   # --- accounting ---
 
   defp total_uses(state, cs), do: Map.get(state.total_uses, cs, 0)

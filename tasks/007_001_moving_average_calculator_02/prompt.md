@@ -193,10 +193,6 @@ defmodule MovingAverage do
     # TODO
   end
 
-  defp compute(stream, :ema, period) do
-    # TODO
-  end
-
   # ---------------------------------------------------------------------------
   # EMA arithmetic
   # ---------------------------------------------------------------------------
@@ -233,4 +229,5 @@ defmodule MovingAverage do
     %{stream | values: Enum.take(stream.values, stream.max_period)}
   end
 end
+
 ```

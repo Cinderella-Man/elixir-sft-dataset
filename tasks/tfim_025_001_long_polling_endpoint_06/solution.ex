@@ -1,4 +1,4 @@
-  test "notification reaches the correct user among multiple pollers", %{server: server, opts: opts} do
+  test "delivers to the correct user among many pollers", %{server: server, opts: opts} do
     task_a = Task.async(fn -> poll(opts, "user:a") end)
     task_b = Task.async(fn -> poll(opts, "user:b") end)
 

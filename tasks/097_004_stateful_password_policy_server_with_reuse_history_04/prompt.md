@@ -78,10 +78,6 @@ defmodule PasswordPolicy do
     # TODO
   end
 
-  def handle_call({:history_count, username}, _from, state) do
-    # TODO
-  end
-
   # ---------------------------------------------------------------------------
   # Config
   # ---------------------------------------------------------------------------

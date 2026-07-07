@@ -28,7 +28,8 @@ defmodule IntervalScheduler do
   ## Examples
 
       iex> {:ok, pid} = IntervalScheduler.start_link([])
-      iex> :ok = IntervalScheduler.register(pid, "heartbeat", {:every, 30, :seconds}, {IO, :puts, ["tick"]})
+      iex> mfa = {IO, :puts, ["tick"]}
+      iex> :ok = IntervalScheduler.register(pid, "heartbeat", {:every, 30, :seconds}, mfa)
 
   """
 
@@ -48,6 +49,10 @@ defmodule IntervalScheduler do
 
   @spec register(GenServer.server(), term(), tuple(), {module(), atom(), list()}) ::
           :ok | {:error, :invalid_interval | :already_exists}
+  @doc """
+  Registers a recurring `job_name` that runs `mfa` on `interval_spec`. Returns `:ok`,
+  or `{:error, :invalid_interval | :already_exists}`.
+  """
   def register(server, job_name, interval_spec, {mod, fun, args} = mfa)
       when is_atom(mod) and is_atom(fun) and is_list(args) do
     GenServer.call(server, {:register, job_name, interval_spec, mfa})

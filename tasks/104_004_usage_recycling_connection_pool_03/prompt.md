@@ -115,16 +115,7 @@ defmodule RecyclingPool do
     end
   end
 
-  @impl true
   def handle_call({:checkout, timeout}, from, state) do
-    # TODO
-  end
-
-  def handle_call({:checkin, conn}, _from, state) do
-    # TODO
-  end
-
-  def handle_call(:stats, _from, state) do
     # TODO
   end
 

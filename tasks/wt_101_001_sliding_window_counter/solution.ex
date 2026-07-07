@@ -54,13 +54,13 @@ defmodule SlidingCounter do
 
   ## Options
 
-  | key                   | type / default              | description                                       |
-  |-----------------------|-----------------------------|---------------------------------------------------|
-  | `:clock`              | `(-> integer)` / monotonic  | Zero-arity function returning current time in ms  |
-  | `:bucket_ms`          | `pos_integer` / `1_000`     | Width of each internal sub-bucket                 |
-  | `:max_window_ms`      | `pos_integer` / `bucket_ms * 60` | Oldest data to retain; drives cleanup cutoff |
-  | `:cleanup_interval_ms`| `pos_integer / :infinity` / `60_000` | How often the background cleanup fires   |
-  | `:name`               | atom / `nil`                | Optional registration name                        |
+  | key                    | type / default                   | description                    |
+  |------------------------|----------------------------------|--------------------------------|
+  | `:clock`               | `(-> integer)` / monotonic       | Current time in ms (0-arity)   |
+  | `:bucket_ms`           | `pos_integer` / `1_000`          | Width of each sub-bucket       |
+  | `:max_window_ms`       | `pos_integer` / `bucket_ms * 60` | Oldest data retained; cutoff   |
+  | `:cleanup_interval_ms` | `pos_integer`/`:infinity`/`60_000` | Background cleanup interval   |
+  | `:name`                | atom / `nil`                     | Optional registration name     |
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
@@ -103,7 +103,7 @@ defmodule SlidingCounter do
       Keyword.get(opts, :clock, fn -> System.monotonic_time(:millisecond) end)
 
     bucket_ms           = Keyword.get(opts, :bucket_ms,           @default_bucket_ms)
-    max_window_ms       = Keyword.get(opts, :max_window_ms,        bucket_ms * @default_max_window_buckets)
+    max_window_ms = Keyword.get(opts, :max_window_ms, bucket_ms * @default_max_window_buckets)
     cleanup_interval_ms = Keyword.get(opts, :cleanup_interval_ms, @default_cleanup_interval_ms)
 
     state = %{

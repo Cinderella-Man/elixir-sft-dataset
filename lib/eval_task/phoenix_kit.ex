@@ -15,10 +15,11 @@ defmodule EvalTask.PhoenixKit do
   Render the kit modules into `dir`, skipping any module the bundle already
   defines (`bundle_modules`). Returns the written file paths.
   """
-  @spec render(String.t(), String.t(), String.t(), atom(), [String.t()]) :: [String.t()]
-  def render(dir, prefix, web, otp, bundle_modules) do
+  @spec render(String.t(), String.t(), String.t(), atom(), [String.t()], :sqlite | :postgres) ::
+          [String.t()]
+  def render(dir, prefix, web, otp, bundle_modules, db \\ :sqlite) do
     candidates = [
-      {"#{prefix}.Repo", "kit_repo.ex", repo(prefix, otp)},
+      {"#{prefix}.Repo", "kit_repo.ex", repo(prefix, otp, db)},
       {web, "kit_web.ex", web_entry(web, otp)},
       {"#{web}.Endpoint", "kit_endpoint.ex", endpoint(web, otp)},
       {"#{web}.ErrorJSON", "kit_error_json.ex", error_json(web)},
@@ -33,7 +34,7 @@ defmodule EvalTask.PhoenixKit do
     end
   end
 
-  @doc "Endpoint/Repo `Application.put_env` config. Call before compile + boot."
+  @doc "SQLite Repo + Endpoint `Application.put_env` config. Call before compile + boot."
   @spec configure(atom(), String.t(), String.t(), String.t()) :: :ok
   def configure(otp, prefix, web, db_path) do
     Application.put_env(otp, Module.concat(prefix, "Repo"),
@@ -42,6 +43,25 @@ defmodule EvalTask.PhoenixKit do
       pool_size: 5
     )
 
+    configure_endpoint(otp, web)
+  end
+
+  @doc """
+  Postgres Repo + Endpoint config. `pg_opts` carries `:hostname`/`:port`/`:username`/
+  `:password`/`:database`. Call before compile + boot.
+  """
+  @spec configure_postgres(atom(), String.t(), String.t(), keyword()) :: :ok
+  def configure_postgres(otp, prefix, web, pg_opts) do
+    Application.put_env(
+      otp,
+      Module.concat(prefix, "Repo"),
+      Keyword.merge(pg_opts, pool: Ecto.Adapters.SQL.Sandbox, pool_size: 5)
+    )
+
+    configure_endpoint(otp, web)
+  end
+
+  defp configure_endpoint(otp, web) do
     Application.put_env(otp, Module.concat(web, "Endpoint"),
       secret_key_base: String.duplicate("z", 64),
       server: false,
@@ -51,10 +71,16 @@ defmodule EvalTask.PhoenixKit do
     :ok
   end
 
-  defp repo(prefix, otp) do
+  defp repo(prefix, otp, db) do
+    adapter =
+      case db do
+        :postgres -> "Ecto.Adapters.Postgres"
+        _ -> "Ecto.Adapters.SQLite3"
+      end
+
     """
     defmodule #{prefix}.Repo do
-      use Ecto.Repo, otp_app: #{inspect(otp)}, adapter: Ecto.Adapters.SQLite3
+      use Ecto.Repo, otp_app: #{inspect(otp)}, adapter: #{adapter}
     end
     """
   end

@@ -30,10 +30,10 @@ defmodule Inventory do
   is a map `%{sku: String.t(), name: String.t(), price: integer, qty: integer}`.
   """
 
-  @type record :: %{sku: String.t(), name: String.t(), price: integer, qty: non_neg_integer}
+  @type record_t :: %{sku: String.t(), name: String.t(), price: integer, qty: non_neg_integer}
   @type errors :: %{optional(String.t()) => [String.t()]}
   @type result ::
-          {non_neg_integer, :inserted | :updated | :skipped, record}
+          {non_neg_integer, :inserted | :updated | :skipped, record_t}
           | {non_neg_integer, :ok, :valid}
           | {non_neg_integer, :error, errors}
 
@@ -48,7 +48,7 @@ defmodule Inventory do
   end
 
   @doc "Return all stored records."
-  @spec all() :: [record]
+  @spec all() :: [record_t]
   def all, do: Agent.get(__MODULE__, fn %{records: r} -> Map.values(r) end)
 
   @doc "Return the number of stored records."
@@ -56,7 +56,7 @@ defmodule Inventory do
   def count, do: Agent.get(__MODULE__, fn %{records: r} -> map_size(r) end)
 
   @doc "Fetch a record by `sku`, or `nil` if absent."
-  @spec get(String.t()) :: record | nil
+  @spec get(String.t()) :: record_t | nil
   def get(sku), do: Agent.get(__MODULE__, fn %{records: r} -> Map.get(r, sku) end)
 
   @doc """

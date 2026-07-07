@@ -8,7 +8,7 @@
       Enum.reduce(records, {%{}, 0, 0}, fn record, {groups, unr, miss} ->
         case Map.fetch(record, type_field) do
           :error ->
-            Logger.warning("[MultiSchemaIngestion] Record missing '#{type_field}' field, skipping")
+            Logger.warning("[Ingestion] record missing '#{type_field}', skipping")
             {groups, unr, miss + 1}
 
           {:ok, type_value} ->

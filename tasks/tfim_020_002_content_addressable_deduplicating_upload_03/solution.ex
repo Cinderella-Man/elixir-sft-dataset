@@ -1,4 +1,4 @@
-  test "identical content under a different name is deduplicated (200, same id, count grows)", %{opts: opts} do
+  test "identical content under a new name dedupes (200, same id)", %{opts: opts} do
     content = "x,y\n1,2\n"
     c1 = call_upload(opts, "first.csv", content)
     c2 = call_upload(opts, "second.csv", content)

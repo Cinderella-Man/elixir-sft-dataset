@@ -1,4 +1,4 @@
-  test "new CSV upload returns 201 with a 64-char sha256 id and deduplicated=false", %{opts: opts} do
+  test "new CSV upload returns 201 with sha256 id, deduplicated=false", %{opts: opts} do
     conn = call_upload(opts, "people.csv", "name,age\nAlice,30\n")
     assert conn.status == 201
     body = json_body(conn)

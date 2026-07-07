@@ -106,7 +106,7 @@ defmodule SecureToken do
 
   defp split_mac(binary) do
     data_size = byte_size(binary) - @hmac_size
-    <<data::binary-size(data_size), mac::binary-size(@hmac_size)>> = binary
+    <<data::binary-size(^data_size), mac::binary-size(@hmac_size)>> = binary
     {:ok, data, mac}
   end
 

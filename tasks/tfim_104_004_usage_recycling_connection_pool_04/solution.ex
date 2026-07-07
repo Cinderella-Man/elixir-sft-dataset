@@ -3,7 +3,8 @@
     {destroy, destroyed} = destroy_tracker()
 
     start_supervised!(
-      {RecyclingPool, name: :rp_recycle, max_size: 1, max_uses: 2, create: create, destroy: destroy}
+      {RecyclingPool,
+       name: :rp_recycle, max_size: 1, max_uses: 2, create: create, destroy: destroy}
     )
 
     assert {:ok, c0} = RecyclingPool.checkout(:rp_recycle, 100)

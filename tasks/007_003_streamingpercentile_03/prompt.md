@@ -104,20 +104,7 @@ defmodule StreamingPercentile do
   @impl GenServer
   def init(:ok), do: {:ok, %{streams: %{}}}
 
-  @impl GenServer
   def handle_call({:push, name, value, window_size}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:percentile, name, q}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:percentiles, name, q_list}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:window, name}, _from, state) do
     # TODO
   end
 
@@ -164,4 +151,5 @@ defmodule StreamingPercentile do
   defp valid_quantile?(q) when is_number(q), do: q >= 0.0 and q <= 1.0
   defp valid_quantile?(_), do: false
 end
+
 ```

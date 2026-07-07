@@ -78,10 +78,6 @@ defmodule PathVersionApi.Migrations do
   defp apply_step({"v3", "v2"}, doc) do
     # TODO
   end
-
-  defp apply_step({"v2", "v1"}, doc) do
-    # TODO
-  end
 end
 
 defmodule PathVersionApi.Router do

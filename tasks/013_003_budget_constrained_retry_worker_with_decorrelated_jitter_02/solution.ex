@@ -1,4 +1,14 @@
-  defp do_attempt(func, clock_fn, random_fn, started_at, base_delay, budget, max_delay, prev_delay, attempts) do
+  defp do_attempt(
+         func,
+         clock_fn,
+         random_fn,
+         started_at,
+         base_delay,
+         budget,
+         max_delay,
+         prev_delay,
+         attempts
+       ) do
     attempts = attempts + 1
 
     case func.() do

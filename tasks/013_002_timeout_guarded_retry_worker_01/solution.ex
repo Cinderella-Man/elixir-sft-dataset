@@ -16,6 +16,7 @@ defmodule TimeoutRetryWorker do
     GenServer.start_link(__MODULE__, opts, gen_opts)
   end
 
+  @doc "Runs `func`, retrying on failure until the timeout in `opts`. Returns the result."
   @spec execute(GenServer.server(), (-> any()), keyword()) ::
           {:ok, any()} | {:error, :max_retries_exceeded, any()}
   def execute(server, func, opts \\ []) do

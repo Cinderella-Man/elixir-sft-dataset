@@ -124,13 +124,7 @@ defmodule OrderedLeaderboard do
     {:ok, %{entries: entries, index: index, seq: 0}}
   end
 
-  @impl true
   def handle_call(:board, _from, state) do
-    # TODO
-  end
-
-  @impl true
-  def handle_call({:submit, player_id, score}, _from, state) do
     # TODO
   end
 

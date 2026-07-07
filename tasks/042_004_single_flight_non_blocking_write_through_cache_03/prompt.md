@@ -155,24 +155,7 @@ defmodule CacheLayer do
     {:ok, %{tables: %{}, inflight: %{}}}
   end
 
-  @impl GenServer
   def handle_call({:join, table, key}, from, state) do
-    # TODO
-  end
-
-  def handle_call({:done, table, key, value}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:fail, table, key}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:invalidate, table, key}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:invalidate_all, table}, _from, state) do
     # TODO
   end
 

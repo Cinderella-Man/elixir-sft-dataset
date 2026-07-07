@@ -89,9 +89,5 @@ defmodule Pipeline do
   defp run_stage({:seq, name, fun}, value) do
     # TODO
   end
-
-  defp run_stage({:map, name, fun, mc_opt}, value) do
-    # TODO
-  end
 end
 ```

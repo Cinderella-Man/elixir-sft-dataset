@@ -1,7 +1,8 @@
   test "backward navigation returns the preceding window in ascending order" do
     all = items(1..12)
 
-    page3 = CursorPaginator.paginate(all, %{"limit" => "5", "cursor" => CursorPaginator.encode_cursor(10)})
+    cursor = CursorPaginator.encode_cursor(10)
+    page3 = CursorPaginator.paginate(all, %{"limit" => "5", "cursor" => cursor})
     assert Enum.map(page3.data, & &1.id) == [11, 12]
 
     prev =

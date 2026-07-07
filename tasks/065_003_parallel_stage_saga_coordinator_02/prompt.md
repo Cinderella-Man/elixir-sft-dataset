@@ -84,12 +84,7 @@ defmodule ParallelSaga do
     run_stages(stages, 0, context, [])
   end
 
-  # `completed` holds step maps in reverse completion order (most recent first).
   defp run_stages([], _idx, context, _completed) do
-    # TODO
-  end
-
-  defp run_stages([stage | rest], idx, context, completed) do
     # TODO
   end
 

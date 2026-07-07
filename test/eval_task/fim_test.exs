@@ -40,6 +40,62 @@ defmodule EvalTask.FimTest do
 
   # --- test-FIM (tfim) additions ---
 
+  describe "build_skeleton/2 (deterministic skeleton, inverse of reconstruct)" do
+    test "stubs only the target clause; splicing the candidate back is clean" do
+      parent = """
+      defmodule A do
+        @impl true
+        def handle_call(:a, _from, s), do: {:reply, :a, s}
+
+        @impl true
+        def handle_call(:b, _from, s) do
+          {:reply, :b, s}
+        end
+      end
+      """
+
+      candidate = "@impl true\ndef handle_call(:b, _from, s) do\n  {:reply, :b, s}\nend"
+      skeleton = Fim.build_skeleton(parent, candidate)
+
+      # only the :b clause is stubbed; :a stays complete
+      assert skeleton =~ "def handle_call(:a, _from, s), do: {:reply, :a, s}"
+      assert skeleton =~ ~r/def handle_call\(:b, _from, s\) do\s*# TODO\s*end/
+
+      # round-trip: reconstruct compiles, no leftover marker, no duplicate clause/@impl
+      whole = Fim.splice(skeleton, candidate)
+      refute whole =~ "# TODO"
+      assert {:ok, _} = Code.string_to_quoted(whole)
+      assert length(Regex.scan(~r/def handle_call\(:b/, whole)) == 1
+    end
+
+    test "a one-liner + block multi-clause candidate collapses to one stub (no dup)" do
+      parent = """
+      defmodule A do
+        defp draw(s, %{b: nil}, r), do: {r, s}
+        defp draw(s, %{b: b}, r) do
+          {min(r, b), s}
+        end
+      end
+      """
+
+      candidate =
+        "defp draw(s, %{b: nil}, r), do: {r, s}\ndefp draw(s, %{b: b}, r) do\n  {min(r, b), s}\nend"
+
+      whole = Fim.splice(Fim.build_skeleton(parent, candidate), candidate)
+      assert {:ok, _} = Code.string_to_quoted(whole)
+      # both clauses present exactly once — no redundant clause
+      assert length(Regex.scan(~r/defp draw\(s, %\{b: nil\}/, whole)) == 1
+    end
+
+    test "rewrite_skeleton swaps only the # TODO-bearing fence" do
+      prompt = "Do X.\n\n```elixir\ndef old, do: :stub # TODO\n```\n\n```elixir\n:example\n```"
+      out = Fim.rewrite_skeleton(prompt, "def new do\n  # TODO\nend")
+      assert out =~ "def new do"
+      assert out =~ ":example"
+      refute out =~ "def old"
+    end
+  end
+
   test "test_fim_parent_dir strips the tfim_ prefix and the subtask index" do
     assert Fim.test_fim_parent_dir("tasks/tfim_107_001_event_aggregator_02") ==
              "tasks/107_001_event_aggregator_01"

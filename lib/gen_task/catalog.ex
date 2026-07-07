@@ -287,11 +287,12 @@ defmodule GenTask.Catalog do
     |> Enum.count(&File.dir?/1)
   end
 
-  # A `_01` whose evaluator run is `skipped` — Postgres-tier (`manifest.exs` carries
-  # `db: :postgres`) with no host to grade against — can never mint a green wtest or a
-  # gated tfim (both stage the parent, which grades `skipped`, not green). Excluding it
-  # keeps such a seed out of the wtest/tfim backfill; otherwise it is re-attempted every
-  # run and its derivatives land in `logs/errors/` forever (docs/06 §6 `gradable_skip?`).
+  # A Postgres-tier `_01` (`manifest.exs` carries `db: :postgres`). Unattended
+  # generation runs have no guaranteed Postgres host, and without one the parent grades
+  # RED (the evaluator provisions a throwaway DB and fails loudly if the server is down —
+  # see `EvalTask.Runner`), so a gated tfim / wtest minted here would land in
+  # `logs/errors/` every run. Excluding it keeps such a seed out of the wtest/tfim
+  # backfill. (To derive from these, run generation with `docker compose up -d db`.)
   @spec gradable_skip?(String.t()) :: boolean()
   defp gradable_skip?(dir) do
     manifest = Path.join(dir, "manifest.exs")

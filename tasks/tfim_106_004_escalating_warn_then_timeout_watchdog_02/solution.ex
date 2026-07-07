@@ -2,7 +2,9 @@
     test = self()
 
     :ok =
-      EscalatingWatchdog.register(:w, dummy_pid(), 80, 200, warn_notifier(test), timeout_notifier(test))
+      EscalatingWatchdog.register(
+        :w, dummy_pid(), 80, 200, warn_notifier(test), timeout_notifier(test)
+      )
 
     for _ <- 1..4 do
       Process.sleep(40)

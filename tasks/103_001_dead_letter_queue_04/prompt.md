@@ -140,23 +140,7 @@ defmodule DLQ do
     {:ok, state}
   end
 
-  @impl true
   def handle_call({:push, queue_name, message, error_reason, metadata}, _from, state) do
-    # TODO
-  end
-
-  @impl true
-  def handle_call({:peek, queue_name, count}, _from, state) do
-    # TODO
-  end
-
-  @impl true
-  def handle_call({:retry, queue_name, message_id, handler_fn}, _from, state) do
-    # TODO
-  end
-
-  @impl true
-  def handle_call({:purge, queue_name, older_than}, _from, state) do
     # TODO
   end
 

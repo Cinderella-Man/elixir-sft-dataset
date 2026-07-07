@@ -1,4 +1,4 @@
-  test "correct user receives their batch among multiple pollers", %{server: server, opts: opts} do
+  test "correct user receives their batch among many pollers", %{server: server, opts: opts} do
     task_a = Task.async(fn -> poll(opts, "user:a") end)
     task_b = Task.async(fn -> poll(opts, "user:b") end)
     Process.sleep(100)

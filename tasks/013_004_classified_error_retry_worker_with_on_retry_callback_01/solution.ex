@@ -17,6 +17,7 @@ defmodule ClassifiedRetryWorker do
     GenServer.start_link(__MODULE__, opts, gen_opts)
   end
 
+  @doc "Runs `func`, retrying classified errors per `opts`. Returns the result."
   @spec execute(GenServer.server(), (-> any()), keyword()) ::
           {:ok, any()}
           | {:error, :permanent, any()}

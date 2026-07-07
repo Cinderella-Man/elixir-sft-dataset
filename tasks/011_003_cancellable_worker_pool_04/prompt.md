@@ -201,13 +201,7 @@ defmodule CancellablePool do
     {:reply, status, state}
   end
 
-  @impl true
   def handle_info({:task_finished, worker, ref, result}, state) do
-    # TODO
-  end
-
-  @impl true
-  def handle_info({:DOWN, mref, :process, pid, reason}, state) do
     # TODO
   end
 
@@ -268,4 +262,5 @@ defmodule CancellablePool do
     end
   end
 end
+
 ```

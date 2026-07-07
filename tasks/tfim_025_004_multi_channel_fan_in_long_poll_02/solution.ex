@@ -1,4 +1,4 @@
-  test "returns a notification tagged with the channel it fired on", %{server: server, opts: opts} do
+  test "notification is tagged with its channel", %{server: server, opts: opts} do
     task = Task.async(fn -> poll(opts, "user:1", ["orders", "alerts", "dm"]) end)
     Process.sleep(100)
     Notifications.publish(server, "user:1", "alerts", %{"level" => "high"})

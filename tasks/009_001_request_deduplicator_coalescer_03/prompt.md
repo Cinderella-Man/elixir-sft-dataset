@@ -130,14 +130,9 @@ defmodule Dedup do
     end
   end
 
-  @impl GenServer
   def handle_info({:task_done, key, result}, state) do
     # TODO
   end
-
-  # Ignore any other messages (e.g. stray task EXIT signals).
-  def handle_info(_msg, state) do
-    # TODO
-  end
 end
+
 ```

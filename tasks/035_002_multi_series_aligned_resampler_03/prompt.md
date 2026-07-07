@@ -89,16 +89,6 @@ defmodule MultiSeriesResampler do
     # TODO
   end
 
-  def resample(series, interval_ms, _opts)
-      when is_map(series) and not is_integer(interval_ms) do
-    # TODO
-  end
-
-  def resample(series, interval_ms, _opts)
-      when is_map(series) and interval_ms <= 0 do
-    # TODO
-  end
-
   # --------------------------------------------------------------------------
   # Private helpers
   # --------------------------------------------------------------------------

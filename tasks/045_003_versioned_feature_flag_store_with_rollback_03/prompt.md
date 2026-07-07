@@ -190,12 +190,7 @@ defmodule FeatureFlags do
     {:ok, %{state_table: state_table, hist_table: hist_table}}
   end
 
-  @impl true
   def handle_call({:write, flag, new_state}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:rollback, flag}, _from, state) do
     # TODO
   end
 

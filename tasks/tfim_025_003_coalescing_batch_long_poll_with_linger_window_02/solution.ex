@@ -1,4 +1,4 @@
-  test "coalesces a burst of notifications into one batched response", %{server: server, opts: opts} do
+  test "coalesces a burst into one batched response", %{server: server, opts: opts} do
     task = Task.async(fn -> poll(opts, "user:1") end)
     Process.sleep(100)
 

@@ -120,7 +120,7 @@ defmodule PromoCodes do
     now = state.clock.()
 
     case check(code_string, order_total, user_id, now, state) do
-      {:ok, code, discount} ->
+      {:ok, _code, discount} ->
         new_state = record_use(state, code_string, user_id)
         {:reply, {:ok, discount}, new_state}
 
@@ -265,8 +265,9 @@ defmodule PromoCodes do
 
   defp total_uses(state, code_string), do: Map.get(state.total_uses, code_string, 0)
 
-  defp user_uses(_state, _code_string, nil), do: 0
-  defp user_uses(state, code_string, user_id), do: Map.get(state.user_uses, {code_string, user_id}, 0)
+  defp user_uses(state, code_string, user_id) do
+    Map.get(state.user_uses, {code_string, user_id}, 0)
+  end
 
   defp record_use(state, code_string, user_id) do
     # TODO

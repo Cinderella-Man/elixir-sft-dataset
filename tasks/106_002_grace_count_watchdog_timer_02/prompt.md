@@ -114,12 +114,7 @@ defmodule GraceWatchdog do
     end
   end
 
-  @impl true
   def handle_info({:tick, name, ref}, state) do
-    # TODO
-  end
-
-  def handle_info(_msg, state) do
     # TODO
   end
 

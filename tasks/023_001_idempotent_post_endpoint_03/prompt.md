@@ -120,9 +120,7 @@ defmodule IdempotentPayments do
   # Internals
   # ---------------------------------------------------------------------------
 
-  defp cached(_state, nil, _now), do: # TODO
-
-  defp cached(state, key, now) do
+  defp cached(_state, nil, _now) do
     # TODO
   end
 
@@ -167,4 +165,5 @@ defmodule IdempotentPayments do
     Process.send_after(self(), :cleanup, interval)
   end
 end
+
 ```

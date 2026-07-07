@@ -98,10 +98,6 @@ defmodule TreeBuilder do
     # TODO
   end
 
-  def build(items, opts) when is_list(items) do
-    # TODO
-  end
-
   # ---------------------------------------------------------------------------
   # Private helpers
   # ---------------------------------------------------------------------------

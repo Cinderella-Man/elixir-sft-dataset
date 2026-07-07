@@ -81,20 +81,7 @@ defmodule GraceWatchdog do
   @impl true
   def init(_arg), do: {:ok, %{}}
 
-  @impl true
   def handle_call({:register, name, pid, interval_ms, max_misses, fun}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:heartbeat, name}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:unregister, name}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:misses, name}, _from, state) do
     # TODO
   end
 

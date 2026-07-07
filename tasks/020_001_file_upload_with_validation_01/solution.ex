@@ -1,4 +1,3 @@
-<file path="lib/file_upload.ex">
 defmodule FileUpload.Store do
   @moduledoc """
   A `GenServer` that stores uploaded-file metadata in memory, keyed by a
@@ -7,10 +6,7 @@ defmodule FileUpload.Store do
 
   use GenServer
 
-  @max_bytes 5_242_880
-
-  def max_bytes, do: @max_bytes
-
+  @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
   end
@@ -191,4 +187,3 @@ defmodule FileUpload.Router do
     |> send_resp(status, Jason.encode!(data))
   end
 end
-</file>

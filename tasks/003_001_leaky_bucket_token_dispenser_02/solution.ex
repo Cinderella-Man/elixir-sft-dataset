@@ -1,5 +1,9 @@
 @impl true
-def handle_call({:acquire, bucket_name, capacity, refill_rate, tokens}, _from, %State{} = state) do
+def handle_call(
+      {:acquire, bucket_name, capacity, refill_rate, tokens},
+      _from,
+      %State{} = state
+    ) do
   now = state.clock.()
 
   bucket =

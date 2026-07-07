@@ -19,4 +19,4 @@ The in-memory user store should contain at least these entries:
 
 All JSON responses must have a `content-type` of `application/json`. Use `Jason` for JSON encoding.
 
-Give me all three modules in a single file. Only depend on `plug`, `jason`, and their transitive dependencies — no Phoenix, no database.
+Give me all three modules, each in its own file. Only depend on `plug`, `jason`, and their transitive dependencies — no Phoenix, no database.

@@ -126,12 +126,7 @@ defmodule KeyedPool do
     {:reply, reply, state}
   end
 
-  @impl GenServer
   def handle_info({:task_done, key, ref, result}, state) do
-    # TODO
-  end
-
-  def handle_info(_msg, state) do
     # TODO
   end
 
@@ -184,4 +179,5 @@ defmodule KeyedPool do
     end
   end
 end
+
 ```

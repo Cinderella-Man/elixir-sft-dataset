@@ -1,4 +1,4 @@
-  test "multiple pollers on the same channel all receive the notification", %{server: server, opts: opts} do
+  test "all pollers on one channel receive it", %{server: server, opts: opts} do
     task1 = Task.async(fn -> poll(opts, "user:1", ["x"]) end)
     task2 = Task.async(fn -> poll(opts, "user:1", ["x", "y"]) end)
     Process.sleep(100)

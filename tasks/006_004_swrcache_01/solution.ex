@@ -49,6 +49,7 @@ defmodule SwrCache do
     GenServer.start_link(__MODULE__, opts, server_opts)
   end
 
+  @doc "Stores `value` under `key` with fresh/stale TTLs and a `loader`. Returns `:ok`."
   @spec put(GenServer.server(), term(), term(), pos_integer(), pos_integer(), (-> term())) :: :ok
   def put(server, key, value, fresh_ms, stale_ms, loader)
       when is_integer(fresh_ms) and fresh_ms > 0 and

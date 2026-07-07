@@ -40,9 +40,10 @@ defmodule RefreshAheadCache do
   def start_link(opts \\ []) do
     refresh_threshold = Keyword.get(opts, :refresh_threshold, 0.8)
 
-    unless is_number(refresh_threshold) and refresh_threshold > 0.0 and refresh_threshold <= 1.0 do
+    unless is_number(refresh_threshold) and refresh_threshold > 0.0 and
+             refresh_threshold <= 1.0 do
       raise ArgumentError,
-            ":refresh_threshold must be a number in (0.0, 1.0], got: #{inspect(refresh_threshold)}"
+            "refresh_threshold must be in (0.0, 1.0], got: #{inspect(refresh_threshold)}"
     end
 
     {name, opts} = Keyword.pop(opts, :name)
@@ -51,6 +52,10 @@ defmodule RefreshAheadCache do
   end
 
   @spec put(GenServer.server(), term(), term(), pos_integer(), (-> term())) :: :ok
+  @doc """
+  Stores `value` under `key` for `ttl_ms`, using `loader/0` to refresh the entry ahead
+  of expiry. Returns `:ok`.
+  """
   def put(server, key, value, ttl_ms, loader)
       when is_integer(ttl_ms) and ttl_ms > 0 and is_function(loader, 0) do
     GenServer.call(server, {:put, key, value, ttl_ms, loader})
@@ -62,7 +67,10 @@ defmodule RefreshAheadCache do
   @spec delete(GenServer.server(), term()) :: :ok
   def delete(server, key), do: GenServer.call(server, {:delete, key})
 
-  @spec stats(GenServer.server()) :: %{entries: non_neg_integer(), refreshes_in_flight: non_neg_integer()}
+  @spec stats(GenServer.server()) :: %{
+          entries: non_neg_integer(),
+          refreshes_in_flight: non_neg_integer()
+        }
   def stats(server), do: GenServer.call(server, :stats)
 
   # ---------------------------------------------------------------------------

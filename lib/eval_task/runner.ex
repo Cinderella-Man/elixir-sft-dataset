@@ -43,32 +43,16 @@ defmodule EvalTask.Runner do
     end
   end
 
-  defp do_run_multifile(files, _harness, %{db: :postgres} = cfg) do
-    # Deferred: no Postgres kit yet (S4-D2). Skip with a clear reason.
-    finish(
-      %{
-        compiled: false,
-        compile_warnings: 0,
-        compile_errors: [
-          %{type: "Skipped", message: "requires Postgres (db: :postgres) — not provisioned"}
-        ]
-      },
-      Analysis.analyze_all(Bundle.lib_sources(files), :full),
-      %{no_tests() | tests_ran: false},
-      %{archetype: cfg.archetype, skipped: "postgres", bundle_files: length(files)}
-    )
-  end
-
   defp do_run_multifile(files, harness, cfg) do
     tmp = mktemp()
     {sources, migrations} = Bundle.materialize(files, tmp)
     analysis = Analysis.analyze_all(Bundle.lib_sources(files), :full)
 
-    {compile, extra} =
+    {compile, extra, cleanup} =
       try do
         case cfg.archetype do
           :phoenix_conncase -> compile_tier_b(files, sources, migrations, tmp, cfg)
-          _ -> {compile_bundle(sources) |> Map.put(:tier, "A"), %{tier: "A"}}
+          _ -> {compile_bundle(sources) |> Map.put(:tier, "A"), %{tier: "A"}, fn -> :ok end}
         end
       rescue
         e ->
@@ -78,13 +62,14 @@ defmodule EvalTask.Runner do
              compile_errors: [
                %{
                  type: inspect(e.__struct__),
-                 message: Exception.message(e) |> String.slice(0, 200)
+                 message: Exception.message(e) |> String.slice(0, 300)
                }
              ]
-           }, %{tier: tier(cfg.archetype)}}
+           }, %{tier: tier(cfg.archetype)}, fn -> :ok end}
       end
 
     tests = if compile.compiled, do: run_harness(harness), else: no_tests()
+    _ = safe_cleanup(cleanup)
     File.rm_rf!(tmp)
 
     finish(
@@ -95,26 +80,30 @@ defmodule EvalTask.Runner do
     )
   end
 
+  defp safe_cleanup(fun) do
+    fun.()
+  rescue
+    _ -> :ok
+  end
+
   defp compile_tier_b(files, sources, migrations, tmp, cfg) do
-    Application.ensure_all_started(:ecto_sql)
-    Application.ensure_all_started(:ecto_sqlite3)
-    Application.ensure_all_started(:phoenix)
-    Application.ensure_all_started(:jason)
+    db = Map.get(cfg, :db, :sqlite)
+    ensure_db_apps(db)
 
     %{prefix: prefix, web_prefix: web, otp_app: otp} = cfg
     repo = Module.concat(prefix, "Repo")
     endpoint = Module.concat(web, "Endpoint")
-    db = Path.join(System.tmp_dir!(), "evaldb_#{uniq_suffix()}.db")
-    File.rm_rf(db)
 
-    kit_paths = PhoenixKit.render(tmp, prefix, web, otp, Bundle.module_names(files))
-    PhoenixKit.configure(otp, prefix, web, db)
+    # Provision storage (create a fresh, isolated DB) and return a cleanup thunk.
+    storage_cleanup = setup_repo_storage(db, otp, prefix, web)
+
+    kit_paths = PhoenixKit.render(tmp, prefix, web, otp, Bundle.module_names(files), db)
 
     {:ok, _mods, diag} =
       Kernel.ParallelCompiler.compile(sources ++ kit_paths, return_diagnostics: true)
 
     {:ok, mig_mods, _} = Kernel.ParallelCompiler.compile(migrations, return_diagnostics: true)
-    {:ok, _} = Supervisor.start_link([repo, endpoint], strategy: :one_for_one)
+    {:ok, sup} = Supervisor.start_link([repo, endpoint], strategy: :one_for_one)
 
     mig_mods
     |> Enum.with_index(1)
@@ -122,12 +111,81 @@ defmodule EvalTask.Runner do
 
     Ecto.Adapters.SQL.Sandbox.mode(repo, :manual)
 
+    # Stop the repo pool before dropping storage (Postgres refuses DROP DATABASE
+    # while connections are open).
+    cleanup = fn ->
+      _ = Supervisor.stop(sup)
+      storage_cleanup.()
+    end
+
     {%{
        compiled: true,
        compile_warnings: length(diag.compile_warnings),
        compile_errors: [],
        tier: "B"
-     }, %{tier: "B"}}
+     }, %{tier: "B"}, cleanup}
+  end
+
+  defp ensure_db_apps(:postgres) do
+    Application.ensure_all_started(:ecto_sql)
+    Application.ensure_all_started(:postgrex)
+    Application.ensure_all_started(:phoenix)
+    Application.ensure_all_started(:jason)
+  end
+
+  defp ensure_db_apps(_sqlite) do
+    Application.ensure_all_started(:ecto_sql)
+    Application.ensure_all_started(:ecto_sqlite3)
+    Application.ensure_all_started(:phoenix)
+    Application.ensure_all_started(:jason)
+  end
+
+  # SQLite: a fresh temp file per run. Cleanup deletes it.
+  defp setup_repo_storage(:sqlite, otp, prefix, web) do
+    db = Path.join(System.tmp_dir!(), "evaldb_#{uniq_suffix()}.db")
+    File.rm_rf(db)
+    PhoenixKit.configure(otp, prefix, web, db)
+    fn -> File.rm_rf(db) end
+  end
+
+  # Postgres: a fresh throwaway database per run on the live server (mirrors the
+  # per-run SQLite file, so parallel evals don't collide). CREATE fails loudly if
+  # no server is reachable — that's the point: the task goes RED, not skipped.
+  defp setup_repo_storage(:postgres, otp, prefix, web) do
+    opts = Keyword.put(pg_conn_opts(), :database, "evaldb_#{uniq_suffix()}")
+    PhoenixKit.configure_postgres(otp, prefix, web, opts)
+    ensure_pg_database!(opts)
+    fn -> _ = Ecto.Adapters.Postgres.storage_down(opts) end
+  end
+
+  defp pg_conn_opts do
+    [
+      hostname: System.get_env("EVAL_PG_HOST", "127.0.0.1"),
+      port: String.to_integer(System.get_env("EVAL_PG_PORT", "5432")),
+      username: System.get_env("EVAL_PG_USER", "postgres"),
+      password: System.get_env("EVAL_PG_PASSWORD", "postgres"),
+      maintenance_database: System.get_env("EVAL_PG_MAINTENANCE_DB", "postgres")
+    ]
+  end
+
+  defp ensure_pg_database!(opts) do
+    case Ecto.Adapters.Postgres.storage_up(opts) do
+      :ok ->
+        :ok
+
+      {:error, :already_up} ->
+        :ok
+
+      {:error, reason} ->
+        raise """
+        Postgres is required for this task but is not reachable at \
+        #{opts[:hostname]}:#{opts[:port]} (#{inspect(reason)}).
+
+        Start it with `docker compose up -d db` from the repo root, then re-run. \
+        Override the connection with EVAL_PG_HOST / EVAL_PG_PORT / EVAL_PG_USER / \
+        EVAL_PG_PASSWORD if your server differs.\
+        """
+    end
   end
 
   @doc "Run a FIM task: reconstruct from the prompt skeleton + candidate, run the parent harness."

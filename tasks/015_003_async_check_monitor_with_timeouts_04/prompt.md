@@ -115,20 +115,7 @@ defmodule AsyncMonitor do
     {:ok, %{services: %{}, clock: clock, notify: notify}}
   end
 
-  @impl GenServer
   def handle_call({:register, name, check_func, interval_ms, opts}, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:status, name}, _from, state) do
-    # TODO
-  end
-
-  def handle_call(:statuses, _from, state) do
-    # TODO
-  end
-
-  def handle_call({:deregister, name}, _from, state) do
     # TODO
   end
 
@@ -288,4 +275,5 @@ defmodule AsyncMonitor do
   defp fire_notify(nil, _name, _reason), do: :ok
   defp fire_notify(notify_fn, name, reason), do: notify_fn.(name, reason)
 end
+
 ```

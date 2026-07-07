@@ -100,9 +100,5 @@ defmodule JsonGenerators do
   def value(max_depth) when is_integer(max_depth) and max_depth <= 0 do
     # TODO
   end
-
-  def value(max_depth) when is_integer(max_depth) and max_depth > 0 do
-    # TODO
-  end
 end
 ```

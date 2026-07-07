@@ -19,8 +19,22 @@ end
 
 <file path="lib/my_app/products/product.ex">
 defmodule MyApp.Products.Product do
+  @moduledoc """
+  Ecto schema for a catalog product: a `name`, a `category`, and a non-negative
+  `price`, plus insertion/update timestamps.
+  """
+
   use Ecto.Schema
   import Ecto.Changeset
+
+  @type t :: %__MODULE__{
+          id: integer() | nil,
+          name: String.t() | nil,
+          category: String.t() | nil,
+          price: Decimal.t() | nil,
+          inserted_at: NaiveDateTime.t() | nil,
+          updated_at: NaiveDateTime.t() | nil
+        }
 
   schema "products" do
     field :name, :string
@@ -32,6 +46,11 @@ defmodule MyApp.Products.Product do
 
   @required_fields ~w(name category price)a
 
+  @doc """
+  Builds a changeset casting `name`, `category`, and `price`, requiring all three
+  and enforcing a non-negative price.
+  """
+  @spec changeset(t(), map()) :: Ecto.Changeset.t()
   def changeset(product, attrs) do
     product
     |> cast(attrs, @required_fields)
@@ -43,6 +62,12 @@ end
 
 <file path="lib/my_app/products.ex">
 defmodule MyApp.Products do
+  @moduledoc """
+  The Products context: read-side querying of the catalog with optional
+  case-insensitive name search, exact category filtering, a price range, and
+  sorting on a whitelisted set of fields.
+  """
+
   import Ecto.Query
 
   alias MyApp.Repo
@@ -50,6 +75,17 @@ defmodule MyApp.Products do
 
   @allowed_sort_fields ~w(name price category)
 
+  @doc """
+  Lists products matching the string-keyed `params` map.
+
+  Supported keys: `"name"` (case-insensitive substring), `"category"` (exact),
+  `"min_price"`/`"max_price"` (inclusive bounds), and `"sort"` + `"order"`
+  (`"asc"`/`"desc"`) over #{Enum.join(@allowed_sort_fields, ", ")}.
+
+  Returns `{:ok, products}`, or `{:error, :invalid_sort_field}` when `"sort"` is
+  not one of the allowed fields.
+  """
+  @spec list_products(map()) :: {:ok, [Product.t()]} | {:error, :invalid_sort_field}
   def list_products(params) when is_map(params) do
     case validate_sort(params) do
       {:error, _} = err ->
@@ -124,10 +160,16 @@ end
 
 <file path="lib/my_app_web/controllers/product_controller.ex">
 defmodule MyAppWeb.ProductController do
+  @moduledoc """
+  JSON endpoint for listing products. Delegates filtering/sorting to the
+  `MyApp.Products` context and renders via `MyAppWeb.ProductJSON`.
+  """
+
   use MyAppWeb, :controller
 
   alias MyApp.Products
 
+  @doc "GET /api/products — renders the filtered list, or 400 on an invalid sort field."
   def index(conn, params) do
     case Products.list_products(params) do
       {:ok, products} ->
@@ -146,8 +188,11 @@ end
 
 <file path="lib/my_app_web/controllers/product_json.ex">
 defmodule MyAppWeb.ProductJSON do
+  @moduledoc "Serializes products into the `%{data: [...]}` JSON response shape."
+
   alias MyApp.Products.Product
 
+  @doc "Renders the product list as `%{data: [product_map]}`."
   def index(%{products: products}) do
     %{data: Enum.map(products, &product/1)}
   end
@@ -165,6 +210,7 @@ end
 
 <file path="lib/my_app_web/router.ex">
 defmodule MyAppWeb.Router do
+  @moduledoc false
   use MyAppWeb, :router
 
   pipeline :api do

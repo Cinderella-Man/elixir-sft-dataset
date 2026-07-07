@@ -21,8 +21,6 @@ defmodule MyAppWeb.ProductControllerTest do
         %{name: "SNOWSHOE Set", category: "outdoors", price: Decimal.new("199.99")}
       ]
       |> Enum.map(fn attrs ->
-        now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
-
         %Product{}
         |> Product.changeset(attrs)
         |> Repo.insert!()

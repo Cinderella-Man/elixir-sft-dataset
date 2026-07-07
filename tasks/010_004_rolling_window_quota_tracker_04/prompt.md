@@ -250,12 +250,7 @@ defmodule QuotaTracker do
     {:reply, Map.keys(state.entries), state}
   end
 
-  @impl GenServer
   def handle_info(:cleanup, state) do
-    # TODO
-  end
-
-  def handle_info(msg, state) do
     # TODO
   end
 
@@ -283,4 +278,5 @@ defmodule QuotaTracker do
     Enum.reduce(entries, 0, fn entry, acc -> acc + entry.amount end)
   end
 end
+
 ```
