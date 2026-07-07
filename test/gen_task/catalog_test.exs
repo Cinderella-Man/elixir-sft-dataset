@@ -281,8 +281,11 @@ defmodule GenTask.CatalogTest do
     test "inserts missing entries per variation dir (slot→Vn), idempotently" do
       dir = tmp_dir()
 
-      for d <- ["050_001_widget_maker_01", "050_002_fast_widget_maker_01",
-                "050_003_bulk_widget_maker_01"],
+      for d <- [
+            "050_001_widget_maker_01",
+            "050_002_fast_widget_maker_01",
+            "050_003_bulk_widget_maker_01"
+          ],
           do: File.mkdir_p!(Path.join(dir, d))
 
       File.write!(

@@ -144,7 +144,8 @@ defmodule RetryPoolTest do
       RetryPool.submit(
         pool,
         slow_task(2_000, :too_slow),
-        task_timeout: 200, max_retries: 0
+        task_timeout: 200,
+        max_retries: 0
       )
 
     assert {:error, {:task_timeout, 1}} = RetryPool.await(pool, ref, 3_000)
@@ -168,7 +169,8 @@ defmodule RetryPoolTest do
             :fast_enough
           end
         end,
-        task_timeout: 200, max_retries: 1
+        task_timeout: 200,
+        max_retries: 1
       )
 
     assert {:ok, :fast_enough} = RetryPool.await(pool, ref, 5_000)
@@ -180,7 +182,8 @@ defmodule RetryPoolTest do
       RetryPool.submit(
         pool,
         slow_task(2_000, :never),
-        task_timeout: 100, max_retries: 1
+        task_timeout: 100,
+        max_retries: 1
       )
 
     assert {:error, {:task_timeout, 2}} = RetryPool.await(pool, ref, 5_000)
@@ -325,8 +328,12 @@ defmodule RetryPoolTest do
     {:ok, ref} =
       RetryPool.submit(
         pool,
-        fn -> Process.sleep(500); raise "slow fail" end,
-        max_retries: 10, task_timeout: 30_000
+        fn ->
+          Process.sleep(500)
+          raise "slow fail"
+        end,
+        max_retries: 10,
+        task_timeout: 30_000
       )
 
     # Await with a short timeout — should not wait for all retries

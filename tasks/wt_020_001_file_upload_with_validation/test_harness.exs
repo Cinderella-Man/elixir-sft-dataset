@@ -3,7 +3,10 @@ defmodule FileUploadTest do
   import Plug.Test
   import Plug.Conn
 
-  @upload_dir Path.join(System.tmp_dir!(), "file_upload_test_#{System.pid()}_#{System.unique_integer([:positive])}")
+  @upload_dir Path.join(
+                System.tmp_dir!(),
+                "file_upload_test_#{System.pid()}_#{System.unique_integer([:positive])}"
+              )
 
   setup_all do
     File.mkdir_p!(@upload_dir)
@@ -37,7 +40,12 @@ defmodule FileUploadTest do
 
   defp call_upload(opts, filename, content, content_type \\ nil) do
     # Write content to a tmp file so Plug.Upload can reference it
-    tmp_path = Path.join(System.tmp_dir!(), "upload_#{System.pid()}_#{System.unique_integer([:positive])}_#{filename}")
+    tmp_path =
+      Path.join(
+        System.tmp_dir!(),
+        "upload_#{System.pid()}_#{System.unique_integer([:positive])}_#{filename}"
+      )
+
     File.write!(tmp_path, content)
 
     ct =
@@ -80,7 +88,8 @@ defmodule FileUploadTest do
     assert body["size"] == byte_size(csv_content)
     assert body["content_type"] == "text/csv"
     assert is_binary(body["id"])
-    assert String.length(body["id"]) == 36  # UUID v4 length
+    # UUID v4 length
+    assert String.length(body["id"]) == 36
     assert is_binary(body["uploaded_at"])
     assert String.contains?(body["download_url"], body["id"])
   end

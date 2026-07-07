@@ -49,7 +49,10 @@ defmodule GenTask.WriteTest do
             mint(seed, wt_id, cfg)
           rescue
             e ->
-              Logger.error("wtest #{wt_id} crashed: " <> Exception.format(:error, e, __STACKTRACE__))
+              Logger.error(
+                "wtest #{wt_id} crashed: " <> Exception.format(:error, e, __STACKTRACE__)
+              )
+
               outcome(wt_id, seed, :error, reason: Exception.message(e))
           end
 
@@ -74,7 +77,9 @@ defmodule GenTask.WriteTest do
         outcome(wt_id, seed, :accepted, stats: stats)
 
       true ->
-        outcome(wt_id, seed, :rejected, reason: "gold harness is not green vs the module: " <> Cycle.reason_for(grade))
+        outcome(wt_id, seed, :rejected,
+          reason: "gold harness is not green vs the module: " <> Cycle.reason_for(grade)
+        )
     end
   end
 
@@ -88,7 +93,10 @@ defmodule GenTask.WriteTest do
     }
 
     manifest = Path.join([cfg.tasks_dir, seed.task_id, "manifest.exs"])
-    if File.regular?(manifest), do: Map.put(base, "manifest.exs", File.read!(manifest)), else: base
+
+    if File.regular?(manifest),
+      do: Map.put(base, "manifest.exs", File.read!(manifest)),
+      else: base
   end
 
   @doc """
@@ -137,7 +145,13 @@ defmodule GenTask.WriteTest do
   defp skipped?(_), do: false
 
   defp outcome(wt_id, seed, status, opts) do
-    stats = Keyword.get(opts, :stats, %{compiled: false, tests_passed: 0, tests_failed: 0, tests_total: 0})
+    stats =
+      Keyword.get(opts, :stats, %{
+        compiled: false,
+        tests_passed: 0,
+        tests_failed: 0,
+        tests_total: 0
+      })
 
     Cycle.outcome(
       id: wt_id,

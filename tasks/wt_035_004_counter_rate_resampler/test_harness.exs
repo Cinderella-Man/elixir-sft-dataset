@@ -49,7 +49,7 @@ defmodule CounterResamplerTest do
 
   test "empty buckets fill with nil when requested" do
     data = [{0, 100}, {300, 150}, {2_300, 400}]
-    result = CounterResampler.resample(data, @interval, mode: :delta, fill: :nil)
+    result = CounterResampler.resample(data, @interval, mode: :delta, fill: nil)
 
     assert result == [{0, 50}, {1_000, nil}, {2_000, 250}]
   end
@@ -67,7 +67,7 @@ defmodule CounterResamplerTest do
     result = CounterResampler.resample([{300, 100}], @interval, mode: :delta, fill: :zero)
     assert result == [{0, 0}]
 
-    nil_result = CounterResampler.resample([{300, 100}], @interval, mode: :delta, fill: :nil)
+    nil_result = CounterResampler.resample([{300, 100}], @interval, mode: :delta, fill: nil)
     assert nil_result == [{0, nil}]
   end
 

@@ -23,7 +23,8 @@ defmodule CatalogTest do
     assert length(results) == 3
     assert Catalog.count() == 3
 
-    for {i, expected} <- Enum.with_index(["Alpha", "Beta", "Gamma"]) |> Enum.map(fn {n, i} -> {i, n} end) do
+    for {i, expected} <-
+          Enum.with_index(["Alpha", "Beta", "Gamma"]) |> Enum.map(fn {n, i} -> {i, n} end) do
       it = item(results, i)
       assert it.name == expected
       assert is_integer(it.id)

@@ -293,7 +293,16 @@ defmodule GenTask.Fim do
           report = Evaluator.repair_report({:failed, grade})
 
           if attempt >= cfg.max_retries do
-            CycleLog.record_attempt(cfg, log_id, attempt, candidate, grade, :rejected_final, report)
+            CycleLog.record_attempt(
+              cfg,
+              log_id,
+              attempt,
+              candidate,
+              grade,
+              :rejected_final,
+              report
+            )
+
             {:halt, {reject(seed, log_id, target, stats, Cycle.reason_for(grade)), false}}
           else
             CycleLog.record_attempt(cfg, log_id, attempt, candidate, grade, :rejected, report)

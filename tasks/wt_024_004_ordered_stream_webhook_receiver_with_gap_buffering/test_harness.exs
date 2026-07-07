@@ -60,7 +60,10 @@ defmodule WebhookReceiverOrderedTest do
     assert event.event_id == "e1"
   end
 
-  test "future event is buffered with 202 then drained when gap fills", %{opts: opts, store: store} do
+  test "future event is buffered with 202 then drained when gap fills", %{
+    opts: opts,
+    store: store
+  } do
     assert json_body(deliver(opts, "e1", "s1", 1))["status"] == "received"
 
     conn3 = deliver(opts, "e3", "s1", 3)

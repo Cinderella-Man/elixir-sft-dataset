@@ -33,7 +33,7 @@ defmodule DecayPercentileTest do
 
   test "with equal fresh weights, percentiles match plain nearest-rank" do
     start_server([])
-    for v <- 1..100, do: assert :ok = DecayPercentile.record(:d, v)
+    for v <- 1..100, do: assert(:ok = DecayPercentile.record(:d, v))
 
     assert {:ok, 50} = DecayPercentile.query(:d, 0.50)
     assert {:ok, 95} = DecayPercentile.query(:d, 0.95)

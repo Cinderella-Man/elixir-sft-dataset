@@ -243,6 +243,7 @@ defmodule ORSetTest do
 
   test "merge is idempotent", %{s: s} do
     ORSet.add(s, :a, :n1)
+
     remote = %{
       entries: %{b: MapSet.new([{:n2, 1}])},
       tombstones: MapSet.new(),

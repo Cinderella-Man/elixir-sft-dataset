@@ -116,10 +116,13 @@ defmodule CsvIngestionTest do
 
   test "skips rows that fail changeset validation and reports line numbers" do
     header = ["external_id", "name", "price"]
+
     rows = [
       ["eid-1", "good product", "100"],
-      ["eid-2", "",             "200"],   # missing name → invalid (line 3)
-      ["",      "no id product","300"],   # missing external_id → invalid (line 4)
+      # missing name → invalid (line 3)
+      ["eid-2", "", "200"],
+      # missing external_id → invalid (line 4)
+      ["", "no id product", "300"],
       ["eid-4", "another good", "400"]
     ]
 
@@ -174,6 +177,7 @@ defmodule CsvIngestionTest do
 
   test "uses field_mapping to map CSV headers to schema fields" do
     header = ["Product ID", "Product Name", "Unit Price"]
+
     rows = [
       ["eid-1", "Widget A", "500"],
       ["eid-2", "Widget B", "600"]
@@ -183,9 +187,9 @@ defmodule CsvIngestionTest do
     write_csv!(path, header, rows)
 
     mapping = %{
-      "Product ID"   => :external_id,
+      "Product ID" => :external_id,
       "Product Name" => :name,
-      "Unit Price"   => :price
+      "Unit Price" => :price
     }
 
     assert {:ok, stats} =
@@ -262,8 +266,11 @@ defmodule CsvIngestionTest do
     seed_path = tmp_path("seed_csv.csv")
     conflict_rows = Enum.map(1..5, fn i -> ["conflict-#{i}", "old #{i}", "#{i}"] end)
     write_csv!(seed_path, header, conflict_rows)
+
     CsvIngestion.ingest(TestRepo, Product, seed_path,
-      conflict_target: [:external_id], on_conflict: :nothing)
+      conflict_target: [:external_id],
+      on_conflict: :nothing
+    )
 
     # Now ingest: good_before + conflict rows + good_after, with on_conflict: :raise
     # The conflict batch should fail, others succeed.

@@ -37,6 +37,7 @@ defmodule PromoCodesTest do
 
   test "create rejects duplicate codes" do
     assert {:ok, _} = PromoCodes.create(%{code: "DUP", type: :percentage, value: 10})
+
     assert {:error, :already_exists} =
              PromoCodes.create(%{code: "DUP", type: :fixed_amount, value: 500})
   end
@@ -267,6 +268,7 @@ defmodule PromoCodesTest do
       })
 
     assert {:ok, 500} = PromoCodes.apply("ONEEACH", 10_000, user_id: "u1")
+
     assert {:error, :max_uses_per_user_exceeded} =
              PromoCodes.apply("ONEEACH", 10_000, user_id: "u1")
 

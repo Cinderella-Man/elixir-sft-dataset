@@ -25,7 +25,7 @@ defmodule MultiSeriesResamplerTest do
   end
 
   test ":sum aggregates each series independently per bucket" do
-    result = MultiSeriesResampler.resample(@series, @interval, agg: :sum, fill: :nil)
+    result = MultiSeriesResampler.resample(@series, @interval, agg: :sum, fill: nil)
 
     assert row(result, 0) == %{cpu: 30, mem: 1}
     assert row(result, 2_000) == %{cpu: 20, mem: 2}
@@ -33,7 +33,7 @@ defmodule MultiSeriesResamplerTest do
   end
 
   test ":last picks per-series latest value in the bucket" do
-    result = MultiSeriesResampler.resample(@series, @interval, agg: :last, fill: :nil)
+    result = MultiSeriesResampler.resample(@series, @interval, agg: :last, fill: nil)
 
     assert row(result, 0) == %{cpu: 20, mem: 1}
     assert row(result, 2_000) == %{cpu: 15, mem: 2}
@@ -41,7 +41,7 @@ defmodule MultiSeriesResamplerTest do
   end
 
   test ":count counts per-series points in the bucket" do
-    result = MultiSeriesResampler.resample(@series, @interval, agg: :count, fill: :nil)
+    result = MultiSeriesResampler.resample(@series, @interval, agg: :count, fill: nil)
 
     assert row(result, 0) == %{cpu: 2, mem: 1}
     assert row(result, 2_000) == %{cpu: 2, mem: 1}
@@ -49,7 +49,7 @@ defmodule MultiSeriesResamplerTest do
   end
 
   test ":mean produces per-series floats" do
-    result = MultiSeriesResampler.resample(@series, @interval, agg: :mean, fill: :nil)
+    result = MultiSeriesResampler.resample(@series, @interval, agg: :mean, fill: nil)
 
     m0 = row(result, 0)
     assert_in_delta m0.cpu, 15.0, 0.001
@@ -61,7 +61,7 @@ defmodule MultiSeriesResamplerTest do
   end
 
   test "fill: :nil leaves each series nil in empty buckets" do
-    result = MultiSeriesResampler.resample(@series, @interval, agg: :last, fill: :nil)
+    result = MultiSeriesResampler.resample(@series, @interval, agg: :last, fill: nil)
 
     assert row(result, 4_000) == %{cpu: nil, mem: nil}
     assert row(result, 6_000) == %{cpu: nil, mem: nil}
@@ -78,7 +78,7 @@ defmodule MultiSeriesResamplerTest do
   end
 
   test "every bucket in the joint range is present and sorted" do
-    result = MultiSeriesResampler.resample(@series, @interval, agg: :last, fill: :nil)
+    result = MultiSeriesResampler.resample(@series, @interval, agg: :last, fill: nil)
     buckets = Enum.map(result, fn {b, _} -> b end)
 
     assert buckets == [0, 2_000, 4_000, 6_000, 8_000]
@@ -86,7 +86,7 @@ defmodule MultiSeriesResamplerTest do
   end
 
   test "every row's value map contains every series name" do
-    result = MultiSeriesResampler.resample(@series, @interval, agg: :sum, fill: :nil)
+    result = MultiSeriesResampler.resample(@series, @interval, agg: :sum, fill: nil)
 
     Enum.each(result, fn {_b, map} ->
       assert Map.has_key?(map, :cpu)
@@ -96,7 +96,7 @@ defmodule MultiSeriesResamplerTest do
 
   test "a present-but-empty series still appears in every row" do
     series = %{a: [], b: [{0, 5}, {2_500, 9}]}
-    result = MultiSeriesResampler.resample(series, @interval, agg: :sum, fill: :nil)
+    result = MultiSeriesResampler.resample(series, @interval, agg: :sum, fill: nil)
 
     assert row(result, 0) == %{a: nil, b: 5}
     assert row(result, 2_000) == %{a: nil, b: 9}

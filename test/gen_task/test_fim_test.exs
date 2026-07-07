@@ -61,7 +61,12 @@ defmodule GenTask.TestFimTest do
 
   describe "prompt_md/2" do
     test "embeds the module and the harness skeleton in two elixir fences" do
-      md = TestFim.prompt_md("defmodule Mod do\n  def go, do: :ok\nend", "defmodule T do\n  # TODO\nend")
+      md =
+        TestFim.prompt_md(
+          "defmodule Mod do\n  def go, do: :ok\nend",
+          "defmodule T do\n  # TODO\nend"
+        )
+
       assert length(Regex.scan(~r/```elixir/, md)) == 2
       assert md =~ "def go, do: :ok"
       assert md =~ "# TODO"

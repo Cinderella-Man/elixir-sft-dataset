@@ -63,8 +63,11 @@ defmodule GenTask.OpusTest do
       logs = Path.join(System.tmp_dir!(), "opus_test_#{System.unique_integer([:positive])}")
 
       runner = fn _sys, _user, _cfg ->
-        {json(%{"is_error" => true, "api_error_status" => 429, "result" => "usage limit reached"}),
-         1}
+        {json(%{
+           "is_error" => true,
+           "api_error_status" => 429,
+           "result" => "usage limit reached"
+         }), 1}
       end
 
       cfg = %GenTask.Config{

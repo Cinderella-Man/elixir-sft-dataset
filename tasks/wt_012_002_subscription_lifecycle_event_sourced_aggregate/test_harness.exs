@@ -26,7 +26,9 @@ defmodule SubscriptionAggregateTest do
 
   test "creating an already-existing subscription fails", %{agg: agg} do
     SubscriptionAggregate.execute(agg, "sub:1", {:create, "premium"})
-    assert {:error, :already_exists} = SubscriptionAggregate.execute(agg, "sub:1", {:create, "basic"})
+
+    assert {:error, :already_exists} =
+             SubscriptionAggregate.execute(agg, "sub:1", {:create, "basic"})
   end
 
   # -------------------------------------------------------
@@ -59,7 +61,10 @@ defmodule SubscriptionAggregateTest do
   test "suspend moves status to :suspended with reason", %{agg: agg} do
     SubscriptionAggregate.execute(agg, "sub:1", {:create, "premium"})
     SubscriptionAggregate.execute(agg, "sub:1", {:activate})
-    assert {:ok, [event]} = SubscriptionAggregate.execute(agg, "sub:1", {:suspend, "payment_failed"})
+
+    assert {:ok, [event]} =
+             SubscriptionAggregate.execute(agg, "sub:1", {:suspend, "payment_failed"})
+
     assert event.type == :subscription_suspended
 
     state = SubscriptionAggregate.state(agg, "sub:1")
@@ -68,12 +73,15 @@ defmodule SubscriptionAggregateTest do
   end
 
   test "suspend on non-existent subscription fails", %{agg: agg} do
-    assert {:error, :not_found} = SubscriptionAggregate.execute(agg, "sub:1", {:suspend, "reason"})
+    assert {:error, :not_found} =
+             SubscriptionAggregate.execute(agg, "sub:1", {:suspend, "reason"})
   end
 
   test "suspend on pending subscription fails", %{agg: agg} do
     SubscriptionAggregate.execute(agg, "sub:1", {:create, "premium"})
-    assert {:error, :not_active} = SubscriptionAggregate.execute(agg, "sub:1", {:suspend, "reason"})
+
+    assert {:error, :not_active} =
+             SubscriptionAggregate.execute(agg, "sub:1", {:suspend, "reason"})
   end
 
   # -------------------------------------------------------

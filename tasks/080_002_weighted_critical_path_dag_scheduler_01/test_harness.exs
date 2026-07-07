@@ -14,9 +14,10 @@ defmodule WeightedDAGTest do
   end
 
   defp build(tasks, deps) do
-    dag = Enum.reduce(tasks, WeightedDAG.new(), fn {id, dur}, acc ->
-      WeightedDAG.add_task(acc, id, dur)
-    end)
+    dag =
+      Enum.reduce(tasks, WeightedDAG.new(), fn {id, dur}, acc ->
+        WeightedDAG.add_task(acc, id, dur)
+      end)
 
     Enum.reduce(deps, dag, fn {from, to}, acc ->
       {:ok, updated} = WeightedDAG.add_dependency(acc, from, to)

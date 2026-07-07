@@ -48,7 +48,9 @@ defmodule GenTask.TestFim do
 
       true ->
         covered = covered_names(seed, cfg)
-        rejected = CycleLog.rejected_tfim_targets(cfg, prefix(seed), CycleLog.content_sha(harness))
+
+        rejected =
+          CycleLog.rejected_tfim_targets(cfg, prefix(seed), CycleLog.content_sha(harness))
 
         candidates =
           harness
@@ -77,7 +79,9 @@ defmodule GenTask.TestFim do
           {acc, d, left}
         else
           {out, promoted?} = build_candidate(seed, module_src, harness, cand, d, cfg)
-          {[out | acc], if(promoted?, do: d + 1, else: d), if(promoted?, do: left - 1, else: left)}
+
+          {[out | acc], if(promoted?, do: d + 1, else: d),
+           if(promoted?, do: left - 1, else: left)}
         end
       end)
 
@@ -122,13 +126,21 @@ defmodule GenTask.TestFim do
         record_rejected(seed, cand, cfg)
 
         {outcome(tfim_id, seed, cand.name, :rejected,
-           reason: "reconstruct not green: " <> Cycle.reason_for(recon)), false}
+           reason: "reconstruct not green: " <> Cycle.reason_for(recon)
+         ), false}
 
-      not gate_ok?(module_src, files["solution.ex"], iso_harness, Path.join(stage_root, "iso"), cfg) ->
+      not gate_ok?(
+        module_src,
+        files["solution.ex"],
+        iso_harness,
+        Path.join(stage_root, "iso"),
+        cfg
+      ) ->
         record_rejected(seed, cand, cfg)
 
         {outcome(tfim_id, seed, cand.name, :rejected,
-           reason: "vacuous test block (no mutant killed / not independent)"), false}
+           reason: "vacuous test block (no mutant killed / not independent)"
+         ), false}
 
       true ->
         _ = Cycle.promote(cfg, tfim_id, files)
@@ -182,7 +194,9 @@ defmodule GenTask.TestFim do
   end
 
   @doc "Top-level `test \"…\"` blocks in `harness` as `%{name, s, e}` (start/end line idx)."
-  @spec test_blocks(String.t()) :: [%{name: String.t(), s: non_neg_integer(), e: non_neg_integer()}]
+  @spec test_blocks(String.t()) :: [
+          %{name: String.t(), s: non_neg_integer(), e: non_neg_integer()}
+        ]
   def test_blocks(harness) do
     harness |> block_spans(~r/^  test\s+"/) |> Enum.reject(&is_nil(&1.name))
   end
@@ -310,7 +324,12 @@ defmodule GenTask.TestFim do
 
   defp outcome(tfim_id, seed, name, status, opts) do
     stats =
-      Keyword.get(opts, :stats, %{compiled: false, tests_passed: 0, tests_failed: 0, tests_total: 0})
+      Keyword.get(opts, :stats, %{
+        compiled: false,
+        tests_passed: 0,
+        tests_failed: 0,
+        tests_total: 0
+      })
 
     Cycle.outcome(
       id: tfim_id,

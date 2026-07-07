@@ -29,7 +29,9 @@ defmodule DedupDLQTest do
     assert DedupDLQ.peek(dlq, "nope", 10) == []
   end
 
-  test "repeated key coalesces: same id, bumped occurrences, latest data, refreshed last_seen", %{dlq: dlq} do
+  test "repeated key coalesces: same id, bumped occurrences, latest data, refreshed last_seen", %{
+    dlq: dlq
+  } do
     {:ok, :new, id} = DedupDLQ.push(dlq, "q", "k", :first, :err_a, %{v: 1})
     Clock.advance(100)
     assert {:ok, :duplicate, ^id} = DedupDLQ.push(dlq, "q", "k", :second, :err_b, %{v: 2})

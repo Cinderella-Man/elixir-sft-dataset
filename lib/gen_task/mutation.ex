@@ -191,6 +191,7 @@ defmodule GenTask.Mutation do
 
   # Extract {name, arity} from a function head AST, handling a `when` guard.
   defp head_name_arity({:when, _, [inner | _]}), do: head_name_arity(inner)
+
   defp head_name_arity({name, _, args}) when is_atom(name) and is_list(args),
     do: {name, length(args)}
 
@@ -347,7 +348,10 @@ defmodule GenTask.Mutation do
   def gate_isolation(iso_dir, module_src, isolated_harness, %Config{} = cfg) do
     # Sanity: the isolated block must itself pass the real module. Otherwise it would
     # "fail" against every mutant too and be mistaken for a mutant-killer (false pass).
-    Evaluator.stage!(iso_dir, %{"solution.ex" => module_src, "test_harness.exs" => isolated_harness})
+    Evaluator.stage!(iso_dir, %{
+      "solution.ex" => module_src,
+      "test_harness.exs" => isolated_harness
+    })
 
     if not Evaluator.green?(Evaluator.grade(iso_dir, cfg)) do
       {:survived,

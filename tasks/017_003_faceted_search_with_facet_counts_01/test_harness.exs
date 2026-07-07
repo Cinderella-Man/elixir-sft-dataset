@@ -5,12 +5,48 @@ defmodule Catalog.FacetedTest do
 
   defp products do
     [
-      %{id: 1, name: "Running Shoes", category: "footwear", price_cents: 8999, tags: ["running", "outdoor"]},
-      %{id: 2, name: "Leather Boots", category: "footwear", price_cents: 14_999, tags: ["formal", "outdoor"]},
-      %{id: 3, name: "Wireless Mouse", category: "electronics", price_cents: 2999, tags: ["wireless", "office"]},
-      %{id: 4, name: "Mechanical Keyboard", category: "electronics", price_cents: 7450, tags: ["wired", "office"]},
-      %{id: 5, name: "USB-C Cable", category: "electronics", price_cents: 999, tags: ["wired", "office"]},
-      %{id: 6, name: "Yoga Mat", category: "fitness", price_cents: 2999, tags: ["outdoor", "home"]}
+      %{
+        id: 1,
+        name: "Running Shoes",
+        category: "footwear",
+        price_cents: 8999,
+        tags: ["running", "outdoor"]
+      },
+      %{
+        id: 2,
+        name: "Leather Boots",
+        category: "footwear",
+        price_cents: 14_999,
+        tags: ["formal", "outdoor"]
+      },
+      %{
+        id: 3,
+        name: "Wireless Mouse",
+        category: "electronics",
+        price_cents: 2999,
+        tags: ["wireless", "office"]
+      },
+      %{
+        id: 4,
+        name: "Mechanical Keyboard",
+        category: "electronics",
+        price_cents: 7450,
+        tags: ["wired", "office"]
+      },
+      %{
+        id: 5,
+        name: "USB-C Cable",
+        category: "electronics",
+        price_cents: 999,
+        tags: ["wired", "office"]
+      },
+      %{
+        id: 6,
+        name: "Yoga Mat",
+        category: "fitness",
+        price_cents: 2999,
+        tags: ["outdoor", "home"]
+      }
     ]
   end
 
@@ -91,7 +127,11 @@ defmodule Catalog.FacetedTest do
 
   test "price range filter is inclusive" do
     assert {:ok, %{data: data, total: 2}} =
-             Faceted.search(products(), %{"min_price" => "2999", "max_price" => "2999", "sort" => "id"})
+             Faceted.search(products(), %{
+               "min_price" => "2999",
+               "max_price" => "2999",
+               "sort" => "id"
+             })
 
     assert ids(data) == [3, 6]
   end

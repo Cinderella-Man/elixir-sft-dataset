@@ -61,7 +61,9 @@ defmodule SoftCrud.DocumentsTest do
     test "stale version is rejected", %{srv: srv} do
       doc = create(srv)
       {:ok, _} = Documents.update_document(srv, doc.id, %{title: "v1"}, 0)
-      assert {:error, :stale_version, 1} = Documents.update_document(srv, doc.id, %{title: "v2"}, 0)
+
+      assert {:error, :stale_version, 1} =
+               Documents.update_document(srv, doc.id, %{title: "v2"}, 0)
     end
 
     test "invalid attrs rejected after version check", %{srv: srv} do
@@ -101,7 +103,9 @@ defmodule SoftCrud.DocumentsTest do
     test "already deleted rejected", %{srv: srv} do
       doc = create(srv)
       {:ok, del} = Documents.soft_delete_document(srv, doc.id, 0)
-      assert {:error, :already_deleted} = Documents.soft_delete_document(srv, doc.id, del.lock_version)
+
+      assert {:error, :already_deleted} =
+               Documents.soft_delete_document(srv, doc.id, del.lock_version)
     end
 
     test "404 for missing", %{srv: srv} do

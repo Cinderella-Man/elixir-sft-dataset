@@ -128,7 +128,10 @@ defmodule GenTask.Work do
 
     for w <- all() do
       per_seed = Enum.map(seeds, &w.missing.(&1, cfg))
-      applicable = Enum.count(Enum.zip(seeds, per_seed), fn {s, n} -> n > 0 or complete?(w, s, cfg) end)
+
+      applicable =
+        Enum.count(Enum.zip(seeds, per_seed), fn {s, n} -> n > 0 or complete?(w, s, cfg) end)
+
       pending = Enum.count(per_seed, &(&1 > 0))
 
       %{

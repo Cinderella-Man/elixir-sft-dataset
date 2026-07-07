@@ -75,8 +75,13 @@ defmodule GenTask.CLI do
 
   defp maybe_reconcile(%Config{} = cfg) do
     case Catalog.reconcile_variations!(cfg) do
-      0 -> :ok
-      n -> IO.puts("Reconcile: inserted #{n} missing variation catalog entr#{if n == 1, do: "y", else: "ies"}.")
+      0 ->
+        :ok
+
+      n ->
+        IO.puts(
+          "Reconcile: inserted #{n} missing variation catalog entr#{if n == 1, do: "y", else: "ies"}."
+        )
     end
   end
 

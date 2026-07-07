@@ -28,7 +28,15 @@ defmodule WeightedMapTest do
 
   test "order preserved when tasks finish out of order" do
     results =
-      WeightedMap.pmap(1..6, fn x -> Process.sleep((7 - x) * 20); x end, fn _ -> 1 end, 6)
+      WeightedMap.pmap(
+        1..6,
+        fn x ->
+          Process.sleep((7 - x) * 20)
+          x
+        end,
+        fn _ -> 1 end,
+        6
+      )
 
     assert results == Enum.to_list(1..6)
   end
@@ -98,10 +106,15 @@ defmodule WeightedMapTest do
 
   test "a crashing function returns {:error, reason} for that element only" do
     results =
-      WeightedMap.pmap([1, 2, 3], fn
-        2 -> raise "boom"
-        x -> x * 10
-      end, fn _ -> 1 end, 3)
+      WeightedMap.pmap(
+        [1, 2, 3],
+        fn
+          2 -> raise "boom"
+          x -> x * 10
+        end,
+        fn _ -> 1 end,
+        3
+      )
 
     assert Enum.at(results, 0) == 10
     assert match?({:error, _}, Enum.at(results, 1))
@@ -110,9 +123,14 @@ defmodule WeightedMapTest do
 
   test "a crash releases weight so remaining work still proceeds" do
     results =
-      WeightedMap.pmap([5, 5, 5], fn
-        x -> if x == 5, do: x
-      end, & &1, 5)
+      WeightedMap.pmap(
+        [5, 5, 5],
+        fn
+          x -> if x == 5, do: x
+        end,
+        & &1,
+        5
+      )
 
     # All weights equal budget, so they run one at a time; each returns its value.
     assert results == [5, 5, 5]

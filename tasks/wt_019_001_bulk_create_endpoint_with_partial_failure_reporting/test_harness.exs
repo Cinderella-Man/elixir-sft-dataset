@@ -80,7 +80,8 @@ defmodule MyAppWeb.BulkItemControllerTest do
     test "inserts zero rows when any single item is invalid", %{conn: conn} do
       items = [
         valid_attrs(%{"name" => "Good"}),
-        %{"name" => "", "price" => -5},           # invalid: blank name + negative price
+        # invalid: blank name + negative price
+        %{"name" => "", "price" => -5},
         valid_attrs(%{"name" => "Also Good"})
       ]
 
@@ -103,10 +104,14 @@ defmodule MyAppWeb.BulkItemControllerTest do
 
     test "reports correct indices for multiple invalid items", %{conn: conn} do
       items = [
-        %{"name" => "", "price" => 1},             # index 0: bad name
-        valid_attrs(),                               # index 1: good
-        %{"price" => 10},                            # index 2: missing name
-        %{"name" => "OK", "price" => -1}             # index 3: bad price
+        # index 0: bad name
+        %{"name" => "", "price" => 1},
+        # index 1: good
+        valid_attrs(),
+        # index 2: missing name
+        %{"price" => 10},
+        # index 3: bad price
+        %{"name" => "OK", "price" => -1}
       ]
 
       conn = bulk_create(conn, items)
@@ -224,9 +229,12 @@ defmodule MyAppWeb.BulkItemControllerTest do
       long_name = String.duplicate("a", 256)
 
       items = [
-        %{"price" => 10},                            # missing name
-        %{"name" => "", "price" => 10},               # blank name
-        %{"name" => long_name, "price" => 10}         # too long
+        # missing name
+        %{"price" => 10},
+        # blank name
+        %{"name" => "", "price" => 10},
+        # too long
+        %{"name" => long_name, "price" => 10}
       ]
 
       conn = bulk_create(conn, items)
@@ -239,9 +247,12 @@ defmodule MyAppWeb.BulkItemControllerTest do
 
     test "price is required and must be positive", %{conn: conn} do
       items = [
-        %{"name" => "A"},                             # missing price
-        %{"name" => "B", "price" => 0},               # zero
-        %{"name" => "C", "price" => -10}              # negative
+        # missing price
+        %{"name" => "A"},
+        # zero
+        %{"name" => "B", "price" => 0},
+        # negative
+        %{"name" => "C", "price" => -10}
       ]
 
       conn = bulk_create(conn, items)

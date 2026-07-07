@@ -50,12 +50,12 @@ defmodule MultiSchemaIngestionTest do
 
   defp routing do
     %{
-      "order"  => Order,
+      "order" => Order,
       "refund" => Refund
     }
   end
 
-  defp all_orders,  do: TestRepo.all(Order)
+  defp all_orders, do: TestRepo.all(Order)
   defp all_refunds, do: TestRepo.all(Refund)
 
   # ---------------------------------------------------------------------------
@@ -113,10 +113,10 @@ defmodule MultiSchemaIngestionTest do
 
   test "routes records to correct schemas based on type field" do
     records = [
-      %{"type" => "order",  "order_id" => "o-1", "customer" => "Alice", "amount" => 100},
+      %{"type" => "order", "order_id" => "o-1", "customer" => "Alice", "amount" => 100},
       %{"type" => "refund", "refund_id" => "r-1", "reason" => "damaged", "amount" => 50},
-      %{"type" => "order",  "order_id" => "o-2", "customer" => "Bob",   "amount" => 200},
-      %{"type" => "order",  "order_id" => "o-3", "customer" => "Carol", "amount" => 300},
+      %{"type" => "order", "order_id" => "o-2", "customer" => "Bob", "amount" => 200},
+      %{"type" => "order", "order_id" => "o-3", "customer" => "Carol", "amount" => 300},
       %{"type" => "refund", "refund_id" => "r-2", "reason" => "wrong item", "amount" => 75}
     ]
 
@@ -148,9 +148,9 @@ defmodule MultiSchemaIngestionTest do
 
   test "counts records with unknown type as unroutable" do
     records = [
-      %{"type" => "order",   "order_id" => "o-1", "customer" => "Alice", "amount" => 100},
+      %{"type" => "order", "order_id" => "o-1", "customer" => "Alice", "amount" => 100},
       %{"type" => "unknown", "foo" => "bar"},
-      %{"type" => "refund",  "refund_id" => "r-1", "reason" => "oops", "amount" => 25},
+      %{"type" => "refund", "refund_id" => "r-1", "reason" => "oops", "amount" => 25},
       %{"type" => "mystery", "baz" => "qux"}
     ]
 
@@ -200,7 +200,7 @@ defmodule MultiSchemaIngestionTest do
 
   test "supports custom type_field option" do
     records = [
-      %{"record_kind" => "order",  "order_id" => "o-1", "customer" => "X", "amount" => 10},
+      %{"record_kind" => "order", "order_id" => "o-1", "customer" => "X", "amount" => 10},
       %{"record_kind" => "refund", "refund_id" => "r-1", "reason" => "Y", "amount" => 5}
     ]
 
@@ -224,7 +224,7 @@ defmodule MultiSchemaIngestionTest do
 
   test "uses per-schema conflict targets from a map" do
     records = [
-      %{"type" => "order",  "order_id" => "o-1", "customer" => "Alice", "amount" => 100},
+      %{"type" => "order", "order_id" => "o-1", "customer" => "Alice", "amount" => 100},
       %{"type" => "refund", "refund_id" => "r-1", "reason" => "damaged", "amount" => 50}
     ]
 

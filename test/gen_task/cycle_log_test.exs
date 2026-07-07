@@ -18,7 +18,8 @@ defmodule GenTask.CycleLogTest do
       files = %{"solution.ex" => "defmodule A do\nend\n", "test_harness.exs" => "# h"}
       grade = {:ok, %{"compiled" => true, "tests_failed" => 2}}
 
-      :ok = CycleLog.record_attempt(cfg(tmp), "042_001_x_01", 0, files, grade, :rejected, "2 fail")
+      :ok =
+        CycleLog.record_attempt(cfg(tmp), "042_001_x_01", 0, files, grade, :rejected, "2 fail")
 
       base = Path.join([tmp, "attempts", "042_001_x_01", "attempt_00"])
       assert File.read!(Path.join([base, "files", "solution.ex"])) == "defmodule A do\nend\n"

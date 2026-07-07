@@ -16,7 +16,12 @@ defmodule RetryMapTest do
 
   test "order preserved when tasks finish out of order" do
     results =
-      RetryMap.pmap(1..6, fn x -> Process.sleep((7 - x) * 20); x end,
+      RetryMap.pmap(
+        1..6,
+        fn x ->
+          Process.sleep((7 - x) * 20)
+          x
+        end,
         max_concurrency: 6,
         timeout: 1000
       )
@@ -32,7 +37,12 @@ defmodule RetryMapTest do
     {:ok, agent} = Agent.start_link(fn -> %{} end)
 
     func = fn x ->
-      n = Agent.get_and_update(agent, fn m -> c = Map.get(m, x, 0) + 1; {c, Map.put(m, x, c)} end)
+      n =
+        Agent.get_and_update(agent, fn m ->
+          c = Map.get(m, x, 0) + 1
+          {c, Map.put(m, x, c)}
+        end)
+
       if n == 1, do: Process.sleep(300)
       x * 2
     end
@@ -43,7 +53,12 @@ defmodule RetryMapTest do
 
   test "an element that always times out returns {:error, :timeout} after exhausting attempts" do
     results =
-      RetryMap.pmap([1], fn _ -> Process.sleep(500); :never end,
+      RetryMap.pmap(
+        [1],
+        fn _ ->
+          Process.sleep(500)
+          :never
+        end,
         max_concurrency: 1,
         timeout: 80,
         max_attempts: 2
@@ -60,7 +75,12 @@ defmodule RetryMapTest do
     {:ok, agent} = Agent.start_link(fn -> 0 end)
 
     results =
-      RetryMap.pmap([1], fn _ -> Agent.update(agent, &(&1 + 1)); raise "boom" end,
+      RetryMap.pmap(
+        [1],
+        fn _ ->
+          Agent.update(agent, &(&1 + 1))
+          raise "boom"
+        end,
         max_concurrency: 1,
         timeout: 1000,
         max_attempts: 3
@@ -72,10 +92,12 @@ defmodule RetryMapTest do
 
   test "a crash in one element does not affect the others" do
     results =
-      RetryMap.pmap([1, 2, 3], fn
-        2 -> raise "only me"
-        x -> x * 10
-      end, max_concurrency: 3, timeout: 1000, max_attempts: 2)
+      RetryMap.pmap(
+        [1, 2, 3],
+        fn
+          2 -> raise "only me"
+          x -> x * 10
+        end, max_concurrency: 3, timeout: 1000, max_attempts: 2)
 
     assert Enum.at(results, 0) == {:ok, 10}
     assert match?({:error, {:exception, _}}, Enum.at(results, 1))
@@ -89,11 +111,13 @@ defmodule RetryMapTest do
   test "never exceeds max_concurrency simultaneous tasks" do
     {:ok, counter} = ConcurrencyCounter.start_link([])
 
-    RetryMap.pmap(1..8, fn _x ->
-      ConcurrencyCounter.increment(counter)
-      Process.sleep(60)
-      ConcurrencyCounter.decrement(counter)
-    end, max_concurrency: 3, timeout: 1000, max_attempts: 1)
+    RetryMap.pmap(
+      1..8,
+      fn _x ->
+        ConcurrencyCounter.increment(counter)
+        Process.sleep(60)
+        ConcurrencyCounter.decrement(counter)
+      end, max_concurrency: 3, timeout: 1000, max_attempts: 1)
 
     assert ConcurrencyCounter.peak(counter) <= 3
   end

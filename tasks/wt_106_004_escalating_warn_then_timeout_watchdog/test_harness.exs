@@ -25,7 +25,14 @@ defmodule EscalatingWatchdogTest do
     test = self()
 
     :ok =
-      EscalatingWatchdog.register(:w, dummy_pid(), 80, 200, warn_notifier(test), timeout_notifier(test))
+      EscalatingWatchdog.register(
+        :w,
+        dummy_pid(),
+        80,
+        200,
+        warn_notifier(test),
+        timeout_notifier(test)
+      )
 
     for _ <- 1..4 do
       Process.sleep(40)
@@ -44,7 +51,14 @@ defmodule EscalatingWatchdogTest do
     test = self()
 
     :ok =
-      EscalatingWatchdog.register(:w, dummy_pid(), 60, 150, warn_notifier(test), timeout_notifier(test))
+      EscalatingWatchdog.register(
+        :w,
+        dummy_pid(),
+        60,
+        150,
+        warn_notifier(test),
+        timeout_notifier(test)
+      )
 
     assert_receive {:warned, :w}, 1_000
     assert_receive {:timed_out, :w}, 1_000
@@ -54,7 +68,14 @@ defmodule EscalatingWatchdogTest do
     test = self()
 
     :ok =
-      EscalatingWatchdog.register(:w, dummy_pid(), 50, 10_000, warn_notifier(test), timeout_notifier(test))
+      EscalatingWatchdog.register(
+        :w,
+        dummy_pid(),
+        50,
+        10_000,
+        warn_notifier(test),
+        timeout_notifier(test)
+      )
 
     assert {:ok, :healthy} = EscalatingWatchdog.phase(:w)
     assert_receive {:warned, :w}, 1_000
@@ -65,7 +86,14 @@ defmodule EscalatingWatchdogTest do
     test = self()
 
     :ok =
-      EscalatingWatchdog.register({:svc, 9}, dummy_pid(), 40, 90, warn_notifier(test), timeout_notifier(test))
+      EscalatingWatchdog.register(
+        {:svc, 9},
+        dummy_pid(),
+        40,
+        90,
+        warn_notifier(test),
+        timeout_notifier(test)
+      )
 
     assert_receive {:warned, {:svc, 9}}, 1_000
     assert_receive {:timed_out, {:svc, 9}}, 1_000
@@ -79,7 +107,14 @@ defmodule EscalatingWatchdogTest do
     test = self()
 
     :ok =
-      EscalatingWatchdog.register(:w, dummy_pid(), 80, 400, warn_notifier(test), timeout_notifier(test))
+      EscalatingWatchdog.register(
+        :w,
+        dummy_pid(),
+        80,
+        400,
+        warn_notifier(test),
+        timeout_notifier(test)
+      )
 
     Process.sleep(40)
     assert :ok = EscalatingWatchdog.heartbeat(:w)
@@ -91,7 +126,14 @@ defmodule EscalatingWatchdogTest do
     test = self()
 
     :ok =
-      EscalatingWatchdog.register(:w, dummy_pid(), 50, 250, warn_notifier(test), timeout_notifier(test))
+      EscalatingWatchdog.register(
+        :w,
+        dummy_pid(),
+        50,
+        250,
+        warn_notifier(test),
+        timeout_notifier(test)
+      )
 
     assert_receive {:warned, :w}, 1_000
     assert :ok = EscalatingWatchdog.heartbeat(:w)
@@ -113,7 +155,14 @@ defmodule EscalatingWatchdogTest do
     test = self()
 
     :ok =
-      EscalatingWatchdog.register(:w, dummy_pid(), 40, 90, warn_notifier(test), timeout_notifier(test))
+      EscalatingWatchdog.register(
+        :w,
+        dummy_pid(),
+        40,
+        90,
+        warn_notifier(test),
+        timeout_notifier(test)
+      )
 
     assert_receive {:timed_out, :w}, 1_000
     assert {:error, :not_registered} = EscalatingWatchdog.phase(:w)
@@ -128,10 +177,24 @@ defmodule EscalatingWatchdogTest do
     test = self()
 
     :ok =
-      EscalatingWatchdog.register(:fast, dummy_pid(), 40, 90, warn_notifier(test), timeout_notifier(test))
+      EscalatingWatchdog.register(
+        :fast,
+        dummy_pid(),
+        40,
+        90,
+        warn_notifier(test),
+        timeout_notifier(test)
+      )
 
     :ok =
-      EscalatingWatchdog.register(:slow, dummy_pid(), 5_000, 10_000, warn_notifier(test), timeout_notifier(test))
+      EscalatingWatchdog.register(
+        :slow,
+        dummy_pid(),
+        5_000,
+        10_000,
+        warn_notifier(test),
+        timeout_notifier(test)
+      )
 
     assert_receive {:timed_out, :fast}, 1_000
     refute_receive {:warned, :slow}, 50
@@ -141,7 +204,14 @@ defmodule EscalatingWatchdogTest do
     test = self()
 
     :ok =
-      EscalatingWatchdog.register(:w, dummy_pid(), 40, 90, warn_notifier(test), timeout_notifier(test))
+      EscalatingWatchdog.register(
+        :w,
+        dummy_pid(),
+        40,
+        90,
+        warn_notifier(test),
+        timeout_notifier(test)
+      )
 
     assert :ok = EscalatingWatchdog.unregister(:w)
 
@@ -157,11 +227,25 @@ defmodule EscalatingWatchdogTest do
     test = self()
 
     assert_raise ArgumentError, fn ->
-      EscalatingWatchdog.register(:w, dummy_pid(), 100, 100, warn_notifier(test), timeout_notifier(test))
+      EscalatingWatchdog.register(
+        :w,
+        dummy_pid(),
+        100,
+        100,
+        warn_notifier(test),
+        timeout_notifier(test)
+      )
     end
 
     assert_raise ArgumentError, fn ->
-      EscalatingWatchdog.register(:w, dummy_pid(), 200, 100, warn_notifier(test), timeout_notifier(test))
+      EscalatingWatchdog.register(
+        :w,
+        dummy_pid(),
+        200,
+        100,
+        warn_notifier(test),
+        timeout_notifier(test)
+      )
     end
   end
 

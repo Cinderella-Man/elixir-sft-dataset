@@ -76,9 +76,7 @@ defmodule PoolTest do
   test "connections are created lazily, never beyond max, and reused" do
     {counter, create} = counting_create()
 
-    start_supervised!(
-      {Pool, name: :pool_lazy, min_size: 0, max_size: 3, create: create}
-    )
+    start_supervised!({Pool, name: :pool_lazy, min_size: 0, max_size: 3, create: create})
 
     # Nothing created eagerly when min_size is 0.
     assert created(counter) == 0
@@ -102,9 +100,7 @@ defmodule PoolTest do
   test "min_size connections are created eagerly at startup" do
     {counter, create} = counting_create()
 
-    start_supervised!(
-      {Pool, name: :pool_min, min_size: 2, max_size: 4, create: create}
-    )
+    start_supervised!({Pool, name: :pool_min, min_size: 2, max_size: 4, create: create})
 
     assert created(counter) == 2
 

@@ -83,9 +83,7 @@ defmodule BatchCollectorTest do
         tasks =
           for i <- 1..3 do
             Task.async(fn ->
-              BatchCollector.submit(bc, :fast, i, fn items -> {:ok, items} end,
-                max_batch_size: 3
-              )
+              BatchCollector.submit(bc, :fast, i, fn items -> {:ok, items} end, max_batch_size: 3)
             end)
           end
 
@@ -230,9 +228,7 @@ defmodule BatchCollectorTest do
 
     {elapsed, result} =
       :timer.tc(fn ->
-        BatchCollector.submit(bc, :fast, :item, fn items -> {:ok, items} end,
-          max_batch_size: 1
-        )
+        BatchCollector.submit(bc, :fast, :item, fn items -> {:ok, items} end, max_batch_size: 1)
       end)
 
     assert result == {:ok, [:item]}

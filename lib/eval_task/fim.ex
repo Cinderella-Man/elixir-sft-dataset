@@ -153,11 +153,14 @@ defmodule EvalTask.Fim do
     trimmed = lines |> Enum.at(j) |> String.trim()
 
     cond do
-      trimmed == "" -> walk_up_dupes(lines, j - 1, lo, cand_attrs)
+      trimmed == "" ->
+        walk_up_dupes(lines, j - 1, lo, cand_attrs)
+
       String.starts_with?(trimmed, "@") and MapSet.member?(cand_attrs, trimmed) ->
         walk_up_dupes(lines, j - 1, j, cand_attrs)
 
-      true -> lo
+      true ->
+        lo
     end
   end
 
@@ -246,7 +249,7 @@ defmodule EvalTask.Fim do
     start =
       Enum.find(0..(n - 1), fn i ->
         Enum.at(plist, i) == hd(cand) and
-          (plist |> Enum.drop(i) |> Enum.reject(&(&1 == "")) |> Enum.take(length(cand))) == cand
+          plist |> Enum.drop(i) |> Enum.reject(&(&1 == "")) |> Enum.take(length(cand)) == cand
       end) || raise "candidate not found in parent"
 
     {endi, _} =

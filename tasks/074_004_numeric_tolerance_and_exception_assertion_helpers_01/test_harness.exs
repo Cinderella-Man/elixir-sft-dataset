@@ -125,6 +125,7 @@ defmodule AssertHelpersTest do
           assert_raises_message(ArgumentError, "expected text", fn ->
             raise ArgumentError, "something else"
           end)
+
           :no_failure
         rescue
           e in ExUnit.AssertionError -> e.message

@@ -151,8 +151,11 @@ defmodule EvalTask.FimTest do
     # A tfim gold test block may legitimately contain the substring `defmodule` (an inline
     # module or a string literal). It must still be spliced into the harness skeleton, not
     # returned verbatim as if it were a whole module.
-    prompt = "```elixir\ndefmodule T do\n  use ExUnit.Case\n  test \"m\" do\n    # TODO\n  end\nend\n```"
-    candidate = "  test \"m\" do\n    src = \"defmodule Inline do end\"\n    assert is_binary(src)\n  end"
+    prompt =
+      "```elixir\ndefmodule T do\n  use ExUnit.Case\n  test \"m\" do\n    # TODO\n  end\nend\n```"
+
+    candidate =
+      "  test \"m\" do\n    src = \"defmodule Inline do end\"\n    assert is_binary(src)\n  end"
 
     forced = Fim.reconstruct(prompt, candidate, true)
     assert forced =~ "use ExUnit.Case"

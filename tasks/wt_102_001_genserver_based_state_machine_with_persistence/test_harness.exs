@@ -31,8 +31,11 @@ defmodule StateMachineTest do
           struct -> struct
         end
 
-      record = %{record | id: System.unique_integer([:positive, :monotonic]),
-                          inserted_at: DateTime.utc_now()}
+      record = %{
+        record
+        | id: System.unique_integer([:positive, :monotonic]),
+          inserted_at: DateTime.utc_now()
+      }
 
       Agent.update(__MODULE__, &[record | &1])
       {:ok, record}

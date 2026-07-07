@@ -180,9 +180,7 @@ defmodule JsonlIngestionTest do
     write_jsonl!(path, lines)
 
     assert {:ok, stats} =
-             JsonlIngestion.ingest(TestRepo, Event, path,
-               conflict_target: [:event_id]
-             )
+             JsonlIngestion.ingest(TestRepo, Event, path, conflict_target: [:event_id])
 
     assert stats.total == 2
     assert stats.inserted == 2

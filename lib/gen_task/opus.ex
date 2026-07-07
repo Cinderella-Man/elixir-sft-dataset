@@ -105,6 +105,7 @@ defmodule GenTask.Opus do
             "transient error (#{reason}) on #{call_label()} — " <>
               "retry #{transient_n + 1}/#{cfg.transient_retries} after #{backoff}ms"
           )
+
           Process.sleep(backoff)
           do_call(system, user, cfg, transient_n + 1, usage_n)
         else
