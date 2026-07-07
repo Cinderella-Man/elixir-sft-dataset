@@ -268,9 +268,9 @@ defmodule StateMachine do
   # Fetches the most recent to_state for entity_id from the DB and converts
   # it from a string back to an atom. Returns @initial_state when no rows exist.
   #
-  # Note: we deliberately avoid a `select:` clause so that both the real Ecto
-  # repo (returns full struct) and FakeRepo (also returns full struct, ignoring
-  # select) give us a consistent %EntityTransition{} to pattern-match on.
+  # Note: we deliberately avoid a `select:` clause and load full
+  # %EntityTransition{} structs — pattern-matching on the whole struct keeps the
+  # query portable across any injected repo implementation.
   @spec load_latest_state(module(), String.t()) :: atom()
   defp load_latest_state(repo, entity_id) do
     query =

@@ -65,8 +65,9 @@ index of the last element line the parser examined.
 - `:elapsed_ms` — number, wall-clock time (use `System.monotonic_time/1`), `>= 0`.
 - `:throughput` — float, `processed / (elapsed_ms / 1000)`; `0.0` when
   `elapsed_ms` is `0` (never divide by zero).
-- `:last_index` — integer, the index of the last element line examined (`0` if
-  none were examined, e.g. an empty array or `resume_from` past the end).
+- `:last_index` — integer, the index of the last element line examined. Lines
+  skipped by `resume_from` still count as examined, so `resume_from` past the end
+  yields the total element count; `0` only when the array has no elements.
 - `:aborted` — boolean, `true` iff the error budget was exceeded.
 
 Because `:last_index` on an abort points at the poison line, a caller can resume

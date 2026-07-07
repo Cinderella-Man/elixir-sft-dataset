@@ -400,10 +400,14 @@ Work one task family at a time; after EACH family run
 - Acceptance: `validate --only "*105_001*"` and `--mutants --only "*105_001*"` green;
   manually re-read `_03/prompt.md` to confirm the prose no longer mandates the race.
 
-**R2b. `102_001_genserver_based_state_machine_with_persistence` — grader contamination.**
-- Minimum fix: delete the comment naming `FakeRepo` (solution.ex:262-264) and rephrase
-  to describe the CONTRACT ("repos are expected to return the full struct from
-  insert"). The gold must not reference its test double.
+**R2b. `102_001_genserver_based_state_machine_with_persistence` — grader contamination.
+✅ Minimum fix DONE 2026-07-08.**
+- The comment naming `FakeRepo` (solution.ex:262-264) is rewritten to state the
+  contract ("pattern-matching on the whole struct keeps the query portable across any
+  injected repo implementation") in all SIX copies: parent + wt_ `solution.ex`, and
+  the module text embedded in `wt_`/three `tfim_` `prompt.md`s. Remaining `FakeRepo`
+  mentions live only in harness/test text, where the double legitimately exists.
+  Family verified green (perfect + mutants). The BIGGER fix below is still open:
 - **[decision]** Bigger fix (harness's FakeRepo ignores order_by/limit/select, making
   the "chronological order" requirement untestable): either make FakeRepo honor
   `order_by`/`limit`/`select` on its `all/2`/`one/2`, or migrate the task to the
@@ -427,12 +431,12 @@ Work one task family at a time; after EACH family run
 - Cascade as above (children: `grep 623_001`).
 
 **R2d. `wt_131_004_resumable_streaming_json_array_parser_with_error_budget` — spec
-contradicts gold.**
-- prompt.md:68-69 says `:last_index` is 0 when `resume_from` is past the end; the gold
-  harness asserts `== 5` (test_harness.exs:151-156) matching the impl. Fix the PROMPT
-  text (the impl+harness agree; the spec sentence is the outlier). The parent
-  `131_004_*_01/prompt.md` likely carries the same sentence — fix both, plus any FIM
-  children embedding it.
+contradicts gold. ✅ DONE 2026-07-08.**
+- prompt.md:68-69 said `:last_index` is 0 when `resume_from` is past the end; the gold
+  harness asserts `== 5` (test_harness.exs:162) matching the impl (skipped lines count
+  as examined). Fixed the sentence in BOTH copies — `131_004_*_01/prompt.md` and
+  `wt_131_004_*/prompt.md` (grep confirmed no FIM/tfim child embeds it). Family
+  verified: `validate --only "*131_004*"` and `--mutants --only "*131_004*"` green.
 
 ### R3. Stop deriving `wt_`/`tfim_` from vacuous seeds (audit gen-loop 3.4)
 - Today `lib/gen_task/cli.ex:194-233` (`warn_if_vacuous_seed`) warns and DERIVES ANYWAY;
