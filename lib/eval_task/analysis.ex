@@ -4,7 +4,11 @@ defmodule EvalTask.Analysis do
 
   ## Scoring model
 
-      overall = tests · 0.7  +  analysis · 0.2  +  compilation · 0.1   (0.0 if it doesn't compile)
+      overall = tests · 0.7  +  analysis · 0.2  +  compilation · 0.1
+
+  `overall` hard-fails to 0.0 when: the solution does not compile, it compiles
+  with warnings, no test ran (`tests_total == 0`), or the harness errored
+  (`tests_errors > 0`).
 
   * `compilation` = `max(0.0, 1.0 - warnings · 0.1)`
   * `tests`       = `tests_passed / tests_total`
@@ -119,6 +123,11 @@ defmodule EvalTask.Analysis do
         # warning hard-fails, exactly like a compile failure.
         not compile.compiled -> 0.0
         compile.compile_warnings > 0 -> 0.0
+        # No tests ran, or the harness errored: hard fail. A solution must not
+        # bank the analysis+compilation subscores (up to 0.3) without a single
+        # passing test — a harness-load failure used to outscore honest zeros.
+        tests.tests_total == 0 -> 0.0
+        Map.get(tests, :tests_errors, 0) > 0 -> 0.0
         true -> test_score * 0.7 + analysis_score * 0.2 + compilation_score * 0.1
       end
 
@@ -151,9 +160,19 @@ defmodule EvalTask.Analysis do
       end
     end)
     |> then(fn acc ->
-      if tests.tests_total > 0 and tests.tests_passed < tests.tests_total,
-        do: ["tests: #{tests.tests_total - tests.tests_passed}/#{tests.tests_total} failed" | acc],
-        else: acc
+      cond do
+        tests.tests_total == 0 and compile.compiled ->
+          ["tests: no tests ran → hard fail (overall 0.0)" | acc]
+
+        Map.get(tests, :tests_errors, 0) > 0 ->
+          ["tests: #{tests.tests_errors} harness error(s) → hard fail (overall 0.0)" | acc]
+
+        tests.tests_total > 0 and tests.tests_passed < tests.tests_total ->
+          ["tests: #{tests.tests_total - tests.tests_passed}/#{tests.tests_total} failed" | acc]
+
+        true ->
+          acc
+      end
     end)
     |> then(fn acc ->
       failed =

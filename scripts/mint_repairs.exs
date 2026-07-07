@@ -146,17 +146,28 @@ defmodule MintRepairs do
     end
   end
 
+  # Broken attempts are exactly the population most likely to hang (that is often WHY
+  # they were rejected), so the grade runs under a wall-clock KILL. A killed/crashed
+  # grade decodes to `{}` → not green → the pair is (correctly) not minted.
   defp grade(dir, sol) do
+    eval = Path.join(File.cwd!(), "scripts/eval_task.exs")
+    timeout_s = System.get_env("EVAL_TIMEOUT_S", "240")
+
     {out, _} =
-      System.cmd("elixir", [Path.join(File.cwd!(), "scripts/eval_task.exs"), dir, sol],
+      System.cmd("timeout", ["--signal=KILL", timeout_s, "elixir", eval, dir, sol],
         stderr_to_stdout: true
       )
 
-    out
-    |> String.split("\n", trim: true)
-    |> Enum.reverse()
-    |> Enum.find("{}", &String.starts_with?(&1, "{"))
-    |> Jason.decode!()
+    line =
+      out
+      |> String.split("\n", trim: true)
+      |> Enum.reverse()
+      |> Enum.find("{}", &String.starts_with?(&1, "{"))
+
+    case Jason.decode(line) do
+      {:ok, json} -> json
+      {:error, _} -> %{}
+    end
   end
 
   defp green?(json) do

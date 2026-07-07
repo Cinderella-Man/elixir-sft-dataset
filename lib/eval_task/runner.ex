@@ -99,10 +99,11 @@ defmodule EvalTask.Runner do
 
     kit_paths = PhoenixKit.render(tmp, prefix, web, otp, Bundle.module_names(files), db)
 
-    {:ok, _mods, diag} =
-      Kernel.ParallelCompiler.compile(sources ++ kit_paths, return_diagnostics: true)
-
-    {:ok, mig_mods, _} = Kernel.ParallelCompiler.compile(migrations, return_diagnostics: true)
+    # On a compile failure raise with the REAL diagnostics; the tier-B rescue upstream
+    # turns this into compiled:false. A bare `{:ok, …}` match would report a useless
+    # truncated MatchError instead.
+    diag = compile_or_raise!(sources ++ kit_paths, "solution+kit")
+    mig_mods = compile_or_raise!(migrations, "migrations").modules
     {:ok, sup} = Supervisor.start_link([repo, endpoint], strategy: :one_for_one)
 
     mig_mods
@@ -345,8 +346,16 @@ defmodule EvalTask.Runner do
   end
 
   defp compile_bundle(sources) do
-    {:ok, _mods, diag} = Kernel.ParallelCompiler.compile(sources, return_diagnostics: true)
-    %{compiled: true, compile_warnings: length(diag.compile_warnings), compile_errors: []}
+    # `compile/2` returns `{:error, errors, _}` on a compile failure — a bare `{:ok, …}`
+    # match would raise MatchError and bury the real compiler diagnostics in a truncated
+    # inspect of the match failure.
+    case Kernel.ParallelCompiler.compile(sources, return_diagnostics: true) do
+      {:ok, _mods, diag} ->
+        %{compiled: true, compile_warnings: length(diag.compile_warnings), compile_errors: []}
+
+      {:error, errors, _diag} ->
+        %{compiled: false, compile_warnings: 0, compile_errors: diagnostics_to_errors(errors)}
+    end
   rescue
     e ->
       %{
@@ -356,6 +365,32 @@ defmodule EvalTask.Runner do
           %{type: inspect(e.__struct__), message: Exception.message(e) |> String.slice(0, 200)}
         ]
       }
+  end
+
+  # Compile `paths`, returning `%{modules, compile_warnings}`; raises with the real
+  # compiler diagnostics on failure (callers inside a rescue report compiled:false).
+  defp compile_or_raise!(paths, what) do
+    case Kernel.ParallelCompiler.compile(paths, return_diagnostics: true) do
+      {:ok, mods, diag} ->
+        %{modules: mods, compile_warnings: diag.compile_warnings}
+
+      {:error, errors, _diag} ->
+        details = errors |> diagnostics_to_errors() |> Enum.map_join("; ", & &1.message)
+        raise "#{what} failed to compile: #{details}"
+    end
+  end
+
+  # Normalize `Kernel.ParallelCompiler` error diagnostics (maps with :message/:file/
+  # :position, or legacy tuples) into the evaluator's compile_errors shape.
+  defp diagnostics_to_errors(errors) do
+    Enum.map(errors, fn
+      %{message: msg} = d ->
+        loc = "#{Map.get(d, :file, "?")}:#{inspect(Map.get(d, :position, "?"))}"
+        %{type: "CompileError", message: "#{loc}: #{msg}" |> String.slice(0, 500)}
+
+      other ->
+        %{type: "CompileError", message: inspect(other) |> String.slice(0, 500)}
+    end)
   end
 
   defp run_harness(harness_file) do

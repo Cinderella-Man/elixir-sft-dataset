@@ -171,4 +171,28 @@ defmodule GenTask.MutationTest do
       assert Mutation.all_functions("defmodule Broken do def") == []
     end
   end
+
+  describe "plug_module?/1" do
+    test "recognizes Plug modules (use Plug / Plug.Builder)" do
+      assert Mutation.plug_module?("defmodule P do\n  use Plug.Router\nend")
+      assert Mutation.plug_module?("defmodule P do\n  use Plug.Builder\nend")
+    end
+
+    test "a GenServer is NOT exempt — its init/1 must be mutation-checked" do
+      refute Mutation.plug_module?(
+               "defmodule G do\n  use GenServer\n  def init(o), do: {:ok, o}\nend"
+             )
+    end
+  end
+
+  describe "gate_base/3 unbuildable mutant" do
+    test "reports 'could not be constructed', not 'vacuous harness', on a parse error" do
+      cfg = %GenTask.Config{per_fn_mutation: false}
+      files = %{"solution.ex" => "def broken(", "test_harness.exs" => "irrelevant"}
+      # The unparsable source short-circuits before any staging/eval subprocess runs.
+      assert {:survived, why} = Mutation.gate_base("/nonexistent-must-not-be-used", files, cfg)
+      assert why =~ "could not be constructed"
+      refute why =~ "every function body is replaced"
+    end
+  end
 end

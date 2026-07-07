@@ -53,4 +53,27 @@ defmodule EvalTask.AnalysisTest do
 
     assert s.overall == 0.65
   end
+
+  test "zero tests ran => overall 0.0 (no banking analysis+compilation points)" do
+    s =
+      Analysis.score(@compiled, Analysis.analyze(@documented, :full), %{
+        tests_passed: 0,
+        tests_total: 0
+      })
+
+    assert s.overall == 0.0
+    assert Enum.any?(s.reasons, &(&1 =~ "no tests ran"))
+  end
+
+  test "harness errors => overall 0.0 even when counted tests passed" do
+    s =
+      Analysis.score(@compiled, Analysis.analyze(@documented, :full), %{
+        tests_passed: 10,
+        tests_total: 10,
+        tests_errors: 2
+      })
+
+    assert s.overall == 0.0
+    assert Enum.any?(s.reasons, &(&1 =~ "harness error"))
+  end
 end

@@ -3,10 +3,17 @@
 System.argv()
 |> Enum.each(fn dir ->
   try do
-    {json, 0} =
+    {out, 0} =
       System.cmd("elixir", ["scripts/eval_task.exs", dir], stderr_to_stdout: false)
 
-    d = Jason.decode!(json)
+    # Decode the LAST `{`-prefixed line (like every other consumer) — a harness that
+    # prints to stdout would otherwise make a green task report ERROR.
+    d =
+      out
+      |> String.split("\n", trim: true)
+      |> Enum.reverse()
+      |> Enum.find("{}", &String.starts_with?(&1, "{"))
+      |> Jason.decode!()
     sc = d["score"] || %{}
 
     status =

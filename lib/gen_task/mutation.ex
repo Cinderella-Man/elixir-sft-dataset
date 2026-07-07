@@ -222,7 +222,9 @@ defmodule GenTask.Mutation do
         gate_base_whole(mutant_dir, files, cfg)
 
       true ->
-        case files["solution.ex"] |> public_functions() |> Enum.reject(&skip_fn?/1) do
+        src = files["solution.ex"]
+
+        case src |> public_functions() |> Enum.reject(&skip_fn?(&1, plug_module?(src))) do
           [] -> gate_base_whole(mutant_dir, files, cfg)
           fns -> gate_base_per_fn(mutant_dir, files, fns, cfg)
         end
@@ -234,22 +236,46 @@ defmodule GenTask.Mutation do
   end
 
   # Public functions the per-function gate must not require the harness to kill:
-  #   * `init/1` — Plug invokes it at COMPILE time and inlines the result, so a gutted
-  #     `init/1` raises *during compilation*; the mutant is inconclusive, not a kill.
+  #   * `init/1` — **in a Plug module only**: Plug invokes it at COMPILE time and inlines
+  #     the result, so a gutted `init/1` raises *during compilation*; the mutant is
+  #     inconclusive, not a kill. A GenServer's `init/1` holds real state-construction
+  #     logic and IS mutated — the blanket exemption left GenServer startup semantics
+  #     (options parsing, initial state, scheduling) unverified in a GenServer-heavy corpus.
   #   * `__foo__/n` — the leading-and-trailing double-underscore convention marks an
   #     internal / injected seam (e.g. a default clock deliberately overridden in every
   #     test via a `:clock` option), not public behavior a test is meant to exercise.
-  # Both survive raise-mutation for structural reasons, not because the harness is
+  # These survive raise-mutation for structural reasons, not because the harness is
   # vacuous — requiring their kill produces a false smell.
-  defp skip_fn?({:init, 1}), do: true
+  defp skip_fn?({:init, 1}, plug?), do: plug?
 
-  defp skip_fn?({name, _arity}) do
+  defp skip_fn?({name, _arity}, _plug?) do
     s = Atom.to_string(name)
     String.starts_with?(s, "__") and String.ends_with?(s, "__")
   end
 
+  @doc false
+  def plug_module?(src), do: Regex.match?(~r/^\s*(use|import)\s+Plug\b|Plug\.Builder/m, src)
+
   defp gate_base_whole(mutant_dir, files, cfg) do
-    mutant_files = Map.put(files, "solution.ex", mutate(files["solution.ex"]))
+    source = files["solution.ex"]
+    mutated = mutate(source)
+
+    if mutated == source do
+      # `mutate/1` returns the source unchanged when the mutant cannot be built (parse
+      # error, empty bundle). Grading that "mutant" would go green and be reported as
+      # "tests still pass after every function body is replaced by raise" — a lie that
+      # sends the fixer off to strengthen a harness that may be fine. Say what happened.
+      {:survived,
+       "a raise-mutant could not be constructed (mutation left the source unchanged — " <>
+         "parse failure or empty bundle); coverage cannot be verified and no harness " <>
+         "edit can fix this"}
+    else
+      gate_base_whole_graded(mutant_dir, files, mutated, cfg)
+    end
+  end
+
+  defp gate_base_whole_graded(mutant_dir, files, mutated, cfg) do
+    mutant_files = Map.put(files, "solution.ex", mutated)
     Evaluator.stage!(mutant_dir, mutant_files)
     grade = Evaluator.grade(mutant_dir, cfg)
 

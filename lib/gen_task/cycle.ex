@@ -44,11 +44,22 @@ defmodule GenTask.Cycle do
   def run(files, ctx, %Config{} = cfg) do
     CycleLog.reset_attempts(cfg, ctx.id)
 
-    Enum.reduce_while(0..cfg.max_retries, {files, :timeout_or_crash}, fn attempt, {files, _} ->
-      Evaluator.stage!(ctx.dir, files)
-      grade = Evaluator.grade(ctx.dir, cfg)
+    Enum.reduce_while(0..cfg.max_retries, {files, nil}, fn attempt, {files, cached} ->
+      # A fix that returned byte-identical files (contract violation, rejected harness
+      # edit) has a deterministic grade AND gate decision — reuse them instead of
+      # burning an eval subprocess (and a per-fn mutation sweep) on identical input.
+      {grade, decision} =
+        case cached do
+          nil ->
+            Evaluator.stage!(ctx.dir, files)
+            grade = Evaluator.grade(ctx.dir, cfg)
+            {grade, accept?(grade, ctx, files, cfg)}
 
-      case accept?(grade, ctx, files, cfg) do
+          {grade, decision} ->
+            {grade, decision}
+        end
+
+      case decision do
         :accept ->
           CycleLog.record_attempt(cfg, ctx.id, attempt, files, grade, :accepted, nil)
           progress(attempt, "#{grade_line(grade)} — all gates passed")
@@ -75,8 +86,12 @@ defmodule GenTask.Cycle do
                   progress(attempt, "the fix call itself failed — giving up")
                   {:halt, mk(:rejected, files, grade, attempt + 1, why <> "; repair call failed")}
 
-                {:ok, files} ->
-                  {:cont, {files, grade}}
+                {:ok, new_files} when new_files == files ->
+                  progress(attempt, "fix changed nothing usable — re-asking without regrade")
+                  {:cont, {files, {grade, decision}}}
+
+                {:ok, new_files} ->
+                  {:cont, {new_files, nil}}
               end
           end
       end
@@ -173,10 +188,10 @@ defmodule GenTask.Cycle do
       {:ok, text, _meta} ->
         upd = Reply.parse(text)
 
-        case Reply.validate_fix(upd) do
-          :ok ->
-            {:ok, Map.merge(files, upd)}
-
+        with :ok <- Reply.validate_fix(upd),
+             :ok <- guard_test_deletion(files, upd, ctx) do
+          {:ok, Map.merge(files, upd)}
+        else
           {:error, msg} ->
             Logger.warning("cycle #{ctx.id}: fix contract violation (attempt consumed): #{msg}")
             {:ok, files}
@@ -187,6 +202,38 @@ defmodule GenTask.Cycle do
         :error
     end
   end
+
+  # The fixer's path of least resistance for a failing edge-case test is deleting it —
+  # which passes green AND the mutation gate (that only requires each public function
+  # killed by SOME test), silently weakening the accepted harness. A harness edit that
+  # reduces the test count is rejected wholesale; the (re-)ask must fix code or tests,
+  # not remove them. Counts `test`/`property` at any nesting so a flat→describe
+  # restructuring is not miscounted as deletion.
+  @doc false
+  def guard_test_deletion(files, upd, ctx) do
+    case upd["test_harness.exs"] do
+      nil ->
+        :ok
+
+      new_harness ->
+        old_count = count_tests(files["test_harness.exs"] || "")
+        new_count = count_tests(new_harness)
+
+        if new_count < old_count do
+          Logger.warning(
+            "cycle #{ctx.id}: fix DELETED tests (#{old_count} → #{new_count}) — rejected"
+          )
+
+          {:error,
+           "the fix removed tests from test_harness.exs (#{old_count} → #{new_count}); " <>
+             "deleting a failing test is not a repair — fix the code or the test instead"}
+        else
+          :ok
+        end
+    end
+  end
+
+  defp count_tests(harness), do: length(Regex.scan(~r/^\s*(?:test|property)\s+"/m, harness))
 
   # ---------------------------------------------------------------------------
   # Shared generation plumbing

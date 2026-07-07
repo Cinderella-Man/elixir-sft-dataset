@@ -85,16 +85,24 @@ defmodule RunAll do
     end)
   end
 
+  # Each eval runs under a wall-clock KILL (EVAL_TIMEOUT_S, default 240s) so one
+  # hanging solution cannot stall the whole run. Exit 137 = killed by the timeout.
   defp eval(task) do
-    case System.cmd("elixir", ["scripts/eval_task.exs", task.dir, task.solution],
-           stderr_to_stdout: false
-         ) do
+    timeout_s = System.get_env("EVAL_TIMEOUT_S", "240")
+
+    args =
+      ["--signal=KILL", timeout_s, "elixir", "scripts/eval_task.exs", task.dir, task.solution]
+
+    case System.cmd("timeout", args, stderr_to_stdout: false) do
       {output, 0} ->
         json = String.trim(output) |> last_json_line()
         {json, status_of(json)}
 
+      {_output, 137} ->
+        {crash_json(task, "evaluator killed after #{timeout_s}s (EVAL_TIMEOUT_S)"), "TIMEOUT"}
+
       {_output, _code} ->
-        {crash_json(task), "CRASH"}
+        {crash_json(task, "evaluator process crashed"), "CRASH"}
     end
   end
 
@@ -132,12 +140,12 @@ defmodule RunAll do
     end
   end
 
-  defp crash_json(task) do
+  defp crash_json(task, message) do
     Jason.encode!(%{
       task: task.name,
       shape: task.shape,
       compiled: false,
-      compile_errors: [%{type: "crash", message: "evaluator process crashed"}],
+      compile_errors: [%{type: "crash", message: message}],
       tests_ran: false,
       tests_passed: 0,
       tests_failed: 0,

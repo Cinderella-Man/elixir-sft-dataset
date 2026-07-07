@@ -359,9 +359,25 @@ defmodule GenTask.Prompts do
 
     style_note = if kind == :task, do: "\n#{@house_style}", else: ""
 
+    # :task — prompt.md is immutable (the statement must not drift), and deleting a
+    # failing test is auto-rejected by the cycle, so say both up front.
+    # :fim — prompt.md IS editable (a wrong skeleton can only be fixed there); the
+    # unconditional "do NOT return prompt.md" used to contradict the contract above
+    # and models resolved it by never fixing broken skeletons.
+    rules =
+      case kind do
+        :fim ->
+          "Return ONLY the file(s) you changed."
+
+        _ ->
+          "Return ONLY the file(s) you changed; do NOT return prompt.md.\n" <>
+            "Never DELETE a test from test_harness.exs — a fix that reduces the test " <>
+            "count is rejected automatically. Fix the code or the test instead."
+      end
+
     user = """
     A generated task failed its automated check. Fix it. You may edit #{editable}.
-    Return ONLY the file(s) you changed; do NOT return prompt.md.
+    #{rules}
 
     === FAILURE REPORT ===
     #{report}

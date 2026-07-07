@@ -52,10 +52,20 @@ mix run ./scripts/eval_task.exs tasks/076_001_trie_01 solution_Qwen3.5-4B-Q6_K_g
 elixir ./scripts/run_all.exs --parallel 6
 #   → results/<task>.json, results/report_<ts>.json, results/summary_<ts>.txt
 
-# quality gate: every reference solution must be green, and every FIM target must be
-# exercised (a raise-body mutant must make the parent harness fail)
-elixir ./scripts/validate.exs             # reference-green + FIM mutation
-elixir ./scripts/validate.exs --fim-only  # just the mutation check
+# quality gate — DEFAULT: perfect-score. Every task must satisfy the RAW invariants
+# (0 failed, 0 errors, ≥1 passed, 0 warnings, full analysis), not the rounded overall.
+# Missing/unclassifiable task dirs are reported as failures, never skipped. Every eval
+# runs under a wall-clock KILL (EVAL_TIMEOUT_S, default 240s). Flakes recovered by the
+# serial re-check still pass but are appended to logs/flaky.jsonl — a repeat offender
+# there needs a fake clock, not forgiveness.
+elixir ./scripts/validate.exs                    # perfect-score, whole corpus
+elixir ./scripts/validate.exs --green            # lighter: compiles + tests pass only
+elixir ./scripts/validate.exs --fim              # FIM raise-mutant must fail the parent harness
+elixir ./scripts/validate.exs --mutants          # single/multifile/wt_: whole-solution raise-
+                                                 #   mutant must make the harness FAIL — the
+                                                 #   deterministic vacuous-harness detector
+elixir ./scripts/validate.exs --stability 3      # flake recovery needs 3 consecutive serial passes
+elixir ./scripts/validate.exs --only "001_001*"  # restrict any mode to matching task names
 
 # unit tests for the evaluator itself
 mix test test/eval_task
@@ -250,7 +260,7 @@ tail -f logs/loop_console.log                 # the one-line-per-task progress s
 ls logs/errors/                               # any task that failed its accept gate lands here
 tail -f logs/runs.jsonl                        # structured ledger: one JSON line per task
 git status --short tasks/                       # every new task + tasks.md insert shows in the diff
-elixir ./scripts/validate.exs                   # after a run: reference-green + FIM-mutation gate
+elixir ./scripts/validate.exs                   # after a run: the perfect-score gate
 ```
 
 Each generated task also gets a full per-cycle log at `logs/<task_id>.log` (every prompt,
