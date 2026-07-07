@@ -87,12 +87,12 @@ defmodule AssertHelpersTest do
     end
 
     test "passes for a datetime exactly at the tolerance boundary" do
-      four_seconds_ago = DateTime.add(DateTime.utc_now(), -4, :second)
+      four_seconds_ago = apply(DateTime, :add, [DateTime.utc_now(), -4, :second])
       assert_recent(four_seconds_ago, 5)
     end
 
     test "fails for a datetime well in the past" do
-      old = DateTime.add(DateTime.utc_now(), -60, :second)
+      old = apply(DateTime, :add, [DateTime.utc_now(), -60, :second])
 
       result =
         try do
@@ -107,7 +107,7 @@ defmodule AssertHelpersTest do
     end
 
     test "fails for a datetime in the future beyond tolerance" do
-      future = DateTime.add(DateTime.utc_now(), 30, :second)
+      future = apply(DateTime, :add, [DateTime.utc_now(), 30, :second])
 
       result =
         try do
@@ -121,7 +121,7 @@ defmodule AssertHelpersTest do
     end
 
     test "failure message includes the actual datetime and the diff" do
-      old = DateTime.add(DateTime.utc_now(), -100, :second)
+      old = apply(DateTime, :add, [DateTime.utc_now(), -100, :second])
 
       message =
         try do

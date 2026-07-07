@@ -114,9 +114,13 @@ defmodule EvalTask.Analysis do
     analysis_score = if max_points > 0, do: min(awarded / max_points, 1.0), else: 1.0
 
     overall =
-      if compile.compiled,
-        do: test_score * 0.7 + analysis_score * 0.2 + compilation_score * 0.1,
-        else: 0.0
+      cond do
+        # A warning is treated as an error: a task with any compile/type
+        # warning hard-fails, exactly like a compile failure.
+        not compile.compiled -> 0.0
+        compile.compile_warnings > 0 -> 0.0
+        true -> test_score * 0.7 + analysis_score * 0.2 + compilation_score * 0.1
+      end
 
     %{
       compilation: Float.round(compilation_score, 2),
@@ -138,7 +142,7 @@ defmodule EvalTask.Analysis do
 
         compile.compile_warnings > 0 ->
           [
-            "compilation: #{compile.compile_warnings} warning(s) → -#{Float.round(compile.compile_warnings * 0.1, 1)} pts"
+            "compilation: #{compile.compile_warnings} warning(s) → hard fail (overall 0.0)"
             | acc
           ]
 

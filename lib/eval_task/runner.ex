@@ -322,13 +322,17 @@ defmodule EvalTask.Runner do
     # harness can pass its accept-grade once and fail forever after in validate.exs.
     ExUnit.start(autorun: false, seed: 0, formatters: [EvalTask.FailureCollector])
 
-    compile_result =
-      try do
-        Code.compile_file(harness_file)
-        :ok
-      rescue
-        e -> {:error, Exception.message(e)}
-      end
+    {compile_result, diagnostics} =
+      Code.with_diagnostics(fn ->
+        try do
+          Code.compile_file(harness_file)
+          :ok
+        rescue
+          e -> {:error, Exception.message(e)}
+        end
+      end)
+
+    harness_warnings = Enum.count(diagnostics, &(&1.severity == :warning))
 
     case compile_result do
       {:error, message} ->
@@ -339,6 +343,7 @@ defmodule EvalTask.Runner do
               %{test: "harness_load", message: "Test harness compilation failed: #{message}"}
             ]
         }
+        |> Map.put(:harness_warnings, harness_warnings)
 
       :ok ->
         # `skipped` (@tag :skip) must be subtracted like `excluded` — a skipped test
@@ -355,7 +360,8 @@ defmodule EvalTask.Runner do
           tests_excluded: excluded,
           tests_skipped: skipped,
           tests_total: total,
-          test_failures: EvalTask.FailureCollector.get_failures()
+          test_failures: EvalTask.FailureCollector.get_failures(),
+          harness_warnings: harness_warnings
         }
     end
   rescue
@@ -383,6 +389,13 @@ defmodule EvalTask.Runner do
   end
 
   defp finish(compile, analysis, tests, extra) do
+    # Warnings emitted while compiling the test harness count the same as
+    # warnings from the solution: fold them into compile_warnings so the
+    # scorer's warnings-as-errors gate sees the full picture.
+    harness_warnings = Map.get(tests, :harness_warnings, 0)
+    compile = %{compile | compile_warnings: compile.compile_warnings + harness_warnings}
+    tests = Map.delete(tests, :harness_warnings)
+
     score = Analysis.score(compile, analysis, tests)
 
     compile
