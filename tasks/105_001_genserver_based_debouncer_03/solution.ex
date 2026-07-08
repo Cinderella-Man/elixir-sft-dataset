@@ -1,13 +1,16 @@
   @impl true
-  def handle_info({:fire, key}, state) do
-    case Map.pop(state, key) do
-      {{_timer_ref, func}, new_state} ->
+  def handle_info({:fire, key, ref}, state) do
+    case Map.get(state, key) do
+      {^ref, _timer, func} ->
         # Run the func off the server's reduction path so a slow or crashing
         # func can't wedge the GenServer.
         spawn(fn -> func.() end)
-        {:noreply, new_state}
+        {:noreply, Map.delete(state, key)}
 
-      {nil, new_state} ->
-        {:noreply, new_state}
+      _ ->
+        # Stale fire: the key was re-debounced (or already fired) after this
+        # timer's message was queued, so its func was replaced. Dropping the
+        # message keeps the replacement's delay real.
+        {:noreply, state}
     end
   end

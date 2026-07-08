@@ -375,7 +375,20 @@ Steps marked **[decision]** need the user's choice before implementation.
 Work one task family at a time; after EACH family run
 `elixir scripts/validate.exs --only "<family>*"` AND `--mutants --only "<family>*"`.
 
-**R2a. `105_001_genserver_based_debouncer` — stale-timer race (REAL bug in gold).**
+**R2a. `105_001_genserver_based_debouncer` — stale-timer race (REAL bug in gold).
+✅ DONE 2026-07-08.** Fix: each arm stores `{ref, timer, func}` (`ref` from
+`make_ref/0`), timers send `{:fire, key, ref}`, and `handle_info/2` drops any fire
+whose ref no longer matches — a stale fire can no longer run the replacement func
+early. All 11 family carriers updated: parent solution + harness (new suspension-based
+regression test "a stale timer message cannot run the replacement func early" —
+deterministic via `:sys.suspend/resume` message-ordering, not sleep-racing), FIM
+`_02`/`_03` gold functions + skeletons + prose (the `_03` prose that MANDATED the race
+is rewritten to specify ref-matching), FIM `_04` skeleton, wt_ solution/harness/prompt
+embed, and the three tfim prompt embeds (module + harness text; reconstruction reads
+the embedded harness, so it carries the new test too). Verified: family green under
+perfect + mutants; the OLD solution graded against the new harness fails EXACTLY the
+regression test (10/11); the fixed solution passes 11/11 in 3 consecutive runs.
+Original details for reference:**
 - Bug: `solution.ex:62` ignores `Process.cancel_timer/1`'s result and never flushes an
   already-delivered `{:fire, key}`; `handle_info({:fire, key}, …)` (solution.ex:71-77)
   runs whatever func is CURRENTLY stored. Sequence: timer fires (message queued) →

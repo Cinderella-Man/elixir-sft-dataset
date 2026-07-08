@@ -4,13 +4,16 @@ Implement the `handle_cast/2` clause that handles the `{:debounce, key, delay_ms
 message cast by `call/3`. It must coalesce rapid calls sharing the same `key`:
 
 - First, cancel any timer already pending for `key`. Look up `key` in `state`; if it
-  holds a `{timer_ref, _old_func}` entry, cancel that timer with
+  holds a `{_ref, timer, _old_func}` entry, cancel that timer with
   `Process.cancel_timer/1` (discarding the previously pending func). If there is no
-  entry for `key`, do nothing.
-- Then schedule a fresh timer with `Process.send_after/3` that sends `{:fire, key}` to
-  the server (`self()`) after `delay_ms` milliseconds.
-- Store the new `{timer_ref, func}` under `key` in the state map (replacing any prior
-  entry for that key), and return `{:noreply, updated_state}`.
+  entry for `key`, do nothing. Note that cancellation cannot recall a fire message
+  that was already delivered into the mailbox — that staleness is what the per-arm
+  ref exists for (`handle_info/2` drops fires whose ref no longer matches).
+- Then create a fresh reference with `make_ref/0` and schedule a new timer with
+  `Process.send_after/3` that sends `{:fire, key, ref}` to the server (`self()`)
+  after `delay_ms` milliseconds.
+- Store the new `{ref, timer, func}` under `key` in the state map (replacing any
+  prior entry for that key), and return `{:noreply, updated_state}`.
 
 The net effect is that each new call for a key restarts that key's timer and replaces
 its pending function, while leaving every other key's timer and function untouched.
@@ -78,16 +81,19 @@ defmodule Debouncer do
   end
 
   @impl true
-  def handle_info({:fire, key}, state) do
-    case Map.pop(state, key) do
-      {{_timer_ref, func}, new_state} ->
+  def handle_info({:fire, key, ref}, state) do
+    case Map.get(state, key) do
+      {^ref, _timer, func} ->
         # Run the func off the server's reduction path so a slow or crashing
         # func can't wedge the GenServer.
         spawn(fn -> func.() end)
-        {:noreply, new_state}
+        {:noreply, Map.delete(state, key)}
 
-      {nil, new_state} ->
-        {:noreply, new_state}
+      _ ->
+        # Stale fire: the key was re-debounced (or already fired) after this
+        # timer's message was queued, so its func was replaced. Dropping the
+        # message keeps the replacement's delay real.
+        {:noreply, state}
     end
   end
 end

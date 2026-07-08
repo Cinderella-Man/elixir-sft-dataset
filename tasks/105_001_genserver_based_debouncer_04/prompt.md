@@ -77,27 +77,34 @@ defmodule Debouncer do
 
   @impl true
   def handle_cast({:debounce, key, delay_ms, func}, state) do
-    # Cancel any pending timer for this key so the burst is coalesced.
+    # Cancel any pending timer for this key so the burst is coalesced. If the
+    # old timer already fired, its message may be sitting in our queue —
+    # cancellation cannot recall it, which is why every arm carries a unique
+    # ref: handle_info/2 recognizes and drops the stale message.
     case Map.get(state, key) do
-      {timer_ref, _old_func} -> Process.cancel_timer(timer_ref)
+      {_ref, timer, _old_func} -> Process.cancel_timer(timer)
       nil -> :ok
     end
 
-    timer_ref = Process.send_after(self(), {:fire, key}, delay_ms)
-    {:noreply, Map.put(state, key, {timer_ref, func})}
+    ref = make_ref()
+    timer = Process.send_after(self(), {:fire, key, ref}, delay_ms)
+    {:noreply, Map.put(state, key, {ref, timer, func})}
   end
 
   @impl true
-  def handle_info({:fire, key}, state) do
-    case Map.pop(state, key) do
-      {{_timer_ref, func}, new_state} ->
+  def handle_info({:fire, key, ref}, state) do
+    case Map.get(state, key) do
+      {^ref, _timer, func} ->
         # Run the func off the server's reduction path so a slow or crashing
         # func can't wedge the GenServer.
         spawn(fn -> func.() end)
-        {:noreply, new_state}
+        {:noreply, Map.delete(state, key)}
 
-      {nil, new_state} ->
-        {:noreply, new_state}
+      _ ->
+        # Stale fire: the key was re-debounced (or already fired) after this
+        # timer's message was queued, so its func was replaced. Dropping the
+        # message keeps the replacement's delay real.
+        {:noreply, state}
     end
   end
 end

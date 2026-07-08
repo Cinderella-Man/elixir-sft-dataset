@@ -2,20 +2,22 @@ Implement the `handle_info/2` callback that fires a key's debounced function
 when its timer elapses.
 
 The debouncer schedules each pending timer with
-`Process.send_after(self(), {:fire, key}, delay_ms)`, so when a key's delay
-elapses the server receives a `{:fire, key}` message. `handle_info/2` must
-handle that message:
+`Process.send_after(self(), {:fire, key, ref}, delay_ms)`, where `ref` is the
+unique reference created when the timer was armed (the state entry for the key
+is `{ref, timer, func}`). When a key's delay elapses the server receives that
+`{:fire, key, ref}` message. `handle_info/2` must handle it:
 
-- Remove `key` from the state (its pending entry is `{timer_ref, func}`), since
-  once a key fires its debounce cycle is complete and its state must be cleared.
-- If the key still had a pending entry, run its `func` **outside the server's
-  own reduction path** (e.g. in a spawned process) so a slow or crashing `func`
-  can't wedge the GenServer, then reply with `{:noreply, new_state}` where
-  `new_state` no longer contains the key.
-- If the key had no pending entry (for example, its timer was already cancelled
-  or the message is stale), do nothing and reply with `{:noreply, new_state}`.
-
-Use `Map.pop/2` to remove and retrieve the entry in one step.
+- Look up `key` in the state. If the entry's stored ref matches the `ref`
+  carried by the message, this fire is current: run its `func` **outside the
+  server's own reduction path** (e.g. in a spawned process) so a slow or
+  crashing `func` can't wedge the GenServer, delete the key from the state
+  (once a key fires its debounce cycle is complete), and reply with
+  `{:noreply, new_state}`.
+- Otherwise the message is stale: the key was re-debounced (or already fired)
+  after this timer's message was queued, so the func this fire belonged to has
+  been replaced. Ignore it — reply `{:noreply, state}` with the state
+  unchanged. Running the currently pending func now would violate the "delay
+  is real" guarantee. This branch also covers a `key` with no entry at all.
 
 ```elixir
 defmodule Debouncer do
@@ -76,18 +78,22 @@ defmodule Debouncer do
 
   @impl true
   def handle_cast({:debounce, key, delay_ms, func}, state) do
-    # Cancel any pending timer for this key so the burst is coalesced.
+    # Cancel any pending timer for this key so the burst is coalesced. If the
+    # old timer already fired, its message may be sitting in our queue —
+    # cancellation cannot recall it, which is why every arm carries a unique
+    # ref: handle_info/2 recognizes and drops the stale message.
     case Map.get(state, key) do
-      {timer_ref, _old_func} -> Process.cancel_timer(timer_ref)
+      {_ref, timer, _old_func} -> Process.cancel_timer(timer)
       nil -> :ok
     end
 
-    timer_ref = Process.send_after(self(), {:fire, key}, delay_ms)
-    {:noreply, Map.put(state, key, {timer_ref, func})}
+    ref = make_ref()
+    timer = Process.send_after(self(), {:fire, key, ref}, delay_ms)
+    {:noreply, Map.put(state, key, {ref, timer, func})}
   end
 
   @impl true
-  def handle_info({:fire, key}, state) do
+  def handle_info({:fire, key, ref}, state) do
     # TODO
   end
 end
