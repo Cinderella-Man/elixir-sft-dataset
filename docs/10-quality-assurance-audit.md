@@ -357,18 +357,71 @@ user before committing). Verified: `mix test` → 168 passed; full-corpus defaul
   green on 2026-07-07; nothing in this batch changes FIM mutation semantics except the
   shared verdict helper, which only WIDENS kills).
 
+### 5.9 Full blind-solve sweep COMPLETE (2026-07-08) — R4a corpus screen results
+- `mix run scripts/screen_blind_solve.exs` ran the full corpus screen: model=opus,
+  sequential, 00:20–11:55 (~11.5h), 300 calls, $58.08, 0 transport errors.
+  **299/299 `_01` tasks screened — 198 GREEN (66%), 101 RED (34%).**
+  Ledger: `logs/screen_blind.jsonl` (latest entry per task wins; `--report`
+  summarizes without calls). Only uncommitted change to the script itself: mode
+  bit (`chmod +x`).
+- Canaries behaved exactly as designed: `001_001` RED, `016_001` RED (screen is not
+  too weak), `623_001` GREEN (the R2c fix→screen loop held on the full run).
+- `001_001` is the one task with two ledger entries: the R5b prompt backfill changed
+  its sha and it auto-re-screened — resume/re-screen machinery works. Its re-screen
+  is the sweep's most instructive result: the blind solution now handles the FIXED
+  hidden contracts (`:infinity`, `send :cleanup`) and fails on the NEXT one —
+  `assert map_size(state.keys) == 0` (test_harness.exs:176) hard-codes an internal
+  state field name the prompt never mentions (the harness comment even admits "The
+  state is implementation-dependent" two lines later). The §1.1/R5-deferred
+  `:sys.get_state` debt is now EMPIRICALLY confirmed to bite blind solves.
+- Failure buckets (machine-classified from `first_failure`; full triage plan in R12):
+
+  | bucket | n | examples |
+  |---|---|---|
+  | internal-state shape asserts (`key :x not found`, via `:sys.get_state`) | 8 | 001_001, 005_004, 007_003, 010_004, 020_002, 023_001, 023_003, 097_002 |
+  | direct named-ETS / persistent_term access from the harness | 5 | 042_003, 042_004, 044_004, 045_001, 045_002 |
+  | undisclosed helper-API surface (`… is undefined or private`) | 8 | 016_002/3/4, 017_003, 024_002/3/4, 074_003 |
+  | named-process / multi-instance start contracts (`failed to start child`, `:noproc`) | 9 | 041_001–004, 020_003/4, 025_002, 045_003/4 |
+  | harness defines collaborator modules the blind solver also defined (`{:invalid, %ExUnit.TestModule{…}}`) | 3 | 071_002/3/4 |
+  | candidate failed to compile | 13 | Phoenix self-containment: 016_001, 019_001 (likely 005_001); solver slips: 025_003, 036_002, 074_002, 075_004, 077_004, 101_001, 110_002, 134_001/2; crash: 061_001 |
+  | harness itself failed to load against the candidate | 2 | 017_001, 018_001 (harness `use SoftCrudWeb.ConnCase` + `~p` routes — scaffolding the prompt never asks for) |
+  | behavioral/semantic assertion mismatches (everything else) | 53 | 007_001–004 (SMA/WMA math), 020_001 (413 vs 422), 035_002/4 (which exception), 086_001/2 (`cart.items == %{}` pins internal representation), 074_001/4 (asserts exact failure-message text), 100_001 (URL-encoding %20), 031_003, 013_003, … |
+
+- Two notable single-task findings:
+  - `105_001` RED is good-news/bad-news: the blind solution reintroduced the EXACT
+    stale-timer race R2a fixed, and the new regression test caught it — the test
+    discriminates (good). But "The delay is real" (prompt.md:31) did not get an
+    independent solver to ref-matching; prompt.md:45 ("cancel/replace them") could
+    gain a hint: a cancelled timer may already have fired — guard fires with a ref.
+    The prompt arguably ENTAILS the behavior, so this may be a keep-as-hard-task.
+  - `061_001` timed out/crashed and left `erl_crash.dump` (7.6MB, repo root,
+    02:28, "runtime terminating during boot") — delete the dump, re-screen the task.
+- Caveat for reading the 198 greens: a green blind solve proves solvable-from-prompt;
+  it does NOT prove the harness asserts everything the prompt states (the
+  under-testing direction is still only covered by mutation gates).
+
 ---
 
-## 6. Remaining work — step-by-step plan (R1–R11, priority order)
+## 6. Remaining work — step-by-step plan (R1–R12)
 
 Each step is self-contained: files, approach, acceptance criteria, gotchas.
 Steps marked **[decision]** need the user's choice before implementation.
 
+**Priority order as of 2026-07-08 (post-sweep):** R1 (commit — now also protects a
+$58 screen ledger) → **R12 (triage the 101-task quarantine — the new top work item;
+subsumes the R5 `:sys.get_state` remainder)** → R6 (formatter/pin) → R9 (flakes) →
+R10 (semantic mutants) → R11 (CI/evidence). R2/R3/R4/R5/R7/R8 are done except the
+sub-items explicitly marked open below.
+
 ### R1. Commit the current batch + gate evidence **[decision: user must approve commit]**
 - `git add` the files listed at the top of §5 + `test/gen_task/cycle_test.exs`.
+  Only remaining uncommitted diff as of 2026-07-08 14:00 is the `chmod +x` on
+  `scripts/screen_blind_solve.exs` — include it.
 - Consider committing `results/summary_*.txt` + `results/perfect_failures.txt` (tiny)
   from the next full run so the repo carries proof of corpus state (currently
   `results/` and `logs/` are gitignored — check `.gitignore` before forcing).
+- **`logs/screen_blind.jsonl` is now $58 of screening evidence and the input to R12
+  — back it up (or commit it; it's 100KB and gitignored by the `logs/` rule).**
 - Acceptance: `mix test` green; `elixir scripts/validate.exs --only "001_001*"` green.
 
 ### R2. Fix the four known-bad golds (§1.4) — mostly deterministic edits
@@ -476,7 +529,8 @@ contradicts gold. ✅ DONE 2026-07-08.**
   clean, so nothing is currently blocked — this gate protects FUTURE derivation.
 
 ### R4. Blind re-solve screen — the prompt↔harness consistency check
-**✅ MACHINERY + CANARIES DONE 2026-07-08; full 299-task sweep awaits a budget go-ahead.**
+**✅ FULLY DONE 2026-07-08: machinery + canaries + full 299-task sweep (198 green /
+101 RED, $58.08 — results in §5.9). The output is the R12 quarantine triage.**
 
 Implemented:
 - **R4a**: `scripts/screen_blind_solve.exs` — one blind solve per `_01`
@@ -505,10 +559,11 @@ Canary run (model=opus, 3 real calls, 2026-07-08):
   this failed on un-spec'd "-er" stemming; an independent solver now passes from the
   prompt alone. Fix→screen loop closed.
 
-Remaining: run the full sweep (`mix run scripts/screen_blind_solve.exs`, ~299 calls,
-sequential, hours — resumable) **[decision: when/model]**, then triage the
-quarantine; the 001_001-style `:infinity` family (~50 harnesses) is the known bulk
-(fix via R5b prompt-side backfill, then re-screen). Original plan for reference:
+Full sweep ran 2026-07-08 (§5.9). The prediction "the `:infinity` family is the
+known bulk" was WRONG in an informative way: R5b's prompt backfill fixed that layer
+before the sweep, and the reds that remain are the layers BEHIND it — internal-state
+shape asserts, undisclosed helper APIs, and behavioral ambiguity (see the §5.9
+bucket table and R12). Original plan for reference:
 The highest-leverage remaining item (§1.1, §1.2). Two parts:
 
 **R4a. Corpus screen (one-off audit).** New `scripts/screen_blind_solve.exs`:
@@ -552,8 +607,9 @@ inserted before "## Module under test"). Report is now CLEAN of fixable items;
 affected families re-validate perfect; the blind-screen ledger is content-keyed so
 these prompts auto-re-screen. REMAINING (report-only): 62 dirs with `:sys.get_state`
 asserts — fixing means rewriting tests to assert observable behavior, cascading into
-tfim gold blocks; LLM/human surgery for a later session (quarantine triage of the
-full blind sweep will surface the ones that actually bite). Original plan:
+tfim gold blocks. The 2026-07-08 blind sweep surfaced WHICH ones actually bite:
+8 state-shape + 5 direct-ETS/persistent_term reds (§5.9 table) — that 13-dir subset
+is now R12b, the prioritized front of this queue. Original plan:
 **R5a. Lint (deterministic, report-only first).** New `scripts/lint_harnesses.exs`
 scanning every `test_harness.exs` (and tfim prompt-embedded harnesses if cheap):
 - `:sys.get_state` (62 harnesses), `send(pid, :internal_atom)` where the atom is not
@@ -681,6 +737,76 @@ logs/ backup, minting the 3 pairs **[decision]**.
 - GC `.gen_staging/` (2,660 leftover `*_seedmut` dirs).
 - Update stale docs: docs/05 still documents `--fim-only`/`--green-only` flags
   (now `--fim`/`--green`); `prompts.ex:6` references dead `tasks/*.md` meta-prompts.
+- NEW 2026-07-08: delete `erl_crash.dump` (7.6MB at repo root, left by 061_001's
+  eval crash during the blind sweep) and gitignore `erl_crash.dump` if not covered.
+
+### R12. Triage the 101-task blind-screen quarantine **[NEW — top work item]**
+The sweep (§5.9) turned §1.1 from a hypothesis into a work-list. Every red means
+EITHER an under-specified prompt OR a too-weak solver; the buckets have distinct fix
+strategies and cascade profiles. Work bucket-by-bucket; the sha-keyed ledger
+auto-re-screens any task whose prompt changes (each re-screen ≈ one opus call,
+~$0.19 average).
+
+**R12a. Deterministic prompt-side backfills (cheapest, ~20 tasks).**
+- Undisclosed helper-API surface (8): the harness calls functions/arities the prompt
+  never states (`CursorPaginator.paginate/1`, `WebhookReceiver.Store.get_event/2`,
+  `AssertHelpers.next_message/2`, …). Fix: add the exact function signatures the
+  harness uses to prompt.md (extend the `lint_harnesses.exs --fix-prompts`
+  "Additional interface contract" mechanism — it is idempotent per bullet).
+- Harness-defined collaborators (3, the 071 factory family): the harness defines
+  `MyApp.User`/`MyApp.Post`/`FakeRepo`; the blind solver defined them too →
+  `{:invalid, %ExUnit.TestModule{}}`. Fix: prompt sentence "assume these modules
+  already exist (defined by the test environment); do NOT define them", listing the
+  struct fields.
+- Named-table names (subset of the ETS bucket where prompt-side is enough): where
+  the harness reads a table whose NAME the prompt could simply state.
+- Cascade: wt_ prompt embeds + tfim prompt embeds per family (invariant #5);
+  re-run `validate --only` + `--mutants --only` per family, then re-screen.
+
+**R12b. Harness-side rewrites — internal-state reach-ins (13 confirmed dirs).**
+The R5 remainder, now empirically prioritized: 8 state-shape asserts
+(001_001's `state.keys`, 005_004, 007_003, 010_004, 020_002, 023_001, 023_003,
+097_002) + 5 direct ETS/persistent_term reach-ins (042_003/4, 044_004, 045_001/2).
+Rewrite each offending test to assert observable behavior (the 001_001 harness
+already documents the right pattern in its own comment: "verify by checking that
+new requests for those keys work fresh"). CASCADES into tfim gold blocks when the
+offending test IS a gold block — check per family before editing. The remaining
+~49 of the 62 `:sys.get_state` dirs passed the blind screen; deprioritize them.
+
+**R12c. Phoenix self-containment family [decision].**
+016_001, 017_001, 018_001, 019_001 (and likely 005_001): candidates can't compile
+(undisclosed scaffolding) or the HARNESS can't load (`use SoftCrudWeb.ConnCase`,
+`~p` verified routes — infrastructure the prompt never asks the solver to write).
+Decide once for the family: (a) prompts fully specify the scaffolding modules to
+write, (b) tasks ship the scaffolding as provided context (multifile kit), or
+(c) harnesses drop ConnCase/verified-routes for plain `Plug.Test`. Recommend (c)
+where feasible — smallest cascade, keeps tasks self-contained.
+
+**R12d. Behavioral/semantic ambiguity (~53 tasks) — human/LLM triage pass.**
+For each red: is the failing assertion ENTAILED by prompt.md? YES → solver-weak;
+keep, mark triaged (105_001 is the exemplar: prompt entails it, blind solution had
+the exact race the gold used to have — the test discriminates). NO → one-sentence
+prompt backfill, then auto-re-screen. This is §4.4's review loop with a ready-made
+work-list; batch it as an LLM-judge pass ("quote the prompt sentence that justifies
+this failing assertion — or say none") with human sign-off on the "none" verdicts.
+Recurring sub-patterns to rule on once, not 53 times: which-exception-class
+(035_002/4), error-signaling convention — raise vs `{:error, _}` (006_002/3,
+008_003), HTTP status choice (020_001), internal representation pinned by struct
+field asserts (086_001/2 `cart.items == %{}`), exact failure-message text
+(074_001/4), URL-encoding flavor (100_001).
+
+**R12e. Cheap re-screens (solver-slip candidates, ~11 tasks).**
+The 10 non-Phoenix compile failures (025_003, 036_002, 074_002, 075_004, 077_004,
+101_001, 110_002, 134_001/2, 005_001 if not Phoenix) + 061_001 (eval crash) may be
+one-shot solver noise. `--rescreen --only "<names>"` before investing triage time;
+twice-red = real. Note 101_001 + 110_002 failed the SAME way (function capture in a
+struct default → not escapable at compile time) — if the prompts show a
+clock-in-struct-default pattern, that's a prompt bug, not noise.
+
+- Acceptance: quarantine shrinks to a documented residue of triaged-keep tasks
+  (prompt entails the assertion; task is legitimately hard), recorded in a committed
+  triage ledger (`logs/screen_triage.jsonl` or a docs table); every prompt-fixed
+  family re-validates perfect + mutants and re-screens green.
 
 ---
 
@@ -699,6 +825,7 @@ logs/ backup, minting the 3 pairs **[decision]**.
 | Solver transport + usage ledger | `lib/gen_task/opus.ex`, `cycle.ex opus/5` |
 | Work registry (what remains to generate) | `lib/gen_task/work.ex`, `scripts/work_status.exs` |
 | Eval-under-timeout reference implementation | `lib/gen_task/evaluator.ex grade/3` |
+| Blind-solve screen + ledger (§5.9, R12) | `scripts/screen_blind_solve.exs`, `logs/screen_blind.jsonl` |
 
 ### Invariants and gotchas (violating these has bitten before)
 1. **`mix compile` before running any script** — scripts prepend `_build/*/ebin`; stale
@@ -733,4 +860,5 @@ elixir scripts/validate.exs                           # full corpus (~10 min, 16
 elixir scripts/validate.exs --mutants                 # 597 tasks (~4 min)
 elixir scripts/validate.exs --fim                     # 830 FIM dirs (~10 min)
 jq -r .task logs/flaky.jsonl | sort | uniq -c         # flake repeat offenders
+mix run scripts/screen_blind_solve.exs --report       # blind-screen quarantine, no calls
 ```
