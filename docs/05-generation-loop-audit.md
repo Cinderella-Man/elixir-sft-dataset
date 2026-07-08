@@ -5,6 +5,12 @@ code review of `lib/gen_task/**` across 5 dimensions, each finding adversarially
 answers two questions: **how do we test every generated task**, and **are we doing everything we
 can** in the loop.
 
+> **Erratum (2026-07-08).** This doc predates the validate.exs rewrite: the flags it
+> mentions are now `--green` / `--fim` (not `--green-only`/`--fim-only`), and the
+> DEFAULT mode is the perfect-score gate on raw invariants. See README and docs/10.
+> Open items #13 (variation dedup signal — now measured by dataset_stats R8),
+> #16, and #17 are tracked in docs/10.
+
 ---
 
 ## 1. How to run tests for ALL generated tasks

@@ -539,6 +539,21 @@ Also add to `prompts.ex` `base_task`/`variations` harness rules: "every assertio
 test_harness.exs must be justified by an explicit sentence in prompt.md".
 
 ### R5. Harness anti-pattern lint + hidden-contract backfill
+**✅ R5a DONE + R5b prompt-side DONE 2026-07-08; :sys.get_state rewrites deferred.**
+`scripts/lint_harnesses.exs` (report; `--fix-prompts` applies the backfill; `--only`
+scoping; idempotent per BULLET so new lint findings extend existing sections).
+Detection subtleties learned: the trigger check needs `~r/:cleanup\b/` — a substring
+check false-matches inside the OPTION name `:cleanup_interval_ms`; interval-key regex
+is deliberately narrow so `timeout: :infinity`/`max_uses: :infinity` (different
+semantics) aren't misflagged. Applied: 13 parents + wt_ copies got the `:infinity`
+contract; 16 parents + wt_ copies got the `:cleanup`/`:sweep` manual-trigger
+contract ("## Additional interface contract" section; parent = appended, wt_ =
+inserted before "## Module under test"). Report is now CLEAN of fixable items;
+affected families re-validate perfect; the blind-screen ledger is content-keyed so
+these prompts auto-re-screen. REMAINING (report-only): 62 dirs with `:sys.get_state`
+asserts — fixing means rewriting tests to assert observable behavior, cascading into
+tfim gold blocks; LLM/human surgery for a later session (quarantine triage of the
+full blind sweep will surface the ones that actually bite). Original plan:
 **R5a. Lint (deterministic, report-only first).** New `scripts/lint_harnesses.exs`
 scanning every `test_harness.exs` (and tfim prompt-embedded harnesses if cheap):
 - `:sys.get_state` (62 harnesses), `send(pid, :internal_atom)` where the atom is not
@@ -558,6 +573,9 @@ FIM/tfim children embed module/harness text — grep per family before editing.
 instead); that re-opens tfim children whose gold block is the offending test.
 
 ### R6. Formatter gate + toolchain pin **[decision: reformat churn]**
+**Partial 2026-07-08:** `.tool-versions` pinned (elixir 1.20.2-otp-29 / erlang 29.0.3)
+and the README prerequisite updated to state gate results are only reproducible on
+the pin. The corpus reformat + format gate remain open (the churn decision below).
 - Pin the toolchain first: add `.tool-versions` (this machine: Elixir 1.20.2,
   OTP 29; README claims 1.17+ — align README).
 - Measured 2026-07-07: 3,989 of ~4,340 corpus files are not canonical
@@ -577,7 +595,22 @@ instead); that re-opens tfim children whose gold block is the offending test.
   the embedded skeletons in the same pass or scope the reformat to `test_harness.exs` +
   `_01`/`wt_` `solution.ex` and verify `--fim` still passes.
 
-### R7. Cheap deferred gate upgrades (audit gen-loop 3.6/3.8/3.9, docs/06 §11)
+### R7. Cheap deferred gate upgrades ✅ DONE 2026-07-08
+- Bundle-parent tfim gate: `TestFim.asserting_block?/1` (AST) replaced the bare
+  `assert`-word regex — `assert true`, comments, and strings no longer pass; an
+  `assert`/`refute` needs a non-literal argument, behavioral macros
+  (`assert_receive`/`assert_raise`/…) pass as-is (a module-reference requirement was
+  deliberately NOT imposed: Phoenix golds use imported `conn` helpers with no module
+  refs). 6 unit tests.
+- FIM skeleton fallback: `deterministic_skeleton` now LOGS when the deterministic
+  rebuild fails and only ships the model's hand-written skeleton after
+  `Fim.skeleton_matches_parent?/3` proves (per-clause normalized AST) every function
+  outside the hole is identical to the parent; divergence rejects the candidate.
+  5 unit tests.
+- `fim_select`: hallucinated `name/arity` targets are dropped against
+  `Mutation.all_functions/1` before any generation call (bundles keep permissive
+  behavior — they parse to `[]`).
+Original plan for reference:
 - Bundle-parent tfim gate: replace the bare `assert`-regex (`lib/gen_task/test_fim.ex:148-157`)
   with an AST check — the block must contain an assertion call whose args reference
   the module under test (parse via `Code.string_to_quoted`; blocks already `parses?/1`).
@@ -589,7 +622,13 @@ instead); that re-opens tfim children whose gold block is the offending test.
   `GenTask.Mutation.all_functions(module_src)` so hallucinated `name/arity` targets
   don't burn generation calls (`lib/gen_task/fim.ex:186-204`).
 
-### R8. Dedup / leakage stats in `scripts/dataset_stats.exs` (deterministic, no decisions)
+### R8. Dedup / leakage stats ✅ DONE 2026-07-08
+`dataset_stats.exs` gained a "DUPLICATION & LEAKAGE" section (+ `duplication` key in
+`--json`): AST-hash exact-dup groups (54 found — cross-variation FIM functions;
+wt_ byte-copies excluded by design), sibling-`_01` shingle-Jaccard near-dups
+(**0 found** — variations genuinely differ), and within-family completion→prompt
+leakage (**88%** — by construction) with the split recommendation printed: group
+train/val by the leading idea number NNN. Original plan for reference:
 - Exact-dup groups: normalized AST hash of every `solution.ex`
   (`Code.string_to_quoted |> Macro.to_string |> :erlang.md5`) — known baseline: 50 FIM
   single-function solutions byte-identical across DIFFERENT variations; wt_ dups are
@@ -625,6 +664,14 @@ instead); that re-opens tfim children whose gold block is the offending test.
   assertions" (§1.3) and would double as tfim per-block strength measurement.
 
 ### R11. CI + evidence + hygiene
+**Partial 2026-07-08:** `.gen_staging` GC'd (2,660 leftover dirs, 122MB — verdicts
+live in `logs/seed_verdicts.jsonl`, nothing recomputes); `mint_repairs --dry-run`
+run: 552 chains → 63 candidate pairs → **3 verified mintable** (60 fail
+double-verification because most captured rejections are quality/mutation-gate
+rejects that were still GREEN — they cannot teach a test-fix); docs/05 erratum added
+(flag renames, open-items pointer); `prompts.ex` moduledoc no longer claims the dead
+`tasks/*.md` meta-prompts are live. Still open: CI job, committing gate evidence,
+logs/ backup, minting the 3 pairs **[decision]**.
 - CI job (GitHub Actions if the repo gets a remote, else a documented local
   pre-push hook): `mix test` + `elixir scripts/validate.exs --only "<changed
   families>"`, full sweep nightly. Needs the R6 toolchain pin.

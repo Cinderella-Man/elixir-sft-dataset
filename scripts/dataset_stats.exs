@@ -151,9 +151,140 @@ defmodule DatasetStats do
       context_windows: context_windows(found),
       structure: structure(rows, found),
       quality: quality(with_harness),
-      coverage: coverage(rows)
+      coverage: coverage(rows),
+      duplication: duplication()
     }
   end
+
+  # ---------------------------------------------------------------- duplication & leakage (docs/10 R8)
+
+  # Deterministic, zero-LLM. Three signals:
+  #   * exact duplicates — normalized-AST hash of every solution (wt_ excluded: their
+  #     solution is a byte-copy of the parent BY DESIGN — it is the prompt context,
+  #     not a second training completion);
+  #   * near-duplicate sibling `_01`s — token-shingle Jaccard between the solutions of
+  #     the same idea's base+variations (variations must differ along a real axis);
+  #   * cross-shape leakage — completions appearing verbatim (whitespace-normalized)
+  #     inside another family member's prompt. This is by CONSTRUCTION high (a _01
+  #     solution fans into its fim/wt/tfim children's prompts) — the number exists to
+  #     justify the split recommendation, not to be driven to zero.
+  defp duplication do
+    tasks = Discovery.all() |> Enum.filter(& &1.found)
+
+    exact = exact_dup_groups(tasks)
+    near = near_dup_variation_pairs(tasks)
+    {leaked, leakable} = leakage(tasks)
+
+    %{
+      exact_dup_groups: length(exact),
+      exact_dup_examples: exact |> Enum.take(5) |> Enum.map(&Enum.sort/1),
+      near_dup_variation_pairs: length(near),
+      near_dup_examples: Enum.take(near, 5),
+      leaked_completions: leaked,
+      leakable_examples: leakable,
+      leakage_pct: pct(leaked, leakable),
+      split_recommendation:
+        "group train/val splits by the leading idea number (NNN) — completions leak " <>
+          "across shapes within a family by construction, never across ideas"
+    }
+  end
+
+  defp exact_dup_groups(tasks) do
+    for(
+      t <- tasks,
+      t.shape != :write_test,
+      hash = ast_hash(read(t.solution)),
+      hash != nil,
+      do: {hash, t.name}
+    )
+    |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+    |> Map.values()
+    |> Enum.filter(&(length(&1) > 1))
+  end
+
+  defp ast_hash(src) do
+    case Code.string_to_quoted(src) do
+      {:ok, ast} -> ast |> Macro.to_string() |> then(&:erlang.md5/1) |> Base.encode16()
+      {:error, _} -> nil
+    end
+  end
+
+  # Same-idea `_01` dirs (base + variations) pairwise; a pair above 0.85 means the
+  # variation is a near-clone, not a distinct problem.
+  defp near_dup_variation_pairs(tasks) do
+    tasks
+    |> Enum.filter(&(&1.shape in [:single, :multifile]))
+    |> Enum.group_by(&String.slice(&1.name, 0, 3))
+    |> Map.values()
+    |> Enum.filter(&(length(&1) > 1))
+    |> Enum.flat_map(fn group ->
+      with_shingles = Enum.map(group, &{&1.name, shingles(read(&1.solution))})
+
+      for {{n1, s1}, i} <- Enum.with_index(with_shingles),
+          {n2, s2} <- Enum.drop(with_shingles, i + 1),
+          j = jaccard(s1, s2),
+          j > 0.85,
+          do: %{pair: [n1, n2], jaccard: Float.round(j, 3)}
+    end)
+  end
+
+  defp shingles(text, k \\ 8) do
+    text
+    |> String.split(~r/\s+/, trim: true)
+    |> Enum.chunk_every(k, 1, :discard)
+    |> MapSet.new(&:erlang.phash2/1)
+  end
+
+  defp jaccard(a, b) do
+    union = MapSet.union(a, b) |> MapSet.size()
+    if union == 0, do: 0.0, else: MapSet.intersection(a, b) |> MapSet.size() |> Kernel./(union)
+  end
+
+  # Within each NNN_VVV family: completions contained (whitespace-normalized) in
+  # another member's prompt.
+  defp leakage(tasks) do
+    families =
+      tasks
+      |> Enum.group_by(fn t ->
+        case Regex.run(~r/(\d{3})_(\d{3})/, t.name) do
+          [_, a, b] -> {a, b}
+          _ -> :none
+        end
+      end)
+      |> Map.delete(:none)
+      |> Map.values()
+
+    results =
+      for family <- families, length(family) > 1, member <- family do
+        completion = normalize_ws(completion_text(member))
+
+        leaked? =
+          completion != "" and
+            Enum.any?(family, fn other ->
+              other.name != member.name and
+                String.contains?(
+                  normalize_ws(read(Path.join(other.dir, "prompt.md"))),
+                  completion
+                )
+            end)
+
+        leaked?
+      end
+
+    {Enum.count(results, & &1), length(results)}
+  end
+
+  defp completion_text(t) do
+    case t.shape do
+      :write_test -> read(Path.join(t.dir, "test_harness.exs"))
+      _ -> read(t.solution)
+    end
+  end
+
+  defp normalize_ws(text), do: text |> String.split(~r/\s+/, trim: true) |> Enum.join(" ")
+
+  defp pct(_n, 0), do: 0.0
+  defp pct(n, d), do: Float.round(n * 100 / d, 1)
 
   defp corpus(rows, found) do
     %{
@@ -166,7 +297,8 @@ defmodule DatasetStats do
       fim_subtasks: Enum.count(rows, & &1.fim?),
       write_tests: Enum.count(rows, & &1.wtest?),
       test_fim_subtasks: Enum.count(rows, & &1.tfim?),
-      distinct_ideas: rows |> Enum.map(& &1.idea) |> Enum.reject(&is_nil/1) |> Enum.uniq() |> length(),
+      distinct_ideas:
+        rows |> Enum.map(& &1.idea) |> Enum.reject(&is_nil/1) |> Enum.uniq() |> length(),
       with_prompt: Enum.count(rows, &(&1.prompt.chars > 0)),
       with_harness: Enum.count(rows, & &1.has_harness?),
       alternate_solutions: alternate_solutions()
@@ -185,7 +317,7 @@ defmodule DatasetStats do
   end
 
   defp tokens(found) do
-    sum = fn key -> found |> Enum.map(&(Map.fetch!(&1, key).tokens)) |> Enum.sum() end
+    sum = fn key -> found |> Enum.map(&Map.fetch!(&1, key).tokens) |> Enum.sum() end
     p = sum.(:prompt)
     s = sum.(:sol)
     h = sum.(:harness)
@@ -203,7 +335,8 @@ defmodule DatasetStats do
         found
         |> Enum.group_by(& &1.shape)
         |> Map.new(fn {shape, rs} ->
-          {shape, rs |> Enum.map(&(&1.prompt.tokens + &1.sol.tokens + &1.harness.tokens)) |> Enum.sum()}
+          {shape,
+           rs |> Enum.map(&(&1.prompt.tokens + &1.sol.tokens + &1.harness.tokens)) |> Enum.sum()}
         end),
       raw_totals: %{
         chars: raw(found, :chars),
@@ -226,7 +359,8 @@ defmodule DatasetStats do
       example_tokens: dist(Enum.map(found, & &1.ex_tokens)),
       solution_tokens: dist(Enum.map(found, & &1.sol.tokens)),
       prompt_tokens: dist(Enum.map(found, & &1.prompt.tokens)),
-      harness_tokens: dist(found |> Enum.filter(& &1.has_harness?) |> Enum.map(& &1.harness.tokens))
+      harness_tokens:
+        dist(found |> Enum.filter(& &1.has_harness?) |> Enum.map(& &1.harness.tokens))
     }
   end
 
@@ -290,7 +424,8 @@ defmodule DatasetStats do
     %{
       ideas_built: MapSet.size(built),
       ideas_planned: MapSet.size(planned),
-      pct_built: pct(MapSet.size(MapSet.intersection(built, planned)), max(MapSet.size(planned), 1))
+      pct_built:
+        pct(MapSet.size(MapSet.intersection(built, planned)), max(MapSet.size(planned), 1))
     }
   end
 
@@ -299,7 +434,9 @@ defmodule DatasetStats do
   defp alternate_solutions do
     Path.wildcard("tasks/*/solution_*.ex")
     |> Enum.map(fn p ->
-      Path.basename(p) |> String.replace_prefix("solution_", "") |> String.replace_suffix(".ex", "")
+      Path.basename(p)
+      |> String.replace_prefix("solution_", "")
+      |> String.replace_suffix(".ex", "")
     end)
     |> freq(& &1)
   end
@@ -308,7 +445,8 @@ defmodule DatasetStats do
     ["tasks/tasks.md", "tasks/tasks_external.md"]
     |> Enum.filter(&File.regular?/1)
     |> Enum.flat_map(fn f ->
-      Regex.scan(~r/^###\s+(\d+)\.\s/m, File.read!(f)) |> Enum.map(fn [_, n] -> String.to_integer(n) end)
+      Regex.scan(~r/^###\s+(\d+)\.\s/m, File.read!(f))
+      |> Enum.map(fn [_, n] -> String.to_integer(n) end)
     end)
     |> MapSet.new()
   end
@@ -333,7 +471,8 @@ defmodule DatasetStats do
 
   # ---------------------------------------------------------------- stat helpers
 
-  defp freq(list, fun), do: list |> Enum.frequencies_by(fun) |> Map.new(fn {k, v} -> {to_string(k), v} end)
+  defp freq(list, fun),
+    do: list |> Enum.frequencies_by(fun) |> Map.new(fn {k, v} -> {to_string(k), v} end)
 
   defp dist([]), do: %{n: 0}
 
@@ -358,7 +497,7 @@ defmodule DatasetStats do
   defp dist_f(values) do
     s = Enum.sort(values)
     n = length(s)
-    r2 = &(Float.round(&1 / 1, 2))
+    r2 = &Float.round(&1 / 1, 2)
 
     %{
       n: n,
@@ -371,7 +510,9 @@ defmodule DatasetStats do
   end
 
   defp pctile([], _), do: 0
-  defp pctile(sorted, q), do: Enum.at(sorted, min(round(q * (length(sorted) - 1)), length(sorted) - 1))
+
+  defp pctile(sorted, q),
+    do: Enum.at(sorted, min(round(q * (length(sorted) - 1)), length(sorted) - 1))
 
   defp pct(_, 0), do: 0.0
   defp pct(x, total), do: Float.round(x * 100 / total, 1)
@@ -405,8 +546,11 @@ defmodule DatasetStats do
     kv("  solutions", "#{fmt(t.by_file.solution)}  (#{t.by_file_pct.solution}%)")
     kv("  harnesses", "#{fmt(t.by_file.harness)}  (#{t.by_file_pct.harness}%)")
     kv("By shape", inspect(Map.new(t.by_shape, fn {k, v} -> {k, fmt(v)} end)))
-    kv("Raw chars / bytes / words / lines",
-      "#{fmt(t.raw_totals.chars)} / #{fmt(t.raw_totals.bytes)} / #{fmt(t.raw_totals.words)} / #{fmt(t.raw_totals.lines)}")
+
+    kv(
+      "Raw chars / bytes / words / lines",
+      "#{fmt(t.raw_totals.chars)} / #{fmt(t.raw_totals.bytes)} / #{fmt(t.raw_totals.words)} / #{fmt(t.raw_totals.lines)}"
+    )
 
     section("LENGTH DISTRIBUTIONS (tokens/example)")
     drow("prompt+solution", s.distributions.example_tokens)
@@ -415,16 +559,26 @@ defmodule DatasetStats do
     drow("harness only", s.distributions.harness_tokens)
 
     section("CONTEXT-WINDOW FIT (prompt+solution)")
+
     Enum.each(@ctx_windows, fn w ->
       cw = s.context_windows["#{w}"]
-      kv("> #{w} tok", "#{cw.examples_over} examples (#{cw.pct_over}%),  #{fmt(cw.tokens_truncated)} tok truncated")
+
+      kv(
+        "> #{w} tok",
+        "#{cw.examples_over} examples (#{cw.pct_over}%),  #{fmt(cw.tokens_truncated)} tok truncated"
+      )
     end)
 
     st = s.structure
     section("STRUCTURE & DIVERSITY")
     drow("_01s/idea (base+variations)", st.variations_per_idea)
     drow("FIM subtasks/parent (of parents w/ FIM)", st.fim_subtasks_per_parent)
-    kv("Multi-file bundles", "#{st.multifile_blocks[:n]} tasks, #{st.multifile_total_blocks} <file> blocks")
+
+    kv(
+      "Multi-file bundles",
+      "#{st.multifile_blocks[:n]} tasks, #{st.multifile_total_blocks} <file> blocks"
+    )
+
     kv("  bundle file kinds", inspect(st.multifile_file_kinds))
     kv("OTP behaviours (in solutions)", inspect(st.otp_behaviours))
 
@@ -435,27 +589,59 @@ defmodule DatasetStats do
     kv("tests:solution size ratio (mean)", "#{q.tests_to_solution_ratio[:mean]}×")
 
     if q.reference_scores.available do
-      kv("Reference score (last run_all, may be stale)",
-        "mean #{q.reference_scores[:mean]}, min #{q.reference_scores[:min]} (n=#{q.reference_scores.count}) — re-run scripts/run_all.exs to refresh")
+      kv(
+        "Reference score (last run_all, may be stale)",
+        "mean #{q.reference_scores[:mean]}, min #{q.reference_scores[:min]} (n=#{q.reference_scores.count}) — re-run scripts/run_all.exs to refresh"
+      )
     end
 
     cov = s.coverage
     section("ROADMAP COVERAGE")
-    kv("Ideas built / planned", "#{cov.ideas_built} / #{cov.ideas_planned}  (#{cov.pct_built}% of catalog)")
+
+    kv(
+      "Ideas built / planned",
+      "#{cov.ideas_built} / #{cov.ideas_planned}  (#{cov.pct_built}% of catalog)"
+    )
+
+    d = s.duplication
+    section("DUPLICATION & LEAKAGE (docs/10 R8)")
+    kv("Exact-dup solution groups (AST hash)", d.exact_dup_groups)
+
+    if d.exact_dup_examples != [] do
+      for group <- d.exact_dup_examples, do: IO.puts("      = #{Enum.join(group, "  ")}")
+    end
+
+    kv("Near-dup sibling _01 pairs (J>0.85)", d.near_dup_variation_pairs)
+
+    kv(
+      "Cross-shape leakage (within family)",
+      "#{d.leaked_completions}/#{d.leakable_examples} completions (#{d.leakage_pct}%) appear in a sibling's prompt"
+    )
+
+    kv("Split recommendation", d.split_recommendation)
     IO.puts("\n#{line}\n")
   end
 
-  defp section(title), do: IO.puts("\n── #{title} " <> String.duplicate("─", max(0, 60 - String.length(title))))
+  defp section(title),
+    do: IO.puts("\n── #{title} " <> String.duplicate("─", max(0, 60 - String.length(title))))
+
   defp kv(k, v), do: IO.puts("  #{String.pad_trailing(k, 38)} #{v}")
 
   defp drow(label, %{n: 0}), do: kv(label, "(none)")
 
   defp drow(label, d) do
-    kv(label, "n=#{d.n}  min #{fmt(d.min)}  med #{fmt(d.median)}  mean #{fmt(d.mean)}  p90 #{fmt(d.p90)}  max #{fmt(d.max)}")
+    kv(
+      label,
+      "n=#{d.n}  min #{fmt(d.min)}  med #{fmt(d.median)}  mean #{fmt(d.mean)}  p90 #{fmt(d.p90)}  max #{fmt(d.max)}"
+    )
   end
 
   defp fmt(n) when is_integer(n) do
-    n |> Integer.to_string() |> String.reverse() |> String.replace(~r/(\d{3})(?=\d)/, "\\1,") |> String.reverse()
+    n
+    |> Integer.to_string()
+    |> String.reverse()
+    |> String.replace(~r/(\d{3})(?=\d)/, "\\1,")
+    |> String.reverse()
   end
 
   defp fmt(n), do: to_string(n)

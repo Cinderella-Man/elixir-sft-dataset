@@ -3,8 +3,10 @@ defmodule GenTask.Prompts do
   Pure prompt builders for every `claude -p` step of the generation loop.
 
   Each builder returns a `{system, user}` tuple of strings — no I/O — so they are
-  directly unit-testable. They adapt the meta-prompts under `tasks/*.md` and append
-  the shared file-only output contract (`docs/04-task-generation-loop.md` §7).
+  directly unit-testable. The templates are fully INLINED here (the historical
+  meta-prompt files under `tasks/*.md` are dead — editing them changes nothing);
+  each appends the shared file-only output contract
+  (`docs/04-task-generation-loop.md` §7).
 
   The task-001 triplet is inlined (read at compile time) as the worked example for
   base task generation.

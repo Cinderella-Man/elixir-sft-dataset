@@ -59,6 +59,48 @@ defmodule GenTask.TestFimTest do
     end
   end
 
+  describe "asserting_block?/1 (bundle-parent gold gate)" do
+    test "assert true is vacuous (the old regex passed it)" do
+      refute TestFim.asserting_block?(~s(test "x" do\n  assert true\nend))
+    end
+
+    test "the word assert in a comment or string is not an assertion" do
+      refute TestFim.asserting_block?("""
+             test "x" do
+               # assert later
+               send(self(), "assert")
+             end
+             """)
+    end
+
+    test "assert on a real expression passes (no module ref needed — conn helpers)" do
+      assert TestFim.asserting_block?("""
+             test "x", %{conn: conn} do
+               conn = get(conn, "/items")
+               assert json_response(conn, 200)["data"] == []
+             end
+             """)
+    end
+
+    test "behavioral macros pass even with literal args" do
+      assert TestFim.asserting_block?(~s(test "x" do\n  assert_receive :done, 100\nend))
+
+      assert TestFim.asserting_block?(
+               ~s[test "x" do\n  assert_raise ArgumentError, fn -> boom() end\nend]
+             )
+    end
+
+    test "a later vacuous assert does not erase an earlier real one" do
+      assert TestFim.asserting_block?(
+               ~s[test "x" do\n  assert do_it() == :ok\n  assert true\nend]
+             )
+    end
+
+    test "unparsable block is conservatively rejected" do
+      refute TestFim.asserting_block?("test \"x\" do\n  assert (\nend")
+    end
+  end
+
   describe "prompt_md/2" do
     test "embeds the module and the harness skeleton in two elixir fences" do
       md =

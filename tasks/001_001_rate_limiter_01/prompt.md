@@ -11,3 +11,11 @@ Each key must be tracked independently — rate limiting "user:1" should have no
 You also need to make sure expired entries get cleaned up so the GenServer doesn't leak memory over time. Run a periodic cleanup using `Process.send_after` every 60 seconds (configurable via `:cleanup_interval_ms` option) that removes any tracking data for windows that have fully expired.
 
 Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
+
+## Additional interface contract
+
+- The `:cleanup_interval_ms` option may also be `:infinity`, in which case the periodic
+  timer is never scheduled — nothing runs automatically.
+
+- Sending the server process a bare `:cleanup` message performs one cleanup
+  pass immediately — the same work the periodic timer performs.

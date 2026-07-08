@@ -27,3 +27,11 @@ You also need periodic cleanup via `Process.send_after` every 60 seconds (config
 The `remaining` value on success is an integer. The `retry_after_ms` value on rejection is a positive integer (minimum 1).
 
 Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
+
+## Additional interface contract
+
+- The `:cleanup_interval_ms` option may also be `:infinity`, in which case the periodic
+  timer is never scheduled — nothing runs automatically.
+
+- Sending the server process a bare `:cleanup` message performs one cleanup
+  pass immediately — the same work the periodic timer performs.

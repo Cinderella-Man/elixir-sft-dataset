@@ -83,7 +83,9 @@ defmodule EvalTask.Fim do
   # fence. A test-FIM prompt has two fenced blocks — the reference module (no TODO)
   # and the harness skeleton (with the TODO) — so "first fence" would wrongly grab the
   # module. For a single-fence (sfim) prompt this still selects that one fence.
-  defp extract_skeleton(prompt_md) do
+  # Public (@doc false) — GenTask.Fim's skeleton-integrity check reuses it.
+  @doc false
+  def extract_skeleton(prompt_md) do
     # Pick the LAST ```elixir fence containing the marker. A test-FIM prompt places the
     # reference module fence first and the harness skeleton (with the injected `# TODO`)
     # last, so "last TODO-fence" robustly selects the harness even if the module fence

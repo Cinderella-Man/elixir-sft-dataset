@@ -46,3 +46,8 @@ The **original TTL** is preserved across refreshes — refreshing restarts the c
 A key-race you must handle correctly: if the user `put`s a new value for a key that has a refresh in flight, the old refresh's result must be discarded on arrival. The trick is that `put` should update the in-flight map appropriately — concretely, the simplest correct behavior is that `put` clears the in-flight entry for that key (so when the old refresh arrives, its `task_ref` doesn't match and its result is discarded).
 
 Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
+
+## Additional interface contract
+
+- Sending the server process a bare `:sweep` message performs one sweep
+  pass immediately — the same work the periodic timer performs.

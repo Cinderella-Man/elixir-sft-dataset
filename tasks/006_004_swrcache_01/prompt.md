@@ -52,3 +52,8 @@ A `put` that overwrites invalidates any in-flight revalidation (same mechanism a
 The periodic sweep removes only fully-expired (past-stale) entries. Entries in the stale window are kept in state because the next reader triggers a revalidation from them. A stale entry with a failed revalidation is NOT eagerly dropped by sweep — it remains until it passes hard expiry.
 
 Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
+
+## Additional interface contract
+
+- Sending the server process a bare `:sweep` message performs one sweep
+  pass immediately — the same work the periodic timer performs.

@@ -18,3 +18,11 @@ Each key must be tracked independently. Internally track per key: the list of re
 Run a periodic cleanup using `Process.send_after` every 60 seconds (configurable via `:cleanup_interval_ms` option) that removes keys whose timestamps have all expired AND whose strike count has decayed to zero AND whose cooldown has elapsed — i.e., keys that are indistinguishable from never-seen keys.
 
 Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
+
+## Additional interface contract
+
+- The `:cleanup_interval_ms` option may also be `:infinity`, in which case the periodic
+  timer is never scheduled — nothing runs automatically.
+
+- Sending the server process a bare `:cleanup` message performs one cleanup
+  pass immediately — the same work the periodic timer performs.

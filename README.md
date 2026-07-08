@@ -21,7 +21,9 @@ scores below 1.0.
 
 ## Prerequisites
 
-- Elixir 1.17+ / OTP 27+
+- Elixir 1.20.2 / OTP 29 — pinned in `.tool-versions`; this is the toolchain the
+  corpus is validated under (1.17+/OTP 27+ still compiles, but formatter output and
+  warning sets differ across versions, so gate results are only reproducible on the pin)
 - PostgreSQL 16+ (only for tasks marked `db: :postgres` — currently
   `017_001_search_endpoint_with_filtering_and_sorting`, which uses `ILIKE`). SQLite-in-BEAM is
   the default and needs no external service. The easiest way to provide Postgres is the bundled

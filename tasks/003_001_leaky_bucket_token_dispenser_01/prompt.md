@@ -19,3 +19,11 @@ The `remaining` value returned on success should be an integer (floor of the flo
 The `retry_after_ms` value returned on rejection should be a positive integer representing the ceiling of the time needed to refill enough tokens.
 
 Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
+
+## Additional interface contract
+
+- The `:cleanup_interval_ms` option may also be `:infinity`, in which case the periodic
+  timer is never scheduled — nothing runs automatically.
+
+- Sending the server process a bare `:cleanup` message performs one cleanup
+  pass immediately — the same work the periodic timer performs.

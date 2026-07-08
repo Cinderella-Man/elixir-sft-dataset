@@ -64,6 +64,11 @@ A key-race you must handle correctly: if the user `put`s a new value for a key t
 
 Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
 
+## Additional interface contract
+
+- Sending the server process a bare `:sweep` message performs one sweep
+  pass immediately — the same work the periodic timer performs.
+
 ## Module under test
 
 ```elixir

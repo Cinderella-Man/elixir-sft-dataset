@@ -15,3 +15,8 @@ Each key is independent — putting or deleting key "a" must have no effect on k
 You also need to prevent memory leaks from keys that are written but never read again. Use `Process.send_after` to schedule a `:sweep` message every `:sweep_interval_ms` milliseconds. When the sweep runs, remove all entries whose expiration time is in the past. The sweep should reschedule itself after completing.
 
 Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
+
+## Additional interface contract
+
+- The `:sweep_interval_ms` option may also be `:infinity`, in which case the periodic
+  timer is never scheduled — nothing runs automatically.

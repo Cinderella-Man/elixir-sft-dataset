@@ -150,7 +150,7 @@ defmodule GenTask.Fim do
 
         case Cycle.opus(cfg, seed.task_id, "fim_select", system, user) do
           {:ok, text, _meta} ->
-            {:targets, parse_candidates(text, limit, excluded)}
+            {:targets, parse_candidates(text, limit, excluded, seed.files["solution.ex"])}
 
           {:error, reason} ->
             {:error, select_error(sel_id, seed, inspect(reason))}
@@ -183,7 +183,7 @@ defmodule GenTask.Fim do
     )
   end
 
-  defp parse_candidates(text, max, excluded) do
+  defp parse_candidates(text, max, excluded, module_src) do
     text
     |> Reply.parse()
     |> Map.get("candidates.md", "")
@@ -192,7 +192,39 @@ defmodule GenTask.Fim do
     |> Enum.reject(&(&1 == ""))
     |> Enum.filter(&String.contains?(&1, "/"))
     |> Enum.reject(&MapSet.member?(excluded, &1))
+    |> reject_hallucinated(module_src)
     |> Enum.take(max)
+  end
+
+  # A hallucinated `name/arity` (not defined in the module) used to proceed to a full
+  # candidate generation — 1–2 wasted LLM calls per miss. Filter against the module's
+  # real functions; when the module can't be enumerated (bundle parents parse to []),
+  # keep the old permissive behavior rather than dropping everything.
+  defp reject_hallucinated(candidates, module_src) do
+    case Mutation.all_functions(module_src) do
+      [] ->
+        candidates
+
+      fns ->
+        known = MapSet.new(fns, fn {_kind, name, arity} -> "#{name}/#{arity}" end)
+
+        {kept, dropped} =
+          Enum.split_with(candidates, fn cand ->
+            case Regex.run(~r/(\w+\/\d+)/, cand) do
+              [_, na] -> MapSet.member?(known, na)
+              nil -> false
+            end
+          end)
+
+        if dropped != [] do
+          Logger.warning(
+            "fim select: dropped hallucinated target(s) not defined in the module: " <>
+              Enum.join(dropped, ", ")
+          )
+        end
+
+        kept
+    end
   end
 
   defp clean_candidate(line) do
@@ -223,7 +255,14 @@ defmodule GenTask.Fim do
 
         case gen_fim(cfg, log_id, system, user) do
           {:ok, ff} ->
-            run_attempts(seed, target, fim_id, log_id, deterministic_skeleton(ff, seed), cfg)
+            case deterministic_skeleton(ff, seed, target, log_id) do
+              {:ok, ff} ->
+                run_attempts(seed, target, fim_id, log_id, ff, cfg)
+
+              {:error, reason} ->
+                {reject(seed, log_id, target, Cycle.grade_stats(:timeout_or_crash), reason),
+                 false}
+            end
 
           {:error, reason} ->
             {reject(seed, log_id, target, Cycle.grade_stats(:timeout_or_crash), inspect(reason)),
@@ -255,18 +294,93 @@ defmodule GenTask.Fim do
   # clean parent module + the candidate. The model over-stubs multi-clause functions,
   # leaving redundant clauses that warn; building from the parent guarantees a clean
   # reconstruction. Falls back to the model's `prompt.md` for multifile parents or when
-  # the candidate can't be located verbatim in the parent.
-  defp deterministic_skeleton(ff, seed) do
+  # the candidate can't be located verbatim in the parent — but a hand-written fallback
+  # skeleton is only shipped after an AST integrity check: every function OUTSIDE the
+  # hole must be structurally identical to the parent, or the promoted prompt's
+  # "every other function intact" claim would be false (docs/10 §1.7). The fallback
+  # used to ship silently and unchecked.
+  defp deterministic_skeleton(ff, seed, target, log_id) do
     parent = seed.files["solution.ex"]
 
     if EvalTask.Bundle.bundle?(parent) do
-      ff
+      {:ok, ff}
     else
       skeleton = EvalTask.Fim.build_skeleton(parent, ff["solution.ex"])
-      Map.update!(ff, "prompt.md", &EvalTask.Fim.rewrite_skeleton(&1, skeleton))
+      {:ok, Map.update!(ff, "prompt.md", &EvalTask.Fim.rewrite_skeleton(&1, skeleton))}
     end
   rescue
-    _ -> ff
+    e ->
+      Logger.warning(
+        "fim #{log_id}: deterministic skeleton failed (#{Exception.message(e)}) — " <>
+          "checking the model's hand-written skeleton against the parent"
+      )
+
+      if skeleton_matches_parent?(ff["prompt.md"], seed.files["solution.ex"], target) do
+        {:ok, ff}
+      else
+        {:error,
+         "model skeleton rewrites code outside the hole (functions differ from the " <>
+           "parent) — the FIM prompt would falsely claim every other function is intact"}
+      end
+  end
+
+  # Every function of the skeleton except the target (and stub clauses holding the
+  # `# TODO` hole, whose bodies vanish) must be byte-identical (as normalized AST
+  # text) to the parent's. Conservative: any parse failure → mismatch.
+  @doc false
+  @spec skeleton_matches_parent?(String.t(), String.t(), String.t()) :: boolean()
+  def skeleton_matches_parent?(prompt_md, parent_src, target) do
+    {tname, tarity} = parse_target(target)
+
+    with {:ok, skeleton} <- safe_extract_skeleton(prompt_md),
+         {:ok, skel_fns} <- functions_map(skeleton),
+         {:ok, parent_fns} <- functions_map(parent_src) do
+      drop = fn fns -> Map.reject(fns, fn {{_k, n, a}, _} -> n == tname and a == tarity end) end
+      drop.(skel_fns) == drop.(parent_fns)
+    else
+      _ -> false
+    end
+  end
+
+  defp parse_target(target) do
+    case Regex.run(~r/(\w+)\/(\d+)/, target) do
+      [_, name, arity] -> {String.to_atom(name), String.to_integer(arity)}
+      _ -> {nil, nil}
+    end
+  end
+
+  defp safe_extract_skeleton(prompt_md) do
+    {:ok, EvalTask.Fim.extract_skeleton(prompt_md)}
+  rescue
+    _ -> :error
+  end
+
+  # %{{kind, name, arity} => [normalized clause text]} for every function in `src`.
+  defp functions_map(src) do
+    case Code.string_to_quoted(src) do
+      {:ok, ast} ->
+        {_ast, acc} =
+          Macro.prewalk(ast, %{}, fn
+            {kind, _m, [head | _]} = node, acc
+            when kind in [:def, :defp, :defmacro, :defmacrop] ->
+              case Mutation.head_name_arity(head) do
+                {n, a} ->
+                  clause = Macro.to_string(node)
+                  {node, Map.update(acc, {kind, n, a}, [clause], &(&1 ++ [clause]))}
+
+                nil ->
+                  {node, acc}
+              end
+
+            node, acc ->
+              {node, acc}
+          end)
+
+        {:ok, acc}
+
+      {:error, _} ->
+        :error
+    end
   end
 
   defp run_attempts(seed, target, fim_id, log_id, ff0, cfg) do

@@ -33,6 +33,11 @@ You also need to prevent memory leaks from keys that are written but never read 
 
 Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
 
+## Additional interface contract
+
+- The `:sweep_interval_ms` option may also be `:infinity`, in which case the periodic
+  timer is never scheduled — nothing runs automatically.
+
 ## Module under test
 
 ```elixir

@@ -190,13 +190,15 @@ defmodule GenTask.Mutation do
   end
 
   # Extract {name, arity} from a function head AST, handling a `when` guard.
-  defp head_name_arity({:when, _, [inner | _]}), do: head_name_arity(inner)
+  # Public (@doc false) — GenTask.Fim's skeleton-integrity check reuses it.
+  @doc false
+  def head_name_arity({:when, _, [inner | _]}), do: head_name_arity(inner)
 
-  defp head_name_arity({name, _, args}) when is_atom(name) and is_list(args),
+  def head_name_arity({name, _, args}) when is_atom(name) and is_list(args),
     do: {name, length(args)}
 
-  defp head_name_arity({name, _, nil}) when is_atom(name), do: {name, 0}
-  defp head_name_arity(_), do: nil
+  def head_name_arity({name, _, nil}) when is_atom(name), do: {name, 0}
+  def head_name_arity(_), do: nil
 
   @doc """
   Base/variation gate. `files` is the accepted triplet; `mutant_dir` is a staging

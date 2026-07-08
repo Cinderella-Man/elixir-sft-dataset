@@ -31,8 +31,6 @@ defmodule GenTask.TestFim do
           files: %{String.t() => String.t()}
         }
 
-  @assertion ~r/\b(assert|refute|assert_receive|refute_receive|assert_raise|catch_error|catch_exit|catch_throw|assert_in_delta)\b/
-
   @doc "Carve tfim subtasks for `seed`, up to the top-up cap, skipping covered targets."
   @spec run(seed(), Config.t()) :: [map()]
   def run(_seed, %Config{skip_test_fim: true}), do: []
@@ -157,14 +155,50 @@ defmodule GenTask.TestFim do
     CycleLog.record_tfim_rejected(cfg, prefix(seed), cand.name, sha)
   end
 
-  # Single-file → isolation-kill; multifile (bundle) → static assertion on the GOLD BLOCK
-  # itself (mutation of a `<file>` bundle is deferred; the block must contain a real
-  # assertion — checking the whole isolated harness would pass on a setup/helper assert).
+  # Single-file → isolation-kill; multifile (bundle) → static AST assertion check on
+  # the GOLD BLOCK itself (mutation of a `<file>` bundle is deferred; checking the
+  # whole isolated harness would pass on a setup/helper assert).
   defp gate_ok?(module_src, gold, iso_harness, iso_dir, cfg) do
     if bundle?(module_src) do
-      Regex.match?(@assertion, gold)
+      asserting_block?(gold)
     else
       Mutation.gate_isolation(iso_dir, module_src, iso_harness, cfg) == :killed
+    end
+  end
+
+  # Assertion macros that are behavioral by construction (they assert that something
+  # HAPPENS — a message, an exception — so literal arguments are fine).
+  @behavioral_asserts ~w(assert_receive refute_receive assert_raise assert_in_delta
+                         catch_error catch_exit catch_throw)a
+
+  # The old regex gate matched the WORD `assert` anywhere — inside a comment, a
+  # string, or the vacuous `assert true` — so a contentless bundle gold could
+  # promote. The AST check requires a real assertion CALL: either a behavioral
+  # macro, or an `assert`/`refute` whose argument is a non-literal expression
+  # (calls, match/comparison operators, variables — anything but a bare literal).
+  # Conservative on parse failure: reject.
+  @doc false
+  @spec asserting_block?(String.t()) :: boolean()
+  def asserting_block?(gold) do
+    case Code.string_to_quoted(gold) do
+      {:ok, ast} ->
+        {_ast, found?} =
+          Macro.prewalk(ast, false, fn
+            {name, _m, [arg | _]} = node, acc when name in [:assert, :refute] ->
+              {node, acc or is_tuple(arg)}
+
+            {name, _m, args} = node, _acc
+            when name in @behavioral_asserts and is_list(args) and args != [] ->
+              {node, true}
+
+            node, acc ->
+              {node, acc}
+          end)
+
+        found?
+
+      {:error, _} ->
+        false
     end
   end
 

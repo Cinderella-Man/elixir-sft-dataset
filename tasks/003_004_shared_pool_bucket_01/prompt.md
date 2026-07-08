@@ -30,3 +30,11 @@ Per-bucket state (per key) must track the current token count (float), the last 
 Periodic cleanup via `Process.send_after` every `:cleanup_interval_ms` milliseconds. The sweep drops any per-key bucket whose projected free balance has refilled back to capacity (indistinguishable from a fresh bucket). The global pool is never dropped. Use the injectable clock, not wall time.
 
 Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
+
+## Additional interface contract
+
+- The `:cleanup_interval_ms` option may also be `:infinity`, in which case the periodic
+  timer is never scheduled — nothing runs automatically.
+
+- Sending the server process a bare `:cleanup` message performs one cleanup
+  pass immediately — the same work the periodic timer performs.
