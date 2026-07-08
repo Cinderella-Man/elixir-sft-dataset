@@ -111,6 +111,11 @@ defmodule GenTask.Prompts do
       The corpus is graded with many harnesses running in parallel, so a path that is
       not unique per OS process will collide and cause flaky failures.
     - The prompt.md must NOT reveal the tests; it is the standalone task statement.
+    - Every assertion in the harness must be justified by an explicit statement in
+      prompt.md — if a behavior is worth testing, state it in the prompt first. A
+      solver who reads ONLY prompt.md must be able to pass every test. Never assert
+      internal state (`:sys.get_state`), internal message names, or option values
+      (e.g. `:infinity` sentinels) that prompt.md does not document.
 
     #{output_contract([{"prompt.md", "the standalone task statement"}, {"test_harness.exs", "the ExUnit harness"}])}
     """
@@ -171,7 +176,11 @@ defmodule GenTask.Prompts do
     each other along a real axis (data structure, concurrency model, failure semantics,
     …). For each variation produce a full triplet (prompt.md, test_harness.exs,
     solution.ex) following the SAME harness rules as the base (`use ExUnit.Case,
-    async: false`; no `ExUnit.start()`; self-contained; ZERO compile warnings).#{already}
+    async: false`; no `ExUnit.start()`; self-contained; ZERO compile warnings;
+    process-unique temp paths via `System.pid()` + `System.unique_integer/1`; every
+    assertion justified by an explicit statement in that variation's prompt.md — a
+    solver reading ONLY the prompt must be able to pass every test, so never assert
+    internal state or undocumented option values).#{already}
 
     Also, for each variation, produce a one-line catalog entry in the exact tasks.md
     format — its `idea.md` file must contain a `### Task #{num} - Vn - <Name>` header on

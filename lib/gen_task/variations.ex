@@ -165,10 +165,27 @@ defmodule GenTask.Variations do
 
     outcome =
       try do
+        # The variations call CO-AUTHORS prompt+harness+solution in one reply, so
+        # its solution can encode knowledge of the tests — an under-specified
+        # prompt would sail through because the same mind wrote both sides
+        # (docs/10 §1.2/R4b). Discard the co-authored solution and re-solve BLIND
+        # from the variation prompt alone (mirrors Base Step B); the cycle then
+        # grades the blind solution. GEN_SKIP_VARIATION_BLIND=1 restores the old
+        # (cheaper, unscreened) behavior.
+        solution =
+          if cfg.skip_variation_blind do
+            files[prefix <> "solution.ex"]
+          else
+            case blind_solution(vtask_id, files[prefix <> "prompt.md"], cfg) do
+              {:ok, sol} -> sol
+              {:error, reason} -> throw({:blind_solve_failed, reason})
+            end
+          end
+
         triplet = %{
           "prompt.md" => files[prefix <> "prompt.md"],
           "test_harness.exs" => files[prefix <> "test_harness.exs"],
-          "solution.ex" => files[prefix <> "solution.ex"]
+          "solution.ex" => solution
         }
 
         ctx = %{
@@ -220,10 +237,45 @@ defmodule GenTask.Variations do
             status: :error,
             reason: Exception.message(e)
           )
+      catch
+        {:blind_solve_failed, reason} ->
+          Logger.error("variation #{vtask_id}: blind solve failed: #{inspect(reason)}")
+
+          Cycle.outcome(
+            id: vtask_id,
+            kind: :variation,
+            num: base.num,
+            name: vname,
+            status: :error,
+            reason: "blind solve failed: #{inspect(reason)}"
+          )
       end
 
     CycleLog.close(handle, if(outcome.status == :accepted, do: :ok, else: :error))
     outcome
+  end
+
+  # The blind Step-B solve for one variation: the solver sees the variation's
+  # prompt.md ONLY (never the harness), exactly like Base Step B. Returns
+  # `{:ok, solution_source}` or `{:error, reason}`. Public (@doc false) so the seam
+  # is unit-testable with a fake transport.
+  @doc false
+  @spec blind_solution(String.t(), String.t(), Config.t()) ::
+          {:ok, String.t()} | {:error, term()}
+  def blind_solution(vtask_id, prompt_md, %Config{} = cfg) do
+    {system, user} = Prompts.base_solve(prompt_md)
+
+    case Cycle.generate(
+           cfg,
+           vtask_id,
+           "variation_blind_solve",
+           system,
+           user,
+           &Reply.validate_answer/1
+         ) do
+      {:ok, answer} -> {:ok, answer["solution.ex"]}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   defp variation_outcome(id, num, name, status, result, stats, seed, reason) do

@@ -67,6 +67,15 @@ elixir ./scripts/validate.exs --mutants          # single/multifile/wt_: whole-s
 elixir ./scripts/validate.exs --stability 3      # flake recovery needs 3 consecutive serial passes
 elixir ./scripts/validate.exs --only "001_001*"  # restrict any mode to matching task names
 
+# blind-solve SCREEN (costs LLM calls — one `claude -p` per unscreened _01): a task is
+# well-specified iff an independent solver goes green from prompt.md ALONE. Failures
+# quarantine to logs/screen_blind.jsonl (prompt under-specified OR solver too weak —
+# human decides). Content-keyed ledger: interrupted runs resume; fixed prompts re-screen.
+mix run scripts/screen_blind_solve.exs --limit 10        # first 10 unscreened
+mix run scripts/screen_blind_solve.exs --only "001_*"    # name filter
+mix run scripts/screen_blind_solve.exs --report          # no calls; summarize ledger
+mix run scripts/screen_blind_solve.exs                   # full corpus (~299 calls, hours)
+
 # unit tests for the evaluator itself
 mix test test/eval_task
 

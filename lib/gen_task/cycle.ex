@@ -272,6 +272,47 @@ defmodule GenTask.Cycle do
   defp usage_field(%{usage: usage}, key) when is_map(usage), do: usage[key]
   defp usage_field(_meta, _key), do: nil
 
+  @doc """
+  Generate + parse + contract-validate, with one reminder retry on a contract miss.
+  The shared shape used by every single-reply generation step (base task/solve,
+  variation blind solve, the blind-solve screen). Returns `{:ok, files}` or
+  `{:error, reason}` (`{:contract, step}` when retries are exhausted).
+  """
+  @spec generate(
+          Config.t(),
+          String.t(),
+          String.t(),
+          String.t(),
+          String.t(),
+          (files() -> :ok | {:error, String.t()})
+        ) :: {:ok, files()} | {:error, term()}
+  def generate(cfg, id, step, system, user, validator, left \\ 2)
+
+  def generate(_cfg, _id, step, _system, _user, _validator, 0), do: {:error, {:contract, step}}
+
+  def generate(cfg, id, step, system, user, validator, left) do
+    case opus(cfg, id, step, system, user) do
+      {:ok, text, _meta} ->
+        files = Reply.parse(text)
+
+        case validator.(files) do
+          :ok ->
+            {:ok, files}
+
+          {:error, msg} ->
+            Logger.warning("#{step} (#{id}): contract violation: #{msg} — reminding")
+
+            reminder =
+              user <> "\n\nReminder: return ONLY the requested <file> blocks and nothing else."
+
+            generate(cfg, id, step, system, reminder, validator, left - 1)
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
   defp safe(v) when is_binary(v) or is_number(v) or is_nil(v), do: v
   defp safe(v), do: inspect(v)
 

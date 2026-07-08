@@ -475,7 +475,40 @@ contradicts gold. ✅ DONE 2026-07-08.**
 - NOTE: zero vacuous verdicts exist in today's ledger and the `--mutants` sweep was
   clean, so nothing is currently blocked — this gate protects FUTURE derivation.
 
-### R4. Blind re-solve screen — the prompt↔harness consistency check **[decision: LLM budget]**
+### R4. Blind re-solve screen — the prompt↔harness consistency check
+**✅ MACHINERY + CANARIES DONE 2026-07-08; full 299-task sweep awaits a budget go-ahead.**
+
+Implemented:
+- **R4a**: `scripts/screen_blind_solve.exs` — one blind solve per `_01`
+  (`Prompts.base_solve` + `Cycle.generate`, NO repair loop), graded via
+  `Evaluator.grade` with the candidate as override. Verdicts append to
+  `logs/screen_blind.jsonl` keyed by sha256(prompt.md): interrupted runs resume,
+  fixed prompts auto-re-screen. Flags: `--only/--limit/--model/--rescreen/--report`.
+- **R4b**: `GenTask.Variations.build_variation` now DISCARDS the co-authored
+  solution and blind-re-solves from the variation prompt
+  (`Variations.blind_solution/3`; `GEN_SKIP_VARIATION_BLIND=1` opts out; one extra
+  call per variation). The gen+validate+remind helper is now shared
+  `Cycle.generate/6` (Base delegates). Both prompt templates gained the
+  assertion-justification rule ("a solver reading ONLY prompt.md must pass every
+  test; never assert internal state or undocumented option values"); the variations
+  template also regained the process-unique tmp-path rule it had dropped (audit 1.4).
+- Tests: `test/gen_task/blind_solve_test.exs` (5, fake transport — blind solver sees
+  prompt only, reminder-retry fires once, contract exhaustion propagates).
+
+Canary run (model=opus, 3 real calls, 2026-07-08):
+- `001_001_rate_limiter_01` → **RED**, and with the EXACT predicted failure: the
+  blind solution crashed on `:erlang.send_after(:infinity, …) :badarg` — the harness's
+  hidden `cleanup_interval_ms: :infinity` contract (§1.1). Screen works.
+- `016_001_paginated_list_endpoint_01` → **RED** (controller does not compile against
+  the undisclosed PhoenixKit scaffolding — the §1.1 self-containment gap).
+- `623_001_mini_elasticsearch_like_inverted_index_01` → **GREEN** — before the R2c fix
+  this failed on un-spec'd "-er" stemming; an independent solver now passes from the
+  prompt alone. Fix→screen loop closed.
+
+Remaining: run the full sweep (`mix run scripts/screen_blind_solve.exs`, ~299 calls,
+sequential, hours — resumable) **[decision: when/model]**, then triage the
+quarantine; the 001_001-style `:infinity` family (~50 harnesses) is the known bulk
+(fix via R5b prompt-side backfill, then re-screen). Original plan for reference:
 The highest-leverage remaining item (§1.1, §1.2). Two parts:
 
 **R4a. Corpus screen (one-off audit).** New `scripts/screen_blind_solve.exs`:

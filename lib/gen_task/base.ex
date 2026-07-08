@@ -127,32 +127,10 @@ defmodule GenTask.Base do
     %{num: idea.num, name: idea.name, slug: idea.slug, b: 1, task_id: idea.task_id, files: files}
   end
 
-  # Generate + parse + contract-validate, with one reminder retry on a contract miss.
-  defp gen(cfg, id, step, system, user, validator, left \\ 2)
-
-  defp gen(_cfg, _id, step, _system, _user, _validator, 0), do: {:error, {:contract, step}}
-
-  defp gen(cfg, id, step, system, user, validator, left) do
-    case Cycle.opus(cfg, id, step, system, user) do
-      {:ok, text, _meta} ->
-        files = Reply.parse(text)
-
-        case validator.(files) do
-          :ok ->
-            {:ok, files}
-
-          {:error, msg} ->
-            Logger.warning("#{step} (#{id}): contract violation: #{msg} — reminding")
-
-            reminder =
-              user <> "\n\nReminder: return ONLY the requested <file> blocks and nothing else."
-
-            gen(cfg, id, step, system, reminder, validator, left - 1)
-        end
-
-      {:error, reason} ->
-        {:error, reason}
-    end
+  # Generate + parse + contract-validate, with one reminder retry on a contract miss
+  # (shared shape — see Cycle.generate/7).
+  defp gen(cfg, id, step, system, user, validator) do
+    Cycle.generate(cfg, id, step, system, user, validator)
   end
 
   defp close_of(:accepted), do: :ok
