@@ -22,3 +22,7 @@ The distinguishing behavior versus a plain paginator is **clamp-to-last-page**: 
 Because reads take a consistent snapshot (materialize and sort the current contents at call time), a `list/2` result is internally coherent even if concurrent inserts land during or after the call.
 
 Use only the standard library (`:ets`). Give me the module in a single file.
+
+## Additional interface contract
+
+- `list/2`'s params argument is optional: `list(table)` must behave exactly like `list(table, %{})` (declare the second parameter with a `\\ %{}` default).

@@ -38,6 +38,10 @@ On success:
 
 Use only the standard library. Give me the module in a single file.
 
+## Additional interface contract
+
+- `paginate/2`'s params argument is optional: `paginate(items)` must behave exactly like `paginate(items, %{})` (declare the second parameter with a `\\ %{}` default).
+
 ## Module under test
 
 ```elixir

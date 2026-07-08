@@ -78,18 +78,38 @@ defmodule ScreenBlind do
         "model=#{cfg.model}, sequential, ~1 call each"
     )
 
-    results =
+    {results, aborted?} =
       todo
       |> Enum.with_index(1)
-      |> Enum.map(fn {task, i} ->
+      |> Enum.reduce_while({[], false}, fn {task, i}, {acc, _} ->
         IO.write("[#{i}/#{length(todo)}] #{task.name} ... ")
         entry = screen_one(cfg, task)
         IO.puts(verdict_text(entry))
-        entry
+
+        # Only reachable when GEN_USAGE_MAX_WAIT_MS > 0 (default is wait-forever):
+        # tokens did not come back within the cap, so every remaining task would
+        # hit the same wall — stop the sweep instead of churning. The ledger only
+        # counts conclusive verdicts, so re-running resumes exactly here.
+        if usage_exhausted?(entry),
+          do: {:halt, {[entry | acc], true}},
+          else: {:cont, {[entry | acc], false}}
       end)
+
+    results = Enum.reverse(results)
+
+    if aborted? do
+      IO.puts("""
+
+      !! Token/credit allowance did not return within GEN_USAGE_MAX_WAIT_MS — sweep stopped.
+         Re-run the same command to resume (screened tasks are skipped via the ledger).
+      """)
+    end
 
     summarize(results)
   end
+
+  @usage_exhausted inspect({:usage_limit, :exhausted})
+  defp usage_exhausted?(entry), do: entry[:error] == @usage_exhausted
 
   defp screen_one(cfg, task) do
     prompt = File.read!(Path.join(task.dir, "prompt.md"))
@@ -98,6 +118,7 @@ defmodule ScreenBlind do
     entry =
       case Cycle.generate(cfg, task.name, "screen_blind", system, user, &Reply.validate_answer/1) do
         {:ok, answer} ->
+          save_candidate(cfg, task, prompt, answer["solution.ex"])
           grade_candidate(cfg, task, answer["solution.ex"])
 
         {:error, reason} ->
@@ -116,6 +137,18 @@ defmodule ScreenBlind do
 
     append_ledger(cfg, entry)
     entry
+  end
+
+  # Keep the blind candidate for triage: a red's ledger entry holds only a
+  # 200-char failure snippet, and diagnosing WHY an independent solver failed
+  # (solver slip vs prompt gap) usually needs the full source. Keyed by prompt
+  # sha like the ledger, so re-screens of a fixed prompt don't overwrite the
+  # candidate that failed against the old prompt.
+  defp save_candidate(cfg, task, prompt, candidate_src) do
+    dir = Path.join(cfg.logs_dir, "screen_candidates")
+    File.mkdir_p!(dir)
+    sha8 = String.slice(CycleLog.content_sha(prompt), 0, 8)
+    File.write!(Path.join(dir, "#{task.name}__#{sha8}.ex"), candidate_src)
   end
 
   defp grade_candidate(cfg, task, candidate_src) do

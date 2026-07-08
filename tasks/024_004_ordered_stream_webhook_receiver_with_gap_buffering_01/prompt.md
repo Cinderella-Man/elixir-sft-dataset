@@ -26,3 +26,7 @@ I need these modules:
      - `:buffered` → **202** `{"status": "buffered"}`
 
 Use only Plug and Jason (plus `:crypto`). No Phoenix, no Ecto. Give me all modules in a single file.
+
+## Additional interface contract
+
+- `WebhookReceiver.Store` is not just a behaviour definition: it must ALSO define public client functions with the same names and arities as its callbacks, each dispatching to the given store process (e.g. via `GenServer.call(store, ...)`), so callers can invoke e.g. `WebhookReceiver.Store.last_sequence(store, stream_id)` directly on the module.

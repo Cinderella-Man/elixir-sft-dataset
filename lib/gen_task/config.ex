@@ -57,7 +57,9 @@ defmodule GenTask.Config do
             eval_timeout_s: 120,
             call_timeout_s: 900,
             usage_wait_ms: 900_000,
-            usage_max_wait_ms: 21_600_000,
+            # 0 = unlimited: keep retrying every usage_wait_ms until tokens return
+            # (running out of the 5-hour subscription window is a normal condition).
+            usage_max_wait_ms: 0,
             transient_retries: 5,
             quality_gate: true,
             per_fn_mutation: true,
@@ -99,7 +101,7 @@ defmodule GenTask.Config do
       eval_timeout_s: env_int(env_fun, "GEN_EVAL_TIMEOUT_S", 120),
       call_timeout_s: env_int(env_fun, "GEN_CALL_TIMEOUT_S", 900),
       usage_wait_ms: env_int(env_fun, "GEN_USAGE_WAIT_MS", 900_000),
-      usage_max_wait_ms: env_int(env_fun, "GEN_USAGE_MAX_WAIT_MS", 21_600_000),
+      usage_max_wait_ms: env_int(env_fun, "GEN_USAGE_MAX_WAIT_MS", 0),
       transient_retries: env_int(env_fun, "GEN_TRANSIENT_RETRIES", 5),
       quality_gate: not env_bool(env_fun, "GEN_SKIP_QUALITY_GATE"),
       per_fn_mutation: not env_bool(env_fun, "GEN_SKIP_PER_FN_MUTATION"),

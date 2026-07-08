@@ -395,13 +395,16 @@ System.cmd("claude",
 it paused. The pause happens at the single call site, so the current idea/cycle stays
 resumable. This is distinct from the short transient backoff.
 
-> **Cap (bug-fix):** the retry loop is **bounded** by `GEN_USAGE_MAX_WAIT_MS` (default **6 h**) —
-> once the cumulative usage-wait would exceed it, the call returns `{:error, {:usage_limit,
-> :exhausted}}` instead of sleeping forever. The 6 h cap covers a full 5-hour window reset while
-> ensuring a *misclassified* persistent transient error can never hang the whole run. The
-> detection regex was also tightened to strong usage phrases only (dropping bare `try again` /
-> `resets at`, which appear in generic 5xx/gateway bodies) so a transient is never read as a
-> usage limit in the first place.
+> **Cap (revised 2026-07-08):** the retry loop is **unbounded by default**
+> (`GEN_USAGE_MAX_WAIT_MS` default **0** = wait forever) — running out of tokens/credits is a
+> normal operating condition; the loop sleeps 15 min at a time until the 5-hour window resets,
+> however long that takes. Set `GEN_USAGE_MAX_WAIT_MS` to a positive value to restore a cap
+> (the call then returns `{:error, {:usage_limit, :exhausted}}` once cumulative wait exceeds
+> it) — useful only if you'd rather a run fail than ride out a *misclassified* persistent
+> transient. The detection regex is tightened to strong usage/credit phrases only (dropping
+> bare `try again` / `resets at`, which appear in generic 5xx/gateway bodies) so a transient
+> is never read as a usage limit in the first place; it now also matches credit-exhaustion
+> wording (`out of credits`, `credit balance`, `insufficient credits`).
 
 > **Residual unknown:** the exact usage-limit message/subtype from `claude -p` couldn't be
 > triggered during planning (no way to exhaust the window on demand). Detection is therefore
@@ -514,7 +517,7 @@ re-scanning (JSONL is fsynced; no partial `tasks/` dirs are ever left).
 | Eval timeout | `GEN_EVAL_TIMEOUT_S` | `120` | wall-clock kill for a hung grade |
 | Call timeout | `GEN_CALL_TIMEOUT_S` | `900` | wall-clock kill for a single `claude -p` |
 | Usage-window wait | `GEN_USAGE_WAIT_MS` | `900000` | sleep between retries while limited (15 min) |
-| Usage-wait cap | `GEN_USAGE_MAX_WAIT_MS` | `21600000` | give up after this cumulative usage-wait (6 h) — stops a misclassified transient from hanging the run |
+| Usage-wait cap | `GEN_USAGE_MAX_WAIT_MS` | `0` (unlimited) | `0` = retry every 15 min forever until tokens return; set > 0 (ms) to give up after that cumulative usage-wait |
 | Transient retries | `GEN_TRANSIENT_RETRIES` | `5` | short-backoff retries for network/5xx |
 | Quality gate | `GEN_SKIP_QUALITY_GATE` | `0` | when unset, a green base/variation must ALSO have `@moduledoc`+`@spec`+`@doc`, no TODO, and **zero compile warnings** — else it is repaired, then rejected (§13) |
 | Per-fn mutation | `GEN_SKIP_PER_FN_MUTATION` | `0` | when unset, the base/variation mutation gate mutates **each public function** independently and requires every one killed (§13), not just a whole-module mutant |
@@ -561,7 +564,7 @@ Runs under `mix run`; shells `elixir scripts/eval_task.exs …` per grade (that 
 
 | Failure | Handling |
 |---|---|
-| Subscription window exhausted | usage-window pause: log, sleep 15 min, retry same call — **capped** at `GEN_USAGE_MAX_WAIT_MS` (6 h) so a misclassified transient can't hang the run (§11) |
+| Subscription window exhausted / out of credits | usage-window pause: log, sleep 15 min, retry same call — **unbounded by default** (`GEN_USAGE_MAX_WAIT_MS=0`); set > 0 to cap (§11) |
 | Model wraps files in ```` ``` ```` fences | `sanitize_file_body/1` strips them (§7) |
 | Model ignores `<file>` contract | contract-validation catch → re-prompt reminder (consumes an attempt) |
 | Truncated reply (`max_tokens`) | not parsed; retry with reminder / higher cap |

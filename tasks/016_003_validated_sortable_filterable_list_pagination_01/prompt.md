@@ -20,3 +20,7 @@ On success:
 - Requesting a page beyond `total_pages` returns an empty `data` list but still-correct metadata (mirror the base endpoint's behavior here).
 
 Use only the standard library. Give me the module in a single file.
+
+## Additional interface contract
+
+- `paginate/2`'s params argument is optional: `paginate(items)` must behave exactly like `paginate(items, %{})` (declare the second parameter with a `\\ %{}` default).

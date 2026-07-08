@@ -5,9 +5,10 @@ defmodule GenTask.Opus do
   `docs/04-task-generation-loop.md` §11).
 
   `call/3` is the entry point used by the generation steps. It classifies each
-  reply and drives the control flow: a subscription **usage-window pause** (log,
-  record, sleep, retry the same call — indefinitely, until the window resets), a
-  short exponential backoff for transient errors, a reminder-retry for truncated
+  reply and drives the control flow: a subscription **usage-window / out-of-credits
+  pause** (log, record, sleep 15 min, retry the same call — by default forever,
+  until the window resets; `GEN_USAGE_MAX_WAIT_MS` > 0 restores a cap), a short
+  exponential backoff for transient errors, a reminder-retry for truncated
   replies, and a plain error for refusals.
 
   The subprocess itself is behind the injectable `cfg.opus_runner` so tests can
@@ -23,7 +24,10 @@ defmodule GenTask.Opus do
   # phrases like "try again" / bare "resets at" that also appear in 5xx/gateway
   # bodies — a transient error must NOT be misread as a usage limit, because the
   # usage-limit branch sleeps for 15 minutes per attempt (see `do_call/5`).
-  @usage_re ~r/usage limit|rate.?limit|limit reached|quota (?:exceeded|reached)|too many requests/i
+  # The credit phrases cover the CLI/API wording when a subscription or credit
+  # pool is exhausted ("Credit balance is too low", "out of credits") — for this
+  # harness that is the same situation as a usage window: wait and retry.
+  @usage_re ~r/usage limit|rate.?limit|limit reached|quota (?:exceeded|reached)|too many requests|out of credits|credit balance|insufficient credits?/i
   @transient_re ~r/overloaded|timeout|timed out|network|connection|econn|502|503|504|internal server|temporar|error_max_turns|max.?turns|error_during_execution/i
 
   @type meta :: %{
@@ -62,21 +66,27 @@ defmodule GenTask.Opus do
       {:usage_limit, _meta} ->
         attempt = usage_n + 1
 
-        # Bound the total time we will wait on usage-limit signals. The legitimate
-        # case is riding out a 5-hour subscription window; the cap (default 6h)
-        # covers a full reset while ensuring a *misclassified* persistent transient
-        # error can never hang the whole run indefinitely.
-        if attempt * cfg.usage_wait_ms > cfg.usage_max_wait_ms do
+        # Running out of tokens/credits is a NORMAL condition for this harness
+        # (subscription windows reset every 5 hours): by default
+        # (`usage_max_wait_ms == 0` = unlimited) we sleep `usage_wait_ms` (15 min)
+        # and retry the same call indefinitely until the window resets. Set
+        # `GEN_USAGE_MAX_WAIT_MS` to a positive cap if you'd rather a run fail
+        # than wait (e.g. to bound a *misclassified* persistent transient error).
+        cap = cfg.usage_max_wait_ms
+
+        if cap > 0 and attempt * cfg.usage_wait_ms > cap do
           Logger.error(
-            "usage limit persisted past the #{cfg.usage_max_wait_ms}ms cap " <>
+            "usage limit persisted past the #{cap}ms cap " <>
               "(#{attempt} attempts) — giving up on this call"
           )
 
           {:error, {:usage_limit, :exhausted}}
         else
+          waited_min = div(usage_n * cfg.usage_wait_ms, 60_000)
+
           Logger.warning(
-            "usage limit reached on #{call_label()} — waiting #{cfg.usage_wait_ms}ms " <>
-              "(attempt #{attempt})"
+            "usage limit / out of credits on #{call_label()} — waiting " <>
+              "#{cfg.usage_wait_ms}ms (attempt #{attempt}, ~#{waited_min} min waited so far)"
           )
 
           CycleLog.record_wait(cfg, cfg.usage_wait_ms, attempt, "usage_limit")

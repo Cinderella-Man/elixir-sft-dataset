@@ -27,3 +27,7 @@ Router behaviour:
 - Malformed JSON or missing `"id"` → **400** `{"error": "bad_payload"}`.
 
 Two different providers may share the same event id without colliding. Use only Plug and Jason (plus `:crypto`). No Phoenix, no Ecto. Give me all modules in a single file.
+
+## Additional interface contract
+
+- `WebhookReceiver.Store` is not just a behaviour definition: it must ALSO define public client functions with the same names and arities as its callbacks, each dispatching to the given store process (e.g. via `GenServer.call(store, ...)`), so callers can invoke e.g. `WebhookReceiver.Store.get_event(store, provider, event_id)` directly on the module.

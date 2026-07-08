@@ -47,6 +47,10 @@ Router behaviour:
 
 The raw body must be available for both signature verification and JSON decoding. Use only Plug and Jason (plus `:crypto` from OTP). No Phoenix, no Ecto. Give me all modules in a single file.
 
+## Additional interface contract
+
+- `WebhookReceiver.Store` is not just a behaviour definition: it must ALSO define public client functions with the same names and arities as its callbacks, each dispatching to the given store process (e.g. via `GenServer.call(store, ...)`), so callers can invoke e.g. `WebhookReceiver.Store.get_event(store, event_id)` directly on the module.
+
 ## Module under test
 
 ```elixir

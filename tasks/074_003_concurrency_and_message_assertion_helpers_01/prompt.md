@@ -11,3 +11,9 @@ I need these macros:
 All three must be macros (not plain functions) so that ExUnit can report the correct file and line number on failure. Use `ExUnit.Assertions.flunk/1` for surfacing failure messages. The module should be a single file with no external dependencies beyond `ExUnit`.
 
 Give me the complete module in a single file.
+
+## Additional interface contract
+
+- In addition to the three macros, define a plain runtime FUNCTION `next_message(expected, timeout_ms)`: it waits up to `timeout_ms` for the next message in the calling process's mailbox and consumes it; it returns `:ok` when the message equals `expected`. On a non-matching message it must flunk with a failure message that includes both the expected and the received term; when no message arrives in time it must flunk with a failure message containing the phrase "timed out" and the `timeout_ms` value.
+- Similarly define a plain runtime FUNCTION `no_message(timeout_ms)` mirroring `assert_no_message`: it returns `:ok` when no message arrives within `timeout_ms`; if a message does arrive it must flunk with a failure message that includes the received message (as rendered by `inspect/1`).
+- Similarly define a plain runtime FUNCTION `process_exits(pid, timeout_ms)` mirroring `assert_process_exits`: it returns `:ok` when the process terminates within `timeout_ms` (an already-dead process counts as terminated), and on timeout it must flunk with a failure message that includes the phrase "did not terminate", the pid (as rendered by `inspect/1`), and whether the process is still alive (the boolean, e.g. `true`).

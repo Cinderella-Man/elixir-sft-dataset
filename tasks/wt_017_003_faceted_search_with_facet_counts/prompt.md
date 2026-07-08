@@ -68,6 +68,10 @@ Each item in `data` is `%{id, name, category, price, tags}` where `price` is a t
 - Pure Elixir, standard library only. No Ecto/Decimal/Phoenix.
 - Facet counts must be computed by excluding exactly the corresponding facet's own filter and no other.
 
+## Additional interface contract
+
+- `search/2`'s params argument is optional: `search(products)` must behave exactly like `search(products, %{})` (declare the second parameter with a `\\ %{}` default).
+
 ## Module under test
 
 ```elixir

@@ -59,6 +59,43 @@ defmodule GenTask.OpusTest do
       assert {:usage_limit, _meta} = Opus.classify(out, 1)
     end
 
+    test "out-of-credits wording is a usage limit, not a refusal" do
+      for msg <- [
+            "You are out of credits.",
+            "Credit balance is too low to run this request",
+            "insufficient credits remaining"
+          ] do
+        out = json(%{"is_error" => true, "subtype" => "error", "result" => msg})
+        assert {:usage_limit, _meta} = Opus.classify(out, 1), "expected usage_limit for: #{msg}"
+      end
+    end
+
+    test "call/3 with usage_max_wait_ms 0 (default) retries until tokens return" do
+      logs = Path.join(System.tmp_dir!(), "opus_test_#{System.unique_integer([:positive])}")
+      {:ok, counter} = Agent.start_link(fn -> 0 end)
+
+      # Fail with out-of-credits 30 times (past the old 6h-cap equivalent for
+      # these wait settings), then succeed — the unlimited default must ride it out.
+      runner = fn _sys, _user, _cfg ->
+        n = Agent.get_and_update(counter, &{&1 + 1, &1 + 1})
+
+        if n <= 30 do
+          {json(%{"is_error" => true, "result" => "out of credits"}), 1}
+        else
+          {json(%{"is_error" => false, "result" => "recovered"}), 0}
+        end
+      end
+
+      cfg = %GenTask.Config{
+        opus_runner: runner,
+        usage_wait_ms: 1,
+        usage_max_wait_ms: 0,
+        logs_dir: logs
+      }
+
+      assert {:ok, "recovered", _meta} = Opus.call("sys", "user", cfg)
+    end
+
     test "call/3 gives up once the cumulative usage-wait cap is exceeded" do
       logs = Path.join(System.tmp_dir!(), "opus_test_#{System.unique_integer([:positive])}")
 

@@ -53,6 +53,11 @@ override.
 Use only the Elixir standard library and assume `Repo` is available as
 `MyApp.Repo`. Deliver everything in a single file.
 
+## Additional interface contract
+
+- The struct modules `MyApp.User` and `MyApp.Post` (with exactly the fields listed above) are provided by the test environment, just like `MyApp.Repo` — do NOT define `MyApp.User`, `MyApp.Post`, or `MyApp.Repo` in your file. Reference them (build with `struct/2`/`struct!/2`) and use `@compile {:no_warn_undefined, ...}` as needed so your single file compiles warning-free on its own.
+- Define `Factory.start/0`: it starts the named `Agent` that backs the sequence counters and returns that `Agent.start_link/2` result. The test suite calls `Factory.start()` once (in `setup_all`) before using any other factory function.
+
 ## Module under test
 
 ```elixir

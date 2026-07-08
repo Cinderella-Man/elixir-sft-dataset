@@ -400,6 +400,70 @@ user before committing). Verified: `mix test` → 168 passed; full-corpus defaul
   it does NOT prove the harness asserts everything the prompt states (the
   under-testing direction is still only covered by mutation gates).
 
+### 5.10 R12a prompt backfills (IN PROGRESS, interrupted) + out-of-tokens hardening (2026-07-08)
+
+**R12a state.** "Additional interface contract" sections were added (uncommitted) to the
+11 undisclosed-helper-API / harness-collaborator prompts — 016_002/3/4, 017_003,
+024_002/3/4, 071_002/3/4, 074_003 — parent `_01` AND `wt_` copies (22 prompt.md files;
+no FIM/tfim embeds affected — verified by the R12a session via grep). The sha-keyed
+re-screen (`logs/rescreen_r12a.log`) was INTERRUPTED by token exhaustion after 6/11:
+- **GREEN (backfill worked, de-quarantined): 016_002, 016_003, 016_004, 017_003.**
+- The remaining 5 were re-screened after the hardening below (`logs/rescreen_r12a2.log`,
+  all 5 RED) and triaged with a second round of prompt fixes:
+  - **024_002/3/4 — KEEP, solver-weak (prompts fine).** All three fail identically
+    post-backfill (`KeyError :secret|:providers not found in: []`): the blind solver
+    falls into the Plug.Router init-opts→dispatch threading trap (route bodies see
+    dispatch's `[]`, not the opts given to `init/1`). The prompts fully document the
+    option lists and the harness uses the standard `Router.call(conn, Router.init(opts))`
+    contract — everything is entailed; passing needs the `builder_opts()`/`call/2`-
+    override idiom. Same hard-task class as the R12e regex-sigil cluster.
+  - **071_002/3/4 — prompt gap FOUND and fixed.** The harness `setup_all` calls
+    `Factory.start()`; the gold defines it (named Agent for sequence counters) but the
+    variation prompts never mention it — the base 071_001 prompt DOES ("started once
+    (e.g., in `Factory.start/0` …)"), so the variation template dropped it. Every blind
+    solve died in `setup_all` (`{:invalid, %ExUnit.TestModule{…}}`). Added a
+    `Factory.start/0` bullet to the interface-contract section (3 parents + 3 wt_).
+  - **074_003 — TWO stacked prompt gaps found and fixed.** The harness requires plain
+    runtime variants of ALL three macros; the prompt (even with the first backfill's
+    `next_message/2` bullet) disclosed neither `process_exits/2`'s pinned failure
+    phrases (`"did not terminate"` + `inspect(pid)` + liveness boolean — the prompt only
+    said "show the pid, whether it is still alive, and how long it waited", which the
+    blind candidate did and still failed) nor `no_message/1` at all (surfaced by the
+    NEXT re-screen once the first fix unblocked it). Both bullets added (parent + wt_).
+    Lesson for R12a: enumerate EVERY undisclosed symbol the harness references in one
+    pass (`grep AssertHelpers\.` etc.) instead of peeling one gap per $0.19 re-screen.
+  Re-screen results (`logs/rescreen_r12a3.log`, `_r12a4.log`): **071_002, 071_003,
+  071_004, 074_003 all GREEN — de-quarantined.** Families re-validated ALL PERFECT
+  after every prompt edit.
+**R12a CLOSED**: all 11 bucket tasks resolved — 8 de-quarantined via prompt backfills
+(016_002/3/4, 017_003, 071_002/3/4, 074_003), 3 triaged-keep as legitimately hard
+(024_002/3/4, Plug.Router opts-threading — prompts entail everything). Quarantine:
+97 (post-R12e) − 8 greens = **89 red in the ledger, of which 024×3 + the R12e keeps
+are documented triaged-keep residue**. Remaining fronts: R12b (13 internal-state
+harness rewrites), R12c (Phoenix family decision), R12d (~53 behavioral triage).
+- Screen script upgrade: blind candidates are now SAVED to
+  `logs/screen_candidates/<task>__<sha8>.ex` (they used to be deleted after grading,
+  leaving only a 200-char failure snippet — today's triage had to re-derive failures
+  inferentially).
+
+**Out-of-tokens hardening (the interruption's root cause, now fixed).** The transport's
+15-min usage-wait loop worked as designed (7 attempts logged riding out the window), but
+the sweep ran as a foreground child of an interactive session that itself ran out of
+tokens and was dropped — killing the sweep mid-wait. Changes:
+- `Opus` `@usage_re` now also matches credit-exhaustion wording (`out of credits`,
+  `credit balance`, `insufficient credits`) so it can never route to `{:refusal, …}`.
+- `GEN_USAGE_MAX_WAIT_MS` default changed **6 h → 0 = unlimited**: running out of tokens
+  is a normal condition; the call retries every 15 min until the 5-hour window resets,
+  however long that takes (set > 0 to restore a fail-fast cap). Wait warnings now include
+  cumulative minutes waited. docs/04 §11 + env table updated.
+- `screen_blind_solve.exs`: if a capped run DOES exhaust (`{:usage_limit, :exhausted}`),
+  the sweep stops cleanly with a resume hint instead of churning every remaining task
+  through its own multi-hour wait.
+- **New `scripts/run_detached.sh <logfile> <cmd…>`** (setsid + nohup): launch ALL
+  LLM sweeps through it so they survive the launching session being dropped — this, not
+  the wait loop, was the actual failure. Tests: 2 new in `opus_test.exs` (credit wording;
+  unlimited-wait rides out 30 consecutive limit replies). `mix test`: 190 passed.
+
 ---
 
 ## 6. Remaining work — step-by-step plan (R1–R12)
@@ -746,7 +810,8 @@ strategies and cascade profiles. Work bucket-by-bucket; the sha-keyed ledger
 auto-re-screens any task whose prompt changes (each re-screen ≈ one opus call,
 ~$0.19 average).
 
-**R12a. Deterministic prompt-side backfills (cheapest, ~20 tasks).**
+**R12a. Deterministic prompt-side backfills. ✅ DONE 2026-07-08 — see §5.10:
+8 de-quarantined via prompt backfills, 3 triaged-keep (024 family, solver-weak).**
 - Undisclosed helper-API surface (8): the harness calls functions/arities the prompt
   never states (`CursorPaginator.paginate/1`, `WebhookReceiver.Store.get_event/2`,
   `AssertHelpers.next_message/2`, …). Fix: add the exact function signatures the
@@ -794,13 +859,29 @@ Recurring sub-patterns to rule on once, not 53 times: which-exception-class
 field asserts (086_001/2 `cart.items == %{}`), exact failure-message text
 (074_001/4), URL-encoding flavor (100_001).
 
-**R12e. Cheap re-screens (solver-slip candidates, ~11 tasks).**
-The 10 non-Phoenix compile failures (025_003, 036_002, 074_002, 075_004, 077_004,
-101_001, 110_002, 134_001/2, 005_001 if not Phoenix) + 061_001 (eval crash) may be
-one-shot solver noise. `--rescreen --only "<names>"` before investing triage time;
-twice-red = real. Note 101_001 + 110_002 failed the SAME way (function capture in a
-struct default → not escapable at compile time) — if the prompts show a
-clock-in-struct-default pattern, that's a prompt bug, not noise.
+**R12e. Cheap re-screens (solver-slip candidates). ✅ DONE 2026-07-08.**
+Re-screened the 10 non-Phoenix compile failures + 061_001 with
+`--rescreen --only …` (11 opus calls; log: `logs/rescreen_r12e.log`). Quarantine
+101 → 97. Verdicts:
+- **4 flipped GREEN** (one-shot solver slips, no longer quarantined): 005_001,
+  075_004, 077_004, 110_002. The clock-in-struct-default hypothesis was checked
+  first: both prompts describe the fn default as a start_link OPTION, so it was
+  solver error, and indeed 110_002 passed on retry.
+- **3 twice-RED, regex-sigil traps — solver-weak, prompts fine, KEEP**: 036_002
+  (`~r/^(#{1,6})…/` — `#{}` interpolates in `~r//`), 134_001 + 134_002 (both wrote
+  `~r{^\d{2}/\d{2}/\d{4}$}` — `{}` sigil delimiters do NOT nest braces, verified
+  locally: quantifier `{2}` terminates the sigil → syntax error). A hard-task
+  cluster, not a prompt defect.
+- **1 twice-RED, solver-weak, KEEP**: 061_001 — prompt.md:10-11 explicitly requires
+  crash → `{:error, reason}`; the blind solution let the exception propagate. The
+  first run's eval crash did NOT recur (no new erl_crash.dump; old one deleted).
+- **3 twice-RED with sharper diagnoses → R12d**: 025_003 (candidate `Map.put` on a
+  keyword opts list — opts-shape convention), 074_002 (harness demands failure
+  message contain "index 1", candidate printed "indexes 1 and 2" — the
+  exact-message-text class), 101_001 (prompt defines window `[now - window_ms, now]`
+  and says discard buckets "entirely before the window" ⇒ partially-overlapping
+  buckets count, but the test expects an edge event NOT to count — genuine
+  boundary-semantics ambiguity, one-sentence prompt fix candidate).
 
 - Acceptance: quarantine shrinks to a documented residue of triaged-keep tasks
   (prompt entails the assertion; task is legitimately hard), recorded in a committed
@@ -861,3 +942,14 @@ elixir scripts/validate.exs --fim                     # 830 FIM dirs (~10 min)
 jq -r .task logs/flaky.jsonl | sort | uniq -c         # flake repeat offenders
 mix run scripts/screen_blind_solve.exs --report       # blind-screen quarantine, no calls
 ```
+
+### Launching LLM sweeps (screen/generate) — ALWAYS detach
+Token allowance runs out routinely; the transport rides it out by sleeping 15 min per
+attempt, indefinitely (`GEN_USAGE_MAX_WAIT_MS=0` default). That only helps if the sweep
+survives its launching session — run every LLM-calling sweep through the detacher:
+```bash
+scripts/run_detached.sh logs/<name>.log mix run scripts/screen_blind_solve.exs [flags]
+tail -f logs/<name>.log                               # follow progress
+```
+Both the screen ledger (sha-keyed) and the generation loop (work registry) resume for
+free after any kill — re-running the same command is always safe.
