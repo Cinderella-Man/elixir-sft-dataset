@@ -70,6 +70,22 @@ cond do
 
     IO.puts("caps: fim_max=#{cfg.fim_max_per_task} tfim_max=#{cfg.tfim_max_per_task}")
 
+    case Work.vacuous_blocked(cfg) do
+      [] ->
+        :ok
+
+      blocked ->
+        IO.puts(
+          "\nBLOCKED (vacuous seed harness — wt_/tfim_ derivation withheld until " <>
+            "test_harness.exs is fixed):"
+        )
+
+        for %{seed: seed, pending: pending} <- blocked do
+          detail = Enum.map_join(pending, ", ", fn {k, n} -> "#{k}: #{n}" end)
+          IO.puts("  #{seed.task_id}  →  #{detail}")
+        end
+    end
+
     if "--pending" in System.argv() do
       IO.puts("\n-- per-seed pending work --")
 

@@ -147,7 +147,7 @@ defmodule GenTask.CLI do
       name = Map.get(names, seed.num, humanize(slug_of(seed.task_id)))
       IO.puts("#{tag} #{seed.task_id} (backfill) ...")
 
-      if files, do: warn_if_vacuous_seed(cfg, seed, files)
+      vacuous? = files != nil and vacuous_seed?(cfg, seed, files)
 
       variation_seeds =
         if seed.needs_variations? and files do
@@ -182,12 +182,18 @@ defmodule GenTask.CLI do
       # Derived-stage works run for fresh variations unconditionally, but the
       # self-seed only when the registry says something is missing — a gradable-skip
       # (Postgres) seed has 0 missing for every derived work and must not re-attempt
-      # un-mintable derivatives (BACKFILL Finding A).
+      # un-mintable derivatives (BACKFILL Finding A) — and only when its own harness
+      # is NOT vacuous: wt_/tfim_ promote that harness (or its blocks) as GOLD
+      # completions, so a harness that can't kill a raise-mutant must never become
+      # a training label (docs/10 R3). FIM is not gated here — gate_fim already
+      # rejects per-candidate against the same weakness.
       self_derive =
-        if self_seed != nil and Enum.any?(Work.derived(cfg), &(&1.missing.(seed, cfg) > 0)),
-          do: [self_seed],
-          else: []
+        if self_seed != nil and not vacuous? and
+             Enum.any?(Work.derived(cfg), &(&1.missing.(seed, cfg) > 0)),
+           do: [self_seed],
+           else: []
 
+      if vacuous? and self_seed != nil, do: skip_derived_works(cfg, seed)
       run_derived_works(cfg, self_derive ++ variation_seeds)
     rescue
       e ->
@@ -196,46 +202,83 @@ defmodule GenTask.CLI do
     end
   end
 
-  # A backfill seed is taken as-is (§4): its own harness is never a blocker, but if it
-  # can't kill a raise-mutant we log a warning — a vacuous seed harness is a smell even
-  # though we still derive from it.
-  defp warn_if_vacuous_seed(cfg, seed, files) do
-    # The verdict is deterministic for fixed content (fixed eval seed, immutable
-    # tasks), and the check costs one eval subprocess per public function — cache it
-    # keyed by content hash so each seed pays once, not on every backfill run.
+  # Whether a backfill seed's own harness is VACUOUS (fails the per-function
+  # raise-mutant self-check). A vacuous seed blocks `wt_`/`tfim_` derivation — those
+  # works promote the harness (or its blocks) as gold completions. Fixing
+  # `test_harness.exs` changes the content hash, so the next run re-checks and
+  # unblocks automatically.
+  #
+  # The verdict is deterministic for fixed content (fixed eval seed, immutable
+  # tasks), and the check costs one eval subprocess per public function — it is
+  # cached in `logs/seed_verdicts.jsonl` keyed by content hash so each seed pays
+  # once, not on every backfill run. A crashed self-check returns `false` (derive) —
+  # an infra failure must not silently freeze corpus growth; it is logged.
+  # Public (@doc false) so the gate decision is unit-testable via a seeded cache.
+  @doc false
+  @spec vacuous_seed?(Config.t(), %{:task_id => String.t(), optional(any()) => any()}, map()) ::
+          boolean()
+  def vacuous_seed?(cfg, seed, files) do
     sha = CycleLog.content_sha(files["solution.ex"] <> (files["test_harness.exs"] || ""))
 
-    case CycleLog.cached_seed_verdict(cfg, seed.task_id, sha) do
-      {:ok, verdict} ->
-        emit_seed_verdict(seed, verdict)
+    verdict =
+      case CycleLog.cached_seed_verdict(cfg, seed.task_id, sha) do
+        {:ok, verdict} ->
+          verdict
 
-      :miss ->
-        mutant_dir = Path.join(cfg.staging_dir, seed.task_id <> "_seedmut")
+        :miss ->
+          mutant_dir = Path.join(cfg.staging_dir, seed.task_id <> "_seedmut")
 
-        verdict =
-          case Mutation.gate_base(mutant_dir, files, cfg) do
-            {:survived, why} -> %{"vacuous" => true, "why" => why}
-            :killed -> %{"vacuous" => false}
-          end
+          verdict =
+            case Mutation.gate_base(mutant_dir, files, cfg) do
+              {:survived, why} -> %{"vacuous" => true, "why" => why}
+              :killed -> %{"vacuous" => false}
+            end
 
-        CycleLog.record_seed_verdict(cfg, seed.task_id, sha, verdict)
-        emit_seed_verdict(seed, verdict)
-    end
+          CycleLog.record_seed_verdict(cfg, seed.task_id, sha, verdict)
+          verdict
+      end
+
+    emit_seed_verdict(seed, verdict)
+    verdict["vacuous"] == true
   rescue
     e ->
       Logger.warning(
         "backfill seed #{seed.task_id}: mutation self-check failed: #{Exception.message(e)}"
       )
+
+      false
   end
 
   defp emit_seed_verdict(seed, %{"vacuous" => true, "why" => why}) do
     Logger.warning(
       "backfill seed #{seed.task_id}: its own harness does NOT kill a mutant " <>
-        "(#{why}) — deriving anyway"
+        "(#{why}) — BLOCKING wt_/tfim_ derivation until test_harness.exs is fixed " <>
+        "(verdict cached in logs/seed_verdicts.jsonl; the content hash re-checks on change)"
     )
   end
 
   defp emit_seed_verdict(_seed, _verdict), do: :ok
+
+  # Print + record one SKIPPED outcome per derived work type still missing for a
+  # vacuous seed, so `logs/runs.jsonl` and the console carry the blockage instead of
+  # silently doing nothing (work_status.exs also surfaces it corpus-wide).
+  defp skip_derived_works(cfg, seed) do
+    for work <- Work.derived(cfg), work.missing.(seed, cfg) > 0 do
+      out =
+        GenTask.Cycle.outcome(
+          id: seed.task_id,
+          kind: work.key,
+          num: seed.num,
+          status: :skipped,
+          attempts: 0,
+          reason: "vacuous seed harness — fix test_harness.exs (see logs/seed_verdicts.jsonl)"
+        )
+
+      record_and_print(cfg, "     ", out, nil)
+    end
+
+    :ok
+  end
 
   # ------------------------------------------------------------------
   # Derivative drivers

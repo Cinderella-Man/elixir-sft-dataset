@@ -148,6 +148,41 @@ defmodule GenTask.Work do
     end
   end
 
+  @doc """
+  Seeds whose CURRENT harness content carries a cached VACUOUS self-check verdict
+  (`logs/seed_verdicts.jsonl`) **and** still have `wt_`/`tfim_` units missing — i.e.
+  derivation the backfill executor is withholding (docs/10 R3). Read-only; keyed by
+  content hash, so a fixed harness drops off this list on the next run.
+  """
+  @spec vacuous_blocked(Config.t()) :: [
+          %{seed: Catalog.Seed.t(), pending: %{atom() => pos_integer()}}
+        ]
+  def vacuous_blocked(%Config{} = cfg) do
+    gated = for w <- all(), w.stage == :derived, do: w
+
+    for seed <- Catalog.all_seeds(cfg),
+        not seed.skip?,
+        pending = for(w <- gated, n = w.missing.(seed, cfg), n > 0, into: %{}, do: {w.key, n}),
+        pending != %{},
+        cached_vacuous?(cfg, seed) do
+      %{seed: seed, pending: pending}
+    end
+  end
+
+  defp cached_vacuous?(cfg, seed) do
+    sol = File.read(Path.join(seed.dir, "solution.ex"))
+    har = File.read(Path.join(seed.dir, "test_harness.exs"))
+
+    with {:ok, sol_body} <- sol,
+         {:ok, har_body} <- har,
+         sha = GenTask.CycleLog.content_sha(sol_body <> har_body),
+         {:ok, verdict} <- GenTask.CycleLog.cached_seed_verdict(cfg, seed.task_id, sha) do
+      verdict["vacuous"] == true
+    else
+      _ -> false
+    end
+  end
+
   # A seed counts as "applicable and complete" when the work type could apply to it
   # (not structurally excluded) and nothing is missing. Structural exclusions:
   # variations apply only to bases; fim/wtest/tfim never apply to gradable-skip seeds.

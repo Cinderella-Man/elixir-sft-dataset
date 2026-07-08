@@ -452,18 +452,28 @@ contradicts gold. ✅ DONE 2026-07-08.**
   `wt_131_004_*/prompt.md` (grep confirmed no FIM/tfim child embeds it). Family
   verified: `validate --only "*131_004*"` and `--mutants --only "*131_004*"` green.
 
-### R3. Stop deriving `wt_`/`tfim_` from vacuous seeds (audit gen-loop 3.4)
-- Today `lib/gen_task/cli.ex:194-233` (`warn_if_vacuous_seed`) warns and DERIVES ANYWAY;
-  a known-vacuous seed harness becomes the gold completion of a `wt_` task.
-- Change: make the cached verdict (`logs/seed_verdicts.jsonl`) a GATE for the
-  `:write_test` and `:test_fim` work types — skip minting, record
-  `{status: :skipped, reason: "vacuous seed"}` in the ledger so `work_status.exs`
-  shows it (rows come from `GenTask.Work` — see docs/09 §12).
-- NOTE: the 2026-07-08 `--mutants` sweep proved NO current wt_ gold harness is
-  whole-solution-vacuous, so this gate protects FUTURE derivation only — do it, but
-  it is no longer the emergency the audit thought.
-- Acceptance: unit test in `test/gen_task/` with a fake vacuous verdict; `mix run
-  scripts/work_status.exs` shows the skip.
+### R3. Stop deriving `wt_`/`tfim_` from vacuous seeds ✅ DONE 2026-07-08
+- `warn_if_vacuous_seed` became `GenTask.CLI.vacuous_seed?/3` (public `@doc false`,
+  cache-seeded unit-testable): the cached per-fn raise-mutant verdict
+  (`logs/seed_verdicts.jsonl`, content-hash keyed) now GATES the `:derived`-stage
+  works — a vacuous backfill seed is excluded from `run_derived_works`, and one
+  `SKIPPED (vacuous seed harness — fix test_harness.exs …)` outcome per withheld
+  work type is printed and recorded to `logs/runs.jsonl` (`skip_derived_works/2`).
+  FIM is deliberately NOT gated here (gate_fim rejects per candidate). A crashed
+  self-check derives + logs (infra failures must not freeze corpus growth). Fixing
+  the harness changes the hash → next run re-checks and unblocks automatically.
+- `GenTask.Work.vacuous_blocked/1` + a `BLOCKED (vacuous seed harness …)` section in
+  `scripts/work_status.exs` surface withheld seeds corpus-wide, so the
+  status → generate → status loop stays explainable (blocked ≠ silently pending).
+- Tests: `test/gen_task/cli_vacuous_seed_test.exs` (4 tests: cached vacuous blocks,
+  cached clean derives, content-key invalidation, no cross-task leakage).
+  End-to-end verified with a PLANTED vacuous verdict for
+  `001_003_hierarchical_limiter_01`: work_status showed the BLOCKED row
+  (`test_fim: 1`), a `GEN_DRY_RUN=1 GEN_ONLY=backfill GEN_LIMIT=1` run logged the
+  blocking warning and emitted exactly one SKIPPED outcome (write_test had 0
+  missing → correctly no skip line), ledgers restored from backup afterwards.
+- NOTE: zero vacuous verdicts exist in today's ledger and the `--mutants` sweep was
+  clean, so nothing is currently blocked — this gate protects FUTURE derivation.
 
 ### R4. Blind re-solve screen — the prompt↔harness consistency check **[decision: LLM budget]**
 The highest-leverage remaining item (§1.1, §1.2). Two parts:
