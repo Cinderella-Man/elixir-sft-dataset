@@ -85,6 +85,11 @@ Use the app name `soft_crud` with module prefix `SoftCrud`. Organize the code as
 
 Use only standard Phoenix/Ecto dependencies. Give me all the files needed for a working application.
 
+## Additional interface contract
+
+- Use exactly these module names: router `SoftCrudWeb.Router`, context `SoftCrud.Documents` (with `create_document/1` and `soft_delete_document/1` returning `{:ok, doc}`), repo `SoftCrud.Repo`. The repo itself is provided (already configured and started) by the test environment. The tests dispatch requests straight to `SoftCrudWeb.Router` with `Plug.Test` (no endpoint in front).
+- Successful creation returns **201** with the document JSON.
+
 ## Module under test
 
 ```elixir
@@ -241,7 +246,9 @@ defmodule SoftCrudWeb.DocumentController do
 
   def create(conn, %{"document" => document_params}) do
     with {:ok, %Document{} = document} <- Documents.create_document(document_params) do
-      render(conn, :show, document: document)
+      conn
+      |> put_status(:created)
+      |> render(:show, document: document)
     end
   end
 

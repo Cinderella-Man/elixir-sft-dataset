@@ -357,8 +357,22 @@ defmodule StreamingPercentileTest do
     # max remained 10, so length caps at 10 as we add more
     assert length(w3) == 9
 
-    state = :sys.get_state(s)
-    assert state.streams["a"].max_window_size == 10
+    # max_window_size is internal and deliberately not inspected. Verify it
+    # through the documented window/2 API instead: with the retention bound
+    # still at 10, further pushes with a smaller requested window keep growing
+    # the window up to exactly 10 and then cap there (it would cap at 2 if the
+    # bound had shrunk).
+    StreamingPercentile.push(s, "a", 12, 2)
+    StreamingPercentile.push(s, "a", 13, 2)
+
+    {:ok, w4} = StreamingPercentile.window(s, "a")
+    assert length(w4) == 10
+
+    StreamingPercentile.push(s, "a", 14, 2)
+
+    {:ok, w5} = StreamingPercentile.window(s, "a")
+    assert w5 == Enum.map(5..14, &(&1 * 1.0))
+    assert Process.alive?(s)
   end
 
   # -------------------------------------------------------

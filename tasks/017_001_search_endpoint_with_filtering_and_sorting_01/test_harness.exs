@@ -1,14 +1,35 @@
 defmodule MyAppWeb.ProductControllerTest do
-  use MyAppWeb.ConnCase, async: true
+  use ExUnit.Case, async: true
+
+  import Plug.Test
 
   alias MyApp.Repo
   alias MyApp.Products.Product
+
+  # Plug.Test replacements for the Phoenix.ConnTest conveniences this suite
+  # used to get from ConnCase: requests are dispatched straight to
+  # MyAppWeb.Router, so no Endpoint/ConnCase scaffolding is involved.
+  defp sigil_p(path, _modifiers), do: path
+
+  defp get(_conn, path, params \\ %{}) do
+    :get
+    |> conn(path, params)
+    |> Plug.Conn.fetch_query_params()
+    |> MyAppWeb.Router.call(MyAppWeb.Router.init([]))
+  end
+
+  defp json_response(conn, status) do
+    assert conn.status == status
+    Jason.decode!(conn.resp_body)
+  end
 
   # -------------------------------------------------------
   # Seed data
   # -------------------------------------------------------
 
   setup do
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
+
     products =
       [
         %{name: "Running Shoes", category: "footwear", price: Decimal.new("89.99")},
@@ -26,7 +47,7 @@ defmodule MyAppWeb.ProductControllerTest do
         |> Repo.insert!()
       end)
 
-    %{products: products}
+    %{products: products, conn: conn(:get, "/")}
   end
 
   # -------------------------------------------------------

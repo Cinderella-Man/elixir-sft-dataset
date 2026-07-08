@@ -42,6 +42,20 @@ The raw body must be read and kept available for both signature verification and
 
 Use only Plug and Jason as dependencies (plus :crypto from OTP). No Phoenix, no Ecto, no database drivers. Give me all modules in a single file.
 
+## Additional interface contract
+
+- The `:store` option's value is the **pid** of an already-started store
+  process, not a module name: callers do
+  `{:ok, store} = WebhookReceiver.MemoryStore.start_link([])` and then invoke
+  the router directly via
+  `WebhookReceiver.Router.init(secret: secret, store: store)` followed by
+  `WebhookReceiver.Router.call(conn, init_result)`. `init/1` must therefore
+  carry the options through to `call/2` (e.g.
+  `use Plug.Router, copy_opts_to_assign: :webhook_opts`), and the router
+  passes that pid as the first argument of every `WebhookReceiver.Store` call.
+
+- `WebhookReceiver.Store` is not just a behaviour definition: it must ALSO define public client functions with the same names and arities as its callbacks, each dispatching to the given store process (e.g. via `GenServer.call(store, ...)`), so callers can invoke e.g. `WebhookReceiver.Store.get_event(store, event_id)` directly on the module.
+
 ## Module under test
 
 ```elixir

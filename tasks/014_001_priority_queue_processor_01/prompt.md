@@ -12,7 +12,7 @@ I need these functions in the public API:
 
 The priority ordering is `:high` > `:normal` > `:low`. The GenServer must always pick the highest priority task available next. Within the same priority level, tasks must be processed in FIFO order (the order they were enqueued).
 
-Processing should happen via internal message passing — when a task is enqueued and the processor is idle, the GenServer sends itself a `:process_next` message. When a task finishes processing, if more tasks remain, it sends itself another `:process_next` message. The processor function is called synchronously inside the GenServer's `handle_info` for `:process_next`.
+Processing should happen via internal message passing — when a task is enqueued and the processor is idle, the GenServer sends itself a `:process_next` message. When a task finishes processing, if more tasks remain, it sends itself another `:process_next` message. The `handle_info` for `:process_next` dequeues the highest-priority task and runs the processor function in a separate spawned, monitored process (e.g. via `spawn_monitor/1`) — never inline in the GenServer loop — so that `enqueue`, `status`, and `drain` calls remain responsive even while a long-running or blocking task is being processed; when the spawned process finishes, the GenServer records the result and moves on.
 
 Each processed task's result should be stored internally so tests can retrieve the processing history. Provide `PriorityQueue.processed(server)` which returns a list of `{task, result}` tuples in the order tasks were processed.
 

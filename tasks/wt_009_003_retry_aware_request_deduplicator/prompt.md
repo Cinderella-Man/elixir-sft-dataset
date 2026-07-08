@@ -42,6 +42,14 @@ The GenServer must not execute `func` inside `handle_call` — always spawn a Ta
 
 Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
 
+## Additional interface contract
+
+- `status/2` also returns `:idle` during the initial attempt: while `func` is
+  running for the first time and no retry has been scheduled yet, the key's
+  status is `:idle` — indistinguishable from an unknown key.
+  `{:retrying, attempt, max_retries}` appears only once at least one retry has
+  been scheduled.
+
 ## Module under test
 
 ```elixir

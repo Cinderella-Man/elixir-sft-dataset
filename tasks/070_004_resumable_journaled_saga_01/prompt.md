@@ -22,3 +22,7 @@ Resume semantics:
 - An empty journal makes `resume/3` behave exactly like `execute/2`.
 
 Other behaviours: steps run strictly in order; each action/compensation sees the accumulated context; a raising compensating function must not abort the remaining compensations (catch and record it). Plain module with a struct — no GenServer, no processes, no external dependencies. Give me the complete implementation in a single file.
+
+## Additional interface contract
+
+- When a compensating function raises, the value recorded for that step (in `compensation_results` and in its `{:compensated, name, value}` journal event) is `{:exception, exception, stacktrace}` — a 3-tuple carrying the raised exception struct and the stacktrace it was caught with.

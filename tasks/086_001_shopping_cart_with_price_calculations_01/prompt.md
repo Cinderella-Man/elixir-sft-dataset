@@ -14,3 +14,7 @@ I need these functions in the public API:
 The discount rule is: if a single line item has a quantity of 10 or more, that item gets a 10% discount applied to its unit price before computing the line total. Items with quantity below 10 receive no discount.
 
 The `Cart` struct must be a pure data structure with no database, no GenServer, and no processes — just plain Elixir structs and functions. All monetary values are floats. Give me the complete module in a single file with no external dependencies.
+
+## Additional interface contract
+
+- The cart returned by `Cart.new/1` is a struct with public fields `:tax_rate` and `:items`: `:tax_rate` holds the configured tax rate (`0.0` by default), and `:items` is a map keyed by product id that is `%{}` for a new, empty cart.

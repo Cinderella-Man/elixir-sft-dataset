@@ -11,3 +11,7 @@ I need these macros:
 All three must be macros (not plain functions) so that ExUnit can report the correct file and line number on failure. Use `ExUnit.Assertions.flunk/1` for surfacing failure messages. The module should be a single file with no external dependencies beyond `ExUnit` and `Ecto` (for the changeset macro).
 
 Give me the complete module in a single file.
+
+## Additional interface contract
+
+- The `assert_recent` failure message must contain the literal word "tolerance" and state the allowed tolerance value in seconds (e.g. `tolerance: 5s`). The computed difference must likewise be expressed in seconds — its numeric value and/or the word "second" must appear in the message alongside the actual datetime.

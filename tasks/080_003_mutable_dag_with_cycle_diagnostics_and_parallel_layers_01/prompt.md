@@ -11,3 +11,7 @@ I need these functions in the public API:
 - `MutableDAG.predecessors(dag, vertex)` / `MutableDAG.successors(dag, vertex)` — direct incoming / outgoing neighbours.
 
 Give me the complete module in a single file. Use only the Elixir/Erlang standard library, no external dependencies.
+
+## Additional interface contract
+
+- `add_edge(dag, from, to)` must return exactly `{:error, :vertex_not_found}` when either endpoint (`from` or `to`) has not been added as a vertex.

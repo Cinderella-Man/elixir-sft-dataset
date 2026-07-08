@@ -444,41 +444,57 @@ defmodule CacheLayerWriteThroughTest do
   # -------------------------------------------------------
 
   test "stopping the server cleans up its persistent_term registrations" do
+    # Snapshot the registry first so the test observes exactly the entries this
+    # instance creates, without assuming anything about how they are keyed.
+    before_keys = MapSet.new(:persistent_term.get(), fn {key, _} -> key end)
+
     {:ok, pid} = CacheLayer.start_link([])
 
     # Touch two tables so both get lazily created and registered.
     assert {:ok, :v1} = CacheLayer.fetch(pid, :cleanup_a, "k", fn -> :v1 end)
     assert {:ok, :v2} = CacheLayer.fetch(pid, :cleanup_b, "k", fn -> :v2 end)
 
-    # The fast read-path registrations exist while the server is alive.
-    tid_a = :persistent_term.get({CacheLayer, pid, :cleanup_a})
-    tid_b = :persistent_term.get({CacheLayer, pid, :cleanup_b})
-    assert :ets.info(tid_a) != :undefined
-    assert :ets.info(tid_b) != :undefined
-    assert :ets.lookup(tid_a, "k") == [{"k", :v1}]
+    # While the server is alive both keys are cache hits: a loader that raises
+    # proves the values are served from the cache, not reloaded.
+    boom = fn -> raise "loader must not run on a cache hit" end
+    assert {:ok, :v1} = CacheLayer.fetch(pid, :cleanup_a, "k", boom)
+    assert {:ok, :v2} = CacheLayer.fetch(pid, :cleanup_b, "k", boom)
 
-    # A clean stop must run terminate/2, which erases every registration.
+    alive_keys = MapSet.new(:persistent_term.get(), fn {key, _} -> key end)
+    created = MapSet.difference(alive_keys, before_keys)
+
+    # A clean stop must run terminate/2, which erases every registration the
+    # server made, whatever naming scheme it chose.
     :ok = GenServer.stop(pid)
 
-    assert :persistent_term.get({CacheLayer, pid, :cleanup_a}, :gone) == :gone
-    assert :persistent_term.get({CacheLayer, pid, :cleanup_b}, :gone) == :gone
+    remaining = MapSet.new(:persistent_term.get(), fn {key, _} -> key end)
+    assert MapSet.disjoint?(created, remaining)
   end
 
   test "terminate/2 runs during a supervised shutdown without crashing" do
+    before_keys = MapSet.new(:persistent_term.get(), fn {key, _} -> key end)
+
     {:ok, sup} = Supervisor.start_link([{CacheLayer, []}], strategy: :one_for_one)
     [{_id, pid, _type, _mods}] = Supervisor.which_children(sup)
 
     assert {:ok, :v} = CacheLayer.fetch(pid, :sup_tbl, "k", fn -> :v end)
-    assert :persistent_term.get({CacheLayer, pid, :sup_tbl}) |> :ets.info() != :undefined
+    # A repeat fetch is a cache hit; the raising loader proves it never runs.
+    boom = fn -> raise "loader must not run on a cache hit" end
+    assert {:ok, :v} = CacheLayer.fetch(pid, :sup_tbl, "k", boom)
+
+    alive_keys = MapSet.new(:persistent_term.get(), fn {key, _} -> key end)
+    created = MapSet.difference(alive_keys, before_keys)
 
     ref = Process.monitor(pid)
     :ok = Supervisor.stop(sup)
 
     # The child must have exited normally (a raising terminate/2 would surface
-    # here as an abnormal exit reason), and its registration must be gone.
+    # here as an abnormal exit reason), and its registrations must be gone.
     assert_receive {:DOWN, ^ref, :process, ^pid, reason}
     assert reason in [:normal, :shutdown]
-    assert :persistent_term.get({CacheLayer, pid, :sup_tbl}, :gone) == :gone
+
+    remaining = MapSet.new(:persistent_term.get(), fn {key, _} -> key end)
+    assert MapSet.disjoint?(created, remaining)
   end
 end
 ```

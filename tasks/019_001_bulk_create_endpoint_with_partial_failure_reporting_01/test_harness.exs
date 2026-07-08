@@ -1,12 +1,44 @@
 defmodule MyAppWeb.BulkItemControllerTest do
-  use MyAppWeb.ConnCase, async: true
+  use ExUnit.Case, async: true
+
+  import Plug.Test
+  import Plug.Conn
 
   alias MyApp.Repo
   alias MyApp.Catalog.Item
 
+  setup do
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
+    %{conn: conn(:get, "/")}
+  end
+
   # -------------------------------------------------------
   # Helpers
   # -------------------------------------------------------
+
+  # Plug.Test replacements for the Phoenix.ConnTest conveniences this suite
+  # used to get from ConnCase: requests are dispatched straight to
+  # MyAppWeb.Router (no Endpoint/ConnCase scaffolding); the JSON body is
+  # parsed here with Plug.Parsers exactly as the endpoint used to do.
+  defp post(conn, path, body) do
+    content_type =
+      case get_req_header(conn, "content-type") do
+        [ct | _] -> ct
+        [] -> "application/json"
+      end
+
+    :post
+    |> conn(path, body)
+    |> put_req_header("content-type", content_type)
+    |> Plug.Parsers.call(Plug.Parsers.init(parsers: [:json], json_decoder: Jason))
+    |> fetch_query_params()
+    |> MyAppWeb.Router.call(MyAppWeb.Router.init([]))
+  end
+
+  defp json_response(conn, status) do
+    assert conn.status == status
+    Jason.decode!(conn.resp_body)
+  end
 
   defp valid_attrs(overrides \\ %{}) do
     Map.merge(%{"name" => "Widget", "price" => 100, "description" => "A fine widget"}, overrides)

@@ -77,3 +77,6 @@ the DB write must both happen inside the `handle_call` callback before the reply
 
 Give me all three modules/files in a single code block or clearly separated blocks. Use only
 Ecto (plus its adapters) as the external dependency — no additional libraries.
+## Additional interface contract
+
+- The test environment provides a real, already-configured SQLite Ecto repo and injects it into your GenServer via the `repo:` option — do NOT define a repo module or any repo configuration. Your migration file must be at a `priv/repo/migrations/<name>.exs` path: it is executed against that repo before the tests run, so the schema/migration must be valid for SQLite (plain `Ecto.Migration`, no database-specific SQL).

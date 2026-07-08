@@ -39,6 +39,10 @@ Shipping rule: if the cart has **no items**, shipping is `0.0`. Otherwise, if `:
 
 The `Cart` struct must be a pure data structure — no database, no GenServer, no processes. All monetary values are floats. Give me the complete module in a single file with no external dependencies.
 
+## Additional interface contract
+
+- The cart returned by `Cart.new/1` is a struct whose configuration is exposed as public fields matching the options above — `:tax_rate`, `:discount_tiers`, `:shipping_flat`, and `:free_shipping_threshold` hold the configured (or default) values — plus an `:items` field, a map keyed by product id that is `%{}` for a new, empty cart.
+
 ## Module under test
 
 ```elixir

@@ -63,3 +63,10 @@ totals.
 
 Give me the complete module in a single file. Assume Jason and Ecto are
 available as dependencies; do not add anything else.
+
+## Additional interface contract
+
+- `:by_schema` contains an entry for EVERY schema module in the routing map,
+  including schemas that received no records — those map to
+  `%{inserted: 0, failed: 0}` (so even an empty input array yields all
+  schemas with zero counts).

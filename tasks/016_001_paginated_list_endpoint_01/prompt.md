@@ -26,3 +26,8 @@ I need the following pieces:
 `total_pages` must be computed as `ceil(total_count / page_size)`. When there are zero items, `total_pages` should be 0. When the requested page is beyond `total_pages`, return an empty `data` list but still include correct metadata.
 
 Use only standard Phoenix/Ecto — no external pagination libraries. Give me all the modules in separate files.
+## Additional interface contract
+
+- Use exactly these module names: router `PaginatedListWeb.Router`, schema `PaginatedList.Item`, repo `PaginatedList.Repo`. The repo itself is provided (already configured and started) by the test environment — do NOT define the repo module or a Phoenix endpoint. Your migration file will be run against it before the tests.
+- The schema must also have an `:updated_at` field (utc_datetime_usec): test fixtures are bulk-inserted with `Repo.insert_all(Item, entries, returning: true)` where each entry sets `:name`, `:inserted_at`, and `:updated_at`.
+- The tests dispatch requests straight to `PaginatedListWeb.Router` with `Plug.Test` (no endpoint in front), so `GET /api/items` must be servable by the router pipeline alone.

@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Pre-push gate (docs/10 R11): fast local CI.
+#
+# Install once:  git config core.hooksPath .githooks
+#
+# Runs mix test always, plus the perfect+mutant validate gates scoped to the
+# task families touched by the commits being pushed. A full-corpus sweep stays
+# a manual/nightly job (~10 min) — this hook aims for < 2 min.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+echo "[pre-push] mix compile --warnings-as-errors && mix test"
+mix compile --warnings-as-errors >/dev/null
+mix test >/dev/null
+
+# Families touched between the remote tip and HEAD (fall back to HEAD~10 when
+# the remote ref is unknown, e.g. first push of a branch).
+range="@{upstream}..HEAD"
+git rev-parse --abbrev-ref '@{upstream}' >/dev/null 2>&1 || range="HEAD~10..HEAD"
+
+families=$(git diff --name-only "$range" -- tasks/ 2>/dev/null |
+  sed -E 's#^tasks/(wt_|tfim_)?([0-9]+_[0-9]+).*#\2#' | sort -u | head -20)
+
+if [ -n "$families" ]; then
+  globs=$(echo "$families" | sed 's/.*/*&*/' | paste -sd, -)
+  echo "[pre-push] validate touched families: $globs"
+  elixir scripts/validate.exs --only "$globs" | tail -1
+  elixir scripts/validate.exs --mutants --only "$globs" | tail -1
+else
+  echo "[pre-push] no task families touched — skipping corpus gates"
+fi
+
+echo "[pre-push] OK"

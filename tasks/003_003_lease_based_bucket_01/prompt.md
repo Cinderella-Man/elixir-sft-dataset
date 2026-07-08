@@ -32,3 +32,7 @@ Give me the complete module in a single file. Use only OTP standard library, no 
 
 - Sending the server process a bare `:cleanup` message performs one cleanup
   pass immediately — the same work the periodic timer performs.
+
+- Concretely, the `lease_id` returned by `acquire_lease` must be an Erlang
+  reference created with `make_ref/0` — it must satisfy `is_reference/1`. Do
+  not use a counter formatted as a binary or integer.

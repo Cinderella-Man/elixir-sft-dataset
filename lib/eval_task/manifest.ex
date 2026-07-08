@@ -3,13 +3,14 @@ defmodule EvalTask.Manifest do
   Per-task configuration for multi-file tasks. Values are inferred from the
   harness by default; an optional `manifest.exs` in the task dir overrides them.
 
-  Fields: `:archetype` (`:phoenix_conncase | :plug_selfcontained | :pure_otp`),
+  Fields: `:archetype` (`:phoenix_conncase | :ecto_repo | :plug_selfcontained | :pure_otp`
+  — `:ecto_repo` is manifest-only, never inferred: repo + migrations boot, no web kit),
   `:prefix`, `:web_prefix`, `:otp_app`, `:db` (`:sqlite | :postgres | :fake | :none`),
   `:migrations`, `:async`.
   """
 
   @type t :: %{
-          archetype: :phoenix_conncase | :plug_selfcontained | :pure_otp,
+          archetype: :phoenix_conncase | :ecto_repo | :plug_selfcontained | :pure_otp,
           prefix: String.t() | nil,
           web_prefix: String.t() | nil,
           otp_app: atom() | nil,

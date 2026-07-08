@@ -1,11 +1,33 @@
 defmodule PaginatedListWeb.ItemControllerTest do
-  use PaginatedListWeb.ConnCase, async: true
+  use ExUnit.Case, async: true
+
+  import Plug.Test
 
   alias PaginatedList.{Repo, Item}
+
+  setup do
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
+    %{conn: conn(:get, "/")}
+  end
 
   # -------------------------------------------------------
   # Helpers
   # -------------------------------------------------------
+
+  # Plug.Test replacements for the Phoenix.ConnTest conveniences this suite
+  # used to get from ConnCase: requests are dispatched straight to
+  # PaginatedListWeb.Router, so no Endpoint/ConnCase scaffolding is involved.
+  defp get(_conn, path, params \\ %{}) do
+    :get
+    |> conn(path, params)
+    |> Plug.Conn.fetch_query_params()
+    |> PaginatedListWeb.Router.call(PaginatedListWeb.Router.init([]))
+  end
+
+  defp json_response(conn, status) do
+    assert conn.status == status
+    Jason.decode!(conn.resp_body)
+  end
 
   defp seed_items(n) do
     now = DateTime.utc_now()

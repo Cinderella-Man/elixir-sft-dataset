@@ -1,11 +1,40 @@
 defmodule SoftCrudWeb.DocumentControllerTest do
-  use SoftCrudWeb.ConnCase, async: true
+  use ExUnit.Case, async: true
+
+  import Plug.Test
 
   alias SoftCrud.Documents
+
+  setup do
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(SoftCrud.Repo)
+    %{conn: conn(:get, "/")}
+  end
 
   # -------------------------------------------------------
   # Helpers
   # -------------------------------------------------------
+
+  # Plug.Test replacements for the Phoenix.ConnTest conveniences this suite
+  # used to get from ConnCase: requests are dispatched straight to
+  # SoftCrudWeb.Router, so no Endpoint/ConnCase scaffolding is involved.
+  defp sigil_p(path, _modifiers), do: path
+
+  defp request(method, path, params) do
+    method
+    |> conn(path, params)
+    |> Plug.Conn.fetch_query_params()
+    |> SoftCrudWeb.Router.call(SoftCrudWeb.Router.init([]))
+  end
+
+  defp get(_conn, path), do: request(:get, path, %{})
+  defp post(_conn, path, params \\ %{}), do: request(:post, path, params)
+  defp put(_conn, path, params), do: request(:put, path, params)
+  defp delete(_conn, path), do: request(:delete, path, %{})
+
+  defp json_response(conn, status) do
+    assert conn.status == status
+    Jason.decode!(conn.resp_body)
+  end
 
   defp create_document(attrs \\ %{}) do
     default = %{title: "Test Doc", content: "Some content"}
@@ -32,7 +61,7 @@ defmodule SoftCrudWeb.DocumentControllerTest do
           "document" => %{"title" => "My Doc", "content" => "Hello"}
         })
 
-      data = json_data(conn)
+      data = json_response(conn, 201)["data"]
       assert data["id"]
       assert data["title"] == "My Doc"
       assert data["content"] == "Hello"
@@ -326,7 +355,7 @@ defmodule SoftCrudWeb.DocumentControllerTest do
           "document" => %{"title" => "Lifecycle", "content" => "v1"}
         })
 
-      id = json_data(conn_create)["id"]
+      id = json_response(conn_create, 201)["data"]["id"]
       assert id
 
       # 2. Read

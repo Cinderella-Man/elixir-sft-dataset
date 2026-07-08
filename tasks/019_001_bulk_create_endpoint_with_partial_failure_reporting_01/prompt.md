@@ -24,3 +24,7 @@ I need the following pieces:
 **Router:** Mount the route as `post "/api/items/bulk", BulkItemController, :create` inside an `/api` scope with the `:api` pipeline.
 
 Give me the complete modules in separate files. Use only Phoenix, Ecto, and standard library — no external dependencies. Assume a Postgres repo at `MyApp.Repo` already exists and is configured.
+## Additional interface contract
+
+- Use exactly these module names: router `MyAppWeb.Router`, schema `MyApp.Catalog.Item`, repo `MyApp.Repo`. The repo itself is provided (already configured and started) by the test environment — do NOT define the repo module or a Phoenix endpoint. Your migration file will be run against it before the tests.
+- The tests dispatch requests straight to `MyAppWeb.Router` with `Plug.Test` and parse the JSON request body with `Plug.Parsers` (no endpoint in front), so the route must be servable by the router pipeline alone.

@@ -4,7 +4,7 @@ I need a single public function:
 - `PasswordPolicy.evaluate(password, context)` which returns `{:accepted, score}` when the password clears every hard rule **and** its strength score meets the minimum, or `{:rejected, score, reasons}` where `reasons` is a list of atoms describing every reason the password was rejected (report all of them, not just the first). `score` is always the computed integer strength score, present in both the accepted and rejected results.
 
 The `context` argument is a map that drives configuration and per-user data:
-- `:username` (required) — the username the password is being set for.
+- `:username` (required) — the username the password is being set for. If the context map does not include `:username`, `evaluate/2` must raise an `ArgumentError`.
 - `:min_length` (optional, default `8`) — a *hard* minimum; shorter passwords are rejected with `:too_short` regardless of score.
 - `:min_score` (optional, default `60`) — the minimum strength score required; passwords scoring strictly below this are rejected with `:insufficient_strength`.
 - `:common_passwords` (optional, default `[]`) — a list of plaintext strings considered too common; a case-insensitive match is a hard rejection with `:common_password`.

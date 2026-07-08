@@ -51,6 +51,11 @@ Give me the complete implementation in a single file. Use only OTP and the stand
 no external dependencies. Do not use `Task.async_stream`; implement the weight-aware
 admission and scheduling logic yourself using `spawn_monitor`.
 
+## Additional interface contract
+
+- `pmap/4` validates weights: if `weight_fun` returns anything other than a positive
+  integer for some element (e.g. `0`), it raises an `ArgumentError`.
+
 ## Module under test
 
 ```elixir

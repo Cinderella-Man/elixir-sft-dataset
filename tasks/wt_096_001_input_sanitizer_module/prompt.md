@@ -22,7 +22,7 @@ I need these functions in the public API:
 - `Sanitizer.html(input, opts \\ [])` which strips all HTML tags except those in an allowlist. The default allowlist is `["b", "i", "em", "strong", "a"]`. The allowlist is configurable via an `:allow` option (e.g., `allow: ["b", "span"]`). Rules:
   - All attributes are stripped from every tag **except** `href` on `<a>` tags.
   - Any `href` value that starts with `javascript:` (case-insensitive, ignoring whitespace) must be removed entirely — replace the `<a>` with just its inner text content.
-  - Tags not in the allowlist are stripped but their inner text content is preserved.
+  - Tags not in the allowlist are stripped but their inner text content is preserved — **except** raw-content tags (`<script>`, `<style>`, `<noscript>`, `<iframe>`), whose entire inner content is dropped along with the tag (e.g. `<script>alert(1)</script>` sanitizes to `""`).
   - Return the sanitized string.
 
 - `Sanitizer.sql_identifier(input)` which ensures a string is safe for interpolation as a SQL identifier (e.g. a table or column name). Rules:

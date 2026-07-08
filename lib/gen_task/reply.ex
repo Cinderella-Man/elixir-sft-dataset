@@ -88,6 +88,28 @@ defmodule GenTask.Reply do
   end
 
   @doc """
+  Validate a multifile blind-solve reply: either a classic `solution.ex` (some
+  models still inline the bundle there) or at least one `.ex` file block
+  containing a `defmodule` (the per-file contract of `Prompts.base_solve/2`
+  with `:multifile`).
+  """
+  @spec validate_bundle_answer(files()) :: :ok | {:error, String.t()}
+  def validate_bundle_answer(files) do
+    cond do
+      Map.has_key?(files, "solution.ex") ->
+        validate_answer(files)
+
+      Enum.any?(files, fn {path, content} ->
+        String.ends_with?(path, ".ex") and String.contains?(content, "defmodule")
+      end) ->
+        :ok
+
+      true ->
+        {:error, "expected solution.ex or at least one lib/*.ex file block with a defmodule"}
+    end
+  end
+
+  @doc """
   Validate a fix reply: a non-empty subset of `{solution.ex, test_harness.exs}`
   and **no** `prompt.md` (the task statement must not drift).
   """

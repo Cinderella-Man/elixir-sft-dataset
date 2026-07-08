@@ -37,6 +37,10 @@ Failure & compensation semantics:
 
 Plain module with a struct — no GenServer, no processes, no external dependencies. Give me the complete implementation in a single file.
 
+## Additional interface contract
+
+- When a compensating function raises, the value recorded for that step in `compensation_results` is `{:exception, exception, stacktrace}` — a 3-tuple carrying the raised exception struct and the stacktrace it was caught with.
+
 ## Module under test
 
 ```elixir

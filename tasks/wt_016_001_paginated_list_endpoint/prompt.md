@@ -44,6 +44,10 @@ I need the following pieces:
 
 Use only standard Phoenix/Ecto — no external pagination libraries. Give me all the modules in separate files.
 
+## Additional interface contract
+
+- Module names: router `PaginatedListWeb.Router`, schema `PaginatedList.Item`, repo `PaginatedList.Repo` (provided, already configured and started, by the test environment). The tests dispatch requests straight to `PaginatedListWeb.Router` with `Plug.Test` (no endpoint in front); fixtures are bulk-inserted with `Repo.insert_all(Item, entries, returning: true)`.
+
 ## Module under test
 
 ```elixir

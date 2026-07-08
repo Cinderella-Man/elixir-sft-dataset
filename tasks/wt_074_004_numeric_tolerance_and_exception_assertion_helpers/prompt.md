@@ -29,6 +29,10 @@ All three must be macros (not plain functions) so that ExUnit can report the cor
 
 Give me the complete module in a single file.
 
+## Additional interface contract
+
+- In the `assert_raises_message` case where the function raises nothing at all, the failure message must contain the literal substring "no exception" (e.g. "but no exception was raised").
+
 ## Module under test
 
 ```elixir

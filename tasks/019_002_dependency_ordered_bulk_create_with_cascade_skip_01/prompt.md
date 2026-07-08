@@ -21,3 +21,10 @@ Compute per-item validity and dependency status, then:
 - **`partial: true`:** create every creatable item in dependency order; bad items are reported as errors and their transitive dependents are reported as `:skipped` (with the index of the nearest bad/skipped ancestor). Return `{:ok, results}`.
 
 Cycle detection must mark exactly the items **on** a cycle as `:cycle`; items merely downstream of a cycle are `:skipped`. Use only Elixir/OTP standard library — no external dependencies.
+
+## Additional interface contract
+
+- In a `{:validation, errors_map}` reason, `errors_map` is keyed by the
+  **string** field name (not an atom), with each value a list of
+  human-readable message strings — e.g. a blank name yields
+  `%{"name" => ["can't be blank"]}`.

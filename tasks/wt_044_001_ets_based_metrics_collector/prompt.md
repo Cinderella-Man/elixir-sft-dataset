@@ -30,6 +30,10 @@ Counters and gauges can coexist in the same table — there is no need to declar
 
 Give me the complete implementation in a single file. Use only OTP/stdlib — no external dependencies.
 
+## Additional interface contract
+
+- `Metrics.increment/2` returns `:ok`, not the counter's new value.
+
 ## Module under test
 
 ```elixir

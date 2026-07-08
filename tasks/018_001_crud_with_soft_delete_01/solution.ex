@@ -152,7 +152,9 @@ defmodule SoftCrudWeb.DocumentController do
 
   def create(conn, %{"document" => document_params}) do
     with {:ok, %Document{} = document} <- Documents.create_document(document_params) do
-      render(conn, :show, document: document)
+      conn
+      |> put_status(:created)
+      |> render(:show, document: document)
     end
   end
 

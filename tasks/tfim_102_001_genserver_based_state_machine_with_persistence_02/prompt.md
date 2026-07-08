@@ -337,100 +337,19 @@ defmodule StateMachineTest do
   use ExUnit.Case, async: false
 
   # ---------------------------------------------------------------------------
-  # Minimal in-memory Ecto repo shim for deterministic testing
+  # Real repo: the test environment provides StateMachine.Repo (SQLite),
+  # already configured, with this bundle's migration applied. Persistence,
+  # query filtering, and order_by are enforced by a real query engine.
   # ---------------------------------------------------------------------------
-  #
-  # If you wire up a real SQLite/Postgres repo in your test config, replace
-  # `TestRepo` below with your actual repo and remove the FakeRepo block.
-  #
-  # The shim below satisfies the surface area that StateMachine uses so the
-  # tests run without any database process.
-  # ---------------------------------------------------------------------------
-
-  defmodule FakeRepo do
-    @moduledoc """
-    A process-backed in-memory store that mimics the Ecto Repo API used by
-    StateMachine: `insert/1`, `all/2`, and `one/2` with basic Ecto.Query support.
-    """
-    use Agent
-
-    def start_link(_opts \\ []) do
-      Agent.start_link(fn -> [] end, name: __MODULE__)
-    end
-
-    # Inserts a struct that has an Ecto schema (EntityTransition)
-    def insert(changeset_or_struct) do
-      record =
-        case changeset_or_struct do
-          %Ecto.Changeset{} = cs -> Ecto.Changeset.apply_changes(cs)
-          struct -> struct
-        end
-
-      record = %{record | id: System.unique_integer([:positive, :monotonic]),
-                          inserted_at: DateTime.utc_now()}
-
-      Agent.update(__MODULE__, &[record | &1])
-      {:ok, record}
-    end
-
-    # Supports `all(query)` — returns rows that match entity_id if a where clause is present.
-    # For our tests we only need `Repo.all(from t in EntityTransition, where: t.entity_id == ^id,
-    #   order_by: [asc: t.id])`.
-    def all(query, _opts \\ []) do
-      rows = Agent.get(__MODULE__, & &1)
-
-      rows
-      |> filter_by_query(query)
-      |> Enum.sort_by(& &1.id)
-    end
-
-    # Supports `one(query)` — returns last inserted row for entity or nil.
-    def one(query, _opts \\ []) do
-      rows = Agent.get(__MODULE__, & &1)
-
-      rows
-      |> filter_by_query(query)
-      |> Enum.sort_by(& &1.id, :desc)
-      |> List.first()
-    end
-
-    defp filter_by_query(rows, %Ecto.Query{} = query) do
-      # Extract the entity_id binding from the first where-clause parameter, if any
-      entity_id =
-        query.wheres
-        |> List.first()
-        |> case do
-          nil -> nil
-          where -> extract_entity_id(where.params)
-        end
-
-      if entity_id do
-        Enum.filter(rows, &(&1.entity_id == entity_id))
-      else
-        rows
-      end
-    end
-
-    defp filter_by_query(rows, _), do: rows
-
-    defp extract_entity_id(params) when is_list(params) do
-      params
-      |> Enum.find_value(fn
-        {val, _type} when is_binary(val) -> val
-        _ -> nil
-      end)
-    end
-
-    defp extract_entity_id(_), do: nil
-  end
 
   # ---------------------------------------------------------------------------
   # Setup
   # ---------------------------------------------------------------------------
 
   setup do
-    start_supervised!(FakeRepo)
-    {:ok, pid} = StateMachine.start_link(repo: FakeRepo)
+    owner = Ecto.Adapters.SQL.Sandbox.start_owner!(StateMachine.Repo, shared: true)
+    on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(owner) end)
+    {:ok, pid} = StateMachine.start_link(repo: StateMachine.Repo)
     %{sm: pid}
   end
 
@@ -452,8 +371,8 @@ defmodule StateMachineTest do
     {:ok, :confirmed} = StateMachine.transition(sm, "order:42", :confirm)
     {:ok, :shipped} = StateMachine.transition(sm, "order:42", :ship)
 
-    # Start a *new* GenServer backed by the same FakeRepo
-    {:ok, sm2} = StateMachine.start_link(repo: FakeRepo)
+    # Start a *new* GenServer backed by the same database
+    {:ok, sm2} = StateMachine.start_link(repo: StateMachine.Repo)
 
     # Entity was never started in sm2, so it must hydrate from DB
     assert {:ok, :shipped} = StateMachine.start(sm2, "order:42")
@@ -587,7 +506,7 @@ defmodule StateMachineTest do
     GenServer.stop(sm)
 
     # Boot a fresh one backed by the same repo
-    {:ok, sm2} = StateMachine.start_link(repo: FakeRepo)
+    {:ok, sm2} = StateMachine.start_link(repo: StateMachine.Repo)
 
     # Re-hydrate from DB
     assert {:ok, :shipped} = StateMachine.start(sm2, "order:99")

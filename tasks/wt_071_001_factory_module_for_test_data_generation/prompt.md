@@ -31,6 +31,10 @@ Sequence counters must be stored in a named `Agent` that is started once (e.g., 
 
 Use only the Elixir standard library and assume `Repo` is available as `MyApp.Repo`. Deliver everything in a single file.
 
+## Additional interface contract
+
+- Passing an explicit `user_id` override to `build(:post, ...)`/`insert(:post, ...)` suppresses the automatic `Factory.insert(:user)` association call entirely: `insert(:post, user_id: existing_id)` inserts exactly one record (the post itself) and creates no extra user.
+
 ## Module under test
 
 ```elixir

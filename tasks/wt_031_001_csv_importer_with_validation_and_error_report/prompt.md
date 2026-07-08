@@ -44,6 +44,11 @@ Edge cases to handle:
 
 Use the NimbleCSV library for parsing (`:nimble_csv` hex package). Do not use any other external dependencies. Give me the complete module in a single file.
 
+## Additional interface contract
+
+- `import_string/2` mirrors the zero-byte-file case: called with an empty
+  string, `import_string("", schema)` returns `{:error, :empty_file}`.
+
 ## Module under test
 
 ```elixir

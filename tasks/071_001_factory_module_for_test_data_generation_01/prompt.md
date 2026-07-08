@@ -13,3 +13,7 @@ Factory definitions should be declared inside the `Factory` module using a `defi
 Sequence counters must be stored in a named `Agent` that is started once (e.g., in `Factory.start/0` or automatically on first use via a lazy init). Sequences must be unique across the entire test run even if tests run concurrently (`async: true`).
 
 Use only the Elixir standard library and assume `Repo` is available as `MyApp.Repo`. Deliver everything in a single file.
+
+## Additional interface contract
+
+- Passing an explicit `user_id` override to `build(:post, ...)`/`insert(:post, ...)` suppresses the automatic `Factory.insert(:user)` association call entirely: `insert(:post, user_id: existing_id)` inserts exactly one record (the post itself) and creates no extra user.

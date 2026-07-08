@@ -184,15 +184,10 @@ defmodule FeatureFlagsTest do
   use ExUnit.Case, async: false
 
   setup do
-    table = :feature_flags_test
-
-    {:ok, pid} =
-      FeatureFlags.start_link(
-        table_name: table,
-        name: nil
-      )
-
-    %{pid: pid, table: table}
+    # Start with default options; every assertion below observes the store
+    # purely through its documented public API.
+    pid = start_supervised!(FeatureFlags)
+    %{pid: pid}
   end
 
   # -------------------------------------------------------

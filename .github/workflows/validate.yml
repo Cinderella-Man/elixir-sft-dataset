@@ -1,0 +1,56 @@
+# CI (docs/10 R11). Fast gates on every push/PR; the full corpus sweep
+# (~10 min locally, longer on 4-core runners) runs weekly and on demand.
+# Toolchain is pinned by .tool-versions — gate results are only reproducible
+# on that pin (see README).
+name: validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1" # weekly full sweep, Monday 03:17 UTC
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          version-file: .tool-versions
+          version-type: strict
+      - uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: mix-${{ hashFiles('mix.lock', '.tool-versions') }}
+      - run: mix deps.get
+      - run: mix compile --warnings-as-errors
+      - run: mix test
+      # Whole-solution raise-mutant gate over single/multifile/wt shapes.
+      - run: elixir scripts/validate.exs --mutants
+      # Full perfect-score sweep: weekly + manual only (too slow per push).
+      - if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: elixir scripts/validate.exs
+      - if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: elixir scripts/validate.exs --fim
+      - name: Upload gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validate-results
+          path: results/
+          if-no-files-found: ignore

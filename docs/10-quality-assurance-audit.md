@@ -464,6 +464,117 @@ tokens and was dropped — killing the sweep mid-wait. Changes:
   the wait loop, was the actual failure. Tests: 2 new in `opus_test.exs` (credit wording;
   unlimited-wait rides out 30 consecutive limit replies). `mix test`: 190 passed.
 
+### 5.11 R12b + R12c + R2b + R10 executed (2026-07-08 evening, uncommitted)
+
+**R12b CLOSED (13/13 dirs).** Per-family outcomes (all validated perfect + mutants,
+all edits count-checked exact replacements, wt_/tfim carriers synced):
+- Harness rewrites to observable-behavior asserts: 001_001 (exemplar: `:cleanup` +
+  follow-up API call synchronizes AND detects crash), 005_004 (poll documented
+  `publish/3` matched-count for async :DOWN), 007_003 (window growth/cap semantics
+  prove `max_window_size` without reading state), 010_004 (documented `keys/1`),
+  023_001/023_003 (replay expired keys through the API), 042_003/042_004
+  (NAME-AGNOSTIC persistent_term/ETS diff: snapshot before start, assert this
+  instance's registrations gone after stop — plus a prompt sentence making the
+  terminate-cleanup obligation explicit), 045_001/045_002 (setup used an
+  UNDOCUMENTED `table_name:`/`name: nil` start that forced a hidden discovery
+  mechanism — now `start_supervised!` with documented defaults; acid-tested with
+  naive blind-style implementations that previously failed).
+- Prompt-side: 097_002 (exception TYPE for missing `:username` documented —
+  rewriting the test would have violated the mutation gate).
+- No defect (solver-slip class, keep): 020_002 (Plug opts-threading, same as 024),
+  044_004 (blind candidate was self-inconsistent; three different blind-style
+  implementations all pass 12/12; residual noted: `assert :ok = increment` pins an
+  undocumented return).
+**R12c CLOSED (4/4).** 016_001/017_001/018_001/019_001 harnesses now dispatch via
+`Plug.Test` straight to the Router — ConnCase/Endpoint/verified-routes out of the
+candidate-facing surface; ConnTest conveniences shimmed locally (`get/post/put/
+delete`, `json_response`, `sigil_p`) so every TEST BODY stayed byte-identical (=
+tfim gold blocks untouched; 016_001's 10 tfim embeds updated by exact preamble
+replacement only). Each task got `manifest.exs` (`:phoenix_conncase` explicit —
+inference can't see tier B in a Plug.Test harness) + prompt "Additional interface
+contract" naming Router/Repo/schema (016_001 also documents the `:updated_at`
+fixture field). Runner fix: tfim reconstruction now COPIES THE PARENT'S
+manifest.exs into its staging dir (`grade_harness_against_module/3`) — archetype
+must survive reconstruction.
+**R2b CLOSED.** 102_001 migrated off FakeRepo onto a real SQLite repo via a new
+**repo-only tier**: archetype `:ecto_repo` (manifest-only, never inferred) →
+`Runner.compile_tier_repo` boots kit Repo + bundle migrations, no web modules
+(`PhoenixKit.render_repo/5`). Harness: sandbox `start_owner!(shared: true)` (the
+GenServer queries from its own process). FakeRepo deleted from all 6 carriers;
+tfim_04's gold block updated (it contains the restart test). order_by/filtering
+now enforced by a real query engine. Prompt states the provided-repo contract +
+`priv/repo/migrations/` path requirement.
+**Blind-screen structural fix.** The screen asked EVERY task for one `solution.ex`
+— a multifile blind solver couldn't know the repo's inner-`<file>`-bundle
+convention, so tier-B tasks were unsolvable in the screen BY CONSTRUCTION (016_001
+red showed `PaginatedList.Repo is not available`: plain-file candidate → graded as
+:single → no kit). Now: `Prompts.base_solve/2` (`:multifile` asks for one <file>
+block per app source file), `Reply.validate_bundle_answer/1`, screen assembles the
+blocks into bundle form. The pre-fix Phoenix re-screen reds in `rescreen_r12bc.log`
+are ARTIFACTS — re-screen those four after the sweep.
+**R10 DONE (machinery + tests; corpus sweep launched).** `Mutation.semantic_mutants/2`
+(first-order: comparison swap, int ±1 spread-capped at 40/module, `:ok`↔`:error`,
+bool flip; doc/string/typespec-safe; parse-verified; deterministic) +
+`validate.exs --semantic-mutants` report-only mode (histogram + weakest-20 +
+`logs/semantic_mutants.jsonl`). First signal: `003_002_gcra_01` kills only 12/22
+(54.5%) semantic mutants despite a 100% raise-mutant kill — assertion tightness is
+the real gap, exactly as §1.3 predicted. Full-corpus sweep: `logs/semantic_sweep.log`.
+**R11 progress.** `.githooks/pre-push` (mix test + touched-family perfect+mutant
+gates; installed via `git config core.hooksPath .githooks`) and
+`.github/workflows/validate.yml` (push/PR: test + --mutants with a Postgres
+service; weekly + dispatch: full sweep + --fim; uploads results/ as artifact).
+**R12d machinery.** `scripts/triage_screen.exs` — LLM-judge per quarantined red
+("quote the prompt sentence that entails the failing assertion — or say none"),
+(task, sha)-keyed ledger `logs/screen_triage.jsonl`, `--report` mode; judge sees
+prompt + first_failure + saved candidate. Human sign-off stays mandatory for
+prompt edits (cascade invariant #5).
+**Ops note.** The R10 subagent + this session hit the token-window limit mid-run;
+the detached re-screen rode it out exactly as designed (15-min waits, attempt 15+,
+~210 min) — the §5.10 hardening is validated in production.
+
+### 5.12 R12d executed: judge triage + 31 backfills (2026-07-08 night, uncommitted)
+
+**Triage.** `scripts/triage_screen.exs` ran over all 79 quarantined reds (model=opus,
+0 errors, `logs/screen_triage.jsonl`): **47 ENTAILED** (prompt justifies the failing
+assertion — solver-weak, keep as legitimately hard tasks) / **32 PROMPT GAPS** with a
+proposed missing-contract sentence each.
+
+**Backfills: 31 of 32 applied** (5 parallel agents, every judge proposal VERIFIED
+against gold+harness before applying — four judge inaccuracies caught and corrected
+from source: 006_002 raises ArgumentError (judge claimed exit tuple), 061_004's
+budget claim refuted (weights only), 070_003/4's recorded shape is
+`{:exception, exception, stacktrace}`, and 007_004's premise was inverted — the real
+gaps were a missing slack-guard rule + a post-alert freeze the prompt described as
+auto-re-learn). Classes:
+- 22 mechanical disclosures (pinned atoms/exit reasons/message substrings/return
+  values/option shapes) appended as "## Additional interface contract" bullets,
+  parent + wt_ prompt embeds.
+- 5 prompt↔gold contradictions corrected in place (007_004 freeze+slack, 010_004
+  per-call-window filters-not-evicts, 014_001 off-loop processing, 073_001
+  Process.put stash, 096_001 script/style content dropped).
+- 086_001/086_002: cart struct's public fields documented (the struct IS the API).
+- 005_003: harness-side R12b-style rewrite (`t.subs == []` reach-in → public-API
+  poll + link-crash detection; targeted mutant check: DOWN-clause raise killed by
+  exactly the rewritten test).
+- 018_001: gold behavior changed 200 → **201 on create** (idiomatic Phoenix);
+  controller `put_status(:created)`, harness create asserts, prompt bullet, wt_
+  byte-copies re-synced.
+**Deferred [decision]: 001_004_penalty_escalation** — the judge's proposal amounts to
+re-specifying decay/cooldown interaction semantics; that is a spec design choice,
+not a disclosure. Needs the user: either canonize the gold's exact semantics
+(cooldown until strike_time + ladder[strike_index]; last-strike timestamp advances
+per removed strike) in the prompt, or simplify the gold. Until then: quarantined.
+
+All 31 families re-validated ALL PERFECT (+ mutants where executable files changed).
+Every prompt edit changes the screen sha → the next plain screen run re-screens all
+of them; 005_003 (harness-only) needs `--rescreen`.
+
+**R10 corpus measurement (complete).** 597 tasks, 12,960 semantic mutants, **71.4%
+killed** (mean per-task 0.731; 1,224 non-compiling dropped). Right-leaning histogram
+(141 tasks ≥ 0.9) with a real weak tail: 22 tasks < 0.4, worst `075_004` 0/7.
+Ledger: `logs/semantic_mutants.jsonl` (per-task survivor labels). Follow-up
+work-list: tighten the weak-tail harnesses; mind equivalent-mutant noise.
+
 ---
 
 ## 6. Remaining work — step-by-step plan (R1–R12)
@@ -846,7 +957,8 @@ write, (b) tasks ship the scaffolding as provided context (multifile kit), or
 (c) harnesses drop ConnCase/verified-routes for plain `Plug.Test`. Recommend (c)
 where feasible — smallest cascade, keeps tasks self-contained.
 
-**R12d. Behavioral/semantic ambiguity (~53 tasks) — human/LLM triage pass.**
+**R12d. Behavioral/semantic ambiguity — human/LLM triage pass. ✅ DONE 2026-07-08
+(see §5.12): 47 entailed-keep, 31/32 gaps backfilled, 001_004 deferred [decision].**
 For each red: is the failing assertion ENTAILED by prompt.md? YES → solver-weak;
 keep, mark triaged (105_001 is the exemplar: prompt entails it, blind solution had
 the exact race the gold used to have — the test discriminates). NO → one-sentence

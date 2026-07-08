@@ -12,3 +12,7 @@ I need these functions in the public API:
 Counters and gauges can coexist in the same table — there is no need to declare a metric's type upfront; `increment` creates or bumps a counter entry and `gauge` creates or overwrites a gauge entry. The ETS table should be public and named so that `increment` can bypass the GenServer process for maximum throughput (i.e., the hot path for incrementing must not serialize through a GenServer `call`). The GenServer is only needed for initialisation and owning the table.
 
 Give me the complete implementation in a single file. Use only OTP/stdlib — no external dependencies.
+
+## Additional interface contract
+
+- `Metrics.increment/2` returns `:ok`, not the counter's new value.

@@ -22,3 +22,7 @@ Rules:
 Also expose `Sanitizer.sql_identifier/1` and `Sanitizer.filename/1` as public helpers returning `{:ok, string}` or `{:error, :empty}`.
 
 Give me the complete module in a single file, standard library only — no external dependencies.
+
+## Additional interface contract
+
+- Type-shape mismatches get dedicated reason atoms: when a nested schema map is expected but the value is not a map, report `:expected_map` at that field's path; when a `{:list, inner}` spec is given a non-list value, report `:expected_list`. E.g. `sanitize(%{"profile" => "nope"}, %{"profile" => %{"bio" => :text}})` returns `{:error, %{["profile"] => :expected_map}}`, and `sanitize(%{"tags" => "nope"}, %{"tags" => {:list, :text}})` returns `{:error, %{["tags"] => :expected_list}}`.

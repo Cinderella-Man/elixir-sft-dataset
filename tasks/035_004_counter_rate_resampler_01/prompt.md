@@ -52,3 +52,9 @@ Edge cases:
 
 Give me the complete module in a single file. Use only the Elixir standard library, no
 external dependencies.
+
+## Additional interface contract
+
+- `resample/3` validates its arguments: an `interval_ms` that is not a positive integer
+  (e.g. `0`), or a `:mode`/`:reset`/`:fill` option value outside the documented sets
+  (e.g. `mode: :average` or `reset: :ignore`), raises an `ArgumentError`.

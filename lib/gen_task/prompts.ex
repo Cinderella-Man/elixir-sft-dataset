@@ -129,14 +129,38 @@ defmodule GenTask.Prompts do
   # Base — Step B: solve blind from prompt.md only
   # ---------------------------------------------------------------------------
 
-  @doc "Prompts for base Step B: implement `solution.ex` from the prompt alone (blind)."
-  @spec base_solve(String.t()) :: {String.t(), String.t()}
-  def base_solve(prompt_md) do
+  @doc """
+  Prompts for base Step B: implement the solution from the prompt alone (blind).
+
+  `shape` selects the output contract: `:single` (default) asks for one
+  `solution.ex`; `:multifile` asks for one `<file>` block per app source file —
+  a solver cannot know the repo's inner-bundle convention, so for multifile
+  tasks the caller assembles the returned blocks into the bundle form
+  (`Reply.validate_bundle_answer/1` + `EvalTask.Bundle`-compatible assembly).
+  """
+  @spec base_solve(String.t(), :single | :multifile) :: {String.t(), String.t()}
+  def base_solve(prompt_md, shape \\ :single)
+
+  def base_solve(prompt_md, :single) do
     user = """
     #{prompt_md}
 
     #{@house_style}
     #{output_contract([{"solution.ex", "the complete implementation module"}])}
+    """
+
+    {@solver_persona, user}
+  end
+
+  def base_solve(prompt_md, :multifile) do
+    user = """
+    #{prompt_md}
+
+    #{@house_style}
+    #{output_contract([
+      {"lib/<app_path>.ex", "one <file> block PER source file, its path mirroring the module name"},
+      {"priv/repo/migrations/<name>.exs", "any migration file(s) the prompt requires"}
+    ])}
     """
 
     {@solver_persona, user}

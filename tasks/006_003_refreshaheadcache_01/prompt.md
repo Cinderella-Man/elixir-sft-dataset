@@ -51,3 +51,9 @@ Give me the complete module in a single file. Use only OTP standard library, no 
 
 - Sending the server process a bare `:sweep` message performs one sweep
   pass immediately — the same work the periodic timer performs.
+
+- If `:refresh_threshold` is not a number in `(0.0, 1.0]` (e.g. `0.0` or
+  `1.5`), `start_link/1` raises `ArgumentError` in the calling process —
+  validate the option in `start_link/1` itself, before starting the GenServer
+  (a failure inside `init/1` would surface to the caller as an exit, not a
+  raise).

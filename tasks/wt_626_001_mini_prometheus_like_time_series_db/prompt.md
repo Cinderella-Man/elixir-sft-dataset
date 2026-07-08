@@ -63,6 +63,10 @@ Handle a `:cleanup` info message that removes any chunks whose `chunk_start + ch
 - Give me the complete module in a single file.
 - All operations go through the GenServer (`call`/`cast`) — no ETS, no separate processes.
 
+## Additional interface contract
+
+- In `query/4`, a series whose labels match but which has NO data points inside `[start_ts, end_ts]` must be omitted from the result entirely — never returned as a `{labels, []}` tuple with an empty points list. When no matched series has any point in range, the result is `[]`.
+
 ## Module under test
 
 ```elixir

@@ -486,10 +486,14 @@ defmodule QuotaTrackerTest do
     Clock.advance(10_001)
 
     send(t, :cleanup)
-    :sys.get_state(t)
 
-    state = :sys.get_state(t)
-    assert map_size(state.entries) == 0
+    # keys/1 is a GenServer call, so it is processed after the :cleanup
+    # message and also confirms the sweep did not crash the server. The sweep
+    # removes keys whose usage lists are empty after eviction, and every entry
+    # here is older than max_window_ms, so no keys may remain. Internal state
+    # is deliberately not inspected.
+    assert QuotaTracker.keys(t) == []
+    assert Process.alive?(t)
   end
 
   test "cleanup only removes fully expired keys, keeps active ones", %{tracker: t} do
@@ -501,11 +505,15 @@ defmodule QuotaTrackerTest do
     Clock.advance(1_001)
 
     send(t, :cleanup)
-    :sys.get_state(t)
 
-    state = :sys.get_state(t)
-    assert not Map.has_key?(state.entries, :old)
-    assert Map.has_key?(state.entries, :new)
+    # keys/1 is a GenServer call, so it is processed after the :cleanup
+    # message and also confirms the sweep did not crash the server. :old's
+    # only entry (age 10_001ms) is past max_window_ms and must be swept away;
+    # :new's entry (age 1_001ms) is within max_window_ms and must survive the
+    # sweep even though it is outside its own 1_000ms query window. Internal
+    # state is deliberately not inspected.
+    assert QuotaTracker.keys(t) == [:new]
+    assert Process.alive?(t)
   end
 
   # -------------------------------------------------------

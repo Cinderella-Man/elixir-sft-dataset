@@ -55,3 +55,8 @@ The sort field validation must act as an allowlist. Never interpolate user input
 - All filtering and sorting happens at the database level, not in Elixir.
 
 Give me all the files: migration, schema, context, controller, JSON view, and router addition. Each in its own code block with the file path as a comment at the top.
+## Additional interface contract
+
+- Use exactly these module names: router `MyAppWeb.Router`, repo `MyApp.Repo`. The repo itself is provided (already configured and started) by the test environment — do NOT define the repo module or a Phoenix endpoint. Your migration file will be run against it before the tests.
+- The tests dispatch requests straight to `MyAppWeb.Router` with `Plug.Test` (no endpoint in front), so `GET /api/products` must be servable by the router pipeline alone.
+- Test fixtures are inserted as `%Product{} |> Product.changeset(attrs) |> MyApp.Repo.insert!()` with `attrs` a map of `:name`, `:category`, `:price` — `Product.changeset/2` must accept exactly that shape.

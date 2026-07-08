@@ -20,6 +20,11 @@
 #   --stability N flake filter must see N consecutive serial passes to recover a
 #                 test-failure suspect (default 1). Recovered flakes are always
 #                 appended to logs/flaky.jsonl — a repeat offender there needs fixing.
+#   --semantic-mutants  REPORT-ONLY assertion-tightness measurement: first-order
+#                 semantic mutants (comparison swap, ±1, :ok↔:error, bool flip) of
+#                 the reference; per-task kill-rate + corpus histogram + weakest 20;
+#                 ledger logs/semantic_mutants.jsonl. ≤ --sm-limit (40) evals/task —
+#                 EXPENSIVE; scope with --only for spot checks.
 #
 # Every eval subprocess runs under `timeout --signal=KILL` (EVAL_TIMEOUT_S, default
 # 240s) so one hanging solution cannot stall the sweep.
@@ -43,6 +48,8 @@ defmodule Validate do
           green: :boolean,
           fim: :boolean,
           mutants: :boolean,
+          semantic_mutants: :boolean,
+          sm_limit: :integer,
           stability: :integer,
           only: :string
         ]
@@ -71,6 +78,10 @@ defmodule Validate do
         IO.puts("\n=== VALIDATION SUMMARY ===")
         report("whole-mutation", f)
         finish(f == [], "ALL HARNESSES KILL THEIR MUTANT ✓")
+
+      opts[:semantic_mutants] ->
+        semantic_report(tasks, opts[:sm_limit] || 40)
+        finish(true, "SEMANTIC-MUTANT REPORT COMPLETE (report-only — no gate)")
 
       true ->
         failures = corpus_failures ++ perfect_score(tasks, opts[:stability] || 1)
@@ -337,6 +348,99 @@ defmodule Validate do
       true ->
         IO.write("?")
         {:fail, task.name, "mutant run was inconclusive (no tests ran, no errors) — unverifiable"}
+    end
+  end
+
+  # ── semantic mutants (docs/10 R10, REPORT-ONLY) ─────────────────────────────
+
+  # Measures assertion TIGHTNESS: each first-order semantic mutant (comparison
+  # swap, off-by-one, :ok↔:error, boolean flip) is a behavior change; a survivor
+  # is a change no test noticed. No gate — the corpus was never held to this bar;
+  # measure first (docs/10 R10), then decide thresholds. EXPENSIVE: up to
+  # `--sm-limit` (default 40) evals per task — scope with --only for spot checks.
+  defp semantic_report(tasks, limit) do
+    mutable = Enum.filter(tasks, &(&1.shape in [:single, :multifile, :write_test]))
+
+    IO.puts(
+      "Semantic mutants (report-only): #{length(mutable)} tasks, ≤#{limit} mutants each ..."
+    )
+
+    rows =
+      mutable
+      |> pmap(fn task ->
+        source = File.read!(task.solution)
+        mutants = GenTask.Mutation.semantic_mutants(source, limit)
+
+        {killed, survivors, dropped} =
+          Enum.reduce(mutants, {0, [], 0}, fn {label, mutated}, {k, s, d} ->
+            path =
+              Path.join(System.tmp_dir!(), "smut_#{System.unique_integer([:positive])}.ex")
+
+            File.write!(path, mutated)
+            json = eval(task.dir, path)
+            File.rm(path)
+
+            failed = (json["tests_failed"] || 0) > 0 or (json["tests_errors"] || 0) > 0
+
+            cond do
+              json["compiled"] != true -> {k, s, d + 1}
+              failed -> {k + 1, s, d}
+              true -> {k, [label | s], d}
+            end
+          end)
+
+        row = %{
+          task: task.name,
+          killed: killed,
+          total: killed + length(survivors),
+          survivors: Enum.reverse(survivors),
+          dropped: dropped,
+          ts: DateTime.utc_now() |> DateTime.to_iso8601()
+        }
+
+        File.mkdir_p!("logs")
+        File.write!("logs/semantic_mutants.jsonl", Jason.encode!(row) <> "\n", [:append])
+        IO.write(".")
+        row
+      end)
+
+    IO.puts("\n\n=== SEMANTIC-MUTANT REPORT (kill-rate = behavior changes noticed) ===")
+
+    scored = Enum.filter(rows, &(&1.total > 0))
+    rates = Enum.map(scored, &(&1.killed / &1.total))
+
+    if rates != [] do
+      mean = Float.round(Enum.sum(rates) / length(rates), 3)
+      total_m = Enum.sum(Enum.map(scored, & &1.total))
+      total_k = Enum.sum(Enum.map(scored, & &1.killed))
+      dropped = Enum.sum(Enum.map(rows, & &1.dropped))
+
+      IO.puts(
+        "  tasks: #{length(scored)}   mutants: #{total_m}   killed: #{total_k} " <>
+          "(#{Float.round(100.0 * total_k / max(total_m, 1), 1)}%)   " <>
+          "mean per-task rate: #{mean}   non-compiling dropped: #{dropped}"
+      )
+
+      IO.puts("\n  kill-rate histogram:")
+
+      for lo <- 0..9 do
+        n = Enum.count(rates, &(&1 >= lo / 10 and (&1 < (lo + 1) / 10 or (lo == 9 and &1 <= 1.0))))
+        IO.puts("    #{lo / 10}–#{(lo + 1) / 10}: #{String.duplicate("█", n)} #{n}")
+      end
+
+      IO.puts("\n  20 weakest tasks (most unnoticed behavior changes):")
+
+      scored
+      |> Enum.sort_by(&{&1.killed / &1.total, -&1.total})
+      |> Enum.take(20)
+      |> Enum.each(fn r ->
+        IO.puts(
+          "    - #{r.task}: #{r.killed}/#{r.total} " <>
+            "(survivors: #{Enum.join(Enum.take(r.survivors, 4), "; ")}#{if length(r.survivors) > 4, do: "; …"})"
+        )
+      end)
+    else
+      IO.puts("  no mutable tasks matched")
     end
   end
 

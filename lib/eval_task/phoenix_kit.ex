@@ -34,6 +34,21 @@ defmodule EvalTask.PhoenixKit do
     end
   end
 
+  @doc """
+  Render only the Repo module — for `:ecto_repo` (repo-only) tasks that have an
+  Ecto surface but no web layer. Same override rule: a bundle-defined Repo wins.
+  """
+  @spec render_repo(String.t(), String.t(), atom(), [String.t()], :sqlite | :postgres) ::
+          [String.t()]
+  def render_repo(dir, prefix, otp, bundle_modules, db \\ :sqlite) do
+    for {mod, file, code} <- [{"#{prefix}.Repo", "kit_repo.ex", repo(prefix, otp, db)}],
+        mod not in bundle_modules do
+      path = Path.join(dir, file)
+      File.write!(path, code)
+      path
+    end
+  end
+
   @doc "SQLite Repo + Endpoint `Application.put_env` config. Call before compile + boot."
   @spec configure(atom(), String.t(), String.t(), String.t()) :: :ok
   def configure(otp, prefix, web, db_path) do

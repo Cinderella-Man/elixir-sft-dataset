@@ -32,3 +32,10 @@ I need these functions in the public API:
 There is no periodic sweep and no TTL — with a fixed capacity, memory is bounded by construction. Do not use `Process.send_after`.
 
 Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
+
+## Additional interface contract
+
+- When `:capacity` is not a positive integer (e.g. `0` or `-1`), `start_link/1`
+  raises `ArgumentError` in the calling process — validate the option in
+  `start_link/1` itself, before starting the GenServer (a failure inside
+  `init/1` would surface to the caller as an exit, not a raise).

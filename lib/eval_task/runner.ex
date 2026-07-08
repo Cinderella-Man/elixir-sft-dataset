@@ -52,6 +52,7 @@ defmodule EvalTask.Runner do
       try do
         case cfg.archetype do
           :phoenix_conncase -> compile_tier_b(files, sources, migrations, tmp, cfg)
+          :ecto_repo -> compile_tier_repo(files, sources, migrations, tmp, cfg)
           _ -> {compile_bundle(sources) |> Map.put(:tier, "A"), %{tier: "A"}, fn -> :ok end}
         end
       rescue
@@ -114,6 +115,44 @@ defmodule EvalTask.Runner do
 
     # Stop the repo pool before dropping storage (Postgres refuses DROP DATABASE
     # while connections are open).
+    cleanup = fn ->
+      _ = Supervisor.stop(sup)
+      storage_cleanup.()
+    end
+
+    {%{
+       compiled: true,
+       compile_warnings: length(diag.compile_warnings),
+       compile_errors: [],
+       tier: "B"
+     }, %{tier: "B"}, cleanup}
+  end
+
+  # Repo-only tier (`:ecto_repo` archetype, manifest-declared): boots the kit Repo
+  # and runs the bundle's migrations exactly like tier B, but renders/starts no web
+  # modules — for Ecto-backed tasks with no controller/router surface. The synthetic
+  # web prefix only feeds `PhoenixKit.configure`'s (unused) endpoint env entry.
+  defp compile_tier_repo(files, sources, migrations, tmp, cfg) do
+    db = Map.get(cfg, :db, :sqlite)
+    ensure_db_apps(db)
+
+    %{prefix: prefix, otp_app: otp} = cfg
+    repo = Module.concat(prefix, "Repo")
+    web = cfg[:web_prefix] || "#{prefix}Web"
+
+    storage_cleanup = setup_repo_storage(db, otp, prefix, web)
+    kit_paths = PhoenixKit.render_repo(tmp, prefix, otp, Bundle.module_names(files), db)
+
+    diag = compile_or_raise!(sources ++ kit_paths, "solution+repo-kit")
+    mig_mods = compile_or_raise!(migrations, "migrations").modules
+    {:ok, sup} = Supervisor.start_link([repo], strategy: :one_for_one)
+
+    mig_mods
+    |> Enum.with_index(1)
+    |> Enum.each(fn {mod, v} -> Ecto.Migrator.up(repo, v, mod, log: false) end)
+
+    Ecto.Adapters.SQL.Sandbox.mode(repo, :manual)
+
     cleanup = fn ->
       _ = Supervisor.stop(sup)
       storage_cleanup.()
@@ -270,7 +309,7 @@ defmodule EvalTask.Runner do
 
       {:ok, harness_src} ->
         module_src = File.read!(Path.join(parent, "solution.ex"))
-        base = grade_harness_against_module(module_src, harness_src)
+        base = grade_harness_against_module(module_src, harness_src, parent)
 
         base
         |> Map.merge(%{analysis: analysis, score: Analysis.score(base, analysis, base)})
@@ -288,11 +327,18 @@ defmodule EvalTask.Runner do
 
   # Run `harness_src` against a reference module (plain module or `<file>` bundle) by
   # staging a throwaway task dir and delegating to the existing single/multifile runner.
-  defp grade_harness_against_module(module_src, harness_src) do
+  # The parent's manifest.exs (if any) is copied into the staged dir: archetype/db config
+  # must survive reconstruction — a Plug.Test harness over an Ecto bundle cannot be
+  # inferred from the harness text alone.
+  defp grade_harness_against_module(module_src, harness_src, parent_dir) do
     if Bundle.bundle?(module_src) do
       tmp = mktemp()
       File.write!(Path.join(tmp, "solution.ex"), module_src)
       File.write!(Path.join(tmp, "test_harness.exs"), harness_src)
+
+      parent_manifest = Path.join(parent_dir, "manifest.exs")
+      if File.regular?(parent_manifest), do: File.cp!(parent_manifest, Path.join(tmp, "manifest.exs"))
+
       result = run_multifile(tmp, Path.join(tmp, "solution.ex"))
       File.rm_rf!(tmp)
       result
@@ -508,5 +554,6 @@ defmodule EvalTask.Runner do
   defp uniq_suffix, do: "#{System.pid()}_#{System.unique_integer([:positive])}"
 
   defp tier(:phoenix_conncase), do: "B"
+  defp tier(:ecto_repo), do: "B"
   defp tier(_), do: "A"
 end

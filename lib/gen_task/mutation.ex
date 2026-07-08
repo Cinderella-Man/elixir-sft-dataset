@@ -113,6 +113,239 @@ defmodule GenTask.Mutation do
     end
   end
 
+  # ── semantic mutants (assertion tightness, docs/10 R10) ─────────────────────
+
+  @semantic_cap 40
+
+  # Typespec attributes carry no runtime behavior — a mutant that only touches a
+  # `@spec`/`@type` compiles and behaves identically, i.e. a guaranteed survivor
+  # that would only add noise to the kill-rate.
+  @typespec_attrs [:spec, :type, :typep, :opaque, :callback, :macrocallback]
+
+  @doc """
+  First-order semantic mutants of `solution_src` (plain module or `<file>` bundle):
+  a list of `{label, mutated_source}` pairs, each differing from the source at
+  exactly ONE site. Unlike raise-mutants (which prove a harness *invokes* a
+  function), semantic mutants measure whether its assertions actually *pin
+  behavior* — a survived semantic mutant is a behavior change no test noticed.
+
+  Operators (applied at every applicable site, one mutation per mutant):
+
+    * comparison swap — `<` ↔ `<=`, `>` ↔ `>=`
+    * integer literal ±1 — only literals `0..1000` (larger ones are config-scale
+      noise); `+1` at every site, `-1` additionally for literals `> 0`
+    * `:ok` ↔ `:error` — as the first element of a tuple literal, or as a bare
+      return atom (clause body, `do:`/`else:` value, or last expression of a block)
+    * boolean flip — `true` ↔ `false`, skipped inside module attributes
+
+  No mutation is generated inside `@moduledoc`/`@doc`/`@typedoc` (blanked, as in
+  `mutate/1`), typespec attributes, strings/binaries, or charlists. Every emitted
+  mutant is re-parsed with `Code.string_to_quoted/1`; ones that do not parse are
+  dropped, and duplicates (two sites collapsing to the same output) are de-duped.
+
+  Output is deterministic and capped at `limit` (default #{@semantic_cap}) per
+  module via an even spread across sites — not the first N, which would bias the
+  sample toward the top of the file. For a bundle, each `lib/**/*.ex` file is
+  mutated independently (one mutant = one mutated file re-embedded in the bundle,
+  label prefixed with the file path) and the spread cap applies to the total.
+
+  `[]` on a parse error (conservative: nothing to measure).
+  """
+  @spec semantic_mutants(String.t(), pos_integer()) :: [{String.t(), String.t()}]
+  def semantic_mutants(solution_src, limit \\ @semantic_cap) do
+    if Bundle.bundle?(solution_src),
+      do: semantic_mutants_bundle(solution_src, limit),
+      else: semantic_mutants_module(solution_src, limit)
+  rescue
+    _ -> []
+  end
+
+  defp semantic_mutants_module(module_src, limit) do
+    # Blank docs up front (same reason as `mutate/1`: heredoc docs can round-trip
+    # to invalid syntax) — the baseline and every mutant share the blanking, so a
+    # mutant still differs from the baseline at exactly one site.
+    ast = module_src |> Code.string_to_quoted!() |> Macro.prewalk(&blank_docs/1)
+    baseline = Macro.to_string(ast)
+
+    ast
+    |> enumerate_sites()
+    |> spread(limit)
+    |> Enum.map(fn {ix, spec, line} ->
+      {site_label(ix, spec, line), ast |> apply_at(ix, spec) |> Macro.to_string()}
+    end)
+    |> Enum.reject(fn {_label, src} -> src == baseline end)
+    |> Enum.filter(fn {_label, src} -> match?({:ok, _}, Code.string_to_quoted(src)) end)
+    |> Enum.uniq_by(fn {_label, src} -> src end)
+  rescue
+    _ -> []
+  end
+
+  # One mutant = one mutated lib file re-embedded into the otherwise-unchanged
+  # bundle. Module sources are parse-checked before embedding (the bundle itself
+  # is not valid Elixir, so the check must happen at the module level).
+  defp semantic_mutants_bundle(bundle_src, limit) do
+    files = Bundle.parse(bundle_src)
+
+    all =
+      for {path, body} <- files,
+          String.starts_with?(path, "lib/") and String.ends_with?(path, ".ex"),
+          {label, mutated} <- semantic_mutants_module(body, limit),
+          do: {"#{path} #{label}", reemit_bundle(files, path, mutated)}
+
+    spread(all, limit)
+  end
+
+  defp reemit_bundle(files, target_path, new_body) do
+    Enum.map_join(files, "\n\n", fn {path, body} ->
+      emitted = if path == target_path, do: new_body, else: body
+      ~s(<file path="#{path}">\n#{emitted}\n</file>)
+    end)
+  end
+
+  # Enumerate mutation sites as `{site_index, spec, line}`. The site index is the
+  # prewalk visit ordinal of the node (counted for EVERY node, skipped or not), so
+  # the application pass — a plain `Macro.prewalk/3` with the same counter — lands
+  # on the identical node. `skip` tracks strings/binaries/charlists/typespecs
+  # (no mutations at all inside); `attr` tracks module-attribute values (boolean
+  # flips only are suppressed there — `@impl true` etc. are not behavior).
+  defp enumerate_sites(ast) do
+    {_ast, {_ix, _skip, _attr, sites}} =
+      Macro.traverse(ast, {0, 0, 0, []}, &enum_pre/2, &enum_post/2)
+
+    Enum.reverse(sites)
+  end
+
+  defp enum_pre(node, {ix, skip, attr, sites}) do
+    cond do
+      skip_all?(node) ->
+        {node, {ix + 1, skip + 1, attr, sites}}
+
+      attr?(node) ->
+        {node, {ix + 1, skip, attr + 1, sites}}
+
+      skip > 0 ->
+        {node, {ix + 1, skip, attr, sites}}
+
+      true ->
+        found = for spec <- node_mutations(node, attr > 0), do: {ix, spec, node_line(node)}
+        {node, {ix + 1, skip, attr, Enum.reverse(found, sites)}}
+    end
+  end
+
+  defp enum_post(node, {ix, skip, attr, sites}) do
+    cond do
+      skip_all?(node) -> {node, {ix, skip - 1, attr, sites}}
+      attr?(node) -> {node, {ix, skip, attr - 1, sites}}
+      true -> {node, {ix, skip, attr, sites}}
+    end
+  end
+
+  defp skip_all?({:@, _, [{name, _, [_ | _]}]}) when name in @typespec_attrs, do: true
+  defp skip_all?({:<<>>, _, _}), do: true
+  defp skip_all?(list) when is_list(list), do: list != [] and List.ascii_printable?(list)
+  defp skip_all?(_), do: false
+
+  defp attr?({:@, _, [{name, _, [_ | _]}]}) when is_atom(name), do: true
+  defp attr?(_), do: false
+
+  # The mutation specs a single AST node admits (each spec → one mutant).
+  defp node_mutations({op, _, [_, _]}, _attr?) when op in [:<, :<=, :>, :>=],
+    do: [{:cmp, op}]
+
+  defp node_mutations(n, _attr?) when is_integer(n) and n >= 0 and n <= 1000 do
+    if n > 0, do: [{:int, n, 1}, {:int, n, -1}], else: [{:int, n, 1}]
+  end
+
+  defp node_mutations(b, attr?) when is_boolean(b),
+    do: if(attr?, do: [], else: [{:bool, b}])
+
+  defp node_mutations({first, _}, _attr?) when first in [:ok, :error],
+    do: [{:pair, first}]
+
+  defp node_mutations({:{}, _, [first | _]}, _attr?) when first in [:ok, :error],
+    do: [{:tuple, first}]
+
+  defp node_mutations({:->, _, [_, body]}, _attr?) when body in [:ok, :error],
+    do: [{:ret, body}]
+
+  defp node_mutations({key, body}, _attr?) when key in [:do, :else] and body in [:ok, :error],
+    do: [{:ret, body}]
+
+  defp node_mutations({:__block__, _, [_ | _] = exprs}, _attr?) do
+    case List.last(exprs) do
+      a when a in [:ok, :error] -> [{:blockret, a}]
+      _ -> []
+    end
+  end
+
+  defp node_mutations(_node, _attr?), do: []
+
+  # Re-walk with the same visit counter and rewrite the single target node. Nodes
+  # after the target may then be counted differently — irrelevant, the mutation is
+  # already applied. A spec that no longer matches leaves the node unchanged; the
+  # emitted "mutant" then equals the baseline and is rejected by the caller.
+  defp apply_at(ast, target_ix, spec) do
+    {mutated, _ix} =
+      Macro.prewalk(ast, 0, fn node, ix ->
+        if ix == target_ix,
+          do: {apply_mutation(node, spec), ix + 1},
+          else: {node, ix + 1}
+      end)
+
+    mutated
+  end
+
+  defp apply_mutation({op, m, [l, r]}, {:cmp, op}), do: {swap_cmp(op), m, [l, r]}
+  defp apply_mutation(n, {:int, n, d}) when is_integer(n), do: n + d
+  defp apply_mutation(b, {:bool, b}), do: not b
+  defp apply_mutation({a, rest}, {:pair, a}), do: {flip_ok(a), rest}
+  defp apply_mutation({:{}, m, [a | rest]}, {:tuple, a}), do: {:{}, m, [flip_ok(a) | rest]}
+  defp apply_mutation({:->, m, [args, a]}, {:ret, a}), do: {:->, m, [args, flip_ok(a)]}
+  defp apply_mutation({key, a}, {:ret, a}), do: {key, flip_ok(a)}
+
+  defp apply_mutation({:__block__, m, exprs}, {:blockret, a}),
+    do: {:__block__, m, List.replace_at(exprs, -1, flip_ok(a))}
+
+  defp apply_mutation(node, _spec), do: node
+
+  defp swap_cmp(:<), do: :<=
+  defp swap_cmp(:<=), do: :<
+  defp swap_cmp(:>), do: :>=
+  defp swap_cmp(:>=), do: :>
+
+  defp flip_ok(:ok), do: :error
+  defp flip_ok(:error), do: :ok
+
+  defp node_line({_, meta, _}) when is_list(meta), do: meta[:line]
+  defp node_line(_), do: nil
+
+  defp site_label(ix, spec, line) do
+    at = if line, do: "L#{line} s#{ix}", else: "s#{ix}"
+    "#{at}: #{describe_spec(spec)}"
+  end
+
+  defp describe_spec({:cmp, op}), do: "#{op} -> #{swap_cmp(op)}"
+  defp describe_spec({:int, n, d}), do: "#{n} -> #{n + d}"
+  defp describe_spec({:bool, b}), do: "#{b} -> #{not b}"
+  defp describe_spec({:pair, a}), do: "{:#{a}, _} -> {:#{flip_ok(a)}, _}"
+  defp describe_spec({:tuple, a}), do: "{:#{a}, ...} -> {:#{flip_ok(a)}, ...}"
+  defp describe_spec({:ret, a}), do: "return :#{a} -> :#{flip_ok(a)}"
+  defp describe_spec({:blockret, a}), do: "return :#{a} -> :#{flip_ok(a)}"
+
+  # Deterministic even spread of at most `limit` items — indices `div(i*n, limit)`
+  # are strictly increasing for n > limit, so no duplicates and full-range coverage
+  # (first-N would bias the sample toward the top of the file).
+  defp spread(list, limit) do
+    n = length(list)
+
+    if n <= limit do
+      list
+    else
+      arr = List.to_tuple(list)
+      for i <- 0..(limit - 1), do: elem(arr, div(i * n, limit))
+    end
+  end
+
   @doc """
   Replace the body of every clause of the function `name/arity` (of the given `kind`,
   `:def` by default, `:defp` for a private fn) with `raise`, leaving all other functions

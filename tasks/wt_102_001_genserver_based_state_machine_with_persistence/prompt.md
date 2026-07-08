@@ -95,6 +95,10 @@ the DB write must both happen inside the `handle_call` callback before the reply
 Give me all three modules/files in a single code block or clearly separated blocks. Use only
 Ecto (plus its adapters) as the external dependency — no additional libraries.
 
+## Additional interface contract
+
+- The test environment provides a real, already-configured SQLite Ecto repo as `StateMachine.Repo`, with the bundle's migration applied; tests inject it via `StateMachine.start_link(repo: StateMachine.Repo)` and check out a shared `Ecto.Adapters.SQL.Sandbox` connection per test.
+
 ## Module under test
 
 ```elixir

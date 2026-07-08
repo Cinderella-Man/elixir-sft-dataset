@@ -39,6 +39,13 @@ Compute per-item validity and dependency status, then:
 
 Cycle detection must mark exactly the items **on** a cycle as `:cycle`; items merely downstream of a cycle are `:skipped`. Use only Elixir/OTP standard library — no external dependencies.
 
+## Additional interface contract
+
+- In a `{:validation, errors_map}` reason, `errors_map` is keyed by the
+  **string** field name (not an atom), with each value a list of
+  human-readable message strings — e.g. a blank name yields
+  `%{"name" => ["can't be blank"]}`.
+
 ## Module under test
 
 ```elixir

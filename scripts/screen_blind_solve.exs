@@ -113,13 +113,20 @@ defmodule ScreenBlind do
 
   defp screen_one(cfg, task) do
     prompt = File.read!(Path.join(task.dir, "prompt.md"))
-    {system, user} = Prompts.base_solve(prompt)
+    {system, user} = Prompts.base_solve(prompt, task.shape)
+
+    validator =
+      case task.shape do
+        :multifile -> &Reply.validate_bundle_answer/1
+        _ -> &Reply.validate_answer/1
+      end
 
     entry =
-      case Cycle.generate(cfg, task.name, "screen_blind", system, user, &Reply.validate_answer/1) do
+      case Cycle.generate(cfg, task.name, "screen_blind", system, user, validator) do
         {:ok, answer} ->
-          save_candidate(cfg, task, prompt, answer["solution.ex"])
-          grade_candidate(cfg, task, answer["solution.ex"])
+          candidate = assemble_candidate(task.shape, answer)
+          save_candidate(cfg, task, prompt, candidate)
+          grade_candidate(cfg, task, candidate)
 
         {:error, reason} ->
           # A transport/contract failure is NOT a verdict on the prompt — record it
@@ -138,6 +145,27 @@ defmodule ScreenBlind do
     append_ledger(cfg, entry)
     entry
   end
+
+  # A single-shape reply is the solution.ex content verbatim. A multifile reply
+  # is one <file> block per app source file (the solver cannot know the repo's
+  # inner-bundle convention) — assemble those blocks into the bundle form the
+  # evaluator's multifile runner expects. A solver that inlined everything into
+  # solution.ex anyway is passed through unchanged.
+  defp assemble_candidate(:multifile, answer) do
+    case answer do
+      %{"solution.ex" => src} ->
+        src
+
+      files ->
+        files
+        |> Enum.sort_by(fn {path, _} -> path end)
+        |> Enum.map_join("\n", fn {path, content} ->
+          "<file path=\"#{path}\">\n#{String.trim_trailing(content)}\n</file>"
+        end)
+    end
+  end
+
+  defp assemble_candidate(_shape, answer), do: answer["solution.ex"]
 
   # Keep the blind candidate for triage: a red's ledger entry holds only a
   # 200-char failure snippet, and diagnosing WHY an independent solver failed

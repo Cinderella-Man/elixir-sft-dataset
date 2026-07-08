@@ -67,3 +67,8 @@ Use the app name `soft_crud` with module prefix `SoftCrud`. Organize the code as
 - `priv/repo/migrations/..._create_documents.exs` — migration
 
 Use only standard Phoenix/Ecto dependencies. Give me all the files needed for a working application.
+## Additional interface contract
+
+- Use exactly these module names: router `SoftCrudWeb.Router`, context `SoftCrud.Documents` (with `create_document/1` and `soft_delete_document/1` returning `{:ok, doc}`), repo `SoftCrud.Repo`. The repo itself is provided (already configured and started) by the test environment — do NOT define the repo module or a Phoenix endpoint. Your migration file will be run against it before the tests.
+- The tests dispatch requests straight to `SoftCrudWeb.Router` with `Plug.Test` (no endpoint in front), so every route must be servable by the router pipeline alone.
+- Successful creation returns **201** with the document JSON.

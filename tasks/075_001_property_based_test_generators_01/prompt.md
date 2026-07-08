@@ -11,3 +11,7 @@ I need these generators in the public API:
 Each generator must be composable with standard `StreamData` combinators (i.e., they return `%StreamData{}` structs). All constraints must be enforced within the generator itself — consumers should never need to filter or reject generated values.
 
 Give me the complete module in a single file. Use only `stream_data` as an external dependency, no others.
+
+## Additional interface contract
+
+- `date_range()` must be able to produce same-day ranges (`start_date == end_date`) as well as multi-day ranges (`start_date < end_date`), and both cases must occur with non-negligible frequency — a sample of a few hundred generated values should reliably contain both.

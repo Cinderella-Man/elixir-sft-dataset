@@ -11,3 +11,7 @@ I need these macros:
 All three must be macros (not plain functions) so that ExUnit can report the correct file and line number on failure. Use `ExUnit.Assertions.flunk/1` for surfacing failure messages. The module should be a single file with no external dependencies beyond `ExUnit`.
 
 Give me the complete module in a single file.
+
+## Additional interface contract
+
+- The `assert_sorted_by` failure message must contain the literal text `index N`, where `N` is the zero-based index of the FIRST element of the first out-of-order pair. Example: for `[%{age: 20}, %{age: 40}, %{age: 30}]` the offending pair is the elements at positions 1 and 2, so the message must contain `index 1`.

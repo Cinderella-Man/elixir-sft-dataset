@@ -42,6 +42,10 @@ I need the following pieces:
 
 Give me the complete modules in separate files. Use only Phoenix, Ecto, and standard library — no external dependencies. Assume a Postgres repo at `MyApp.Repo` already exists and is configured.
 
+## Additional interface contract
+
+- Module names: router `MyAppWeb.Router`, schema `MyApp.Catalog.Item`, repo `MyApp.Repo` (provided, already configured and started, by the test environment). The tests dispatch requests straight to `MyAppWeb.Router` with `Plug.Test` and parse the JSON request body with `Plug.Parsers` (no endpoint in front).
+
 ## Module under test
 
 ```elixir
