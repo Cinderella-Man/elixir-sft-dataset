@@ -413,16 +413,15 @@ subsumes the R5 `:sys.get_state` remainder)** → R6 (formatter/pin) → R9 (fla
 R10 (semantic mutants) → R11 (CI/evidence). R2/R3/R4/R5/R7/R8 are done except the
 sub-items explicitly marked open below.
 
-### R1. Commit the current batch + gate evidence **[decision: user must approve commit]**
-- `git add` the files listed at the top of §5 + `test/gen_task/cycle_test.exs`.
-  Only remaining uncommitted diff as of 2026-07-08 14:00 is the `chmod +x` on
-  `scripts/screen_blind_solve.exs` — include it.
-- Consider committing `results/summary_*.txt` + `results/perfect_failures.txt` (tiny)
-  from the next full run so the repo carries proof of corpus state (currently
-  `results/` and `logs/` are gitignored — check `.gitignore` before forcing).
-- **`logs/screen_blind.jsonl` is now $58 of screening evidence and the input to R12
-  — back it up (or commit it; it's 100KB and gitignored by the `logs/` rule).**
-- Acceptance: `mix test` green; `elixir scripts/validate.exs --only "001_001*"` green.
+### R1. Commit the current batch + gate evidence ✅ DONE 2026-07-08
+- The §5 batch + docs/10 sweep report were committed by the user (`7ecaf5d`
+  "Overnight report", includes the script `chmod +x`).
+- `logs/screen_blind.jsonl` force-added past the `logs/` gitignore rule and
+  committed (`0c77e6c`) — the R12 input is now version-controlled.
+- Acceptance verified post-commit: `mix test` 188 passed;
+  `elixir scripts/validate.exs --only "001_001*"` ALL PERFECT.
+- Still open (folded into R11): committing `results/summary_*.txt` +
+  `perfect_failures.txt` from the NEXT full validate run.
 
 ### R2. Fix the four known-bad golds (§1.4) — mostly deterministic edits
 Work one task family at a time; after EACH family run
