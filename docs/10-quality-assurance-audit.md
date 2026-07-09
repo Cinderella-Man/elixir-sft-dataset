@@ -636,6 +636,18 @@ Known cosmetic debt: `triage_screen.exs --report` lists ledger gaps without
 filtering out ones whose prompt sha has since changed (already-applied
 backfills still print) — polish when next touched.
 
+Known bug (found 2026-07-10 launching the overnight generate run): the R3
+vacuous-seed self-check (`GenTask.CLI.vacuous_seed?/3`) stages the whole-module
+raise mutant WITHOUT the task's `manifest.exs`, so tier-B tasks (016_001 at
+least — expect 017/018/019_001 and 102_001 too) fail to compile the mutant and
+grade "inconclusive" → wt_/tfim derivation is blocked as if the seed were
+vacuous. The `--mutants` sweep passes these same tasks (its path carries the
+manifest), so the harnesses are fine — the CHECKER is manifest-unaware
+(predates R12c). Fix the staging path to copy `manifest.exs` like
+`grade_harness_against_module/3` does, then DELETE the affected cached
+verdicts from `logs/seed_verdicts.jsonl` — the cache is keyed on harness
+content, which is unchanged, so a code fix alone will NOT re-check.
+
 ### 5.14 Session 2026-07-10: R10 canonization closed + R9 625_001 + tfim name-drift reconciliation
 
 - **R10 [decision] RESOLVED — both survivor pockets canonized (user chose "both").**
