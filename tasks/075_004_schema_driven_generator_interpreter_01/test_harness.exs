@@ -183,4 +183,33 @@ defmodule SchemaGeneratorsTest do
       end
     end
   end
+
+  # -------------------------------------------------------
+  # Boundary bounds and defaults
+  # -------------------------------------------------------
+
+  describe "boundary bounds and defaults" do
+    property "{:integer, min, max} supports min == max" do
+      check all(v <- SchemaGenerators.from_schema({:integer, 7, 7})) do
+        assert v == 7
+      end
+    end
+
+    property "{:string, min_len, max_len} supports zero-length bounds" do
+      check all(v <- SchemaGenerators.from_schema({:string, 0, 0})) do
+        assert v == ""
+      end
+    end
+
+    property "{:list, schema, opts} defaults length bounds to 0..10" do
+      lengths =
+        SchemaGenerators.from_schema({:list, :boolean, []})
+        |> Enum.take(300)
+        |> Enum.map(&length/1)
+
+      assert Enum.all?(lengths, fn len -> len >= 0 and len <= 10 end)
+      assert 0 in lengths
+      assert 10 in lengths
+    end
+  end
 end

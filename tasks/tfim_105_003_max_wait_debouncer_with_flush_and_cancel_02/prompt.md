@@ -223,5 +223,21 @@ defmodule MaxWaitDebouncerTest do
     {micros, :ok} = :timer.tc(fn -> MaxWaitDebouncer.call("s", 50, 500, slow) end)
     assert micros < 100_000
   end
+
+  test "accepts max_ms equal to delay_ms and fires once" do
+    # The contract is `max_ms >= delay_ms`, so equality must be accepted.
+    assert :ok = MaxWaitDebouncer.call("k", 100, 100, notify(:equal))
+
+    assert_receive :equal, 400
+    refute_receive :equal, 200
+  end
+
+  test "accepts a zero delay and fires promptly" do
+    # delay_ms is a non-negative duration; 0 satisfies `max_ms >= delay_ms`.
+    assert :ok = MaxWaitDebouncer.call("k", 0, 500, notify(:zero))
+
+    assert_receive :zero, 400
+    refute_receive :zero, 200
+  end
 end
 ```

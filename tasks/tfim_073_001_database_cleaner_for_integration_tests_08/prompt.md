@@ -383,5 +383,13 @@ defmodule DBCleanerTest do
     Agent.update(table, fn _ -> snapshot end)
     assert Agent.get(table, & &1) == ["existing"]
   end
+
+  # -------------------------------------------------------
+  # Return values pinned by the prompt
+  # -------------------------------------------------------
+
+  test "clean/0 without a prior start/2 returns :ok" do
+    assert DBCleaner.clean() == :ok
+  end
 end
 ```

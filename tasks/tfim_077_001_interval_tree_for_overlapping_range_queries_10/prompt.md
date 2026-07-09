@@ -473,5 +473,43 @@ defmodule IntervalTreeTest do
     result2 = IntervalTree.enclosing(tree, 155)
     assert [{150, 159}] = result2
   end
+
+  # -------------------------------------------------------
+  # Equal-start intervals at the exact query boundary
+  # -------------------------------------------------------
+  # After rebalancing, an interval whose start equals another node's start can
+  # end up in that node's right subtree. When the query finish (or the queried
+  # point) equals that shared start, every stored copy still touches the query
+  # ("touching counts"), so none may be skipped.
+
+  test "overlapping query ending exactly at duplicated starts returns every stored copy" do
+    tree =
+      IntervalTree.new()
+      |> IntervalTree.insert({1, 8})
+      |> IntervalTree.insert({6, 7})
+      |> IntervalTree.insert({4, 4})
+      |> IntervalTree.insert({10, 10})
+      |> IntervalTree.insert({10, 10})
+
+    # {10, 10} is stored twice; both share point 10 with each query below.
+    assert Enum.sort(IntervalTree.overlapping(tree, {10, 10})) == [{10, 10}, {10, 10}]
+    assert Enum.sort(IntervalTree.overlapping(tree, {9, 10})) == [{10, 10}, {10, 10}]
+
+    assert Enum.sort(IntervalTree.overlapping(tree, {0, 10})) ==
+             [{1, 8}, {4, 4}, {6, 7}, {10, 10}, {10, 10}]
+  end
+
+  test "enclosing at a point equal to duplicated starts returns every stored copy" do
+    tree =
+      IntervalTree.new()
+      |> IntervalTree.insert({1, 8})
+      |> IntervalTree.insert({6, 7})
+      |> IntervalTree.insert({4, 4})
+      |> IntervalTree.insert({10, 10})
+      |> IntervalTree.insert({10, 10})
+
+    # Both copies of {10, 10} contain 10 (s <= point <= f), so both must appear.
+    assert Enum.sort(IntervalTree.enclosing(tree, 10)) == [{10, 10}, {10, 10}]
+  end
 end
 ```

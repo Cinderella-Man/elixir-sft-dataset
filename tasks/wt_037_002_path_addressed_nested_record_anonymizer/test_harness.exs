@@ -80,4 +80,39 @@ defmodule AnonymizerTest do
       assert [] == Anonymizer.anonymize([], %{"a.b" => :hash})
     end
   end
+
+  test "mask fully masks a 1-character string as *" do
+    records = [%{user: %{initial: "Q"}}]
+    [r] = Anonymizer.anonymize(records, %{"user.initial" => :mask})
+    assert r.user.initial == "*"
+  end
+
+  test "mask shows a 2-character string with no masking" do
+    records = [%{user: %{code: "ab"}}]
+    [r] = Anonymizer.anonymize(records, %{"user.code" => :mask})
+    assert r.user.code == "ab"
+  end
+
+  test "mask keeps first and last characters of a 3-character string" do
+    records = [%{user: %{tag: "abc"}}]
+    [r] = Anonymizer.anonymize(records, %{"user.tag" => :mask})
+    assert r.user.tag == "a*c"
+  end
+
+  test "fake yields a deterministic fabricated string for every value" do
+    values = ["Dave", "Carol", "Alice", "Bob"]
+    records = [%{names: values}]
+
+    [r1] = Anonymizer.anonymize(records, %{"names[]" => {:fake, "s"}})
+    [r2] = Anonymizer.anonymize(records, %{"names[]" => {:fake, "s"}})
+
+    assert r1.names == r2.names
+    assert length(r1.names) == length(values)
+
+    for {original, fake} <- Enum.zip(values, r1.names) do
+      assert is_binary(fake)
+      assert fake != ""
+      assert fake != original
+    end
+  end
 end

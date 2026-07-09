@@ -173,4 +173,145 @@ defmodule CommandGeneratorsTest do
       end
     end
   end
+
+  # -------------------------------------------------------
+  # Documented bounds and endpoints, via deterministic seeded sampling
+  # (StreamData.check_all/3 with a fixed :initial_seed)
+  # -------------------------------------------------------
+
+  test "stack_program/0 defaults to max_length 20: lengths stay in 0..20 and both endpoints occur" do
+    Process.put(:stack_lengths, [])
+
+    {:ok, _} =
+      StreamData.check_all(
+        CommandGenerators.stack_program(),
+        [initial_seed: {11, 22, 33}, max_runs: 600],
+        fn cmds ->
+          Process.put(:stack_lengths, [length(cmds) | Process.get(:stack_lengths)])
+          {:ok, cmds}
+        end
+      )
+
+    lengths = Process.get(:stack_lengths)
+    assert Enum.all?(lengths, &(&1 in 0..20))
+    assert 0 in lengths, "the empty program (0 commands) was never generated"
+    assert 20 in lengths, "the documented default maximum of 20 commands was never attained"
+  end
+
+  test "account_program/0 defaults to max_length 20: lengths stay in 0..20 and both endpoints occur" do
+    Process.put(:account_lengths, [])
+
+    {:ok, _} =
+      StreamData.check_all(
+        CommandGenerators.account_program(),
+        [initial_seed: {44, 55, 66}, max_runs: 600],
+        fn cmds ->
+          Process.put(:account_lengths, [length(cmds) | Process.get(:account_lengths)])
+          {:ok, cmds}
+        end
+      )
+
+    lengths = Process.get(:account_lengths)
+    assert Enum.all?(lengths, &(&1 in 0..20))
+    assert 0 in lengths, "the empty program (0 commands) was never generated"
+    assert 20 in lengths, "the documented default maximum of 20 commands was never attained"
+  end
+
+  test "max_length 0 is a valid argument and produces only the empty program" do
+    stack_gen = CommandGenerators.stack_program(0)
+    account_gen = CommandGenerators.account_program(0)
+
+    assert match?(%StreamData{}, stack_gen)
+    assert match?(%StreamData{}, account_gen)
+
+    for {gen, seed} <- [{stack_gen, {1, 2, 3}}, {account_gen, {4, 5, 6}}] do
+      {:ok, _} =
+        StreamData.check_all(gen, [initial_seed: seed, max_runs: 50], fn cmds ->
+          if cmds == [], do: {:ok, cmds}, else: {:error, cmds}
+        end)
+    end
+  end
+
+  test "deposit amounts respect the documented 1..1000 range and attain both endpoints" do
+    Process.put(:deposit_amounts, [])
+
+    {:ok, _} =
+      StreamData.check_all(
+        CommandGenerators.account_program(),
+        [initial_seed: {7, 8, 9}, max_runs: 1500],
+        fn cmds ->
+          amounts = for {:deposit, a} <- cmds, do: a
+          Process.put(:deposit_amounts, amounts ++ Process.get(:deposit_amounts))
+          {:ok, cmds}
+        end
+      )
+
+    amounts = Process.get(:deposit_amounts)
+    assert amounts != []
+    assert Enum.all?(amounts, &(&1 in 1..1000))
+    assert 1 in amounts, "the deposit lower endpoint 1 was never generated"
+    assert 1000 in amounts, "the deposit upper endpoint 1000 was never generated"
+  end
+
+  test "pop/peek stay available at the non-empty boundary, including states reached via pops" do
+    # The precondition is exactly non-emptiness: :pop/:peek must be offered on a
+    # one-element modeled stack, also when that state was reached after earlier
+    # pops (i.e. the threaded model tracks the real stack, not an approximation).
+    Process.put(:stack_boundary_hit, false)
+
+    {:ok, _} =
+      StreamData.check_all(
+        CommandGenerators.stack_program(),
+        [initial_seed: {11, 22, 33}, max_runs: 600],
+        fn cmds ->
+          Enum.reduce(cmds, {0, 0}, fn cmd, {size, pops} ->
+            case cmd do
+              {:push, _} ->
+                {size + 1, pops}
+
+              :clear ->
+                {0, 0}
+
+              op when op in [:pop, :peek] ->
+                if size == 1 and pops >= 1, do: Process.put(:stack_boundary_hit, true)
+                if op == :pop, do: {size - 1, pops + 1}, else: {size, pops}
+            end
+          end)
+
+          {:ok, cmds}
+        end
+      )
+
+    assert Process.get(:stack_boundary_hit),
+           "no :pop/:peek was ever generated on a one-element modeled stack reached " <>
+             "after an earlier :pop (since the last :clear) across 600 seeded samples"
+  end
+
+  test "withdraw stays available at the positive-balance boundary (balance exactly 1)" do
+    # A positive balance is the documented precondition, so a withdrawal must be
+    # possible when the modeled balance is exactly 1.
+    Process.put(:withdraw_at_one, false)
+
+    {:ok, _} =
+      StreamData.check_all(
+        CommandGenerators.account_program(),
+        [initial_seed: {101, 102, 103}, max_runs: 4000],
+        fn cmds ->
+          Enum.reduce(cmds, 0, fn
+            {:deposit, a}, bal ->
+              bal + a
+
+            {:withdraw, a}, bal ->
+              if bal == 1, do: Process.put(:withdraw_at_one, true)
+              bal - a
+          end)
+
+          {:ok, cmds}
+        end
+      )
+
+    assert Process.get(:withdraw_at_one),
+           "no :withdraw was ever generated at a modeled balance of exactly 1 " <>
+             "across 4000 seeded samples"
+  end
 end

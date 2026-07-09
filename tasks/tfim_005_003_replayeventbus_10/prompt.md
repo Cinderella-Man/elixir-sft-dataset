@@ -596,5 +596,66 @@ defmodule ReplayEventBusTest do
     state = :sys.get_state(bus)
     assert Map.has_key?(state.topics, "t")
   end
+
+  # -------------------------------------------------------
+  # Documented defaults and boundary semantics
+  # -------------------------------------------------------
+
+  test "default_history_size defaults to exactly 100 retained events" do
+    # Fresh bus WITHOUT :default_history_size — the documented default (100)
+    # must apply. Publish 105 events; history keeps exactly the last 100.
+    {:ok, bus} =
+      ReplayEventBus.start_link(
+        clock: &Clock.now/0,
+        history_ttl_ms: 10_000,
+        cleanup_interval_ms: :infinity
+      )
+
+    for i <- 1..105, do: ReplayEventBus.publish(bus, "cap", i)
+
+    assert Enum.to_list(6..105) == ReplayEventBus.history(bus, "cap")
+  end
+
+  test "replay: 1 delivers exactly the single most recent event", %{bus: bus} do
+    for e <- [:a, :b, :c], do: ReplayEventBus.publish(bus, "t", e)
+
+    {:ok, _ref} = ReplayEventBus.subscribe(bus, "t", self(), replay: 1)
+
+    assert [:c] = drain("t")
+  end
+
+  test "event aged exactly TTL is retained; strictly older is dropped", %{bus: bus} do
+    ReplayEventBus.publish(bus, "t", :edge)
+
+    # Age is now exactly the TTL (10_000 ms). Only events OLDER than the TTL
+    # are dropped, so the event must still be retained.
+    Clock.advance(10_000)
+    assert [:edge] = ReplayEventBus.history(bus, "t")
+
+    # One more ms and it is strictly older than the TTL: dropped.
+    Clock.advance(1)
+    assert [] = ReplayEventBus.history(bus, "t")
+  end
+
+  test "cleanup_interval_ms: 1 is a valid interval and the bus keeps serving" do
+    {:ok, bus} =
+      ReplayEventBus.start_link(
+        clock: &Clock.now/0,
+        default_history_size: 10,
+        history_ttl_ms: 10_000,
+        cleanup_interval_ms: 1
+      )
+
+    ReplayEventBus.publish(bus, "t", :old)
+    Clock.advance(15_000)
+
+    # Give the 1 ms periodic sweep plenty of chances to fire, then confirm the
+    # bus is alive and still serving through the public API.
+    Process.sleep(50)
+    assert Process.alive?(bus)
+    assert [] = ReplayEventBus.history(bus, "t")
+    assert :ok = ReplayEventBus.publish(bus, "t", :fresh)
+    assert [:fresh] = ReplayEventBus.history(bus, "t")
+  end
 end
 ```

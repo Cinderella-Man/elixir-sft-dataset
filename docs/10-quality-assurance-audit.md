@@ -1003,6 +1003,40 @@ keep accumulating across days):
   the exact test + message; probe removed.
 
 ### R10. Semantic mutants (assertion tightness) — measurement first
+**✅ Weak-tail tightening pass DONE 2026-07-09.** The 22-entry <0.4 work-list is 11
+distinct parents (wt_ rows are harness byte-copies). All 11 audited survivor-by-
+survivor (11 parallel agents, every proposed test verified against gold + all family
+gates + tfim embeds resynced via `scripts/resync_tfim_embeds.exs`). Aggregate:
+**58/207 → 126/207 mutants killed (28% → 61%)**; every remaining survivor is a
+documented EQUIVALENT (provably unobservable — e.g. dead guard clauses, uniform
+height offsets in AVL internals, discarded returns) or GAP-UNSPECIFIED (observable
+but not entailed by the prompt — testing it would break blind-solvability).
+
+| parent | old | new | remaining survivors are… |
+|---|---|---|---|
+| 075_004 schema generator | 0/7 | **7/7** | — |
+| 075_003 command sequences | 10/31 | **27/31** | push-value range prompt never pins |
+| 037_002 anonymizer | 12/34 | **22/34** | fake-format internals + 1 equivalent |
+| 623_001 inverted index | 9/32 | **17/32** | stemmer dedup/min-root latitude + 4 equivalent |
+| 075_002 JSON generators | 6/21 | **13/21** | container-size internals + 1 equivalent |
+| 005_003 replay bus | 5/15 | **10/15** | 4 equivalent (discarded returns) + interval-0 edge |
+| 107_003 byte-budget agg | 2/9 | **6/9** | default interval ±1ms (untestable) + noop return |
+| 074_003 assert helpers | 3/15 | **7/15** | fn-variant defaults the prompt never documents |
+| 105_003 max-wait debouncer | 2/7 | **5/7** | 1ms timer-shift behind a race |
+| 077_001 interval tree | 7/24 | **9/24** | AVL shape/order internals (5 proven equivalent) |
+| 073_001 database cleaner | 2/12 | **3/12** | prompt is silent on 9 return shapes (see note) |
+
+Notable finds: 077_001's two real gaps needed a duplicates-plus-rotation
+construction (rotations can violate strict right-subtree ordering — the gold's
+`<=` prunes are load-bearing); 623_001's df-lifecycle mutants all hid behind
+result-ID-only assertions (one exact-score + vocabulary test closed the channel);
+107_003's first kill attempt itself flaked under load (short `refute_receive`
+windows under-report kills — positive synchronization via a queued call fixed it).
+**Follow-up candidates (prompt-side, needs the usual human sign-off + re-screen):**
+073_001's return-shape silence and 074_003's fn-variant defaults are the two
+places where a small prompt addition would unlock most of the remaining
+unspecified survivors.
+Original plan for reference:
 - Extend `GenTask.Mutation` with a small operator set applied per public function:
   swap `<`/`<=` and `>`/`>=`, `+1`/`-1` on integer literals, `:ok`↔`:error` in
   returned tuples, boolean literal flip. Reuse the `mutate_fn/4` prewalk plumbing.

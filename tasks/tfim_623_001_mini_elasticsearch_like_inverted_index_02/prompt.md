@@ -659,5 +659,78 @@ defmodule InvertedIndexTest do
     results = InvertedIndex.search(:my_index, "hello")
     assert length(results) == 1
   end
+
+  # -------------------------------------------------------
+  # Default suggest limit
+  # -------------------------------------------------------
+
+  test "suggest without an explicit limit returns at most 10 terms", %{idx: idx} do
+    words = Enum.map_join(1..12, " ", fn i -> "pre#{i}" end)
+    :ok = InvertedIndex.index(idx, "doc1", %{body: words})
+
+    # 12 candidate terms share the prefix; the documented default limit is 10
+    suggestions = InvertedIndex.suggest(idx, "pre")
+    assert length(suggestions) == 10
+    assert Enum.all?(suggestions, &String.starts_with?(&1, "pre"))
+  end
+
+  # -------------------------------------------------------
+  # Stemming is opt-in
+  # -------------------------------------------------------
+
+  test "indexing without the stem option stores unstemmed tokens", %{idx: idx} do
+    :ok = InvertedIndex.index(idx, "doc1", %{body: "walking"})
+
+    # stemming is controlled per-call via opts[:stem]; absent means off, so the
+    # stored term is the literal token "walking", not the stem "walk"
+    assert [%{id: "doc1"}] = InvertedIndex.search(idx, "walking")
+    assert InvertedIndex.search(idx, "walk") == []
+  end
+
+  # -------------------------------------------------------
+  # Exact TF-IDF value with the documented default boost
+  # -------------------------------------------------------
+
+  test "unlisted field boost defaults to exactly 1 in tf-idf scoring", %{idx: idx} do
+    :ok = InvertedIndex.index(idx, "doc1", %{body: "fox runs fast"})
+    :ok = InvertedIndex.index(idx, "doc2", %{body: "cat naps quietly"})
+
+    # tf = 1/3, idf = log(2/1); :body is not listed in boosts so its boost is 1
+    [result] = InvertedIndex.search(idx, "fox", boosts: %{title: 3})
+    assert result.id == "doc1"
+    assert_in_delta result.score, :math.log(2) / 3, 1.0e-9
+  end
+
+  # -------------------------------------------------------
+  # Removal keeps per-term document frequency exact
+  # -------------------------------------------------------
+
+  test "removing a document decrements per-term document frequency for idf", %{idx: idx} do
+    :ok = InvertedIndex.index(idx, "doc1", %{body: "beta alpha"})
+    :ok = InvertedIndex.index(idx, "doc2", %{body: "gamma delta"})
+    :ok = InvertedIndex.index(idx, "doc3", %{body: "beta zeta"})
+
+    :ok = InvertedIndex.remove(idx, "doc3")
+
+    # "beta" is now in exactly 1 of 2 documents: tf = 1/2, idf = log(2/1)
+    [result] = InvertedIndex.search(idx, "beta")
+    assert result.id == "doc1"
+    assert_in_delta result.score, :math.log(2) / 2, 1.0e-9
+
+    # "zeta" left with doc3; the vocabulary is alpha, beta, gamma, delta
+    assert InvertedIndex.stats(idx).term_count == 4
+    assert InvertedIndex.suggest(idx, "zeta") == []
+  end
+
+  # -------------------------------------------------------
+  # Tokenization produces no empty tokens
+  # -------------------------------------------------------
+
+  test "leading and trailing punctuation adds no tokens or terms", %{idx: idx} do
+    :ok = InvertedIndex.index(idx, "doc1", %{body: "Hello, world!"})
+
+    # splitting on ~r/[^a-z0-9]+/ yields exactly ["hello", "world"]
+    assert InvertedIndex.stats(idx).term_count == 2
+  end
 end
 ```

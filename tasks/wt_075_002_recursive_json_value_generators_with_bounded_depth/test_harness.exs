@@ -195,4 +195,68 @@ defmodule JsonGeneratorsTest do
       end
     end
   end
+
+  # -------------------------------------------------------
+  # Zero-length bounds and boundary attainment (seeded)
+  # -------------------------------------------------------
+
+  test "array/2 accepts max_length 0 and then only produces the empty list" do
+    lists =
+      Enum.map(1..50, fn seed ->
+        [list] =
+          JsonGenerators.array(JsonGenerators.scalar(), 0)
+          |> StreamData.resize(20)
+          |> StreamData.seeded(seed)
+          |> Enum.take(1)
+
+        list
+      end)
+
+    assert Enum.all?(lists, &(&1 == []))
+  end
+
+  test "object/2 accepts max_length 0 and then only produces the empty map" do
+    maps =
+      Enum.map(1..50, fn seed ->
+        [obj] =
+          JsonGenerators.object(JsonGenerators.scalar(), 0)
+          |> StreamData.resize(20)
+          |> StreamData.seeded(seed)
+          |> Enum.take(1)
+
+        obj
+      end)
+
+    assert Enum.all?(maps, &(&1 == %{}))
+  end
+
+  test "scalar strings attain the documented 8-char maximum across seeded samples" do
+    lengths =
+      Enum.map(1..300, fn seed ->
+        [v] =
+          JsonGenerators.scalar()
+          |> StreamData.resize(20)
+          |> StreamData.seeded(seed)
+          |> Enum.take(1)
+
+        if is_binary(v), do: String.length(v), else: -1
+      end)
+
+    assert Enum.max(lengths) == 8
+  end
+
+  test "value(2) attains the full depth of 2 across seeded samples" do
+    depths =
+      Enum.map(1..300, fn seed ->
+        [v] =
+          JsonGenerators.value(2)
+          |> StreamData.resize(20)
+          |> StreamData.seeded(seed)
+          |> Enum.take(1)
+
+        depth(v)
+      end)
+
+    assert Enum.max(depths) == 2
+  end
 end
