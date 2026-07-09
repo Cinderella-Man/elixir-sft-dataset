@@ -972,9 +972,20 @@ train/val by the leading idea number NNN. Original plan for reference:
   (`lib/gen_task/variations.ex:31-52`).
 
 ### R9. Flake quarantine follow-through
-- Known suspects (union of runs so far): `104_004_usage_recycling_connection_pool_01`,
-  `tfim_012_003_inventory_stock_event_sourced_aggregate_10`, `tfim_009_002_*_04`,
-  `tfim_031_003_*_03`, `tfim_031_004_*_11`, `tfim_625_001_*_02`.
+**First repeat offender FIXED 2026-07-09:** the 104_004 pool family hit ≥2 ledger
+occurrences (parent 2026-07-07 + tfim_02 twice 2026-07-09, all "1/8 failed" under
+sweep load, serial always green; 48 dedicated 12-way eval runs could NOT force
+it). Fix was analytic: the harness's only wall-clock sensitivity was success-path
+`checkout(…, 100)` deadlines + 500/1000ms receive windows — widened to
+2_000/5_000 across all 7 harness carriers (no assertion weakened; the
+`refute_received` short-sleep guards fail safe and stayed). Family green under
+perfect + mutants + stability-3. The fake-clock pattern does NOT apply here:
+blocked-checkout semantics need real concurrent waiting — deadline widening is
+the right tool for this family class. Remaining suspects (all ≤1 occurrence —
+keep accumulating across days):
+- Known suspects (union of runs so far): `tfim_012_003_*_10`, `tfim_009_002_*_04`,
+  `tfim_031_003_*_03`, `tfim_031_004_*_11`, `tfim_625_001_*_02` (×2 tasks),
+  `wt_106_003`, `wt_045_003`.
 - Run `elixir scripts/validate.exs --stability 3` a few times over a week;
   aggregate `logs/flaky.jsonl` (`jq -r .task logs/flaky.jsonl | sort | uniq -c`);
   fix repeat offenders by converting wall-clock waits to the injected fake-clock
