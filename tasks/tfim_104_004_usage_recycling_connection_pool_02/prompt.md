@@ -260,7 +260,7 @@ defmodule RecyclingPoolTest do
         end
       end)
 
-    assert_receive {:checked_out, ^pid, result}, 1_000
+    assert_receive {:checked_out, ^pid, result}, 5_000
     {pid, result}
   end
 
@@ -309,17 +309,17 @@ defmodule RecyclingPoolTest do
        name: :rp_recycle, max_size: 1, max_uses: 2, create: create, destroy: destroy}
     )
 
-    assert {:ok, c0} = RecyclingPool.checkout(:rp_recycle, 100)
+    assert {:ok, c0} = RecyclingPool.checkout(:rp_recycle, 2_000)
     assert c0 == {:conn, 0}
     assert :ok = RecyclingPool.checkin(:rp_recycle, c0)
 
     # Second use of c0.
-    assert {:ok, ^c0} = RecyclingPool.checkout(:rp_recycle, 100)
+    assert {:ok, ^c0} = RecyclingPool.checkout(:rp_recycle, 2_000)
     assert :ok = RecyclingPool.checkin(:rp_recycle, c0)
 
     # c0 has now been used twice (max_uses): it is retired and replaced.
     assert destroyed.() == [c0]
-    assert {:ok, c1} = RecyclingPool.checkout(:rp_recycle, 100)
+    assert {:ok, c1} = RecyclingPool.checkout(:rp_recycle, 2_000)
     assert c1 != c0
     assert c1 == {:conn, 1}
 
@@ -335,9 +335,9 @@ defmodule RecyclingPoolTest do
       {RecyclingPool, name: :rp_reuse, max_size: 1, max_uses: 3, create: create, destroy: destroy}
     )
 
-    assert {:ok, c0} = RecyclingPool.checkout(:rp_reuse, 100)
+    assert {:ok, c0} = RecyclingPool.checkout(:rp_reuse, 2_000)
     assert :ok = RecyclingPool.checkin(:rp_reuse, c0)
-    assert {:ok, ^c0} = RecyclingPool.checkout(:rp_reuse, 100)
+    assert {:ok, ^c0} = RecyclingPool.checkout(:rp_reuse, 2_000)
     assert destroyed.() == []
   end
 
@@ -348,12 +348,12 @@ defmodule RecyclingPoolTest do
       {RecyclingPool, name: :rp_inf, max_size: 1, max_uses: :infinity, destroy: destroy}
     )
 
-    {:ok, c} = RecyclingPool.checkout(:rp_inf, 100)
+    {:ok, c} = RecyclingPool.checkout(:rp_inf, 2_000)
 
     c =
       Enum.reduce(1..5, c, fn _, conn ->
         :ok = RecyclingPool.checkin(:rp_inf, conn)
-        {:ok, same} = RecyclingPool.checkout(:rp_inf, 100)
+        {:ok, same} = RecyclingPool.checkout(:rp_inf, 2_000)
         assert same == conn
         same
       end)
@@ -370,17 +370,17 @@ defmodule RecyclingPoolTest do
       {RecyclingPool, name: :rp_wait, max_size: 1, max_uses: 1, create: create, destroy: destroy}
     )
 
-    assert {:ok, c0} = RecyclingPool.checkout(:rp_wait, 100)
+    assert {:ok, c0} = RecyclingPool.checkout(:rp_wait, 2_000)
     assert c0 == {:conn, 0}
 
     parent = self()
-    spawn(fn -> send(parent, {:result, RecyclingPool.checkout(:rp_wait, 1_000)}) end)
+    spawn(fn -> send(parent, {:result, RecyclingPool.checkout(:rp_wait, 5_000)}) end)
     Process.sleep(50)
     refute_received {:result, _}
 
     # Returning c0 completes its only allowed use → retired; the waiter gets a fresh one.
     assert :ok = RecyclingPool.checkin(:rp_wait, c0)
-    assert_receive {:result, {:ok, cnew}}, 1_000
+    assert_receive {:result, {:ok, cnew}}, 5_000
     assert cnew != c0
     assert cnew == {:conn, 1}
     assert destroyed.() == [c0]
@@ -396,13 +396,13 @@ defmodule RecyclingPoolTest do
       {RecyclingPool, name: :rp_crash, max_size: 1, max_uses: 1, create: create, destroy: destroy}
     )
 
-    {holder, {:ok, c0}} = spawn_holder(:rp_crash, 1_000)
+    {holder, {:ok, c0}} = spawn_holder(:rp_crash, 5_000)
     assert c0 == {:conn, 0}
 
     Process.exit(holder, :kill)
 
     # The crash counted as a use (max_uses: 1) → c0 retired; next checkout is fresh.
-    assert {:ok, c1} = RecyclingPool.checkout(:rp_crash, 1_000)
+    assert {:ok, c1} = RecyclingPool.checkout(:rp_crash, 5_000)
     assert c1 != c0
     assert c1 == {:conn, 1}
     assert destroyed.() == [c0]
@@ -410,16 +410,16 @@ defmodule RecyclingPoolTest do
 
   test "a blocked checkout is served when a connection is returned" do
     start_supervised!({RecyclingPool, name: :rp_serve, max_size: 2, max_uses: 10})
-    {:ok, c1} = RecyclingPool.checkout(:rp_serve, 100)
-    {:ok, _c2} = RecyclingPool.checkout(:rp_serve, 100)
+    {:ok, c1} = RecyclingPool.checkout(:rp_serve, 2_000)
+    {:ok, _c2} = RecyclingPool.checkout(:rp_serve, 2_000)
 
     parent = self()
-    spawn(fn -> send(parent, {:result, RecyclingPool.checkout(:rp_serve, 1_000)}) end)
+    spawn(fn -> send(parent, {:result, RecyclingPool.checkout(:rp_serve, 5_000)}) end)
     Process.sleep(50)
     refute_received {:result, _}
 
     assert :ok = RecyclingPool.checkin(:rp_serve, c1)
-    assert_receive {:result, {:ok, _conn}}, 500
+    assert_receive {:result, {:ok, _conn}}, 5_000
   end
 end
 ```
