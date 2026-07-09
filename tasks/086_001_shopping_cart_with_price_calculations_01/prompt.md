@@ -18,3 +18,8 @@ The `Cart` struct must be a pure data structure with no database, no GenServer, 
 ## Additional interface contract
 
 - The cart returned by `Cart.new/1` is a struct with public fields `:tax_rate` and `:items`: `:tax_rate` holds the configured tax rate (`0.0` by default), and `:items` is a map keyed by product id that is `%{}` for a new, empty cart.
+- In the map returned by `calculate_totals/1`, `:items` is a flat list with exactly one entry per distinct product (an empty cart yields `[]`), and each entry is a plain map whose `:product_id`, `:quantity`, and `:unit_price` echo the values accumulated via `add_item` — e.g. after `add_item(cart, "prod:1", 2, 5.0)` the sole entry satisfies `product_id == "prod:1"`, `quantity == 2`, and `unit_price == 5.0` (the raw per-unit price, not the discounted price or line total).
+- On success, `add_item/4` returns `{:ok, updated_cart}` — never the bare cart struct. `update_quantity/3` likewise returns `{:ok, updated_cart}` on every success path, including when the quantity is `0` and the item is removed.
+- `remove_item/2` is the exception: it returns the updated cart struct directly, NOT wrapped in an `{:ok, _}` tuple — including the no-op case where the product id is unknown — because callers pass its result straight into `calculate_totals/1`.
+- Each item entry's `:discount_rate` is compared with exact `==`: it must be exactly `0.1` for a discounted line (quantity of 10 or more) and exactly `0.0` otherwise — a fraction, not a percentage such as `10.0`.
+- All monetary outputs are plain floats computed with ordinary float arithmetic (no `Decimal`); totals are asserted to within `±0.001`, so no rounding step is required.

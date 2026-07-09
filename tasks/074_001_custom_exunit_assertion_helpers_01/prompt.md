@@ -15,3 +15,4 @@ Give me the complete module in a single file.
 ## Additional interface contract
 
 - The `assert_recent` failure message must contain the literal word "tolerance" and state the allowed tolerance value in seconds (e.g. `tolerance: 5s`). The computed difference must likewise be expressed in seconds — its numeric value and/or the word "second" must appear in the message alongside the actual datetime.
+- `assert_eventually` refines "truthy": `nil`, `false`, and any bare atom other than `true` (status atoms such as `:still_pending` or `:ok`) count as "not ready yet" and keep polling; any other return — `true` itself or a non-atom truthy value such as `42` — counts as success. On timeout, the failure message must contain the last value returned by `func` rendered with `inspect/1` (a function stuck on `:still_pending` yields a message containing `still_pending`).

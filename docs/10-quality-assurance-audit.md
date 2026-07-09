@@ -575,6 +575,41 @@ killed** (mean per-task 0.731; 1,224 non-compiling dropped). Right-leaning histo
 Ledger: `logs/semantic_mutants.jsonl` (per-task survivor labels). Follow-up
 work-list: tighten the weak-tail harnesses; mind equivalent-mutant noise.
 
+**Overnight re-screen results (2026-07-09, post-commit 5f29311).**
+- 31 backfilled prompts re-screened: **23 GREEN (de-quarantined)**, 8 red on a
+  DIFFERENT, deeper layer each (stacked-gaps pattern; e.g. 007_004 now fails
+  "invalid options raise at start_link"; 074_002 was a solver compile slip).
+- 005_003 harness fix re-screened: **GREEN**.
+- **Quarantine: 299 screened → 244 green / 55 red = 47 documented keeps + 8
+  round-2 candidates** (round-2 triage: `logs/triage_round2.log`,
+  `logs/screen_triage.jsonl` — sha-keyed, auto-re-triaged). Down from 101 reds
+  at the start of 2026-07-08.
+- `--stability 3` full sweep: ALL PERFECT. `logs/flaky.jsonl` aggregation:
+  8 distinct tasks, none with ≥2 occurrences yet — R9 needs runs across days
+  before quarantining anyone.
+
+**R12d rounds 2–3 (2026-07-09, closing the loop).** Round 2: 5 of the 8 survivors
+backfilled (3 more judge inaccuracies corrected from source — 074_001's real
+predicate is "truthy except non-true atoms"; 073_001's exact TRUNCATE form + the
+repo.query!/3-on-module mechanism; 086_001's judge chased entry shapes) →
+071_001 + 074_001 GREEN. The 3 remaining repeat-offenders then got a
+COMPREHENSIVE one-pass audit (every harness assertion vs prompt, all gaps at
+once — the §5.10 lesson applied): 007_004 (+6 bullets: start_link/0, warmup
+boundary, Welford-during-warmup, non-numeric FunctionClauseError, reset
+semantics, frozen check shape), 073_001 (+4: transaction strategy mechanics,
+clean-without-start no-op, strategy switching), 086_001 (root cause found at
+last: `add_item` returns `{:ok, cart}` — the success shape was never specified;
++4 bullets) → **ALL THREE GREEN**.
+
+**FINAL SCREEN STATE: 299 screened — 249 GREEN / 50 RED**, every red a
+judge-confirmed entailed-keep (prompt justifies the assertion; task is
+legitimately hard — the intended difficulty distribution) except the one open
+[decision] 001_004. Campaign total: 101 reds → 50 keeps; 51 tasks de-quarantined
+via 60+ verified prompt/harness/gold fixes across R12a–R12d.
+Known cosmetic debt: `triage_screen.exs --report` lists ledger gaps without
+filtering out ones whose prompt sha has since changed (already-applied
+backfills still print) — polish when next touched.
+
 ---
 
 ## 6. Remaining work — step-by-step plan (R1–R12)

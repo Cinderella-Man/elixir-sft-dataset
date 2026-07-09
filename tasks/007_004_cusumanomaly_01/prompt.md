@@ -48,3 +48,13 @@ I need these functions in the public API:
 Different stream names are independent.
 
 Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
+
+## Additional interface contract
+
+- `start_link/1` validates its options eagerly in the calling process, before any process is started: out-of-range values raise `ArgumentError` directly from the `start_link/1` call (not an `{:error, _}` return). Specifically, `threshold: 0`, `threshold: -1`, `slack: -0.1`, `warmup_samples: 0`, and `epsilon: 0` must each raise `ArgumentError`.
+- `start_link` must also be callable with no arguments — declare it as `start_link(opts \\ [])` — in which case every option takes its default.
+- The warmup comparison uses the stream's sample count *before* the current push: with `warmup_samples: n`, pushes 1 through n all return `:warming_up` (the n-th push included), and push n+1 is the first CUSUM-active push that can return `:ok` or an alert.
+- Warmup pushes still update the Welford accumulators — only the CUSUM step is skipped during warmup. `check/2` on a stream that has received pushes but is still warming up returns `{:ok, info}` (not an error), where `info.samples` counts every push so far and `info.mean`/`info.stddev` reflect all pushed values (population stddev, i.e. `sqrt(M2 / n)`).
+- `push/3` must reject a non-numeric `value` by raising `FunctionClauseError` in the caller — put a `when is_number(value)` guard on the public `push/3` function itself; do not return an error tuple and do not let the server crash.
+- `reset/2` on an existing stream zeroes its state but keeps the stream known: a subsequent `check/2` returns `{:ok, %{samples: 0, mean: 0.0, ...}}` — reset must not delete the stream entry. Conversely, after `reset/2` on a never-seen stream, `check/2` must still return `{:error, :no_data}`.
+- After an alert the stream likewise stays known but frozen: `check/2` then returns `{:ok, %{samples: 0, mean: 0.0, stddev: 0.0, s_high: 0.0, s_low: 0.0, status: :warming_up}}`, and further pushes while frozen leave that state completely untouched (`samples` stays `0` no matter how many frozen pushes arrive before `reset/2`).
