@@ -158,7 +158,7 @@ defmodule ParallelJsonStreamerTest do
     assert Collector.count(c) == 25
   end
 
-  test "handler is invoked in file order despite concurrent decode", %{path: path, collector: c} do
+  test "handler runs in file order despite concurrent decode", %{path: path, collector: c} do
     # TODO
   end
 

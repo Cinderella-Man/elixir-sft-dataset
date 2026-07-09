@@ -323,10 +323,7 @@ defmodule WebhookReceiverOrderedTest do
     assert event.event_id == "e1"
   end
 
-  test "future event is buffered with 202 then drained when gap fills", %{
-    opts: opts,
-    store: store
-  } do
+  test "future event buffered (202) then drained when gap fills", %{opts: opts, store: store} do
     # TODO
   end
 

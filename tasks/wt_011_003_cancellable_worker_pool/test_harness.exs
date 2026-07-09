@@ -130,7 +130,7 @@ defmodule CancellablePoolTest do
     assert {:error, :cancelled} = CancellablePool.await(pool, ref_running, 1_000)
   end
 
-  test "after cancelling a running task, replacement worker picks up queued work", %{pool: pool} do
+  test "cancelling a running task frees a worker for queued work", %{pool: pool} do
     gate = self()
 
     # Fill both workers

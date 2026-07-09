@@ -232,7 +232,7 @@ defmodule StrictIdempotentPaymentsTest do
     assert length(StrictIdempotentPayments.get_payments(pid)) == 1
   end
 
-  test "same key with different params is a conflict and does not mutate the entry", %{pid: pid} do
+  test "same key, different params conflicts and leaves entry unchanged", %{pid: pid} do
     {:ok, first} = StrictIdempotentPayments.process_payment(pid, @valid, "lock")
 
     conflict =

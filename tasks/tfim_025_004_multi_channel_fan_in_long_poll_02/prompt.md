@@ -173,7 +173,7 @@ defmodule MultiChannelNotificationPollerTest do
   # Fan-in across channels — the defining feature
   # -------------------------------------------------------
 
-  test "returns a notification tagged with the channel it fired on", %{server: server, opts: opts} do
+  test "notification is tagged with its channel", %{server: server, opts: opts} do
     # TODO
   end
 
@@ -189,10 +189,7 @@ defmodule MultiChannelNotificationPollerTest do
     assert body["payload"] == %{"first" => true}
   end
 
-  test "a publish to an unsubscribed channel does not wake the poll", %{
-    server: server,
-    opts: opts
-  } do
+  test "publish to an unsubscribed channel doesn't wake poll", %{server: server, opts: opts} do
     task = Task.async(fn -> poll(opts, "user:1", ["a", "b"]) end)
     Process.sleep(100)
     Notifications.publish(server, "user:1", "c", %{"ignored" => true})
@@ -273,10 +270,7 @@ defmodule MultiChannelNotificationPollerTest do
   # Multiple subscribers on the same channel
   # -------------------------------------------------------
 
-  test "multiple pollers on the same channel all receive the notification", %{
-    server: server,
-    opts: opts
-  } do
+  test "all pollers on one channel receive it", %{server: server, opts: opts} do
     task1 = Task.async(fn -> poll(opts, "user:1", ["x"]) end)
     task2 = Task.async(fn -> poll(opts, "user:1", ["x", "y"]) end)
     Process.sleep(100)

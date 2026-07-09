@@ -397,5 +397,67 @@ defmodule DBCleanerTest do
   test "clean/0 without a prior start/2 returns :ok" do
     assert DBCleaner.clean() == :ok
   end
+
+  # -------------------------------------------------------
+  # Return shapes of start/2 and clean/0 pinned by the prompt
+  # -------------------------------------------------------
+
+  defmodule BeginRaisesRepo do
+    def begin_transaction do
+      raise RuntimeError, "begin_transaction exploded"
+    end
+  end
+
+  defmodule CleanRaisesRepo do
+    def begin_transaction, do: {:ok, make_ref()}
+
+    def rollback do
+      raise RuntimeError, "rollback exploded"
+    end
+
+    def query!(_repo, _sql, _params) do
+      raise RuntimeError, "query! exploded"
+    end
+  end
+
+  test "transaction: start/2 returns {:ok, :transaction} on success" do
+    assert DBCleaner.start(:transaction, repo: FakeRepo) == {:ok, :transaction}
+  end
+
+  test "truncation: start/2 returns {:ok, :truncation} on success" do
+    assert DBCleaner.start(:truncation, repo: FakeRepo, tables: ["users"]) == {:ok, :truncation}
+  end
+
+  test "start/2 with an unknown strategy returns {:error, message} with a String message" do
+    assert {:error, message} = DBCleaner.start(:bogus, repo: FakeRepo)
+    assert is_binary(message)
+  end
+
+  test "transaction: a raise from begin_transaction/0 is rescued into {:error, message}" do
+    assert {:error, message} = DBCleaner.start(:transaction, repo: BeginRaisesRepo)
+    assert is_binary(message)
+  end
+
+  test "transaction: clean/0 returns :ok on success" do
+    DBCleaner.start(:transaction, repo: FakeRepo)
+    assert DBCleaner.clean() == :ok
+  end
+
+  test "truncation: clean/0 returns :ok on success" do
+    DBCleaner.start(:truncation, repo: FakeRepo, tables: ["users"])
+    assert DBCleaner.clean() == :ok
+  end
+
+  test "transaction: a raise from rollback/0 makes clean/0 return {:error, message}" do
+    DBCleaner.start(:transaction, repo: CleanRaisesRepo)
+    assert {:error, message} = DBCleaner.clean()
+    assert is_binary(message)
+  end
+
+  test "truncation: a raise from query!/3 makes clean/0 return {:error, message}" do
+    DBCleaner.start(:truncation, repo: CleanRaisesRepo, tables: ["users"])
+    assert {:error, message} = DBCleaner.clean()
+    assert is_binary(message)
+  end
 end
 ```

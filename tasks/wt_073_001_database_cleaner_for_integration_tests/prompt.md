@@ -38,6 +38,10 @@ Give me the complete module in a single file.
 - Under the `:transaction` strategy, `clean/0` rolls back by calling `rollback/0` with no arguments on the repo module — `repo.rollback()` — and must issue no SQL at all via `query!/3`. The `:tables` option is accepted but ignored entirely by this strategy: no `TRUNCATE` statement may be issued even when tables were passed to `start/2`.
 - `clean/0` when `start/2` was never called must be a safe no-op that returns `:ok` — it must not exit or crash the calling process.
 - Every `start/2` call fully replaces any previously stored strategy state, so consecutive start/clean cycles in the same process never bleed into each other: a `:truncation` cycle followed by a `:transaction` cycle must not produce any `TRUNCATE` query during the second cycle's `clean/0`.
+- `start/2` returns exactly `{:ok, :transaction}` when the `:transaction` strategy starts successfully, and exactly `{:ok, :truncation}` when the `:truncation` strategy starts successfully.
+- Calling `start/2` with any strategy other than `:transaction` or `:truncation` does not raise: it returns `{:error, message}` where `message` is a String describing the problem.
+- If the `repo.begin_transaction()` call raises, `start/2` rescues the exception and returns `{:error, message}` where `message` is the exception's message String (as produced by `Exception.message/1`); the exception must not propagate to the caller.
+- `clean/0` returns exactly `:ok` after a successful cleanup under both strategies. If `repo.rollback()` (`:transaction`) or `repo.query!/3` (`:truncation`) raises during `clean/0`, the exception is rescued and `clean/0` returns `{:error, message}` where `message` is the exception's message String.
 
 ## Module under test
 

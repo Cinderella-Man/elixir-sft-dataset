@@ -636,6 +636,67 @@ Known cosmetic debt: `triage_screen.exs --report` lists ledger gaps without
 filtering out ones whose prompt sha has since changed (already-applied
 backfills still print) — polish when next touched.
 
+### 5.14 Session 2026-07-10: R10 canonization closed + R9 625_001 + tfim name-drift reconciliation
+
+- **R10 [decision] RESOLVED — both survivor pockets canonized (user chose "both").**
+  - **073_001**: 4 return-shape bullets added to the contract section (parent + wt_):
+    `start/2` success tuples (`{:ok, :transaction}`/`{:ok, :truncation}`), unknown
+    strategy → `{:error, message}`, `begin_transaction` raise rescued to
+    `{:error, Exception.message(e)}`, `clean/0` → `:ok` / `{:error, message}`. Raise
+    paths (`fetch_repo!`, `validate_tables!`) deliberately NOT canonized. +8 tests,
+    2 new stand-in repos. Semantic kill **3/12 → 11/12**; the one survivor (s408,
+    CaseClauseError-vs-ArgumentError inside private `fetch_repo!`) is documented
+    UNSPECIFIED. 8 tfim embeds resynced. Blind re-screen **GREEN** (20/20).
+  - **074_003**: 3 bullets (fn variants carry the macro defaults; `process_exits`
+    timeout message includes the `timeout_ms` value; `no_message`/`assert_no_message`
+    failure message states the `within_ms` window) + 6 tests. Semantic kill
+    **7/15 → 15/15 — zero survivors.** Timing-mutant lessons that got there:
+    millisecond-resolution elapsed provably cannot see ±1ms mutants (kernel timer
+    slack reads a 99ms `receive after` as 100ms) — the lower-bound tests measure
+    min-over-5 at MICROSECOND resolution (BEAM floor: timeouts never fire early);
+    and the two "timing-untestable" ±1 survivors fell to ZERO-timing message-text
+    tests once the gold's window-in-failure-message fact was canonized. Blind
+    re-screen **GREEN** (28/28).
+  - Screen state unchanged: **250/299 green / 49 documented keeps.**
+- **R9 second repeat offender FIXED: 625_001** (4 ledger occurrences across
+  tfim_02/_03/_04). NOT deadline sensitivity — the harness has zero wall-clock
+  constructs. Root cause: ExUnit `@moduletag :tmp_dir` derives DETERMINISTIC
+  per-test paths under the shared CWD, and five family variants compile the
+  identical `ObjectStorageTest` with seed 0 (same tests, same order, same paths) —
+  concurrent sweep evals collided on the same directories (one run's `rm_rf!`
+  racing another's live server explains every logged signature: `:eexist` cleanup
+  crash, `:already_exists`, `:bucket_not_found`; tfim_03/tfim_04 flaked within 1s
+  of each other). Fix: per-run unique tmp root (`tmp/object_storage_test/
+  <os-pid>-<unique_integer>-<rand-hex>`), fail-safe `on_exit` cleanup; no test
+  name/body/assertion changed → no tfim gold blocks moved. Perfect + mutants +
+  stability-3 ×3 green with zero new ledger entries. Corpus scanned: NO other
+  harness uses `:tmp_dir` — the class is contained. (104_004 has no post-fix
+  occurrences — that fix is holding.)
+- **tfim gold-block name drift: 23 found, 23 fixed.** The resync corpus dry run
+  errored on 23 children whose gold test NAME no longer exists in the parent
+  harness (grading never notices — reconstruction splices by `# TODO` position and
+  grades against the parent's real files — but the child prompt says "implement
+  the test named X" while the gold completion names it Y). 131_003 fixed by hand
+  (exemplar), 22 by agent. All went the PARENT-rename direction: the children's
+  names are shorter, and adopting the parent's name pushes the child fragment's
+  header line over the 98-char analysis gate — which harness files are exempt from
+  but tfim fragments are not (that asymmetry is WHY the drift pattern existed).
+  12 parent harnesses renamed (test-name lines only, bodies byte-identical), wt_
+  byte-copies resynced, 116 tfim embeds regenerated. All families perfect +
+  mutants + format green; **corpus-wide resync errors now 0**.
+- **Tooling**: `resync_tfim_embeds.exs` now strips a leading `--` — the invocation
+  its own header documented (`mix run … -- --only`) silently UNSCOPED the run
+  (OptionParser treats `--` as end-of-options; both agents tripped on it).
+- **NEW finding [decision]: 632 stale tfim embeds.** Deterministic regeneration
+  would change 632 tfim prompt.md embeds across ~77 families — parents were edited
+  over time (e.g. `^size` pin-operator warning fixes) without regenerating child
+  embeds; invisible to every gate because embeds are prompt-display text only.
+  Sample diff (tfim_134_001): `binary-size(size - 1)` → `binary-size(^size - 1)`.
+  Recommendation: one-shot corpus `resync_tfim_embeds.exs --apply` + full
+  validation + format check as its own commit, then wire the dry run
+  (`error: 0, would_resync: 0`) into CI as a staleness gate. Needs sign-off
+  (632-file churn; no re-screen cost — tfim prompts are not blind-screened).
+
 ---
 
 ## 6. Remaining work — step-by-step plan (R1–R12)
@@ -643,14 +704,14 @@ backfills still print) — polish when next touched.
 Each step is self-contained: files, approach, acceptance criteria, gotchas.
 Steps marked **[decision]** need the user's choice before implementation.
 
-**Status as of 2026-07-09: the R1–R12 plan is COMPLETE.** R1–R8, R10–R12 done
-(including the R11 repair-pair minting and the 001_004 decision, §5.13); R6 done
-2026-07-09. The only standing item is **R9 (flake quarantine)**, which by design
-needs `--stability` runs spread across days — aggregate `logs/flaky.jsonl` and
-quarantine repeat offenders as the data accumulates. Follow-up work-lists that
-outlive the plan: the R10 semantic-mutant weak tail (22 tasks < 0.4 kill rate in
-`logs/semantic_mutants.jsonl`), the docs/07 register-monoculture rewrite (§4.2),
-and the §4.4 stratified review loop beyond the blind-screen population.
+**Status as of 2026-07-10: the R1–R12 plan is COMPLETE.** R1–R8, R10–R12 done
+(§5.13); R10's weak-tail tightening AND its two canonization [decision]s done
+(§5.14: 073_001 → 11/12, 074_003 → 15/15, both re-screened green). The only
+standing item is **R9 (flake quarantine)** — two repeat offenders fixed so far
+(104_004 §R9, 625_001 §5.14); keep aggregating `logs/flaky.jsonl` across days.
+Follow-up work-lists that outlive the plan: the 632-stale-tfim-embed resync
+(**[decision]**, §5.14), the docs/07 register-monoculture rewrite (§4.2), and
+the §4.4 stratified review loop beyond the blind-screen population.
 
 Original priority order for reference: R1 → R12 → R6 → R9 → R10 → R11.
 
@@ -981,7 +1042,11 @@ it). Fix was analytic: the harness's only wall-clock sensitivity was success-pat
 `refute_received` short-sleep guards fail safe and stayed). Family green under
 perfect + mutants + stability-3. The fake-clock pattern does NOT apply here:
 blocked-checkout semantics need real concurrent waiting — deadline widening is
-the right tool for this family class. Remaining suspects (all ≤1 occurrence —
+the right tool for this family class.
+**Second repeat offender FIXED 2026-07-10:** the 625_001 family (4 occurrences
+across three tfim children) — not timing at all: concurrent same-family evals
+collided on ExUnit's deterministic `:tmp_dir` paths (full mechanism in §5.14);
+fixed with a per-run unique tmp root. Remaining suspects (all ≤1 occurrence —
 keep accumulating across days):
 - Known suspects (union of runs so far): `tfim_012_003_*_10`, `tfim_009_002_*_04`,
   `tfim_031_003_*_03`, `tfim_031_004_*_11`, `tfim_625_001_*_02` (×2 tasks),
@@ -1032,10 +1097,10 @@ construction (rotations can violate strict right-subtree ordering — the gold's
 result-ID-only assertions (one exact-score + vocabulary test closed the channel);
 107_003's first kill attempt itself flaked under load (short `refute_receive`
 windows under-report kills — positive synchronization via a queued call fixed it).
-**Follow-up candidates (prompt-side, needs the usual human sign-off + re-screen):**
-073_001's return-shape silence and 074_003's fn-variant defaults are the two
-places where a small prompt addition would unlock most of the remaining
-unspecified survivors.
+**Follow-up candidates — ✅ DONE 2026-07-10 (user-approved, §5.14):** 073_001's
+return shapes and 074_003's fn-variant defaults were canonized; 073_001 → 11/12
+(one documented UNSPECIFIED survivor), 074_003 → **15/15**. Both blind
+re-screens green.
 Original plan for reference:
 - Extend `GenTask.Mutation` with a small operator set applied per public function:
   swap `<`/`<=` and `>`/`>=`, `+1`/`-1` on integer literals, `:ok`↔`:error` in

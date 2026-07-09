@@ -22,6 +22,7 @@ defmodule CancellablePool do
     GenServer.start_link(__MODULE__, opts, name: name)
   end
 
+  @doc "Submits `task_func` to the pool. Returns `{:ok, ref}` or `{:error, :queue_full}`."
   @spec submit(GenServer.server(), (-> any())) :: {:ok, reference()} | {:error, :queue_full}
   def submit(pool, task_func) when is_function(task_func, 0) do
     GenServer.call(pool, {:submit, task_func})
@@ -63,7 +64,7 @@ defmodule CancellablePool do
       monitors: %{},
       # %{ref => client_pid} — tracks refs still in the queue
       pending_refs: %{},
-      # refs that were cancelled while running (to distinguish from crash)
+      # refs cancelled while running (to distinguish from a crash)
       cancelled_refs: MapSet.new(),
       cancelled_count: 0
     ]
@@ -425,7 +426,7 @@ defmodule CancellablePoolTest do
     assert {:error, :cancelled} = CancellablePool.await(pool, ref_running, 1_000)
   end
 
-  test "after cancelling a running task, replacement worker picks up queued work", %{pool: pool} do
+  test "cancelling a running task frees a worker for queued work", %{pool: pool} do
     # TODO
   end
 

@@ -492,11 +492,22 @@ end
 defmodule ObjectStorageTest do
   use ExUnit.Case, async: false
 
-  @moduletag :tmp_dir
+  # ExUnit's :tmp_dir tag derives a deterministic path from module + test name, so
+  # concurrent runs of this harness (separate OS processes sharing a CWD) collide on
+  # the same directories. Build a per-run unique root instead: System.pid/0 separates
+  # BEAM instances and the random suffix guards against OS pid reuse. Cleanup uses
+  # the non-raising rm_rf/1 — the path is never reused, so leftovers are harmless.
+  setup do
+    unique =
+      "#{System.pid()}-#{System.unique_integer([:positive])}-" <>
+        Base.encode16(:crypto.strong_rand_bytes(4), case: :lower)
 
-  setup %{tmp_dir: tmp_dir} do
+    tmp_dir = Path.expand(Path.join(["tmp", "object_storage_test", unique]))
+    File.mkdir_p!(tmp_dir)
+    on_exit(fn -> File.rm_rf(tmp_dir) end)
+
     {:ok, pid} = ObjectStorage.start_link(root_dir: tmp_dir)
-    %{os: pid}
+    %{os: pid, tmp_dir: tmp_dir}
   end
 
   # -------------------------------------------------------

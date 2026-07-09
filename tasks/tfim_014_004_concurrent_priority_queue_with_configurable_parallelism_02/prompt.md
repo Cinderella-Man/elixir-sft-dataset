@@ -43,6 +43,7 @@ defmodule ConcurrentPriorityQueue do
     )
   end
 
+  @doc "Enqueues `task` at `priority` for concurrent processing. Returns `:ok`."
   @spec enqueue(server(), term(), priority()) :: :ok
   def enqueue(server, task, priority) when priority in @priority_order do
     GenServer.call(server, {:enqueue, task, priority})
@@ -278,7 +279,7 @@ defmodule ConcurrentPriorityQueueTest do
     # TODO
   end
 
-  test "processes multiple tasks of the same priority in FIFO order with concurrency=1", %{pq: pq} do
+  test "same-priority tasks run in FIFO order at concurrency=1", %{pq: pq} do
     ConcurrentPriorityQueue.enqueue(pq, "first", :normal)
     ConcurrentPriorityQueue.enqueue(pq, "second", :normal)
     ConcurrentPriorityQueue.enqueue(pq, "third", :normal)

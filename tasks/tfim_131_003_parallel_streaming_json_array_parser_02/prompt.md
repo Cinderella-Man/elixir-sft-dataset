@@ -151,7 +151,7 @@ defmodule ParallelJsonStreamerTest do
     # TODO
   end
 
-  test "handler is invoked in file order despite concurrent decode", %{path: path, collector: c} do
+  test "handler runs in file order despite concurrent decode", %{path: path, collector: c} do
     write_array(path, for(i <- 1..500, do: valid(%{"id" => i})))
 
     assert {:ok, stats} =

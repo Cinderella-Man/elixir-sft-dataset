@@ -178,10 +178,7 @@ defmodule CoalescingNotificationPollerTest do
   # Coalescing — the defining feature
   # -------------------------------------------------------
 
-  test "coalesces a burst of notifications into one batched response", %{
-    server: server,
-    opts: opts
-  } do
+  test "coalesces a burst into one batched response", %{server: server, opts: opts} do
     task = Task.async(fn -> poll(opts, "user:1") end)
     Process.sleep(100)
 
@@ -198,7 +195,7 @@ defmodule CoalescingNotificationPollerTest do
     assert body["count"] == 3
   end
 
-  test "a single notification is returned as a one-element batch", %{server: server, opts: opts} do
+  test "single notification returns a one-element batch", %{server: server, opts: opts} do
     # TODO
   end
 
@@ -248,7 +245,7 @@ defmodule CoalescingNotificationPollerTest do
     assert conn_b.status == 204
   end
 
-  test "correct user receives their batch among multiple pollers", %{server: server, opts: opts} do
+  test "correct user receives their batch among many pollers", %{server: server, opts: opts} do
     task_a = Task.async(fn -> poll(opts, "user:a") end)
     task_b = Task.async(fn -> poll(opts, "user:b") end)
     Process.sleep(100)
@@ -268,10 +265,7 @@ defmodule CoalescingNotificationPollerTest do
   # Multiple subscribers for the same user
   # -------------------------------------------------------
 
-  test "multiple pollers for the same user each receive the full batch", %{
-    server: server,
-    opts: opts
-  } do
+  test "all pollers for one user receive the full batch", %{server: server, opts: opts} do
     task1 = Task.async(fn -> poll(opts, "user:1") end)
     task2 = Task.async(fn -> poll(opts, "user:1") end)
     Process.sleep(100)

@@ -29,7 +29,7 @@ defmodule ConcurrentPriorityQueueTest do
     assert [{"task_a", {:processed, "task_a"}}] = ConcurrentPriorityQueue.processed(pq)
   end
 
-  test "processes multiple tasks of the same priority in FIFO order with concurrency=1", %{pq: pq} do
+  test "same-priority tasks run in FIFO order at concurrency=1", %{pq: pq} do
     ConcurrentPriorityQueue.enqueue(pq, "first", :normal)
     ConcurrentPriorityQueue.enqueue(pq, "second", :normal)
     ConcurrentPriorityQueue.enqueue(pq, "third", :normal)

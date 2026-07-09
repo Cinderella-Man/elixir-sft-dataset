@@ -25,6 +25,7 @@ defmodule DedupDLQ do
     GenServer.start_link(__MODULE__, opts, gen_opts)
   end
 
+  @doc "Pushes a failed `message`, deduplicating by fingerprint. Returns `{:ok, id}`."
   @spec push(GenServer.server(), term(), term(), term(), term(), map()) ::
           {:ok, :new | :duplicate, term()}
   def push(server, queue_name, dedup_key, message, error_reason, metadata)
@@ -207,9 +208,7 @@ defmodule DedupDLQTest do
     # TODO
   end
 
-  test "repeated key coalesces: same id, bumped occurrences, latest data, refreshed last_seen", %{
-    dlq: dlq
-  } do
+  test "repeated key coalesces: same id, bumped count, latest data", %{dlq: dlq} do
     {:ok, :new, id} = DedupDLQ.push(dlq, "q", "k", :first, :err_a, %{v: 1})
     Clock.advance(100)
     assert {:ok, :duplicate, ^id} = DedupDLQ.push(dlq, "q", "k", :second, :err_b, %{v: 2})

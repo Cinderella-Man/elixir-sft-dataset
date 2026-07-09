@@ -483,7 +483,7 @@ defmodule MonitorTest do
     # TODO
   end
 
-  test "notification fires again if service goes down a second time after recovery", %{mon: mon} do
+  test "notification fires again on a second down after recovery", %{mon: mon} do
     CheckFn.set_result("api", {:error, :crash})
     check = CheckFn.build("api")
     Monitor.register(mon, "api", check, 1_000)

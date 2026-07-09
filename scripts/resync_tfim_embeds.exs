@@ -25,6 +25,10 @@ defmodule ResyncTfimEmbeds do
   alias GenTask.TestFim
 
   def main(argv) do
+    # `mix run script.exs -- --only ...` leaves the literal `--` in System.argv, and
+    # OptionParser treats it as an end-of-options terminator — silently unscoping the
+    # run. Accept both invocations by dropping a leading `--`.
+    argv = Enum.drop_while(argv, &(&1 == "--"))
     {opts, _, _} = OptionParser.parse(argv, strict: [only: :string, apply: :boolean])
     apply? = opts[:apply] || false
 

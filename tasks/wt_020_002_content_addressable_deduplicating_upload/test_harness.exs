@@ -59,7 +59,7 @@ defmodule FileUploadTest do
 
   defp json_body(conn), do: Jason.decode!(conn.resp_body)
 
-  test "new CSV upload returns 201 with a 64-char sha256 id and deduplicated=false", %{opts: opts} do
+  test "new CSV upload returns 201 with sha256 id, deduplicated=false", %{opts: opts} do
     conn = call_upload(opts, "people.csv", "name,age\nAlice,30\n")
     assert conn.status == 201
     body = json_body(conn)
@@ -71,9 +71,7 @@ defmodule FileUploadTest do
     assert String.contains?(body["download_url"], body["id"])
   end
 
-  test "identical content under a different name is deduplicated (200, same id, count grows)", %{
-    opts: opts
-  } do
+  test "identical content under a new name dedupes (200, same id)", %{opts: opts} do
     content = "x,y\n1,2\n"
     c1 = call_upload(opts, "first.csv", content)
     c2 = call_upload(opts, "second.csv", content)

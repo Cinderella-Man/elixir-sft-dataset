@@ -7,7 +7,6 @@ test so the harness passes for a correct implementation of the module.
 ## Module under test
 
 ```elixir
-<file path="lib/notifications.ex">
 defmodule Notifications do
   @moduledoc """
   In-memory pub/sub for user notifications backed by a `Registry` in
@@ -18,6 +17,7 @@ defmodule Notifications do
   Starts the backing `Registry`. Accepts a `:name` option (default
   `Notifications`) used both for registration and as the server reference.
   """
+  @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
     name = Keyword.get(opts, :name, __MODULE__)
     Registry.start_link(keys: :duplicate, name: name)
@@ -101,8 +101,8 @@ defmodule NotificationRouter do
 
   use Plug.Router, copy_opts_to_assign: :poller_opts
 
-  plug :match
-  plug :dispatch
+  plug(:match)
+  plug(:dispatch)
 
   get "/api/notifications/poll" do
     opts = conn.assigns.poller_opts
@@ -113,7 +113,6 @@ defmodule NotificationRouter do
     send_resp(conn, 404, "not found")
   end
 end
-</file>
 ```
 
 ## Test harness — implement the `# TODO` test
@@ -156,10 +155,7 @@ defmodule NotificationPollerTest do
   # Basic publish / receive
   # -------------------------------------------------------
 
-  test "returns notification immediately when one is published during poll", %{
-    server: server,
-    opts: opts
-  } do
+  test "returns a notification published mid-poll", %{server: server, opts: opts} do
     payload = %{"type" => "message", "body" => "hello"}
 
     # Start the long-poll in a background task
@@ -204,14 +200,11 @@ defmodule NotificationPollerTest do
   # User isolation
   # -------------------------------------------------------
 
-  test "notification for user A is not delivered to user B's poll", %{server: server, opts: opts} do
+  test "user A notification not delivered to user B", %{server: server, opts: opts} do
     # TODO
   end
 
-  test "notification reaches the correct user among multiple pollers", %{
-    server: server,
-    opts: opts
-  } do
+  test "delivers to the correct user among many pollers", %{server: server, opts: opts} do
     task_a = Task.async(fn -> poll(opts, "user:a") end)
     task_b = Task.async(fn -> poll(opts, "user:b") end)
 
@@ -232,10 +225,7 @@ defmodule NotificationPollerTest do
   # Multiple subscribers for the same user
   # -------------------------------------------------------
 
-  test "multiple pollers for the same user all receive the notification", %{
-    server: server,
-    opts: opts
-  } do
+  test "all pollers for one user receive it", %{server: server, opts: opts} do
     task1 = Task.async(fn -> poll(opts, "user:1") end)
     task2 = Task.async(fn -> poll(opts, "user:1") end)
 
@@ -256,10 +246,7 @@ defmodule NotificationPollerTest do
   # Only the first notification is returned (single shot)
   # -------------------------------------------------------
 
-  test "poll returns only the first notification even if multiple arrive", %{
-    server: server,
-    opts: opts
-  } do
+  test "poll returns only the first of several", %{server: server, opts: opts} do
     task = Task.async(fn -> poll(opts, "user:1") end)
 
     Process.sleep(100)

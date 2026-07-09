@@ -61,6 +61,7 @@ defmodule AsyncMonitor do
     GenServer.start_link(__MODULE__, opts, gen_opts ++ name_opt)
   end
 
+  @doc "Registers `service_name` with an async `check_func`. Returns `:ok`."
   @spec register(
           GenServer.server(),
           service_name(),
@@ -566,7 +567,7 @@ defmodule AsyncMonitorTest do
              AsyncMonitor.status(mon, "api")
   end
 
-  test "notification fires again if service goes down a second time after recovery", %{mon: mon} do
+  test "notification fires again on a second down after recovery", %{mon: mon} do
     # TODO
   end
 

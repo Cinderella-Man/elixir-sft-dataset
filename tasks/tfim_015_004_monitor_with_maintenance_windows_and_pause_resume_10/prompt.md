@@ -62,6 +62,7 @@ defmodule ManagedMonitor do
     GenServer.start_link(__MODULE__, opts, gen_opts ++ name_opt)
   end
 
+  @doc "Registers `service_name` with `check_func` every `interval_ms`. Returns `:ok`."
   @spec register(
           GenServer.server(),
           service_name(),
@@ -566,7 +567,7 @@ defmodule ManagedMonitorTest do
     assert [{"api", :recovered, nil}] = recovery_events
   end
 
-  test "notification fires again if service goes down a second time after recovery", %{mon: mon} do
+  test "notification fires again on a second down after recovery", %{mon: mon} do
     # TODO
   end
 
