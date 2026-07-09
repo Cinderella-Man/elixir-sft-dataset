@@ -251,7 +251,10 @@ defmodule GenTask.TestFim do
   end
 
   # The harness with the target block's BODY replaced by `# TODO` (name line kept).
-  defp skeletonize(harness, %{s: s, e: e}) do
+  # Public (@doc false): `scripts/resync_tfim_embeds.exs` rebuilds prompt embeds from
+  # the CURRENT parent harness after a harness edit (docs/10 R10 cascade).
+  @doc false
+  def skeletonize(harness, %{s: s, e: e}) do
     lines = String.split(harness, "\n")
     stub = [Enum.at(lines, s), "    # TODO", "  end"]
     (Enum.slice(lines, 0, s) ++ stub ++ Enum.slice(lines, (e + 1)..-1//1)) |> Enum.join("\n")

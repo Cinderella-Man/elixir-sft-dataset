@@ -57,6 +57,7 @@ defmodule ReplayEventBus do
     GenServer.start_link(__MODULE__, opts, server_opts)
   end
 
+  @doc "Subscribes `pid` to `topic`, optionally replaying buffered events. Returns `{:ok, ref}`."
   @spec subscribe(GenServer.server(), String.t(), pid(), keyword()) :: {:ok, reference()}
   def subscribe(server, topic, pid, opts \\ [])
       when is_binary(topic) and is_pid(pid) and is_list(opts) do
