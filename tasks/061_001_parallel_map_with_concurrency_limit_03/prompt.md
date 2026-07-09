@@ -44,8 +44,8 @@ defmodule ConcurrencyCounter do
   def start_link(opts \\ []) do
     {name, server_opts} =
       case Keyword.pop(opts, :name) do
-        {nil, rest}    -> {__MODULE__, rest}
-        {name, rest}   -> {name, rest}
+        {nil, rest} -> {__MODULE__, rest}
+        {name, rest} -> {name, rest}
       end
 
     GenServer.start_link(__MODULE__, %{count: 0, peak: 0}, [{:name, name} | server_opts])
@@ -84,7 +84,6 @@ defmodule ConcurrencyCounter do
   end
 end
 
-
 defmodule ParallelMap do
   @moduledoc """
   Applies a function to every element of a collection in parallel while
@@ -120,13 +119,13 @@ defmodule ParallelMap do
   def pmap(collection, func, max_concurrency)
       when is_function(func, 1) and is_integer(max_concurrency) and max_concurrency >= 1 do
     indexed = collection |> Enum.to_list() |> Enum.with_index()
-    total   = length(indexed)
+    total = length(indexed)
 
     if total == 0 do
       []
     else
-      parent          = self()
-      {seed, queue}   = Enum.split(indexed, max_concurrency)
+      parent = self()
+      {seed, queue} = Enum.split(indexed, max_concurrency)
 
       # running: %{our_ref => {monitor_ref, original_index}}
       #
@@ -170,7 +169,7 @@ defmodule ParallelMap do
           rescue
             e -> {:error, {e, __STACKTRACE__}}
           catch
-            :exit,  r -> {:error, r}
+            :exit, r -> {:error, r}
             :throw, t -> {:error, {:throw, t}}
           end
 

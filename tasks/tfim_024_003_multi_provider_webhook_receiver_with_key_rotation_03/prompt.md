@@ -194,8 +194,8 @@ defmodule WebhookReceiver.Router do
 
   alias WebhookReceiver.{Signature, Store}
 
-  plug :match
-  plug :dispatch
+  plug(:match)
+  plug(:dispatch)
 
   post "/api/webhooks/:provider" do
     opts = conn.assigns.webhook_opts
@@ -311,7 +311,9 @@ defmodule WebhookReceiverMultiProviderTest do
 
   test "stripe provider verifies and stores", %{opts: opts, store: store} do
     payload = build_event("evt_s1")
-    conn = post_webhook(opts, "stripe", payload, [{"stripe-signature", stripe_sig(payload, @stripe)}])
+
+    conn =
+      post_webhook(opts, "stripe", payload, [{"stripe-signature", stripe_sig(payload, @stripe)}])
 
     assert conn.status == 200
     assert json_body(conn)["status"] == "received"
@@ -326,6 +328,7 @@ defmodule WebhookReceiverMultiProviderTest do
 
   test "github accepts a rotated-out (old) secret", %{opts: opts} do
     payload = build_event("evt_g2")
+
     conn =
       post_webhook(opts, "github", payload, [{"x-hub-signature-256", gh_sig(payload, @gh_old)}])
 
@@ -335,6 +338,7 @@ defmodule WebhookReceiverMultiProviderTest do
 
   test "github rejects an unknown secret", %{opts: opts} do
     payload = build_event("evt_g3")
+
     conn =
       post_webhook(opts, "github", payload, [{"x-hub-signature-256", gh_sig(payload, "rogue")}])
 
@@ -344,6 +348,7 @@ defmodule WebhookReceiverMultiProviderTest do
 
   test "stripe rejects wrong signature", %{opts: opts} do
     payload = build_event("evt_s2")
+
     conn =
       post_webhook(opts, "stripe", payload, [{"stripe-signature", stripe_sig(payload, "wrong")}])
 
@@ -353,6 +358,7 @@ defmodule WebhookReceiverMultiProviderTest do
 
   test "unknown provider returns 404 unknown_provider", %{opts: opts} do
     payload = build_event("evt_x")
+
     conn =
       post_webhook(opts, "paypal", payload, [{"stripe-signature", stripe_sig(payload, @stripe)}])
 
@@ -368,6 +374,7 @@ defmodule WebhookReceiverMultiProviderTest do
 
   test "github signature sent to stripe (wrong header) is rejected", %{opts: opts} do
     payload = build_event("evt_s4")
+
     conn =
       post_webhook(opts, "stripe", payload, [{"x-hub-signature-256", gh_sig(payload, @stripe)}])
 
@@ -377,8 +384,11 @@ defmodule WebhookReceiverMultiProviderTest do
   test "same id under different providers stored independently", %{opts: opts, store: store} do
     payload = build_event("shared_id")
 
-    c1 = post_webhook(opts, "stripe", payload, [{"stripe-signature", stripe_sig(payload, @stripe)}])
-    c2 = post_webhook(opts, "github", payload, [{"x-hub-signature-256", gh_sig(payload, @gh_new)}])
+    c1 =
+      post_webhook(opts, "stripe", payload, [{"stripe-signature", stripe_sig(payload, @stripe)}])
+
+    c2 =
+      post_webhook(opts, "github", payload, [{"x-hub-signature-256", gh_sig(payload, @gh_new)}])
 
     assert json_body(c1)["status"] == "received"
     assert json_body(c2)["status"] == "received"
@@ -411,6 +421,7 @@ defmodule WebhookReceiverMultiProviderTest do
 
   test "missing id returns bad_payload", %{opts: opts} do
     payload = Jason.encode!(%{"type" => "x"})
+
     conn =
       post_webhook(opts, "stripe", payload, [{"stripe-signature", stripe_sig(payload, @stripe)}])
 

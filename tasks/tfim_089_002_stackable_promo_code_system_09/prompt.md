@@ -77,9 +77,15 @@ defmodule StackablePromoCodes do
     value = Map.get(attrs, :value)
 
     cond do
-      not is_binary(code) -> {:error, :invalid_code}
-      type not in @valid_types -> {:error, :invalid_type}
-      not is_number(value) -> {:error, :invalid_value}
+      not is_binary(code) ->
+        {:error, :invalid_code}
+
+      type not in @valid_types ->
+        {:error, :invalid_type}
+
+      not is_number(value) ->
+        {:error, :invalid_value}
+
       true ->
         {:ok,
          %{
@@ -125,7 +131,9 @@ defmodule StackablePromoCodes do
 
     {chosen_pct, extra_pcts} =
       case percentages do
-        [] -> {nil, []}
+        [] ->
+          {nil, []}
+
         _ ->
           best = Enum.max_by(percentages, fn {_cs, c} -> c.value end)
           {best, List.delete(percentages, best)}
@@ -141,7 +149,9 @@ defmodule StackablePromoCodes do
 
     {remaining, applied} =
       case chosen_pct do
-        nil -> {remaining, applied}
+        nil ->
+          {remaining, applied}
+
         {cs, c} ->
           d = min(round(order_total * c.value / 100), remaining)
           {remaining - d, applied ++ [%{code: cs, type: :percentage, discount: d}]}
@@ -149,7 +159,9 @@ defmodule StackablePromoCodes do
 
     {remaining, applied} =
       case chosen_ship do
-        nil -> {remaining, applied}
+        nil ->
+          {remaining, applied}
+
         {cs, c} ->
           d = min(c.value, remaining)
           {remaining - d, applied ++ [%{code: cs, type: :free_shipping, discount: d}]}
@@ -167,7 +179,9 @@ defmodule StackablePromoCodes do
     rejected_all =
       rejected ++
         Enum.map(extra_pcts, fn {cs, _c} -> %{code: cs, reason: :percentage_already_applied} end) ++
-        Enum.map(extra_ships, fn {cs, _c} -> %{code: cs, reason: :free_shipping_already_applied} end)
+        Enum.map(extra_ships, fn {cs, _c} ->
+          %{code: cs, reason: :free_shipping_already_applied}
+        end)
 
     result = %{
       total_discount: order_total - remaining,
@@ -279,6 +293,7 @@ defmodule StackablePromoCodesTest do
 
   test "create rejects duplicate codes" do
     assert {:ok, _} = StackablePromoCodes.create(%{code: "DUP", type: :percentage, value: 10})
+
     assert {:error, :already_exists} =
              StackablePromoCodes.create(%{code: "DUP", type: :fixed_amount, value: 500})
   end
@@ -367,7 +382,12 @@ defmodule StackablePromoCodesTest do
 
   test "below-minimum code is rejected but others apply" do
     {:ok, _} =
-      StackablePromoCodes.create(%{code: "MIN", type: :fixed_amount, value: 500, min_order_total: 5_000})
+      StackablePromoCodes.create(%{
+        code: "MIN",
+        type: :fixed_amount,
+        value: 500,
+        min_order_total: 5_000
+      })
 
     {:ok, _} = StackablePromoCodes.create(%{code: "ANY", type: :fixed_amount, value: 250})
     assert {:ok, r} = StackablePromoCodes.apply_codes(["MIN", "ANY"], 3_000)
@@ -378,7 +398,9 @@ defmodule StackablePromoCodesTest do
   # --- usage accounting ---
 
   test "only applied codes consume uses" do
-    {:ok, _} = StackablePromoCodes.create(%{code: "ONCE", type: :fixed_amount, value: 500, max_uses: 1})
+    {:ok, _} =
+      StackablePromoCodes.create(%{code: "ONCE", type: :fixed_amount, value: 500, max_uses: 1})
+
     {:ok, _} = StackablePromoCodes.create(%{code: "DUPE", type: :percentage, value: 10})
     {:ok, _} = StackablePromoCodes.create(%{code: "DUPE2", type: :percentage, value: 20})
 
@@ -394,7 +416,12 @@ defmodule StackablePromoCodesTest do
 
   test "per-user limit is enforced independently" do
     {:ok, _} =
-      StackablePromoCodes.create(%{code: "PU", type: :fixed_amount, value: 500, max_uses_per_user: 1})
+      StackablePromoCodes.create(%{
+        code: "PU",
+        type: :fixed_amount,
+        value: 500,
+        max_uses_per_user: 1
+      })
 
     assert {:ok, r1} = StackablePromoCodes.apply_codes(["PU"], 10_000, user_id: "u1")
     assert find(r1.applied, "PU")
@@ -410,7 +437,12 @@ defmodule StackablePromoCodesTest do
     valid_until = ~U[2026-06-10 00:00:00Z]
 
     {:ok, _} =
-      StackablePromoCodes.create(%{code: "WIN", type: :percentage, value: 10, valid_until: valid_until})
+      StackablePromoCodes.create(%{
+        code: "WIN",
+        type: :percentage,
+        value: 10,
+        valid_until: valid_until
+      })
 
     assert {:ok, r} = StackablePromoCodes.apply_codes(["WIN"], 10_000)
     assert find(r.applied, "WIN").discount == 1_000
@@ -422,7 +454,12 @@ defmodule StackablePromoCodesTest do
 
   test "not-yet-valid and inclusive boundaries" do
     {:ok, _} =
-      StackablePromoCodes.create(%{code: "SOON", type: :percentage, value: 10, valid_from: @future})
+      StackablePromoCodes.create(%{
+        code: "SOON",
+        type: :percentage,
+        value: 10,
+        valid_from: @future
+      })
 
     assert {:ok, r} = StackablePromoCodes.apply_codes(["SOON"], 10_000)
     assert find(r.rejected, "SOON").reason == :not_yet_valid

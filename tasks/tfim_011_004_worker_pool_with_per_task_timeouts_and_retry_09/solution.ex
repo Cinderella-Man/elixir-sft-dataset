@@ -16,7 +16,8 @@
             :fast_enough
           end
         end,
-        task_timeout: 200, max_retries: 1
+        task_timeout: 200,
+        max_retries: 1
       )
 
     assert {:ok, :fast_enough} = RetryPool.await(pool, ref, 5_000)

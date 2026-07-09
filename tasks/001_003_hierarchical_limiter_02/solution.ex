@@ -19,6 +19,6 @@ def handle_call({:check, key, tiers}, _from, state) do
       new_entry = {active, widest_window}
 
       {:reply, {:error, :rate_limited, tier_name, retry_after},
-        %{state | keys: Map.put(state.keys, key, new_entry)}}
+       %{state | keys: Map.put(state.keys, key, new_entry)}}
   end
 end

@@ -141,5 +141,4 @@ defmodule Leaderboard do
     end
   end
 end
-
 ```

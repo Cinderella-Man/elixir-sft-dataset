@@ -154,9 +154,11 @@ defmodule Saga do
   @spec run_steps([step()], [step()], context()) :: execute_result()
   defp run_steps([], _completed, context), do: {:ok, context}
 
-  defp run_steps([%{name: name, action: action} = step | rest],
-                 completed,
-                 context) do
+  defp run_steps(
+         [%{name: name, action: action} = step | rest],
+         completed,
+         context
+       ) do
     case safe_action(action, context) do
       {:ok, result} ->
         enriched = Map.put(context, name, result)
@@ -173,9 +175,9 @@ defmodule Saga do
   @spec safe_action((context() -> term()), context()) :: {:ok, term()} | {:error, term()}
   defp safe_action(action, context) do
     case action.(context) do
-      {:ok, _} = ok       -> ok
+      {:ok, _} = ok -> ok
       {:error, _} = error -> error
-      other               -> {:error, {:unexpected_return, other}}
+      other -> {:error, {:unexpected_return, other}}
     end
   rescue
     exception -> {:error, {:exception, exception, __STACKTRACE__}}

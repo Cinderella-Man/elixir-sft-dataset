@@ -1,6 +1,6 @@
   test "supports custom type_field option" do
     records = [
-      %{"record_kind" => "order",  "order_id" => "o-1", "customer" => "X", "amount" => 10},
+      %{"record_kind" => "order", "order_id" => "o-1", "customer" => "X", "amount" => 10},
       %{"record_kind" => "refund", "refund_id" => "r-1", "reason" => "Y", "amount" => 5}
     ]
 

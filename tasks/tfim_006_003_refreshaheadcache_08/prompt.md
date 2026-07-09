@@ -71,7 +71,10 @@ defmodule RefreshAheadCache do
   @spec delete(GenServer.server(), term()) :: :ok
   def delete(server, key), do: GenServer.call(server, {:delete, key})
 
-  @spec stats(GenServer.server()) :: %{entries: non_neg_integer(), refreshes_in_flight: non_neg_integer()}
+  @spec stats(GenServer.server()) :: %{
+          entries: non_neg_integer(),
+          refreshes_in_flight: non_neg_integer()
+        }
   def stats(server), do: GenServer.call(server, :stats)
 
   # ---------------------------------------------------------------------------
@@ -251,6 +254,7 @@ defmodule RefreshAheadCache do
   end
 
   defp schedule_sweep(:infinity), do: :ok
+
   defp schedule_sweep(ms) when is_integer(ms) and ms > 0 do
     Process.send_after(self(), :sweep, ms)
   end
@@ -477,7 +481,8 @@ defmodule RefreshAheadCacheTest do
       RefreshAheadCache.put(c, :a, :v1, 1_000, fn -> Loader.slow_next_value(100) end)
 
     Clock.advance(850)
-    RefreshAheadCache.get(c, :a)   # triggers slow refresh
+    # triggers slow refresh
+    RefreshAheadCache.get(c, :a)
 
     # User overwrites manually before refresh completes
     RefreshAheadCache.put(c, :a, :user_set, 1_000, fn -> :ignored end)

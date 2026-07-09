@@ -1,7 +1,7 @@
   defp resolve_opts(opts) do
-    global_strategy  = Keyword.get(opts, :list_strategy, :replace)
-    per_key_raw      = Keyword.get(opts, :list_strategies, %{})
-    locked_raw       = Keyword.get(opts, :locked, [])
+    global_strategy = Keyword.get(opts, :list_strategy, :replace)
+    per_key_raw = Keyword.get(opts, :list_strategies, %{})
+    locked_raw = Keyword.get(opts, :locked, [])
 
     unless global_strategy in [:replace, :append] do
       raise ArgumentError,
@@ -27,7 +27,7 @@
 
     %{
       global_list_strategy: global_strategy,
-      per_key_strategies:   per_key,
-      locked_paths:         locked
+      per_key_strategies: per_key,
+      locked_paths: locked
     }
   end

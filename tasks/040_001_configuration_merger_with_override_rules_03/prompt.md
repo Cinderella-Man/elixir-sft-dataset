@@ -50,15 +50,15 @@ defmodule ConfigMerger do
       %{db: %{host: "localhost", port: 5432, name: "mydb"}, tags: ["b"]}
   """
 
-  @type key_path    :: [atom()]
-  @type strategy    :: :replace | :append
-  @type config_map  :: map()
+  @type key_path :: [atom()]
+  @type strategy :: :replace | :append
+  @type config_map :: map()
 
   @type opts :: [
-    list_strategy:   strategy(),
-    list_strategies: %{key_path() => strategy()},
-    locked:          [key_path()]
-  ]
+          list_strategy: strategy(),
+          list_strategies: %{key_path() => strategy()},
+          locked: [key_path()]
+        ]
 
   # ---------------------------------------------------------------------------
   # Public API
@@ -81,9 +81,9 @@ defmodule ConfigMerger do
   # ---------------------------------------------------------------------------
 
   defp resolve_opts(opts) do
-    global_strategy  = Keyword.get(opts, :list_strategy, :replace)
-    per_key_raw      = Keyword.get(opts, :list_strategies, %{})
-    locked_raw       = Keyword.get(opts, :locked, [])
+    global_strategy = Keyword.get(opts, :list_strategy, :replace)
+    per_key_raw = Keyword.get(opts, :list_strategies, %{})
+    locked_raw = Keyword.get(opts, :locked, [])
 
     unless global_strategy in [:replace, :append] do
       raise ArgumentError,
@@ -109,14 +109,15 @@ defmodule ConfigMerger do
 
     %{
       global_list_strategy: global_strategy,
-      per_key_strategies:   per_key,
-      locked_paths:         locked
+      per_key_strategies: per_key,
+      locked_paths: locked
     }
   end
 
   # Accept both list paths ([:a, :b]) and tuple paths ({:a, :b}) transparently.
-  defp normalise_path(path, _opt) when is_list(path),  do: path
+  defp normalise_path(path, _opt) when is_list(path), do: path
   defp normalise_path(path, _opt) when is_tuple(path), do: Tuple.to_list(path)
+
   defp normalise_path(path, opt) do
     raise ArgumentError,
           "Key paths in `#{inspect(opt)}` must be lists or tuples of atoms, " <>

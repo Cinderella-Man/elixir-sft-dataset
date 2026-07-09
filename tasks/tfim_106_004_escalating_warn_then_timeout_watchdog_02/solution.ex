@@ -3,7 +3,12 @@
 
     :ok =
       EscalatingWatchdog.register(
-        :w, dummy_pid(), 80, 200, warn_notifier(test), timeout_notifier(test)
+        :w,
+        dummy_pid(),
+        80,
+        200,
+        warn_notifier(test),
+        timeout_notifier(test)
       )
 
     for _ <- 1..4 do

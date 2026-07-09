@@ -2,7 +2,12 @@
     {:ok, agent} = Agent.start_link(fn -> 0 end)
 
     results =
-      RetryMap.pmap([1], fn _ -> Agent.update(agent, &(&1 + 1)); raise "boom" end,
+      RetryMap.pmap(
+        [1],
+        fn _ ->
+          Agent.update(agent, &(&1 + 1))
+          raise "boom"
+        end,
         max_concurrency: 1,
         timeout: 1000,
         max_attempts: 3

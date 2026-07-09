@@ -28,9 +28,11 @@ defmodule PenaltyLimiter do
   """
   def check(server, key, max_requests, window_ms, [_ | _] = penalty_ladder)
       when is_integer(max_requests) and max_requests > 0 and
-           is_integer(window_ms) and window_ms > 0 do
+             is_integer(window_ms) and window_ms > 0 do
     Enum.each(penalty_ladder, fn
-      d when is_integer(d) and d > 0 -> :ok
+      d when is_integer(d) and d > 0 ->
+        :ok
+
       bad ->
         raise ArgumentError,
               "penalty ladder entries must be positive integers, got #{inspect(bad)}"
@@ -119,14 +121,16 @@ defmodule PenaltyLimiter do
 
       new_entry = %{
         entry
-        | timestamps: active,          # Do NOT add 'now' for rejected requests
+        | # Do NOT add 'now' for rejected requests
+          timestamps: active,
           strikes: new_strikes,
           last_strike_at: now,
-          cooldown_end: now + retry_after # Fixed: Align stored state with returned value
+          # Fixed: Align stored state with returned value
+          cooldown_end: now + retry_after
       }
 
       {:reply, {:error, :rate_limited, retry_after, new_strikes},
-        %{state | keys: Map.put(state.keys, key, new_entry)}}
+       %{state | keys: Map.put(state.keys, key, new_entry)}}
     end
   end
 
@@ -163,7 +167,8 @@ defmodule PenaltyLimiter do
           entry
           | strikes: new_strikes,
             last_strike_at: new_last,
-            cooldown_end: nil   # 🔑 clear stale cooldown
+            # 🔑 clear stale cooldown
+            cooldown_end: nil
         }
     end
   end

@@ -200,6 +200,7 @@ defmodule ConcurrentBloomFilterTest do
       Enum.count(1..n, fn i -> ConcurrentBloomFilter.member?(filter, "absent-#{i}") end)
 
     observed = false_positives / n
+
     assert observed < p * 2,
            "False positive rate #{observed} exceeded 2x target #{p}"
   end

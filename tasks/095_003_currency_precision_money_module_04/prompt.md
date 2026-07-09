@@ -21,9 +21,12 @@ fallback clause handles the remaining cases with the message
 Examples:
 
 ```elixir
-Money.from_major(12.34, :USD)  # => %Money{amount: 1234, currency: :USD}
-Money.from_major(500, :JPY)    # => %Money{amount: 500,  currency: :JPY}
-Money.from_major(1.2345, :BHD) # => %Money{amount: 1235, currency: :BHD}
+# => %Money{amount: 1234, currency: :USD}
+Money.from_major(12.34, :USD)
+# => %Money{amount: 500,  currency: :JPY}
+Money.from_major(500, :JPY)
+# => %Money{amount: 1235, currency: :BHD}
+Money.from_major(1.2345, :BHD)
 ```
 
 ```elixir

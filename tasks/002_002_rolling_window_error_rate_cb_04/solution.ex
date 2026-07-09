@@ -6,8 +6,7 @@ defp execute_in_closed(state, func) do
     |> Enum.take(state.config.window_size)
 
   if should_trip?(outcomes, state.config) do
-    {reply,
-      %{state | state: :open, opened_at: state.clock.(), outcomes: [], probes_in_flight: 0}}
+    {reply, %{state | state: :open, opened_at: state.clock.(), outcomes: [], probes_in_flight: 0}}
   else
     {reply, %{state | outcomes: outcomes}}
   end

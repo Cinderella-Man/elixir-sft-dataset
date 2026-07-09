@@ -179,8 +179,16 @@ defmodule BackoffDLQ do
   end
 
   defp public(e) do
-    Map.take(e, [:id, :message, :error_reason, :metadata, :retry_count, :status,
-                 :next_retry_at, :pushed_at])
+    Map.take(e, [
+      :id,
+      :message,
+      :error_reason,
+      :metadata,
+      :retry_count,
+      :status,
+      :next_retry_at,
+      :pushed_at
+    ])
   end
 end
 ```
@@ -200,7 +208,10 @@ defmodule BackoffDLQTest do
 
   setup do
     start_supervised!({Clock, 0})
-    {:ok, pid} = BackoffDLQ.start_link(clock: &Clock.now/0, base_backoff_ms: 1000, max_attempts: 3)
+
+    {:ok, pid} =
+      BackoffDLQ.start_link(clock: &Clock.now/0, base_backoff_ms: 1000, max_attempts: 3)
+
     %{dlq: pid}
   end
 
@@ -233,7 +244,9 @@ defmodule BackoffDLQTest do
     assert e2.next_retry_at == 3000
   end
 
-  test "retry before next_retry_at is rejected as :not_ready without running the handler", %{dlq: dlq} do
+  test "retry before next_retry_at is rejected as :not_ready without running the handler", %{
+    dlq: dlq
+  } do
     {:ok, id} = BackoffDLQ.push(dlq, "q", :m, :orig, %{})
     assert {:error, :boom} = BackoffDLQ.retry(dlq, "q", id, fn _ -> {:error, :boom} end)
 
@@ -244,7 +257,9 @@ defmodule BackoffDLQTest do
     assert e.retry_count == 1
   end
 
-  test "ready/3 excludes not-yet-due messages and includes them after the backoff elapses", %{dlq: dlq} do
+  test "ready/3 excludes not-yet-due messages and includes them after the backoff elapses", %{
+    dlq: dlq
+  } do
     {:ok, id} = BackoffDLQ.push(dlq, "q", :m, :orig, %{})
     assert {:error, :boom} = BackoffDLQ.retry(dlq, "q", id, fn _ -> {:error, :boom} end)
 
@@ -258,11 +273,14 @@ defmodule BackoffDLQTest do
     {:ok, id} = BackoffDLQ.push(dlq, "q", :m, :orig, %{})
 
     fail = fn _ -> {:error, :again} end
-    assert {:error, :again} = BackoffDLQ.retry(dlq, "q", id, fail)  # rc 1, due 1000
+    # rc 1, due 1000
+    assert {:error, :again} = BackoffDLQ.retry(dlq, "q", id, fail)
     Clock.advance(1000)
-    assert {:error, :again} = BackoffDLQ.retry(dlq, "q", id, fail)  # rc 2, due 3000
+    # rc 2, due 3000
+    assert {:error, :again} = BackoffDLQ.retry(dlq, "q", id, fail)
     Clock.advance(2000)
-    assert {:error, :again} = BackoffDLQ.retry(dlq, "q", id, fail)  # rc 3 -> dead
+    # rc 3 -> dead
+    assert {:error, :again} = BackoffDLQ.retry(dlq, "q", id, fail)
 
     assert [e] = BackoffDLQ.peek(dlq, "q", 10)
     assert e.status == :dead

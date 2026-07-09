@@ -135,6 +135,7 @@ defmodule SubscriptionAggregate do
   defp validate_command(nil, {:create, plan_name}) do
     {:ok, [%{type: :subscription_created, plan: plan_name}]}
   end
+
   defp validate_command(_state, {:create, _plan_name}), do: {:error, :already_exists}
 
   # Not Found Catch-all
@@ -144,12 +145,14 @@ defmodule SubscriptionAggregate do
   defp validate_command(%{status: :pending}, {:activate}) do
     {:ok, [%{type: :subscription_activated}]}
   end
+
   defp validate_command(_state, {:activate}), do: {:error, :not_pending}
 
   # Suspend
   defp validate_command(%{status: :active}, {:suspend, reason}) do
     {:ok, [%{type: :subscription_suspended, reason: reason}]}
   end
+
   defp validate_command(_state, {:suspend, _reason}), do: {:error, :not_active}
 
   # Cancel
@@ -166,6 +169,7 @@ defmodule SubscriptionAggregate do
   defp validate_command(%{status: :cancelled}, {:reactivate}) do
     {:ok, [%{type: :subscription_reactivated}]}
   end
+
   defp validate_command(_state, {:reactivate}), do: {:error, :not_cancelled}
 
   # --- Domain Logic: Event Application ---

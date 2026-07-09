@@ -145,7 +145,8 @@ defmodule MovingAverage do
 
   defp new_stream do
     %{
-      values: [],      # newest-first plain list; never trimmed during push
+      # newest-first plain list; never trimmed during push
+      values: [],
       max_period: 0,
       total_count: 0,
       ema: %{}
@@ -168,10 +169,11 @@ defmodule MovingAverage do
         {period, ema_step(prev_ema, value, period)}
       end)
 
-    %{stream |
-      values:      [value | stream.values],
-      total_count: stream.total_count + 1,
-      ema:         updated_emas
+    %{
+      stream
+      | values: [value | stream.values],
+        total_count: stream.total_count + 1,
+        ema: updated_emas
     }
   end
 
@@ -229,5 +231,4 @@ defmodule MovingAverage do
     %{stream | values: Enum.take(stream.values, stream.max_period)}
   end
 end
-
 ```

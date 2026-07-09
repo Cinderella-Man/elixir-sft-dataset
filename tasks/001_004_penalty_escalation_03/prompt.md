@@ -34,10 +34,14 @@ defmodule PenaltyLimiter do
           | {:error, :cooling_down, non_neg_integer(), pos_integer()}
   def check(server, key, max_requests, window_ms, [_ | _] = penalty_ladder)
       when is_integer(max_requests) and max_requests > 0 and
-           is_integer(window_ms) and window_ms > 0 do
+             is_integer(window_ms) and window_ms > 0 do
     Enum.each(penalty_ladder, fn
-      d when is_integer(d) and d > 0 -> :ok
-      bad -> raise ArgumentError, "penalty ladder entries must be positive integers, got #{inspect(bad)}"
+      d when is_integer(d) and d > 0 ->
+        :ok
+
+      bad ->
+        raise ArgumentError,
+              "penalty ladder entries must be positive integers, got #{inspect(bad)}"
     end)
 
     GenServer.call(server, {:check, key, max_requests, window_ms, penalty_ladder})
@@ -134,7 +138,8 @@ defmodule PenaltyLimiter do
           entry
           | strikes: new_strikes,
             last_strike_at: new_last,
-            cooldown_end: nil   # 🔑 clear stale cooldown
+            # 🔑 clear stale cooldown
+            cooldown_end: nil
         }
     end
   end

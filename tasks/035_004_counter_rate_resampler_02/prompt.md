@@ -42,13 +42,13 @@ defmodule CounterResampler do
   """
 
   @type datapoint :: {integer(), number()}
-  @type mode      :: :delta | :rate
-  @type reset     :: :detect | :raw
-  @type fill      :: :zero | :nil
+  @type mode :: :delta | :rate
+  @type reset :: :detect | :raw
+  @type fill :: :zero | nil
 
-  @valid_mode  [:delta, :rate]
+  @valid_mode [:delta, :rate]
   @valid_reset [:detect, :raw]
-  @valid_fill  [:zero, :nil]
+  @valid_fill [:zero, nil]
 
   @doc """
   Resamples cumulative counter `data` into fixed `interval_ms` buckets.
@@ -101,7 +101,7 @@ defmodule CounterResampler do
   defp project(inc, :delta, _interval_ms), do: inc
   defp project(inc, :rate, interval_ms), do: inc / (interval_ms / 1000)
 
-  defp empty_value(_mode, _interval_ms, :nil), do: nil
+  defp empty_value(_mode, _interval_ms, nil), do: nil
   defp empty_value(mode, interval_ms, :zero), do: project(0, mode, interval_ms)
 
   defp floor_bucket(ts, interval_ms), do: div(ts, interval_ms) * interval_ms

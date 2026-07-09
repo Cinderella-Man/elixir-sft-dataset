@@ -50,7 +50,11 @@ defmodule BatchCollector do
     flush_interval_ms = Keyword.fetch!(opts, :flush_interval_ms)
     server_opts = Keyword.take(opts, [:name])
     # Initializing state with an empty batches map
-    GenServer.start_link(__MODULE__, %{flush_interval_ms: flush_interval_ms, batches: %{}}, server_opts)
+    GenServer.start_link(
+      __MODULE__,
+      %{flush_interval_ms: flush_interval_ms, batches: %{}},
+      server_opts
+    )
   end
 
   @doc """

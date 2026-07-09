@@ -306,7 +306,10 @@ defmodule CacheLayerSingleFlightTest do
   # -------------------------------------------------------
 
   test "concurrent misses of the same key run the fallback exactly once", %{cl: cl} do
-    fun = fn -> Process.sleep(40); Tracker.fallback() end
+    fun = fn ->
+      Process.sleep(40)
+      Tracker.fallback()
+    end
 
     results =
       for _ <- 1..30 do

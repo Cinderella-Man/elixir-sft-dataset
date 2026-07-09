@@ -247,7 +247,9 @@ defmodule RecordMergeTest do
     assert RecordMerge.merge(base, ours, theirs) ==
              %{
                merged: [],
-               conflicts: [%{id: 1, type: :delete_modify, deleted_by: :ours, modified: %{id: 1, x: 5}}]
+               conflicts: [
+                 %{id: 1, type: :delete_modify, deleted_by: :ours, modified: %{id: 1, x: 5}}
+               ]
              }
   end
 

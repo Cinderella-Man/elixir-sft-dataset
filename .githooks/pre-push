@@ -26,6 +26,8 @@ if [ -n "$families" ]; then
   echo "[pre-push] validate touched families: $globs"
   elixir scripts/validate.exs --only "$globs" | tail -1
   elixir scripts/validate.exs --mutants --only "$globs" | tail -1
+  echo "[pre-push] format check on touched families"
+  elixir scripts/format_corpus.exs --check --only "$globs" | tail -1
 else
   echo "[pre-push] no task families touched — skipping corpus gates"
 fi

@@ -239,8 +239,8 @@ defmodule WebhookReceiver.Router do
 
   alias WebhookReceiver.{Signature, Store}
 
-  plug :match
-  plug :dispatch
+  plug(:match)
+  plug(:dispatch)
 
   post "/api/webhooks/:provider" do
     opts = conn.assigns.webhook_opts

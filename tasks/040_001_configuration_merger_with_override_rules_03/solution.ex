@@ -11,7 +11,7 @@ defp merge_values(base_val, override_val, key_path, opts)
 
   case strategy do
     :replace -> override_val
-    :append  -> base_val ++ override_val
+    :append -> base_val ++ override_val
   end
 end
 

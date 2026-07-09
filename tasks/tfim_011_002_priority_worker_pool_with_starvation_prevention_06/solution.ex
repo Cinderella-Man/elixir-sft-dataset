@@ -10,7 +10,14 @@
 
     # Queue three normal tasks
     for i <- 1..3 do
-      PriorityWorkerPool.submit(pool, fn -> send(collector, {:executed, i}); i end, :normal)
+      PriorityWorkerPool.submit(
+        pool,
+        fn ->
+          send(collector, {:executed, i})
+          i
+        end,
+        :normal
+      )
     end
 
     release(w1)

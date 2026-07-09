@@ -146,6 +146,7 @@ defmodule PipelineTest do
       |> Pipeline.stage(:sum, ok_stage(&Enum.sum/1))
 
     assert {:ok, 12, metadata} = Pipeline.run(pipeline, [1, 2, 3])
+
     assert [%{stage: :double_each, type: :map, count: 3}, %{stage: :sum, type: :sequential}] =
              metadata
   end

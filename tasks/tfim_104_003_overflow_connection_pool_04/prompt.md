@@ -280,9 +280,7 @@ defmodule OverflowPoolTest do
   test "a base connection returned with no waiter is kept available" do
     {destroy, destroyed} = destroy_tracker()
 
-    start_supervised!(
-      {OverflowPool, name: :op_base, size: 2, max_overflow: 0, destroy: destroy}
-    )
+    start_supervised!({OverflowPool, name: :op_base, size: 2, max_overflow: 0, destroy: destroy})
 
     assert {:ok, c1} = OverflowPool.checkout(:op_base, 100)
     assert {:ok, _c2} = OverflowPool.checkout(:op_base, 100)
@@ -295,9 +293,7 @@ defmodule OverflowPoolTest do
   test "an overflow connection handed to a waiter stays alive" do
     {destroy, destroyed} = destroy_tracker()
 
-    start_supervised!(
-      {OverflowPool, name: :op_wait, size: 1, max_overflow: 1, destroy: destroy}
-    )
+    start_supervised!({OverflowPool, name: :op_wait, size: 1, max_overflow: 1, destroy: destroy})
 
     {:ok, _c1} = OverflowPool.checkout(:op_wait, 100)
     {:ok, c2} = OverflowPool.checkout(:op_wait, 100)

@@ -3,6 +3,7 @@
 
     c1 =
       post_webhook(opts, "stripe", payload, [{"stripe-signature", stripe_sig(payload, @stripe)}])
+
     c2 =
       post_webhook(opts, "github", payload, [{"x-hub-signature-256", gh_sig(payload, @gh_new)}])
 

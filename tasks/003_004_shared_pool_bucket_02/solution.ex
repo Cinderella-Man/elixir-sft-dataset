@@ -32,6 +32,6 @@ def handle_call({:acquire, name, key_cap, key_rate, tokens}, _from, state) do
       new_global = state.global_free - tokens
 
       {:reply, {:ok, trunc(new_bucket.free), trunc(new_global)},
-        %{state | buckets: new_buckets, global_free: new_global}}
+       %{state | buckets: new_buckets, global_free: new_global}}
   end
 end

@@ -1,5 +1,8 @@
   test "concurrent misses call the loader at most once", %{cl: cl} do
-    loader = fn -> Process.sleep(20); Store.loaded(:v) end
+    loader = fn ->
+      Process.sleep(20)
+      Store.loaded(:v)
+    end
 
     results =
       for _ <- 1..25 do

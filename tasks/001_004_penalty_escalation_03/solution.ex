@@ -24,13 +24,15 @@ defp evaluate_window(state, key, entry, now, max_requests, window_ms, ladder) do
 
     new_entry = %{
       entry
-      | timestamps: active,          # Do NOT add 'now' for rejected requests
+      | # Do NOT add 'now' for rejected requests
+        timestamps: active,
         strikes: new_strikes,
         last_strike_at: now,
-        cooldown_end: now + retry_after # Fixed: Align stored state with returned value
+        # Fixed: Align stored state with returned value
+        cooldown_end: now + retry_after
     }
 
     {:reply, {:error, :rate_limited, retry_after, new_strikes},
-      %{state | keys: Map.put(state.keys, key, new_entry)}}
+     %{state | keys: Map.put(state.keys, key, new_entry)}}
   end
 end

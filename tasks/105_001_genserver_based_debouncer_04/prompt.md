@@ -66,7 +66,8 @@ defmodule Debouncer do
   registered under the name `Debouncer`.
   """
   @spec call(term(), non_neg_integer(), (-> any())) :: :ok
-  def call(key, delay_ms, func) when is_integer(delay_ms) and delay_ms >= 0 and is_function(func, 0) do
+  def call(key, delay_ms, func)
+      when is_integer(delay_ms) and delay_ms >= 0 and is_function(func, 0) do
     # TODO
   end
 

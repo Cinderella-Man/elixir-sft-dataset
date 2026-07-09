@@ -11,7 +11,7 @@ def start(:transaction, opts) do
 end
 
 def start(:truncation, opts) do
-  repo   = fetch_repo!(opts)
+  repo = fetch_repo!(opts)
   tables = Keyword.get(opts, :tables, [])
 
   validate_tables!(tables)

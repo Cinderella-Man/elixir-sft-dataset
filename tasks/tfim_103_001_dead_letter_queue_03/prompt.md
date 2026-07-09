@@ -292,7 +292,11 @@ defmodule DLQTest do
     {:ok, id} = DLQ.push(dlq, "q", %{payload: 42}, :boom, %{})
 
     test_pid = self()
-    handler = fn msg -> send(test_pid, {:handled, msg}); :ok end
+
+    handler = fn msg ->
+      send(test_pid, {:handled, msg})
+      :ok
+    end
 
     assert :ok = DLQ.retry(dlq, "q", id, handler)
     assert_received {:handled, %{payload: 42}}
@@ -358,6 +362,7 @@ defmodule DLQTest do
 
   test "retry on an unknown message id returns {:error, :not_found}", %{dlq: dlq} do
     assert {:error, :not_found} = DLQ.retry(dlq, "q", "no-such-id", fn _ -> :ok end)
+
     assert {:error, :not_found} =
              DLQ.retry(dlq, "missing-queue", "x", fn _ -> :ok end)
   end

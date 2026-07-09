@@ -45,7 +45,7 @@ defmodule RetryDedup do
   Runs `func` under `key`, coalescing concurrent duplicate calls into one execution
   and retrying per `opts`. Returns the function's result.
   """
-  @spec execute(GenServer.server(), term(), (() -> term()), keyword()) ::
+  @spec execute(GenServer.server(), term(), (-> term()), keyword()) ::
           {:ok, term()} | {:error, term()}
   def execute(server, key, func, opts \\ []) when is_function(func, 0) do
     max_retries = Keyword.get(opts, :max_retries, 3)

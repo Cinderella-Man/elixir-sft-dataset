@@ -48,7 +48,7 @@ defmodule KeyedPool do
   Runs `func` under `key` with per-key bounded concurrency, queueing when the key is
   at capacity. Returns the function's result.
   """
-  @spec execute(GenServer.server(), term(), (() -> term())) ::
+  @spec execute(GenServer.server(), term(), (-> term())) ::
           {:ok, term()} | {:error, term()}
   def execute(server, key, func) when is_function(func, 0) do
     GenServer.call(server, {:execute, key, func}, :infinity)

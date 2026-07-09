@@ -44,6 +44,12 @@ defmodule GenTask.Cycle do
   def run(files, ctx, %Config{} = cfg) do
     CycleLog.reset_attempts(cfg, ctx.id)
 
+    # Canonical formatting is applied BEFORE grading (and re-applied after every
+    # repair merge below) so the bytes that pass the gates are the bytes promoted —
+    # the corpus stays `Code.format_string!`-canonical without spending repair
+    # attempts on cosmetics (docs/10 R6).
+    files = Evaluator.autoformat(files)
+
     Enum.reduce_while(0..cfg.max_retries, {files, nil}, fn attempt, {files, cached} ->
       # A fix that returned byte-identical files (contract violation, rejected harness
       # edit) has a deterministic grade AND gate decision — reuse them instead of
@@ -91,7 +97,11 @@ defmodule GenTask.Cycle do
                   {:cont, {files, {grade, decision}}}
 
                 {:ok, new_files} ->
-                  {:cont, {new_files, nil}}
+                  case Evaluator.autoformat(new_files) do
+                    # formats to the same bytes we already graded — cosmetic-only fix
+                    ^files -> {:cont, {files, {grade, decision}}}
+                    formatted -> {:cont, {formatted, nil}}
+                  end
               end
           end
       end

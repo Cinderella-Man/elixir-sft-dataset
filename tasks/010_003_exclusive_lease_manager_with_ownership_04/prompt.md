@@ -63,7 +63,7 @@ defmodule LeaseManager do
           leases: %{resource() => lease()},
           lease_duration_ms: non_neg_integer(),
           cleanup_interval_ms: non_neg_integer(),
-          clock: (() -> integer())
+          clock: (-> integer())
         }
 
   # ---------------------------------------------------------------------------

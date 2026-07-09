@@ -179,10 +179,10 @@ defmodule PriorityQueue do
           end)
 
         new_state = %{
-          state |
-          queues: queues,
-          current_task: task,
-          current_ref: {pid, ref}
+          state
+          | queues: queues,
+            current_task: task,
+            current_ref: {pid, ref}
         }
 
         {:noreply, new_state}

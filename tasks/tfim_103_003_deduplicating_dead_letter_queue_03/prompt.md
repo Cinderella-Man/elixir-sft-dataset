@@ -158,8 +158,17 @@ defmodule DedupDLQ do
   end
 
   defp public(e) do
-    Map.take(e, [:id, :dedup_key, :message, :error_reason, :metadata, :occurrences,
-                 :retry_count, :first_seen, :last_seen])
+    Map.take(e, [
+      :id,
+      :dedup_key,
+      :message,
+      :error_reason,
+      :metadata,
+      :occurrences,
+      :retry_count,
+      :first_seen,
+      :last_seen
+    ])
   end
 end
 ```
@@ -198,7 +207,9 @@ defmodule DedupDLQTest do
     # TODO
   end
 
-  test "repeated key coalesces: same id, bumped occurrences, latest data, refreshed last_seen", %{dlq: dlq} do
+  test "repeated key coalesces: same id, bumped occurrences, latest data, refreshed last_seen", %{
+    dlq: dlq
+  } do
     {:ok, :new, id} = DedupDLQ.push(dlq, "q", "k", :first, :err_a, %{v: 1})
     Clock.advance(100)
     assert {:ok, :duplicate, ^id} = DedupDLQ.push(dlq, "q", "k", :second, :err_b, %{v: 2})

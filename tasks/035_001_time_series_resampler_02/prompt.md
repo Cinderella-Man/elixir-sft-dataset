@@ -65,14 +65,14 @@ defmodule TimeSeriesResampler do
   """
 
   @type timestamp_ms :: integer()
-  @type value        :: number()
-  @type datapoint    :: {timestamp_ms(), value()}
-  @type bucket       :: {timestamp_ms(), value() | nil}
-  @type agg_mode     :: :last | :first | :mean | :sum | :count | :max | :min
-  @type fill_mode    :: :nil | :forward
+  @type value :: number()
+  @type datapoint :: {timestamp_ms(), value()}
+  @type bucket :: {timestamp_ms(), value() | nil}
+  @type agg_mode :: :last | :first | :mean | :sum | :count | :max | :min
+  @type fill_mode :: nil | :forward
 
-  @valid_agg  [:last, :first, :mean, :sum, :count, :max, :min]
-  @valid_fill [:nil, :forward]
+  @valid_agg [:last, :first, :mean, :sum, :count, :max, :min]
+  @valid_fill [nil, :forward]
 
   # ---------------------------------------------------------------------------
   # Public API

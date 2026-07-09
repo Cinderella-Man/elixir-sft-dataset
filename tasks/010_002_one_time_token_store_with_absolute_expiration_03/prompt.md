@@ -70,7 +70,7 @@ defmodule OneTimeTokenStore do
           tokens: %{token_id() => token()},
           default_ttl_ms: non_neg_integer(),
           cleanup_interval_ms: non_neg_integer(),
-          clock: (() -> integer())
+          clock: (-> integer())
         }
 
   # ---------------------------------------------------------------------------
@@ -242,5 +242,4 @@ defmodule OneTimeTokenStore do
     end
   end
 end
-
 ```

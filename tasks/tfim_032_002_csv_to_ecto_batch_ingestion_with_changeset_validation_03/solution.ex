@@ -1,9 +1,12 @@
   test "skips rows that fail changeset validation and reports line numbers" do
     header = ["external_id", "name", "price"]
+
     rows = [
       ["eid-1", "good product", "100"],
-      ["eid-2", "",             "200"],   # missing name → invalid (line 3)
-      ["",      "no id product","300"],   # missing external_id → invalid (line 4)
+      # missing name → invalid (line 3)
+      ["eid-2", "", "200"],
+      # missing external_id → invalid (line 4)
+      ["", "no id product", "300"],
       ["eid-4", "another good", "400"]
     ]
 

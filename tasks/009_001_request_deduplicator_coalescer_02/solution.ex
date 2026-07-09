@@ -11,9 +11,9 @@ def handle_call({:execute, key, func}, from, state) do
         result =
           try do
             case func.() do
-              {:ok, _} = ok      -> ok
-              {:error, _} = err  -> err
-              other              -> {:ok, other}
+              {:ok, _} = ok -> ok
+              {:error, _} = err -> err
+              other -> {:ok, other}
             end
           rescue
             exception -> {:error, {:exception, exception}}

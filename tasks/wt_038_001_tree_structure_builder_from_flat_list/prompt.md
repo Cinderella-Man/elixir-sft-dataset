@@ -80,8 +80,17 @@ defmodule TreeBuilder do
   """
 
   @type id :: term()
-  @type node_map :: %{required(:id) => id(), required(:parent_id) => id() | nil, optional(atom()) => term()}
-  @type tree_node :: %{required(:id) => id(), required(:parent_id) => id() | nil, required(:children) => [tree_node()], optional(atom()) => term()}
+  @type node_map :: %{
+          required(:id) => id(),
+          required(:parent_id) => id() | nil,
+          optional(atom()) => term()
+        }
+  @type tree_node :: %{
+          required(:id) => id(),
+          required(:parent_id) => id() | nil,
+          required(:children) => [tree_node()],
+          optional(atom()) => term()
+        }
   @type forest :: [tree_node()]
   @type orphan_strategy :: :discard | :raise_to_root
   @type build_opt :: {:orphan_strategy, orphan_strategy()}
@@ -116,7 +125,9 @@ defmodule TreeBuilder do
 
     # Validate: duplicate ids are detected early.
     case detect_duplicate_ids(items) do
-      {:error, _} = err -> err
+      {:error, _} = err ->
+        err
+
       :ok ->
         # Build a parent_id → [child_id] map (children in original order).
         children_map = build_children_map(items)
@@ -139,10 +150,14 @@ defmodule TreeBuilder do
                 pid = node.parent_id
 
                 cond do
-                  is_nil(pid) -> true
+                  is_nil(pid) ->
+                    true
+
                   not MapSet.member?(known_ids, pid) ->
                     orphan_strategy == :raise_to_root
-                  true -> false
+
+                  true ->
+                    false
                 end
               end)
 

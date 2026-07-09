@@ -174,7 +174,8 @@ defmodule RetryPool do
         # The :DOWN handler will handle replacement and retry/failure
         # But we need to mark this as a timeout, not a crash
         # We do this by storing the timeout info before the :DOWN arrives
-        {:noreply, %{state | busy_workers: Map.put(state.busy_workers, worker_pid, {:timed_out, task_info})}}
+        {:noreply,
+         %{state | busy_workers: Map.put(state.busy_workers, worker_pid, {:timed_out, task_info})}}
 
       _ ->
         {:noreply, state}
@@ -223,10 +224,11 @@ defmodule RetryPool do
       {:ok, new_pid} = start_worker(state.sup)
       new_mref = Process.monitor(new_pid)
 
-      state = %{state |
-        monitors: Map.put(state.monitors, new_mref, new_pid),
-        queue: :queue.in_r(updated_task, state.queue),
-        retry_count: state.retry_count + 1
+      state = %{
+        state
+        | monitors: Map.put(state.monitors, new_mref, new_pid),
+          queue: :queue.in_r(updated_task, state.queue),
+          retry_count: state.retry_count + 1
       }
 
       {:noreply, make_worker_available(state, new_pid)}

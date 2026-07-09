@@ -4,9 +4,9 @@ defmodule SoftCrud.Documents.Document do
   import Ecto.Changeset
 
   schema "documents" do
-    field :title, :string
-    field :content, :string
-    field :deleted_at, :utc_datetime
+    field(:title, :string)
+    field(:content, :string)
+    field(:deleted_at, :utc_datetime)
 
     timestamps(type: :utc_datetime)
   end
@@ -103,14 +103,14 @@ defmodule SoftCrudWeb.Router do
   use SoftCrudWeb, :router
 
   pipeline :api do
-    plug :accepts, ["json"]
+    plug(:accepts, ["json"])
   end
 
   scope "/api", SoftCrudWeb do
-    pipe_through :api
+    pipe_through(:api)
 
-    resources "/documents", DocumentController, only: [:index, :create, :show, :update, :delete]
-    post "/documents/:id/restore", DocumentController, :restore
+    resources("/documents", DocumentController, only: [:index, :create, :show, :update, :delete])
+    post("/documents/:id/restore", DocumentController, :restore)
   end
 end
 </file>
@@ -142,7 +142,7 @@ defmodule SoftCrudWeb.DocumentController do
   alias SoftCrud.Documents
   alias SoftCrud.Documents.Document
 
-  action_fallback SoftCrudWeb.FallbackController
+  action_fallback(SoftCrudWeb.FallbackController)
 
   def index(conn, params) do
     opts = parse_include_deleted(params)
@@ -246,14 +246,14 @@ defmodule SoftCrud.Repo.Migrations.CreateDocuments do
 
   def change do
     create table(:documents) do
-      add :title, :string, null: false
-      add :content, :text, null: false
-      add :deleted_at, :utc_datetime, null: true
+      add(:title, :string, null: false)
+      add(:content, :text, null: false)
+      add(:deleted_at, :utc_datetime, null: true)
 
       timestamps(type: :utc_datetime)
     end
 
-    create index(:documents, [:deleted_at])
+    create(index(:documents, [:deleted_at]))
   end
 end
 </file>

@@ -1,5 +1,6 @@
   test "rejects coupons below the minimum subtotal" do
     cart = with_items(0.0)
+
     assert {:error, :below_minimum} =
              Cart.apply_coupon(cart, %{
                code: "VIP",

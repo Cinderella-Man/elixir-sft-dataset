@@ -3,6 +3,7 @@
 
     assert {:ok, stats} =
              ParallelJsonStreamer.process(path, Collector.handler(c), max_concurrency: 3)
+
     assert stats.max_concurrency == 3
 
     {:ok, c2} = Collector.start_link()

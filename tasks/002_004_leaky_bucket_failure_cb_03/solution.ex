@@ -13,8 +13,7 @@ defp execute_in_closed(state, func) do
 
       if new_level >= state.config.bucket_capacity do
         # Trip.  Reset bucket so the eventual probe cycle starts clean.
-        {reply,
-          %{state | state: :open, opened_at: state.clock.(), bucket_level: 0.0}}
+        {reply, %{state | state: :open, opened_at: state.clock.(), bucket_level: 0.0}}
       else
         {reply, state}
       end

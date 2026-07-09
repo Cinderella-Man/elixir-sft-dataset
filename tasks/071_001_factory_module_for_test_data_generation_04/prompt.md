@@ -171,5 +171,4 @@ defmodule Factory do
     """
   end
 end
-
 ```

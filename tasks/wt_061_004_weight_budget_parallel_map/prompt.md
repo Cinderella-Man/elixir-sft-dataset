@@ -112,7 +112,6 @@ defmodule WeightMeter do
   def handle_call(:peak, _from, %{peak: peak} = state), do: {:reply, peak, state}
 end
 
-
 defmodule WeightedMap do
   @moduledoc """
   Parallel map whose concurrency is bounded by a weight *budget*: the sum of the

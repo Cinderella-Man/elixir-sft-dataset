@@ -111,7 +111,8 @@ defmodule GraceWatchdog do
     GenServer.start_link(__MODULE__, %{}, name: name)
   end
 
-  @spec register(term(), pid(), non_neg_integer(), pos_integer(), (term(), pos_integer() -> any())) :: :ok
+  @spec register(term(), pid(), non_neg_integer(), pos_integer(), (term(), pos_integer() -> any())) ::
+          :ok
   def register(name, pid, interval_ms, max_misses, on_timeout_fn)
       when is_integer(interval_ms) and interval_ms >= 0 and is_integer(max_misses) and
              max_misses >= 1 and is_function(on_timeout_fn, 2) do

@@ -67,7 +67,7 @@ defmodule Dedup do
 
   Returns `{:ok, value}` on success or `{:error, reason}` on failure.
   """
-  @spec execute(GenServer.server(), term(), (() -> term())) ::
+  @spec execute(GenServer.server(), term(), (-> term())) ::
           {:ok, term()} | {:error, term()}
   def execute(server, key, func) when is_function(func, 0) do
     GenServer.call(server, {:execute, key, func}, :infinity)
@@ -102,9 +102,9 @@ defmodule Dedup do
           result =
             try do
               case func.() do
-                {:ok, _} = ok      -> ok
-                {:error, _} = err  -> err
-                other              -> {:ok, other}
+                {:ok, _} = ok -> ok
+                {:error, _} = err -> err
+                other -> {:ok, other}
               end
             rescue
               exception -> {:error, {:exception, exception}}

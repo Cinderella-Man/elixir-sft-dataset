@@ -84,7 +84,7 @@ defmodule DBCleaner do
   end
 
   def start(:truncation, opts) do
-    repo   = fetch_repo!(opts)
+    repo = fetch_repo!(opts)
     tables = Keyword.get(opts, :tables, [])
 
     validate_tables!(tables)
@@ -118,7 +118,7 @@ defmodule DBCleaner do
   @spec clean() :: :ok | {:error, term()}
   def clean do
     case get_state() do
-      nil   -> :ok
+      nil -> :ok
       state -> do_clean(state)
     end
   end
@@ -204,8 +204,8 @@ defmodule DBCleaner do
   # ---------------------------------------------------------------------------
 
   defp put_state(state), do: Process.put(@state_key, state)
-  defp get_state,        do: Process.get(@state_key)
-  defp clear_state,      do: Process.delete(@state_key)
+  defp get_state, do: Process.get(@state_key)
+  defp clear_state, do: Process.delete(@state_key)
 end
 ```
 

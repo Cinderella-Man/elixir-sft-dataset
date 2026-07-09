@@ -5,9 +5,9 @@ with runtime grant/revoke of permissions. The server state is a map:
 
 ```elixir
 %{
-  roles:    MapSet.t(role),
+  roles: MapSet.t(role),
   inherits: %{role => MapSet.t(parent_role)},
-  grants:   %{role => MapSet.t({resource, action})}
+  grants: %{role => MapSet.t({resource, action})}
 }
 ```
 

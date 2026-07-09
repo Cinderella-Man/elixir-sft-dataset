@@ -22,7 +22,7 @@ def handle_call(
     remaining = trunc(new_bucket.free)
 
     {:reply, {:ok, lease_id, remaining},
-      %{state | buckets: Map.put(state.buckets, bucket_name, new_bucket)}}
+     %{state | buckets: Map.put(state.buckets, bucket_name, new_bucket)}}
   else
     # Not enough free tokens.  Compute how long until the deficit refills.
     deficit = tokens - bucket.free
@@ -30,6 +30,6 @@ def handle_call(
 
     # Persist the refill-expire update even on failure.
     {:reply, {:error, :empty, retry_after},
-      %{state | buckets: Map.put(state.buckets, bucket_name, bucket)}}
+     %{state | buckets: Map.put(state.buckets, bucket_name, bucket)}}
   end
 end

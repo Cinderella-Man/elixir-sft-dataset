@@ -64,8 +64,13 @@ defmodule PolicySaga do
   @doc """
   Appends a step. `opts` supports `:on_error` (`:continue` default, or `:abort`).
   """
-  @spec step(t(), term(), (context() -> {:ok, term()} | {:error, term()}),
-          (context() -> term()), keyword()) :: t()
+  @spec step(
+          t(),
+          term(),
+          (context() -> {:ok, term()} | {:error, term()}),
+          (context() -> term()),
+          keyword()
+        ) :: t()
   def step(%__MODULE__{steps: steps} = saga, name, action, compensation, opts \\ [])
       when is_function(action, 1) and is_function(compensation, 1) do
     policy = Keyword.get(opts, :on_error, :continue)

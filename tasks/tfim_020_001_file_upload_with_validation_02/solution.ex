@@ -9,7 +9,8 @@
     assert body["size"] == byte_size(csv_content)
     assert body["content_type"] == "text/csv"
     assert is_binary(body["id"])
-    assert String.length(body["id"]) == 36  # UUID v4 length
+    # UUID v4 length
+    assert String.length(body["id"]) == 36
     assert is_binary(body["uploaded_at"])
     assert String.contains?(body["download_url"], body["id"])
   end

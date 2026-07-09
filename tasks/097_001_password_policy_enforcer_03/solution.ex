@@ -16,14 +16,14 @@
       ]
       |> Enum.reduce([], fn check, acc ->
         case check.(password, cfg) do
-          :ok              -> acc
-          {:violation, v}  -> [v | acc]
+          :ok -> acc
+          {:violation, v} -> [v | acc]
         end
       end)
       |> Enum.reverse()
 
     case violations do
-      []   -> :ok
+      [] -> :ok
       list -> {:error, list}
     end
   end

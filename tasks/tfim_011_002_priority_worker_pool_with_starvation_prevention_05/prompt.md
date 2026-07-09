@@ -368,7 +368,14 @@ defmodule PriorityWorkerPoolTest do
 
     # Queue three normal tasks
     for i <- 1..3 do
-      PriorityWorkerPool.submit(pool, fn -> send(collector, {:executed, i}); i end, :normal)
+      PriorityWorkerPool.submit(
+        pool,
+        fn ->
+          send(collector, {:executed, i})
+          i
+        end,
+        :normal
+      )
     end
 
     release(w1)
@@ -492,19 +499,29 @@ defmodule PriorityWorkerPoolTest do
     assert_receive {:ready, w2}, 1_000
 
     # Enqueue a low-priority task
-    {:ok, _} = PriorityWorkerPool.submit(pool, fn ->
-      send(collector, {:executed, :promoted_low})
-      :promoted_low
-    end, :low)
+    {:ok, _} =
+      PriorityWorkerPool.submit(
+        pool,
+        fn ->
+          send(collector, {:executed, :promoted_low})
+          :promoted_low
+        end,
+        :low
+      )
 
     # Wait for promotion (promote_after_ms is 500ms in setup)
     Process.sleep(700)
 
     # Now enqueue a normal-priority task AFTER promotion should have occurred
-    {:ok, _} = PriorityWorkerPool.submit(pool, fn ->
-      send(collector, {:executed, :fresh_normal})
-      :fresh_normal
-    end, :normal)
+    {:ok, _} =
+      PriorityWorkerPool.submit(
+        pool,
+        fn ->
+          send(collector, {:executed, :fresh_normal})
+          :fresh_normal
+        end,
+        :normal
+      )
 
     # The promoted task (was :low, now :normal or :high) should be in front of
     # or at same level as the fresh normal task
@@ -576,8 +593,7 @@ defmodule PriorityWorkerPoolTest do
     pool =
       start_supervised!(
         {PriorityWorkerPool,
-         pool_size: 1, max_queue: 2, promote_after_ms: 60_000,
-         name: :single_priority_pool},
+         pool_size: 1, max_queue: 2, promote_after_ms: 60_000, name: :single_priority_pool},
         id: :single
       )
 
@@ -589,8 +605,7 @@ defmodule PriorityWorkerPoolTest do
     pool =
       start_supervised!(
         {PriorityWorkerPool,
-         pool_size: 1, max_queue: 0, promote_after_ms: 60_000,
-         name: :no_queue_priority_pool},
+         pool_size: 1, max_queue: 0, promote_after_ms: 60_000, name: :no_queue_priority_pool},
         id: :no_queue
       )
 

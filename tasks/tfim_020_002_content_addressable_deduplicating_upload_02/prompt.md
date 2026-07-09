@@ -155,8 +155,8 @@ defmodule FileUpload.Router do
 
   @max_bytes 5_242_880
 
-  plug :match
-  plug :dispatch
+  plug(:match)
+  plug(:dispatch)
 
   post "/api/uploads" do
     opts = conn.assigns.router_opts
@@ -251,7 +251,10 @@ defmodule FileUploadTest do
   import Plug.Test
   import Plug.Conn
 
-  @upload_dir Path.join(System.tmp_dir!(), "file_upload_dedup_test_#{System.pid()}_#{System.unique_integer([:positive])}")
+  @upload_dir Path.join(
+                System.tmp_dir!(),
+                "file_upload_dedup_test_#{System.pid()}_#{System.unique_integer([:positive])}"
+              )
 
   setup_all do
     File.mkdir_p!(@upload_dir)
@@ -275,7 +278,12 @@ defmodule FileUploadTest do
   end
 
   defp call_upload(opts, filename, content, content_type \\ nil) do
-    tmp_path = Path.join(System.tmp_dir!(), "upl_#{System.pid()}_#{System.unique_integer([:positive])}_#{filename}")
+    tmp_path =
+      Path.join(
+        System.tmp_dir!(),
+        "upl_#{System.pid()}_#{System.unique_integer([:positive])}_#{filename}"
+      )
+
     File.write!(tmp_path, content)
 
     ct =
@@ -303,7 +311,9 @@ defmodule FileUploadTest do
     # TODO
   end
 
-  test "identical content under a different name is deduplicated (200, same id, count grows)", %{opts: opts} do
+  test "identical content under a different name is deduplicated (200, same id, count grows)", %{
+    opts: opts
+  } do
     content = "x,y\n1,2\n"
     c1 = call_upload(opts, "first.csv", content)
     c2 = call_upload(opts, "second.csv", content)

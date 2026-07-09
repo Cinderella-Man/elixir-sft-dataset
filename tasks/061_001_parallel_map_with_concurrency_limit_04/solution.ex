@@ -9,7 +9,7 @@ defp spawn_task(parent, func, elem) do
         rescue
           e -> {:error, {e, __STACKTRACE__}}
         catch
-          :exit,  r -> {:error, r}
+          :exit, r -> {:error, r}
           :throw, t -> {:error, {:throw, t}}
         end
 

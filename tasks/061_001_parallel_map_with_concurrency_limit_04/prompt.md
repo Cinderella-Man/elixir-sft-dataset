@@ -41,8 +41,8 @@ defmodule ConcurrencyCounter do
   def start_link(opts \\ []) do
     {name, server_opts} =
       case Keyword.pop(opts, :name) do
-        {nil, rest}    -> {__MODULE__, rest}
-        {name, rest}   -> {name, rest}
+        {nil, rest} -> {__MODULE__, rest}
+        {name, rest} -> {name, rest}
       end
 
     GenServer.start_link(__MODULE__, %{count: 0, peak: 0}, [{:name, name} | server_opts])
@@ -81,7 +81,6 @@ defmodule ConcurrencyCounter do
   end
 end
 
-
 defmodule ParallelMap do
   @moduledoc """
   Applies a function to every element of a collection in parallel while
@@ -117,13 +116,13 @@ defmodule ParallelMap do
   def pmap(collection, func, max_concurrency)
       when is_function(func, 1) and is_integer(max_concurrency) and max_concurrency >= 1 do
     indexed = collection |> Enum.to_list() |> Enum.with_index()
-    total   = length(indexed)
+    total = length(indexed)
 
     if total == 0 do
       []
     else
-      parent          = self()
-      {seed, queue}   = Enum.split(indexed, max_concurrency)
+      parent = self()
+      {seed, queue} = Enum.split(indexed, max_concurrency)
 
       # running: %{our_ref => {monitor_ref, original_index}}
       #
@@ -206,8 +205,8 @@ defmodule ParallelMap do
 
         outcome =
           case result do
-            {:ok, value}      -> value
-            {:error, reason}  -> {:error, reason}
+            {:ok, value} -> value
+            {:error, reason} -> {:error, reason}
           end
 
         {our_ref, idx, outcome}
@@ -216,7 +215,7 @@ defmodule ParallelMap do
         # Unexpected external kill — locate the task by its monitor ref.
         case Enum.find(running, fn {_ref, {mon, _idx}} -> mon == mon_ref end) do
           {our_ref, {_mon, idx}} -> {our_ref, idx, {:error, reason}}
-          nil                    -> await_one(running)
+          nil -> await_one(running)
         end
 
       _other ->

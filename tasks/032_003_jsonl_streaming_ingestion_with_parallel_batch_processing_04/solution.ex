@@ -1,7 +1,7 @@
   @spec stream_and_process(repo(), schema(), String.t(), map()) :: stats()
   defp stream_and_process(repo, schema, file_path, cfg) do
     schema_keys = schema_field_set(schema)
-    now         = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+    now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
 
     # Phase 1: Stream, parse, classify each line.
     {parsed_records, skipped_count, total_count} =

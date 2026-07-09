@@ -20,7 +20,7 @@ def handle_call({:check, key, max_requests, window_ms, ladder}, _from, state) do
       retry_after = entry.cooldown_end - now
 
       {:reply, {:error, :cooling_down, retry_after, entry.strikes},
-        %{state | keys: Map.put(state.keys, key, entry)}}
+       %{state | keys: Map.put(state.keys, key, entry)}}
 
     true ->
       evaluate_window(state, key, entry, now, max_requests, window_ms, ladder)

@@ -269,7 +269,9 @@ defmodule CacheLayerWriteThroughTest do
     use Agent
 
     def start_link(_) do
-      Agent.start_link(fn -> %{loads: 0, writes: 0, deletes: 0, fail: false} end, name: __MODULE__)
+      Agent.start_link(fn -> %{loads: 0, writes: 0, deletes: 0, fail: false} end,
+        name: __MODULE__
+      )
     end
 
     def loaded(value) do

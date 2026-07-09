@@ -4,9 +4,9 @@ defmodule MyApp.Catalog.Item do
   import Ecto.Changeset
 
   schema "items" do
-    field :name, :string
-    field :price, :integer
-    field :description, :string
+    field(:name, :string)
+    field(:price, :integer)
+    field(:description, :string)
 
     timestamps()
   end
@@ -191,13 +191,13 @@ defmodule MyAppWeb.Router do
   use MyAppWeb, :router
 
   pipeline :api do
-    plug :accepts, ["json"]
+    plug(:accepts, ["json"])
   end
 
   scope "/api", MyAppWeb do
-    pipe_through :api
+    pipe_through(:api)
 
-    post "/items/bulk", BulkItemController, :create
+    post("/items/bulk", BulkItemController, :create)
   end
 end
 </file>
@@ -208,9 +208,9 @@ defmodule MyApp.Repo.Migrations.CreateItems do
 
   def change do
     create table(:items) do
-      add :name, :string, null: false
-      add :price, :integer, null: false
-      add :description, :text
+      add(:name, :string, null: false)
+      add(:price, :integer, null: false)
+      add(:description, :text)
 
       timestamps()
     end

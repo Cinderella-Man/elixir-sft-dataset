@@ -12,6 +12,7 @@
 
       # Lazily clean up state using max_window_ms
       retained_entries = evict_expired(entries, now, state.max_window_ms)
+
       new_entries =
         if retained_entries == [] do
           Map.delete(state.entries, key)

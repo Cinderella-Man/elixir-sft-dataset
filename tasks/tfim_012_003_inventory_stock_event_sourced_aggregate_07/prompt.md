@@ -162,7 +162,9 @@ defmodule InventoryAggregateTest do
   # -------------------------------------------------------
 
   test "register produces a :product_registered event", %{agg: agg} do
-    assert {:ok, [event]} = InventoryAggregate.execute(agg, "prod:1", {:register, "Widget", "WDG-001"})
+    assert {:ok, [event]} =
+             InventoryAggregate.execute(agg, "prod:1", {:register, "Widget", "WDG-001"})
+
     assert event.type == :product_registered
   end
 
@@ -178,7 +180,9 @@ defmodule InventoryAggregateTest do
 
   test "registering an already-registered product fails", %{agg: agg} do
     InventoryAggregate.execute(agg, "prod:1", {:register, "Widget", "WDG-001"})
-    assert {:error, :already_registered} = InventoryAggregate.execute(agg, "prod:1", {:register, "Other", "OTH-001"})
+
+    assert {:error, :already_registered} =
+             InventoryAggregate.execute(agg, "prod:1", {:register, "Other", "OTH-001"})
   end
 
   # -------------------------------------------------------
@@ -208,8 +212,12 @@ defmodule InventoryAggregateTest do
 
   test "receive_stock of zero or negative quantity fails", %{agg: agg} do
     InventoryAggregate.execute(agg, "prod:1", {:register, "Widget", "WDG-001"})
-    assert {:error, :invalid_quantity} = InventoryAggregate.execute(agg, "prod:1", {:receive_stock, 0})
-    assert {:error, :invalid_quantity} = InventoryAggregate.execute(agg, "prod:1", {:receive_stock, -10})
+
+    assert {:error, :invalid_quantity} =
+             InventoryAggregate.execute(agg, "prod:1", {:receive_stock, 0})
+
+    assert {:error, :invalid_quantity} =
+             InventoryAggregate.execute(agg, "prod:1", {:receive_stock, -10})
   end
 
   # -------------------------------------------------------
@@ -245,14 +253,19 @@ defmodule InventoryAggregateTest do
   end
 
   test "ship_stock on unregistered product fails", %{agg: agg} do
-    assert {:error, :not_registered} = InventoryAggregate.execute(agg, "prod:1", {:ship_stock, 10})
+    assert {:error, :not_registered} =
+             InventoryAggregate.execute(agg, "prod:1", {:ship_stock, 10})
   end
 
   test "ship_stock of zero or negative quantity fails", %{agg: agg} do
     InventoryAggregate.execute(agg, "prod:1", {:register, "Widget", "WDG-001"})
     InventoryAggregate.execute(agg, "prod:1", {:receive_stock, 100})
-    assert {:error, :invalid_quantity} = InventoryAggregate.execute(agg, "prod:1", {:ship_stock, 0})
-    assert {:error, :invalid_quantity} = InventoryAggregate.execute(agg, "prod:1", {:ship_stock, -5})
+
+    assert {:error, :invalid_quantity} =
+             InventoryAggregate.execute(agg, "prod:1", {:ship_stock, 0})
+
+    assert {:error, :invalid_quantity} =
+             InventoryAggregate.execute(agg, "prod:1", {:ship_stock, -5})
   end
 
   # -------------------------------------------------------
@@ -282,7 +295,9 @@ defmodule InventoryAggregateTest do
     InventoryAggregate.execute(agg, "prod:1", {:register, "Widget", "WDG-001"})
     InventoryAggregate.execute(agg, "prod:1", {:receive_stock, 10})
 
-    assert {:error, :insufficient_stock} = InventoryAggregate.execute(agg, "prod:1", {:adjust, -11})
+    assert {:error, :insufficient_stock} =
+             InventoryAggregate.execute(agg, "prod:1", {:adjust, -11})
+
     assert InventoryAggregate.state(agg, "prod:1").quantity_on_hand == 10
   end
 

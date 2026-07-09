@@ -349,9 +349,11 @@ defmodule CancellablePriorityQueueTest do
       CancellablePriorityQueue.start_link(
         processor: fn task ->
           ref = Process.monitor(gate)
+
           receive do
             {:DOWN, ^ref, _, _, _} -> :ok
           end
+
           {:processed, task}
         end
       )
@@ -390,9 +392,11 @@ defmodule CancellablePriorityQueueTest do
       CancellablePriorityQueue.start_link(
         processor: fn task ->
           ref = Process.monitor(gate)
+
           receive do
             {:DOWN, ^ref, _, _, _} -> :ok
           end
+
           {:processed, task}
         end
       )
@@ -431,9 +435,11 @@ defmodule CancellablePriorityQueueTest do
       CancellablePriorityQueue.start_link(
         processor: fn task ->
           ref = Process.monitor(gate)
+
           receive do
             {:DOWN, ^ref, _, _, _} -> :ok
           end
+
           {:processed, task}
         end
       )
@@ -457,9 +463,11 @@ defmodule CancellablePriorityQueueTest do
       CancellablePriorityQueue.start_link(
         processor: fn task ->
           ref = Process.monitor(gate)
+
           receive do
             {:DOWN, ^ref, _, _, _} -> :ok
           end
+
           {:processed, task}
         end
       )
@@ -493,9 +501,11 @@ defmodule CancellablePriorityQueueTest do
       CancellablePriorityQueue.start_link(
         processor: fn task ->
           ref = Process.monitor(gate)
+
           receive do
             {:DOWN, ^ref, _, _, _} -> :ok
           end
+
           {:processed, task}
         end
       )
@@ -533,9 +543,11 @@ defmodule CancellablePriorityQueueTest do
       CancellablePriorityQueue.start_link(
         processor: fn task ->
           ref = Process.monitor(gate)
+
           receive do
             {:DOWN, ^ref, _, _, _} -> :ok
           end
+
           {:processed, task}
         end
       )
@@ -637,9 +649,11 @@ defmodule CancellablePriorityQueueTest do
       CancellablePriorityQueue.start_link(
         processor: fn task ->
           ref = Process.monitor(gate)
+
           receive do
             {:DOWN, ^ref, _, _, _} -> :ok
           end
+
           {:processed, task}
         end
       )

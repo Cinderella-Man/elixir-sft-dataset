@@ -47,11 +47,11 @@ defmodule Generators do
   @spec user() :: StreamData.t(map())
   def user do
     SD.fixed_map(%{
-      id:    SD.positive_integer(),
-      name:  user_name(),
+      id: SD.positive_integer(),
+      name: user_name(),
       email: email(),
-      age:   SD.integer(18..120),
-      role:  SD.member_of([:admin, :editor, :viewer])
+      age: SD.integer(18..120),
+      role: SD.member_of([:admin, :editor, :viewer])
     })
   end
 
@@ -68,7 +68,7 @@ defmodule Generators do
   @spec money() :: StreamData.t(map())
   def money do
     SD.fixed_map(%{
-      amount:   SD.integer(0..10_000_000),
+      amount: SD.integer(0..10_000_000),
       currency: SD.member_of(["USD", "EUR", "GBP", "JPY", "CHF"])
     })
   end
@@ -98,12 +98,12 @@ defmodule Generators do
       # Relying on bias alone (e.g. integer(0..36524) happening to pick 0) is
       # too probabilistic; with 100 default runs it fails intermittently.
       same_day = SD.constant(start_day)
-      any_day  = SD.integer(start_day..max_day)
+      any_day = SD.integer(start_day..max_day)
 
       SD.bind(SD.one_of([same_day, any_day]), fn end_day ->
         SD.constant(%{
           start_date: Date.from_gregorian_days(start_day),
-          end_date:   Date.from_gregorian_days(end_day)
+          end_date: Date.from_gregorian_days(end_day)
         })
       end)
     end)
@@ -151,7 +151,7 @@ defmodule Generators do
     # correctly propagates shrinking through the underlying generators.
     expanded =
       Enum.flat_map(weighted_list, fn {weight, gen}
-          when is_integer(weight) and weight >= 0 ->
+                                      when is_integer(weight) and weight >= 0 ->
         # weight 0 → List.duplicate returns [] → generator is never selected
         List.duplicate(gen, weight)
       end)

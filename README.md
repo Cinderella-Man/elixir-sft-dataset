@@ -69,6 +69,14 @@ elixir ./scripts/validate.exs --mutants          # single/multifile/wt_: whole-s
 elixir ./scripts/validate.exs --stability 3      # flake recovery needs 3 consecutive serial passes
 elixir ./scripts/validate.exs --only "001_001*"  # restrict any mode to matching task names
 
+# canonical-format gate (docs/10 R6): the whole corpus is Code.format_string! output
+# under the .tool-versions pin — harnesses, solutions, bundle parts, fim/tfim fragments,
+# and the ```elixir fences embedded in fim/tfim/wt_ prompts (_01 prompts excluded: the
+# blind-screen ledger is keyed by prompt sha). Generation keeps itself canonical via
+# Evaluator.autoformat/1; this script guards the corpus (runs in CI + pre-push).
+elixir ./scripts/format_corpus.exs --check       # exit 1 on any deviation
+elixir ./scripts/format_corpus.exs --apply       # rewrite deviating files
+
 # blind-solve SCREEN (costs LLM calls — one `claude -p` per unscreened _01): a task is
 # well-specified iff an independent solver goes green from prompt.md ALONE. Failures
 # quarantine to logs/screen_blind.jsonl (prompt under-specified OR solver too weak —

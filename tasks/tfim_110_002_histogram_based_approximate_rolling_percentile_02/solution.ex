@@ -1,7 +1,7 @@
   test "histogram quantile estimates are deterministic for a known distribution" do
     start_server([])
 
-    for v <- 1..100, do: assert :ok = HistogramPercentile.record(:d, v)
+    for v <- 1..100, do: assert(:ok = HistogramPercentile.record(:d, v))
 
     assert {:ok, p50} = HistogramPercentile.query(:d, 0.50)
     assert_in_delta p50, 51.0, 0.001

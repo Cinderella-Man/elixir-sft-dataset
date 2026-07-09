@@ -20,13 +20,13 @@ defmodule CounterResampler do
   """
 
   @type datapoint :: {integer(), number()}
-  @type mode      :: :delta | :rate
-  @type reset     :: :detect | :raw
-  @type fill      :: :zero | :nil
+  @type mode :: :delta | :rate
+  @type reset :: :detect | :raw
+  @type fill :: :zero | nil
 
-  @valid_mode  [:delta, :rate]
+  @valid_mode [:delta, :rate]
   @valid_reset [:detect, :raw]
-  @valid_fill  [:zero, :nil]
+  @valid_fill [:zero, nil]
 
   @doc """
   Resamples cumulative counter `data` into fixed `interval_ms` buckets.
@@ -55,9 +55,9 @@ defmodule CounterResampler do
 
   def resample(data, interval_ms, opts)
       when is_list(data) and is_integer(interval_ms) and interval_ms > 0 do
-    mode  = fetch_opt!(opts, :mode,  :delta,  @valid_mode)
+    mode = fetch_opt!(opts, :mode, :delta, @valid_mode)
     reset = fetch_opt!(opts, :reset, :detect, @valid_reset)
-    fill  = fetch_opt!(opts, :fill,  :zero,   @valid_fill)
+    fill = fetch_opt!(opts, :fill, :zero, @valid_fill)
 
     sorted = Enum.sort_by(data, &elem(&1, 0))
 
@@ -65,7 +65,7 @@ defmodule CounterResampler do
     {max_ts, _} = List.last(sorted)
 
     first_bucket = floor_bucket(min_ts, interval_ms)
-    last_bucket  = floor_bucket(max_ts, interval_ms)
+    last_bucket = floor_bucket(max_ts, interval_ms)
 
     increments =
       sorted
@@ -83,7 +83,7 @@ defmodule CounterResampler do
       value =
         case Map.fetch(increments, bucket_start) do
           {:ok, inc} -> project(inc, mode, interval_ms)
-          :error     -> empty_value(mode, interval_ms, fill)
+          :error -> empty_value(mode, interval_ms, fill)
         end
 
       {bucket_start, value}
@@ -111,7 +111,7 @@ defmodule CounterResampler do
   defp project(inc, :delta, _interval_ms), do: inc
   defp project(inc, :rate, interval_ms), do: inc / (interval_ms / 1000)
 
-  defp empty_value(_mode, _interval_ms, :nil), do: nil
+  defp empty_value(_mode, _interval_ms, nil), do: nil
   defp empty_value(mode, interval_ms, :zero), do: project(0, mode, interval_ms)
 
   defp floor_bucket(ts, interval_ms), do: div(ts, interval_ms) * interval_ms
@@ -199,7 +199,7 @@ defmodule CounterResamplerTest do
     result = CounterResampler.resample([{300, 100}], @interval, mode: :delta, fill: :zero)
     assert result == [{0, 0}]
 
-    nil_result = CounterResampler.resample([{300, 100}], @interval, mode: :delta, fill: :nil)
+    nil_result = CounterResampler.resample([{300, 100}], @interval, mode: :delta, fill: nil)
     assert nil_result == [{0, nil}]
   end
 

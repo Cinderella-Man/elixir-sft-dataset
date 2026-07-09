@@ -1,8 +1,12 @@
   defp build_item(name, description, raw_tags) do
     tags =
       case raw_tags do
-        nil -> []
-        ""  -> []
+        nil ->
+          []
+
+        "" ->
+          []
+
         str ->
           str
           |> String.split(",")

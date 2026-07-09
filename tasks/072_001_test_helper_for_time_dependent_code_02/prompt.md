@@ -57,11 +57,14 @@ defmodule Clock do
   @spec now(module() | GenServer.server()) :: DateTime.t()
   def now(clock) when is_atom(clock) do
     if function_exported?(clock, :now, 0) do
-      clock.now()            # module atom — e.g. Clock.Real
+      # module atom — e.g. Clock.Real
+      clock.now()
     else
-      Clock.Fake.now(clock)  # registered-name atom — e.g. :my_test_clock
+      # registered-name atom — e.g. :my_test_clock
+      Clock.Fake.now(clock)
     end
   end
+
   def now(clock), do: Clock.Fake.now(clock)
 end
 

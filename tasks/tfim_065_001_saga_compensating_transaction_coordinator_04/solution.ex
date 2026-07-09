@@ -15,6 +15,7 @@
     # reserve action ran, charge action ran (and failed), ship never ran,
     # only reserve was compensated, charge was NOT compensated.
     events = Recorder.events()
+
     assert events == [
              {:action, :reserve},
              {:action, :charge},

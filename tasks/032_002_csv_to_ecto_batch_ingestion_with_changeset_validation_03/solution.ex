@@ -17,20 +17,28 @@
 
       new_acc = %{acc | inserted: acc.inserted + count}
 
-      Logger.info("[CsvIngestion] Batch done — " <>
-        "size: #{batch_size}, inserted: #{count}. " <>
-        "Running totals — #{format_stats(new_acc)}")
+      Logger.info(
+        "[CsvIngestion] Batch done — " <>
+          "size: #{batch_size}, inserted: #{count}. " <>
+          "Running totals — #{format_stats(new_acc)}"
+      )
 
       new_acc
     rescue
       error ->
-        Logger.error("[CsvIngestion] Batch failed (#{batch_size} records skipped): " <>
-          Exception.format(:error, error, __STACKTRACE__))
+        Logger.error(
+          "[CsvIngestion] Batch failed (#{batch_size} records skipped): " <>
+            Exception.format(:error, error, __STACKTRACE__)
+        )
+
         %{acc | failed: acc.failed + batch_size}
     catch
       kind, reason ->
-        Logger.error("[CsvIngestion] Batch failed with #{kind} " <>
-          "(#{batch_size} records skipped): #{inspect(reason)}")
+        Logger.error(
+          "[CsvIngestion] Batch failed with #{kind} " <>
+            "(#{batch_size} records skipped): #{inspect(reason)}"
+        )
+
         %{acc | failed: acc.failed + batch_size}
     end
   end

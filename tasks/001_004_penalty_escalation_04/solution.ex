@@ -23,7 +23,8 @@ defp decay_strikes(entry, now, window_ms) do
         entry
         | strikes: new_strikes,
           last_strike_at: new_last,
-          cooldown_end: nil   # 🔑 clear stale cooldown
+          # 🔑 clear stale cooldown
+          cooldown_end: nil
       }
   end
 end

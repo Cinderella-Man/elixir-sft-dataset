@@ -606,6 +606,32 @@ judge-confirmed entailed-keep (prompt justifies the assertion; task is
 legitimately hard — the intended difficulty distribution) except the one open
 [decision] 001_004. Campaign total: 101 reds → 50 keeps; 51 tasks de-quarantined
 via 60+ verified prompt/harness/gold fixes across R12a–R12d.
+
+### 5.13 Session 2026-07-09: R11 mint + 001_004 resolved + R6 executed
+
+- **R11 repair pairs MINTED (3/3)**: `repair_074_003_*_01_00`, `_01_01`,
+  `repair_079_003_*_01_00` — 552 chains → 63 candidates → 3 survived double
+  verification (fix green AND broken red against the accepted harness).
+  Validated perfect + mutants. The 060 unverified are quality/mutation-gate
+  rejects that were still green — they cannot teach a test-fix (expected).
+- **001_004 [decision] RESOLVED — canonized (option a)**: the gold's
+  "decay forgives cooldowns" semantics are coherent; 5 bullets added to
+  parent + wt_ prompts (lazy decay w/ exact-boundary + reference-time-advance,
+  decay-cancels-cooldown, cooldown end = strike_time + retry_after_ms,
+  rejected requests don't consume window slots). NOTE: the R12d judge's
+  proposed sentence was BACKWARDS (claimed cooldown persists independent of
+  decay) — the fifth judge inaccuracy of the campaign; always derive from
+  source. Family perfect + mutants; blind re-screen GREEN (11/11).
+  **Screen: 250/299 green, 49 reds — ALL documented keeps. Loop fully closed.**
+- **R6 EXECUTED** — corpus reformatted to `Code.format_string!` canonical form
+  (2,545 files: 390 executable + 1,777 prompt embeds + trailing-newline
+  normalization), `scripts/format_corpus.exs` written (`--check` gate in CI +
+  pre-push), `Evaluator.autoformat/1` keeps future generation canonical,
+  `mix format --check-formatted` green repo-wide. Full detail in the R6 section.
+  Evidence: final full perfect + mutants + fim suite green over the settled tree.
+- **triage_screen.exs --report** stale-gap debt fixed: gap verdicts whose prompt
+  sha changed on disk (or whose task re-screened green) now count as
+  stale/resolved — report shows 0 open gaps / 29 resolved / 50 keeps.
 Known cosmetic debt: `triage_screen.exs --report` lists ledger gaps without
 filtering out ones whose prompt sha has since changed (already-applied
 backfills still print) — polish when next touched.
@@ -617,11 +643,16 @@ backfills still print) — polish when next touched.
 Each step is self-contained: files, approach, acceptance criteria, gotchas.
 Steps marked **[decision]** need the user's choice before implementation.
 
-**Priority order as of 2026-07-08 (post-sweep):** R1 (commit — now also protects a
-$58 screen ledger) → **R12 (triage the 101-task quarantine — the new top work item;
-subsumes the R5 `:sys.get_state` remainder)** → R6 (formatter/pin) → R9 (flakes) →
-R10 (semantic mutants) → R11 (CI/evidence). R2/R3/R4/R5/R7/R8 are done except the
-sub-items explicitly marked open below.
+**Status as of 2026-07-09: the R1–R12 plan is COMPLETE.** R1–R8, R10–R12 done
+(including the R11 repair-pair minting and the 001_004 decision, §5.13); R6 done
+2026-07-09. The only standing item is **R9 (flake quarantine)**, which by design
+needs `--stability` runs spread across days — aggregate `logs/flaky.jsonl` and
+quarantine repeat offenders as the data accumulates. Follow-up work-lists that
+outlive the plan: the R10 semantic-mutant weak tail (22 tasks < 0.4 kill rate in
+`logs/semantic_mutants.jsonl`), the docs/07 register-monoculture rewrite (§4.2),
+and the §4.4 stratified review loop beyond the blind-screen population.
+
+Original priority order for reference: R1 → R12 → R6 → R9 → R10 → R11.
 
 ### R1. Commit the current batch + gate evidence ✅ DONE 2026-07-08
 - The §5 batch + docs/10 sweep report were committed by the user (`7ecaf5d`
@@ -837,10 +868,42 @@ FIM/tfim children embed module/harness text — grep per family before editing.
 `:sys.get_state` asserts are better fixed HARNESS-side (assert observable behavior
 instead); that re-opens tfim children whose gold block is the offending test.
 
-### R6. Formatter gate + toolchain pin **[decision: reformat churn]**
-**Partial 2026-07-08:** `.tool-versions` pinned (elixir 1.20.2-otp-29 / erlang 29.0.3)
-and the README prerequisite updated to state gate results are only reproducible on
-the pin. The corpus reformat + format gate remain open (the churn decision below).
+### R6. Formatter gate + toolchain pin
+**✅ DONE 2026-07-09 — corpus reformatted + gates wired** (toolchain pin was done
+2026-07-08: `.tool-versions` elixir 1.20.2-otp-29 / erlang 29.0.3 + README note).
+- New `scripts/format_corpus.exs` (`--check` for CI, `--apply`, `--only`,
+  `--category`). Canonical = `Code.format_string!` on the 1.20.2 pin. Categories:
+  harness / module / bundle (per `<file>` part, wrapper bytes preserved) /
+  fragment (fim+tfim solution.ex: dedent → format at `line_length: 98 - indent` →
+  re-indent — the narrowed width matters: a just-fits line otherwise lands >98 at
+  its embedded indentation, bit on tfim_104_004_04) / manifest / embeds
+  (```elixir fences in fim/tfim/wt_ prompt.md; non-parsing fences left alone).
+- **Exclusions by design**: `_01/prompt.md` (blind-screen ledger is sha-keyed —
+  cosmetic churn would force a ~$58 full re-screen) and `repair_*/prompt.md`
+  (the broken-code fence is captured attempt data).
+- Verified formatting-safe BEFORE applying: eval-time FIM/tfim reconstruction is
+  line-based on `# TODO`/def/end lines and never byte-compares to the parent;
+  `build_skeleton`'s verbatim constraint is generation-time only. wt_ byte-copy
+  invariant re-checked after apply: 0 mismatches.
+- Measured deviation (much lower than the 2026-07-07 estimate, which counted
+  trailing-newline noise): harness 3/600, module 196/589 (+153 more on the
+  trailing-newline normalization), bundle 11/11, fragment 183/3148, embeds
+  1777/3446 (8 fences needed the formatter's second pass to reach fixpoint).
+- Full-file convention: exactly one trailing newline (mix format agreement);
+  fragments keep their own convention (they are spliced, not standalone).
+  `mint_repairs.exs` now writes trailing newlines (the 3 repair dirs were the
+  offenders); lib/gen_task/{prompts,evaluator}.ex + lib/eval_task/runner.ex
+  formatted → **`mix format --check-formatted` green repo-wide**, added to CI.
+- Generation loop: new `Evaluator.autoformat/1` runs at `Cycle.run/3` entry and
+  after every repair merge — graded bytes ARE promoted bytes; unparseable files
+  pass through so the compile gate reports real diagnostics; a fix that formats
+  to already-graded bytes reuses the cached decision. 6 unit tests.
+- Gates wired: `format_corpus.exs --check` + `mix format --check-formatted` in CI
+  (validate.yml); pre-push hook format-checks touched families.
+- NOT done (deliberate): FIM candidates in the fim/wt/tfim GENERATION paths are
+  not auto-formatted (they are fragments whose indentation context is the parent);
+  the corpus-level `--check` would surface any future drift.
+Original plan for reference:
 - Pin the toolchain first: add `.tool-versions` (this machine: Elixir 1.20.2,
   OTP 29; README claims 1.17+ — align README).
 - Measured 2026-07-07: 3,989 of ~4,340 corpus files are not canonical

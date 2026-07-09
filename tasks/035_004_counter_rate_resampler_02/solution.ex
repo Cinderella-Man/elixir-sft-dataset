@@ -1,8 +1,8 @@
   def resample(data, interval_ms, opts)
       when is_list(data) and is_integer(interval_ms) and interval_ms > 0 do
-    mode  = fetch_opt!(opts, :mode,  :delta,  @valid_mode)
+    mode = fetch_opt!(opts, :mode, :delta, @valid_mode)
     reset = fetch_opt!(opts, :reset, :detect, @valid_reset)
-    fill  = fetch_opt!(opts, :fill,  :zero,   @valid_fill)
+    fill = fetch_opt!(opts, :fill, :zero, @valid_fill)
 
     sorted = Enum.sort_by(data, &elem(&1, 0))
 
@@ -10,7 +10,7 @@
     {max_ts, _} = List.last(sorted)
 
     first_bucket = floor_bucket(min_ts, interval_ms)
-    last_bucket  = floor_bucket(max_ts, interval_ms)
+    last_bucket = floor_bucket(max_ts, interval_ms)
 
     increments =
       sorted
@@ -28,7 +28,7 @@
       value =
         case Map.fetch(increments, bucket_start) do
           {:ok, inc} -> project(inc, mode, interval_ms)
-          :error     -> empty_value(mode, interval_ms, fill)
+          :error -> empty_value(mode, interval_ms, fill)
         end
 
       {bucket_start, value}

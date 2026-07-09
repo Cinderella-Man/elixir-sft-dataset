@@ -21,11 +21,11 @@ Unlike a simple role-hierarchy check, there is no notion of one role being "high
 
 ```elixir
 [
-  %{effect: :allow, roles: :any,             resource: :posts,    action: :read},
-  %{effect: :allow, roles: [:editor, :admin], resource: :posts,    action: :write},
-  %{effect: :deny,  roles: [:editor],         resource: :posts,    action: :delete},
-  %{effect: :allow, roles: [:admin],          resource: :any,      action: :any},
-  %{effect: :deny,  roles: :any,              resource: :settings, action: :delete}
+  %{effect: :allow, roles: :any, resource: :posts, action: :read},
+  %{effect: :allow, roles: [:editor, :admin], resource: :posts, action: :write},
+  %{effect: :deny, roles: [:editor], resource: :posts, action: :delete},
+  %{effect: :allow, roles: [:admin], resource: :any, action: :any},
+  %{effect: :deny, roles: :any, resource: :settings, action: :delete}
 ]
 ```
 

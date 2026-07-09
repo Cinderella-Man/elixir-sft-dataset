@@ -120,5 +120,4 @@ defmodule TTLCache do
 
   defp schedule_sweep(_), do: :ok
 end
-
 ```

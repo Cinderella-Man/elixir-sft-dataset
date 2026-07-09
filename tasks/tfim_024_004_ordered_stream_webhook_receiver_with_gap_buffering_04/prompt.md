@@ -197,8 +197,8 @@ defmodule WebhookReceiver.Router do
 
   alias WebhookReceiver.{Signature, Store}
 
-  plug :match
-  plug :dispatch
+  plug(:match)
+  plug(:dispatch)
 
   post "/api/webhooks/stripe" do
     opts = conn.assigns.webhook_opts
@@ -323,7 +323,10 @@ defmodule WebhookReceiverOrderedTest do
     assert event.event_id == "e1"
   end
 
-  test "future event is buffered with 202 then drained when gap fills", %{opts: opts, store: store} do
+  test "future event is buffered with 202 then drained when gap fills", %{
+    opts: opts,
+    store: store
+  } do
     # TODO
   end
 

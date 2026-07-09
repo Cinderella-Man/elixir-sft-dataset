@@ -243,7 +243,11 @@ defmodule MetricAggregatorTest do
 
   defp tmp_path(name) do
     dir = System.tmp_dir!()
-    Path.join(dir, "metric_agg_test_#{name}_#{System.pid()}_#{System.unique_integer([:positive])}.jsonl")
+
+    Path.join(
+      dir,
+      "metric_agg_test_#{name}_#{System.pid()}_#{System.unique_integer([:positive])}.jsonl"
+    )
   end
 
   defp write_lines(path, lines) do
@@ -429,9 +433,16 @@ defmodule MetricAggregatorTest do
 
   test "line with empty name string is malformed" do
     path = tmp_path("empty_name")
+
     write_lines(path, [
-      Jason.encode!(%{"timestamp" => "2024-01-01T00:00:00Z", "name" => "", "value" => 1, "tags" => %{}})
+      Jason.encode!(%{
+        "timestamp" => "2024-01-01T00:00:00Z",
+        "name" => "",
+        "value" => 1,
+        "tags" => %{}
+      })
     ])
+
     on_exit(fn -> File.rm(path) end)
 
     assert {:ok, report} = MetricAggregator.summarize(path)
@@ -441,9 +452,16 @@ defmodule MetricAggregatorTest do
 
   test "line with string value is malformed" do
     path = tmp_path("string_value")
+
     write_lines(path, [
-      Jason.encode!(%{"timestamp" => "2024-01-01T00:00:00Z", "name" => "x", "value" => "not_a_number", "tags" => %{}})
+      Jason.encode!(%{
+        "timestamp" => "2024-01-01T00:00:00Z",
+        "name" => "x",
+        "value" => "not_a_number",
+        "tags" => %{}
+      })
     ])
+
     on_exit(fn -> File.rm(path) end)
 
     assert {:ok, report} = MetricAggregator.summarize(path)

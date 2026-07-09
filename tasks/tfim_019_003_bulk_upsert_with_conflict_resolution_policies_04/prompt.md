@@ -195,7 +195,9 @@ defmodule InventoryTest do
 
   defp seed(sku, name, price, qty) do
     assert {:ok, [{0, :inserted, _}]} =
-             Inventory.bulk_upsert([%{"sku" => sku, "name" => name, "price" => price, "qty" => qty}])
+             Inventory.bulk_upsert([
+               %{"sku" => sku, "name" => name, "price" => price, "qty" => qty}
+             ])
   end
 
   test "inserts new items (all-or-nothing)" do

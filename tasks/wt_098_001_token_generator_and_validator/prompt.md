@@ -191,8 +191,7 @@ defmodule SecureToken do
   # of course still produce a parseable-but-expired token — but that
   # path is governed by verify_mac/check_expiry, not by this function.
   defp parse_data(
-         <<issued_at::signed-64, expires_at::signed-64, payload_size::unsigned-32,
-           rest::binary>>
+         <<issued_at::signed-64, expires_at::signed-64, payload_size::unsigned-32, rest::binary>>
        )
        when byte_size(rest) == payload_size do
     {:ok, issued_at, expires_at, rest}

@@ -248,6 +248,7 @@ defmodule WorkflowTest do
   test "door machine: opened cannot be locked" do
     m = door_machine()
     opened = %{Workflow.new(m) | state: :opened}
+
     assert {:error, :invalid_transition, :opened, :lock} =
              Workflow.transition(m, opened, :lock)
   end
@@ -259,8 +260,10 @@ defmodule WorkflowTest do
   test "guard failure returns guard_failed and leaves record unchanged" do
     m = order_machine()
     rec = Workflow.new(m, %{items: []})
+
     assert {:error, :guard_failed, :draft, :submit} =
              Workflow.transition(m, rec, :submit)
+
     assert rec.state == :draft
   end
 
@@ -272,6 +275,7 @@ defmodule WorkflowTest do
     assert {:ok, %{state: :approved}} = Workflow.transition(m, rec, :approve)
 
     bad = %{rec | approved_by: nil}
+
     assert {:error, :guard_failed, :submitted, :approve} =
              Workflow.transition(m, bad, :approve)
   end

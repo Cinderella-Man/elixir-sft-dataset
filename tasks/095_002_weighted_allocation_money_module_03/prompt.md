@@ -17,15 +17,19 @@ currency**.
 - `factor` may be any number: a positive or negative integer, or a float.
 
 ```elixir
-Money.multiply(Money.new(101, :USD), 0.5)   # => %Money{amount: 51, currency: :USD}
-Money.multiply(Money.new(100, :USD), 3)     # => %Money{amount: 300, currency: :USD}
-Money.multiply(Money.new(100, :USD), -1.5)  # => %Money{amount: -150, currency: :USD}
+# => %Money{amount: 51, currency: :USD}
+Money.multiply(Money.new(101, :USD), 0.5)
+# => %Money{amount: 300, currency: :USD}
+Money.multiply(Money.new(100, :USD), 3)
+# => %Money{amount: -150, currency: :USD}
+Money.multiply(Money.new(100, :USD), -1.5)
 ```
 
 If `factor` is **not a number**, raise `ArgumentError`.
 
 ```elixir
-Money.multiply(Money.new(100, :USD), :nope)  # raises ArgumentError
+# raises ArgumentError
+Money.multiply(Money.new(100, :USD), :nope)
 ```
 
 ## Module

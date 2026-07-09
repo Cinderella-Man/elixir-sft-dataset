@@ -122,8 +122,7 @@ defmodule RollingRateCircuitBreaker do
   end
 
   def handle_call(:reset, _from, state) do
-    {:reply, :ok,
-     %{state | state: :closed, outcomes: [], opened_at: nil, probes_in_flight: 0}}
+    {:reply, :ok, %{state | state: :closed, outcomes: [], opened_at: nil, probes_in_flight: 0}}
   end
 
   # ---------------------------------------------------------------------------
@@ -166,8 +165,12 @@ defmodule RollingRateCircuitBreaker do
     total = length(outcomes)
 
     cond do
-      total == 0 -> false
-      total < config.min_calls_in_window -> false
+      total == 0 ->
+        false
+
+      total < config.min_calls_in_window ->
+        false
+
       true ->
         errors = Enum.count(outcomes, &(&1 == :error))
         errors / total >= config.error_rate_threshold

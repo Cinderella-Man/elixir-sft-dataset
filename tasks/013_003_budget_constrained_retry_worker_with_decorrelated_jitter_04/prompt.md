@@ -74,7 +74,17 @@ defmodule BudgetRetryWorker do
     # TODO
   end
 
-  defp do_attempt(func, clock_fn, random_fn, started_at, base_delay, budget, max_delay, prev_delay, attempts) do
+  defp do_attempt(
+         func,
+         clock_fn,
+         random_fn,
+         started_at,
+         base_delay,
+         budget,
+         max_delay,
+         prev_delay,
+         attempts
+       ) do
     attempts = attempts + 1
 
     case func.() do
@@ -96,8 +106,15 @@ defmodule BudgetRetryWorker do
           await_clock(target_time, clock_fn)
 
           do_attempt(
-            func, clock_fn, random_fn, started_at,
-            base_delay, budget, max_delay, capped_delay, attempts
+            func,
+            clock_fn,
+            random_fn,
+            started_at,
+            base_delay,
+            budget,
+            max_delay,
+            capped_delay,
+            attempts
           )
         end
     end

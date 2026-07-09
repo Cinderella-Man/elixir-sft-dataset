@@ -200,7 +200,8 @@ defmodule TaskAggregateTest do
   end
 
   test "creating with invalid priority fails", %{agg: agg} do
-    assert {:error, :invalid_priority} = TaskAggregate.execute(agg, "task:1", {:create, "Fix bug", :urgent})
+    assert {:error, :invalid_priority} =
+             TaskAggregate.execute(agg, "task:1", {:create, "Fix bug", :urgent})
   end
 
   # -------------------------------------------------------
@@ -405,9 +406,16 @@ defmodule TaskAggregateTest do
     assert length(events) == 8
 
     types = Enum.map(events, & &1.type)
+
     assert types == [
-             :task_created, :task_assigned, :task_started, :task_completed,
-             :task_reopened, :task_assigned, :task_started, :task_completed
+             :task_created,
+             :task_assigned,
+             :task_started,
+             :task_completed,
+             :task_reopened,
+             :task_assigned,
+             :task_started,
+             :task_completed
            ]
   end
 

@@ -16,8 +16,11 @@
     seed_path = tmp_path("seed_csv.csv")
     conflict_rows = Enum.map(1..5, fn i -> ["conflict-#{i}", "old #{i}", "#{i}"] end)
     write_csv!(seed_path, header, conflict_rows)
+
     CsvIngestion.ingest(TestRepo, Product, seed_path,
-      conflict_target: [:external_id], on_conflict: :nothing)
+      conflict_target: [:external_id],
+      on_conflict: :nothing
+    )
 
     # Now ingest: good_before + conflict rows + good_after, with on_conflict: :raise
     # The conflict batch should fail, others succeed.

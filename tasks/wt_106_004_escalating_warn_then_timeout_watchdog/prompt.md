@@ -111,7 +111,14 @@ defmodule EscalatingWatchdog do
     GenServer.start_link(__MODULE__, %{}, name: name)
   end
 
-  @spec register(term(), pid(), non_neg_integer(), non_neg_integer(), (term() -> any()), (term() -> any())) :: :ok
+  @spec register(
+          term(),
+          pid(),
+          non_neg_integer(),
+          non_neg_integer(),
+          (term() -> any()),
+          (term() -> any())
+        ) :: :ok
   def register(name, pid, warn_ms, timeout_ms, on_warn_fn, on_timeout_fn)
       when is_integer(warn_ms) and warn_ms >= 0 and is_integer(timeout_ms) and
              is_function(on_warn_fn, 1) and is_function(on_timeout_fn, 1) do

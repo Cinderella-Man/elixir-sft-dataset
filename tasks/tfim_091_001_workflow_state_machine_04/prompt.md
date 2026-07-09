@@ -208,6 +208,7 @@ defmodule WorkflowTest do
 
   test "invalid event from draft returns invalid_transition" do
     rec = submittable_draft()
+
     assert {:error, :invalid_transition, :draft, :approve} =
              Workflow.transition(rec, :approve)
 
@@ -220,6 +221,7 @@ defmodule WorkflowTest do
 
   test "unknown event is an invalid transition" do
     rec = submittable_draft()
+
     assert {:error, :invalid_transition, :draft, :teleport} =
              Workflow.transition(rec, :teleport)
   end
@@ -238,6 +240,7 @@ defmodule WorkflowTest do
   test "terminal states reject every event" do
     # completed
     completed = %{Workflow.new(%{}) | state: :completed}
+
     for event <- [:submit, :approve, :reject, :start, :complete, :cancel] do
       assert {:error, :invalid_transition, :completed, ^event} =
                Workflow.transition(completed, event)
@@ -245,11 +248,13 @@ defmodule WorkflowTest do
 
     # rejected
     rejected = %{Workflow.new(%{}) | state: :rejected}
+
     assert {:error, :invalid_transition, :rejected, :approve} =
              Workflow.transition(rejected, :approve)
 
     # cancelled
     cancelled = %{Workflow.new(%{}) | state: :cancelled}
+
     assert {:error, :invalid_transition, :cancelled, :start} =
              Workflow.transition(cancelled, :start)
   end
@@ -260,18 +265,21 @@ defmodule WorkflowTest do
 
   test "submit guard fails on empty items" do
     rec = Workflow.new(%{items: []})
+
     assert {:error, :guard_failed, :draft, :submit} =
              Workflow.transition(rec, :submit)
   end
 
   test "submit guard fails on missing items" do
     rec = Workflow.new(%{})
+
     assert {:error, :guard_failed, :draft, :submit} =
              Workflow.transition(rec, :submit)
   end
 
   test "submit guard fails on non-list items" do
     rec = Workflow.new(%{items: "not a list"})
+
     assert {:error, :guard_failed, :draft, :submit} =
              Workflow.transition(rec, :submit)
   end
@@ -304,8 +312,10 @@ defmodule WorkflowTest do
 
   test "guard failure leaves the record unchanged" do
     rec = Workflow.new(%{items: []})
+
     assert {:error, :guard_failed, :draft, :submit} =
              Workflow.transition(rec, :submit)
+
     # calling again yields the same result — no mutation happened
     assert {:error, :guard_failed, :draft, :submit} =
              Workflow.transition(rec, :submit)

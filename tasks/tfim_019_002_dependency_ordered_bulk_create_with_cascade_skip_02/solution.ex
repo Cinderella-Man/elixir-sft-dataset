@@ -6,6 +6,7 @@
     assert Catalog.count() == 3
 
     pairs = Enum.with_index(["Alpha", "Beta", "Gamma"]) |> Enum.map(fn {n, i} -> {i, n} end)
+
     for {i, expected} <- pairs do
       it = item(results, i)
       assert it.name == expected

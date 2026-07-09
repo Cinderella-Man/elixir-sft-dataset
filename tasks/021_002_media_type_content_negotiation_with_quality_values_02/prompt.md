@@ -33,7 +33,12 @@ defmodule MediaVersionApi.Views.UserView do
   def render("v1", u), do: %{name: u.first_name <> " " <> u.last_name, email: u.email}
 
   def render("v2", u),
-    do: %{first_name: u.first_name, last_name: u.last_name, email: u.email, created_at: u.created_at}
+    do: %{
+      first_name: u.first_name,
+      last_name: u.last_name,
+      email: u.email,
+      created_at: u.created_at
+    }
 end
 
 defmodule MediaVersionApi.Plugs.AcceptVersion do
@@ -169,9 +174,9 @@ defmodule MediaVersionApi.Router do
     }
   }
 
-  plug MediaVersionApi.Plugs.AcceptVersion, supported: ["v1", "v2"], default: "v2"
-  plug :match
-  plug :dispatch
+  plug(MediaVersionApi.Plugs.AcceptVersion, supported: ["v1", "v2"], default: "v2")
+  plug(:match)
+  plug(:dispatch)
 
   get "/api/users/:id" do
     version = conn.assigns.api_version

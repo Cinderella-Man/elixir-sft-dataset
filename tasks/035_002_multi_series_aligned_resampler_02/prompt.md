@@ -44,13 +44,13 @@ defmodule MultiSeriesResampler do
   """
 
   @type series_name :: term()
-  @type value       :: number()
-  @type datapoint   :: {integer(), value()}
-  @type agg_mode    :: :last | :first | :mean | :sum | :count | :max | :min
-  @type fill_mode   :: :nil | :forward
+  @type value :: number()
+  @type datapoint :: {integer(), value()}
+  @type agg_mode :: :last | :first | :mean | :sum | :count | :max | :min
+  @type fill_mode :: nil | :forward
 
-  @valid_agg  [:last, :first, :mean, :sum, :count, :max, :min]
-  @valid_fill [:nil, :forward]
+  @valid_agg [:last, :first, :mean, :sum, :count, :max, :min]
+  @valid_fill [nil, :forward]
 
   @doc """
   Resamples `series` onto a shared fixed-interval grid of width `interval_ms`.
@@ -72,8 +72,8 @@ defmodule MultiSeriesResampler do
 
   def resample(series, interval_ms, opts)
       when is_map(series) and is_integer(interval_ms) and interval_ms > 0 do
-    agg  = fetch_opt!(opts, :agg,  :last, @valid_agg)
-    fill = fetch_opt!(opts, :fill, :nil,  @valid_fill)
+    agg = fetch_opt!(opts, :agg, :last, @valid_agg)
+    fill = fetch_opt!(opts, :fill, nil, @valid_fill)
 
     sorted =
       Map.new(series, fn {name, points} ->
@@ -88,8 +88,8 @@ defmodule MultiSeriesResampler do
 
       _ ->
         first_bucket = floor_bucket(Enum.min(all_ts), interval_ms)
-        last_bucket  = floor_bucket(Enum.max(all_ts), interval_ms)
-        names        = Map.keys(sorted)
+        last_bucket = floor_bucket(Enum.max(all_ts), interval_ms)
+        names = Map.keys(sorted)
 
         grouped =
           Map.new(sorted, fn {name, pts} ->
@@ -133,12 +133,12 @@ defmodule MultiSeriesResampler do
 
   defp floor_bucket(ts, interval_ms), do: div(ts, interval_ms) * interval_ms
 
-  defp aggregate(points, :last),  do: points |> List.last() |> elem(1)
+  defp aggregate(points, :last), do: points |> List.last() |> elem(1)
   defp aggregate(points, :first), do: points |> hd() |> elem(1)
   defp aggregate(points, :count), do: length(points)
-  defp aggregate(points, :sum),   do: Enum.reduce(points, 0, fn {_t, v}, acc -> acc + v end)
-  defp aggregate(points, :max),   do: points |> Enum.map(&elem(&1, 1)) |> Enum.max()
-  defp aggregate(points, :min),   do: points |> Enum.map(&elem(&1, 1)) |> Enum.min()
+  defp aggregate(points, :sum), do: Enum.reduce(points, 0, fn {_t, v}, acc -> acc + v end)
+  defp aggregate(points, :max), do: points |> Enum.map(&elem(&1, 1)) |> Enum.max()
+  defp aggregate(points, :min), do: points |> Enum.map(&elem(&1, 1)) |> Enum.min()
 
   defp aggregate(points, :mean) do
     {sum, count} =

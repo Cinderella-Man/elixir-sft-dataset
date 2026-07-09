@@ -158,14 +158,14 @@ defmodule SlidingCounter do
     clock =
       Keyword.get(opts, :clock, fn -> System.monotonic_time(:millisecond) end)
 
-    bucket_ms           = Keyword.get(opts, :bucket_ms,           @default_bucket_ms)
-    max_window_ms       = Keyword.get(opts, :max_window_ms,        bucket_ms * @default_max_window_buckets)
+    bucket_ms = Keyword.get(opts, :bucket_ms, @default_bucket_ms)
+    max_window_ms = Keyword.get(opts, :max_window_ms, bucket_ms * @default_max_window_buckets)
     cleanup_interval_ms = Keyword.get(opts, :cleanup_interval_ms, @default_cleanup_interval_ms)
 
     state = %{
-      clock:               clock,
-      bucket_ms:           bucket_ms,
-      max_window_ms:       max_window_ms,
+      clock: clock,
+      bucket_ms: bucket_ms,
+      max_window_ms: max_window_ms,
       cleanup_interval_ms: cleanup_interval_ms,
       # Primary data structure.
       # Outer map key  → key supplied by the caller (any term).
@@ -180,7 +180,7 @@ defmodule SlidingCounter do
 
   @impl true
   def handle_call({:increment, key}, _from, state) do
-    now    = state.clock.()
+    now = state.clock.()
     bucket = bucket_for(now, state.bucket_ms)
 
     buckets =
@@ -260,7 +260,7 @@ defmodule SlidingCounter do
   # So we keep buckets where b >= cutoff, where cutoff = ceil((now - max_window_ms) / bucket_ms).
   # Ceiling division: -floor_div(-(now - max_window_ms), bucket_ms).
   defp do_cleanup(state) do
-    now    = state.clock.()
+    now = state.clock.()
     cutoff = -Integer.floor_div(-(now - state.max_window_ms), state.bucket_ms)
 
     fresh_keys =

@@ -6,9 +6,10 @@ defp push_value(stream, value) when is_number(value) do
       {period, ema_step(prev_ema, value, period)}
     end)
 
-  %{stream |
-    values:      [value | stream.values],
-    total_count: stream.total_count + 1,
-    ema:         updated_emas
+  %{
+    stream
+    | values: [value | stream.values],
+      total_count: stream.total_count + 1,
+      ema: updated_emas
   }
 end

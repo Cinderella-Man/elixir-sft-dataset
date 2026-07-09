@@ -615,7 +615,10 @@ defmodule CsvLoaderTest do
 
   test "load_file returns error for nonexistent file" do
     assert {:error, :file_not_found} =
-             CsvLoader.load_file("/tmp/does_not_exist_#{:rand.uniform(999_999)}.csv", @basic_schema)
+             CsvLoader.load_file(
+               "/tmp/does_not_exist_#{:rand.uniform(999_999)}.csv",
+               @basic_schema
+             )
   end
 
   test "load_file reads and validates a real file" do

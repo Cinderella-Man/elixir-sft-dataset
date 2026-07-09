@@ -49,9 +49,12 @@ defmodule CancellablePool do
       :pool_size,
       queue: :queue.new(),
       idle_workers: [],
-      busy_workers: %{},       # %{worker_pid => {ref, client_pid}}
-      monitors: %{},           # %{monitor_ref => worker_pid}
-      pending_refs: %{},       # %{ref => client_pid} — tracks refs still in the queue
+      # %{worker_pid => {ref, client_pid}}
+      busy_workers: %{},
+      # %{monitor_ref => worker_pid}
+      monitors: %{},
+      # %{ref => client_pid} — tracks refs still in the queue
+      pending_refs: %{},
       # refs cancelled while running (to distinguish from a crash)
       cancelled_refs: MapSet.new(),
       cancelled_count: 0

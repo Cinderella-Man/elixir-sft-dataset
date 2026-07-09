@@ -142,9 +142,11 @@ defmodule WeightedMovingAverage do
 
   defp new_stream do
     %{
-      values: [],        # newest-first
+      # newest-first
+      values: [],
       max_period: 0,
-      hma: %{}           # %{period => %{raw_buffer: [float]}}
+      # %{period => %{raw_buffer: [float]}}
+      hma: %{}
     }
   end
 

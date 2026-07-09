@@ -358,13 +358,15 @@ defmodule JsonlImporterTest do
   end
 
   test "float field accepts integer values" do
-    jsonl = ~s({"name": "Alice", "email": "alice@example.com", "age": 30, "score": 42, "active": true}\n)
+    jsonl =
+      ~s({"name": "Alice", "email": "alice@example.com", "age": 30, "score": 42, "active": true}\n)
 
     assert {:ok, [_], []} = JsonlImporter.import_string(jsonl, @basic_schema)
   end
 
   test "invalid float produces a type error" do
-    jsonl = ~s({"name": "Alice", "email": "alice@example.com", "age": 30, "score": "notfloat", "active": true}\n)
+    jsonl =
+      ~s({"name": "Alice", "email": "alice@example.com", "age": 30, "score": "notfloat", "active": true}\n)
 
     assert {:ok, [], errors} = JsonlImporter.import_string(jsonl, @basic_schema)
     assert {1, "score", msg} = find_error(errors, 1, "score")
@@ -509,7 +511,8 @@ defmodule JsonlImporterTest do
   # -------------------------------------------------------
 
   test "extra fields in JSON object are silently ignored" do
-    jsonl = ~s({"name": "Alice", "email": "alice@example.com", "age": 30, "active": true, "extra": "stuff", "another": 42}\n)
+    jsonl =
+      ~s({"name": "Alice", "email": "alice@example.com", "age": 30, "active": true, "extra": "stuff", "another": 42}\n)
 
     assert {:ok, [row], []} = JsonlImporter.import_string(jsonl, @basic_schema)
     assert row["name"] == "Alice"
@@ -531,7 +534,9 @@ defmodule JsonlImporterTest do
   end
 
   test "BOM characters at start of file are stripped" do
-    jsonl = "\xEF\xBB\xBF" <> ~s({"name": "Alice", "email": "alice@example.com", "age": 30, "active": true}\n)
+    jsonl =
+      "\xEF\xBB\xBF" <>
+        ~s({"name": "Alice", "email": "alice@example.com", "age": 30, "active": true}\n)
 
     assert {:ok, [row], []} = JsonlImporter.import_string(jsonl, @basic_schema)
     assert row["name"] == "Alice"

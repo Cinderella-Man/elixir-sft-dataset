@@ -70,7 +70,9 @@ defmodule TreeBuilder do
 
     # Validate: duplicate ids are detected early.
     case detect_duplicate_ids(items) do
-      {:error, _} = err -> err
+      {:error, _} = err ->
+        err
+
       :ok ->
         # Build a parent_id → [child_id] map (children in original order).
         children_map = build_children_map(items)
@@ -93,10 +95,14 @@ defmodule TreeBuilder do
                 pid = node.parent_id
 
                 cond do
-                  is_nil(pid) -> true
+                  is_nil(pid) ->
+                    true
+
                   not MapSet.member?(known_ids, pid) ->
                     orphan_strategy == :raise_to_root
-                  true -> false
+
+                  true ->
+                    false
                 end
               end)
 

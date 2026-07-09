@@ -34,8 +34,8 @@ defmodule StreamingResampler do
 
   use GenServer
 
-  @valid_agg  [:last, :first, :mean, :sum, :count, :max, :min]
-  @valid_fill [:nil, :forward]
+  @valid_agg [:last, :first, :mean, :sum, :count, :max, :min]
+  @valid_fill [nil, :forward]
 
   # --------------------------------------------------------------------------
   # Client API
@@ -60,7 +60,7 @@ defmodule StreamingResampler do
     end
 
     _ = fetch_opt!(opts, :agg, :last, @valid_agg)
-    _ = fetch_opt!(opts, :fill, :nil, @valid_fill)
+    _ = fetch_opt!(opts, :fill, nil, @valid_fill)
 
     lateness = Keyword.get(opts, :allowed_lateness, 0)
 
@@ -116,7 +116,7 @@ defmodule StreamingResampler do
       interval: interval_ms,
       lateness: Keyword.get(opts, :allowed_lateness, 0),
       agg: fetch_opt!(opts, :agg, :last, @valid_agg),
-      fill: fetch_opt!(opts, :fill, :nil, @valid_fill),
+      fill: fetch_opt!(opts, :fill, nil, @valid_fill),
       open: %{},
       emitted: [],
       next_emit: nil,
@@ -220,12 +220,12 @@ defmodule StreamingResampler do
 
   defp floor_bucket(ts, interval), do: div(ts, interval) * interval
 
-  defp aggregate(points, :last),  do: points |> List.last() |> elem(1)
+  defp aggregate(points, :last), do: points |> List.last() |> elem(1)
   defp aggregate(points, :first), do: points |> hd() |> elem(1)
   defp aggregate(points, :count), do: length(points)
-  defp aggregate(points, :sum),   do: Enum.reduce(points, 0, fn {_t, v}, acc -> acc + v end)
-  defp aggregate(points, :max),   do: points |> Enum.map(&elem(&1, 1)) |> Enum.max()
-  defp aggregate(points, :min),   do: points |> Enum.map(&elem(&1, 1)) |> Enum.min()
+  defp aggregate(points, :sum), do: Enum.reduce(points, 0, fn {_t, v}, acc -> acc + v end)
+  defp aggregate(points, :max), do: points |> Enum.map(&elem(&1, 1)) |> Enum.max()
+  defp aggregate(points, :min), do: points |> Enum.map(&elem(&1, 1)) |> Enum.min()
 
   defp aggregate(points, :mean) do
     {sum, count} =

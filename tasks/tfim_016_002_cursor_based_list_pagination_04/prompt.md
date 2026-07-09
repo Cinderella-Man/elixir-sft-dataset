@@ -162,7 +162,12 @@ defmodule CursorPaginatorTest do
   test "backward navigation returns the preceding window in ascending order" do
     all = items(1..12)
 
-    page3 = CursorPaginator.paginate(all, %{"limit" => "5", "cursor" => CursorPaginator.encode_cursor(10)})
+    page3 =
+      CursorPaginator.paginate(all, %{
+        "limit" => "5",
+        "cursor" => CursorPaginator.encode_cursor(10)
+      })
+
     assert Enum.map(page3.data, & &1.id) == [11, 12]
 
     prev =
@@ -195,7 +200,9 @@ defmodule CursorPaginatorTest do
   end
 
   test "malformed cursor is ignored and starts from the beginning" do
-    %{data: data} = CursorPaginator.paginate(items(1..10), %{"limit" => "3", "cursor" => "!!!not-valid"})
+    %{data: data} =
+      CursorPaginator.paginate(items(1..10), %{"limit" => "3", "cursor" => "!!!not-valid"})
+
     assert Enum.map(data, & &1.id) == [1, 2, 3]
   end
 

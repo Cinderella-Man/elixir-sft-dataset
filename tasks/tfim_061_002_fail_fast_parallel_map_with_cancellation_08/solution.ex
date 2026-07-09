@@ -2,15 +2,19 @@
     {:ok, counter} = ConcurrencyCounter.start_link([])
 
     result =
-      FailFastMap.pmap(1..30, fn
-        1 ->
-          raise "boom"
+      FailFastMap.pmap(
+        1..30,
+        fn
+          1 ->
+            raise "boom"
 
-        _x ->
-          ConcurrencyCounter.increment(counter)
-          slow(:ok, 200)
-          ConcurrencyCounter.decrement(counter)
-      end, 3)
+          _x ->
+            ConcurrencyCounter.increment(counter)
+            slow(:ok, 200)
+            ConcurrencyCounter.decrement(counter)
+        end,
+        3
+      )
 
     assert {:error, {0, _}} = result
     # Only the initial window (minus the failing element) could have started.

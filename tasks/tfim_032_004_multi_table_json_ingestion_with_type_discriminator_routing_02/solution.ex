@@ -1,9 +1,9 @@
   test "routes records to correct schemas based on type field" do
     records = [
-      %{"type" => "order",  "order_id" => "o-1", "customer" => "Alice", "amount" => 100},
+      %{"type" => "order", "order_id" => "o-1", "customer" => "Alice", "amount" => 100},
       %{"type" => "refund", "refund_id" => "r-1", "reason" => "damaged", "amount" => 50},
-      %{"type" => "order",  "order_id" => "o-2", "customer" => "Bob",   "amount" => 200},
-      %{"type" => "order",  "order_id" => "o-3", "customer" => "Carol", "amount" => 300},
+      %{"type" => "order", "order_id" => "o-2", "customer" => "Bob", "amount" => 200},
+      %{"type" => "order", "order_id" => "o-3", "customer" => "Carol", "amount" => 300},
       %{"type" => "refund", "refund_id" => "r-2", "reason" => "wrong item", "amount" => 75}
     ]
 

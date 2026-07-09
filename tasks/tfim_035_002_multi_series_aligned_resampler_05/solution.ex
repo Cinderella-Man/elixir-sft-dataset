@@ -1,5 +1,5 @@
   test ":mean produces per-series floats" do
-    result = MultiSeriesResampler.resample(@series, @interval, agg: :mean, fill: :nil)
+    result = MultiSeriesResampler.resample(@series, @interval, agg: :mean, fill: nil)
 
     m0 = row(result, 0)
     assert_in_delta m0.cpu, 15.0, 0.001

@@ -1,10 +1,10 @@
   defp insert_schema_group(repo, schema, records, cfg) do
     schema_keys = schema_field_set(schema)
-    now         = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+    now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
     conflict_target = resolve_conflict_target(cfg.conflict_target, schema)
 
     insert_opts = [
-      on_conflict:     cfg.on_conflict,
+      on_conflict: cfg.on_conflict,
       conflict_target: conflict_target
     ]
 
@@ -21,21 +21,29 @@
 
         new_acc = %{acc | inserted: acc.inserted + count}
 
-        Logger.info("[MultiSchemaIngestion] #{inspect(schema)} batch done — " <>
-          "size: #{batch_size}, inserted: #{count}. " <>
-          "Running totals — inserted=#{new_acc.inserted} failed=#{new_acc.failed}")
+        Logger.info(
+          "[MultiSchemaIngestion] #{inspect(schema)} batch done — " <>
+            "size: #{batch_size}, inserted: #{count}. " <>
+            "Running totals — inserted=#{new_acc.inserted} failed=#{new_acc.failed}"
+        )
 
         new_acc
       rescue
         error ->
-          Logger.error("[MultiSchemaIngestion] #{inspect(schema)} batch failed " <>
-            "(#{batch_size} records skipped): " <>
-            Exception.format(:error, error, __STACKTRACE__))
+          Logger.error(
+            "[MultiSchemaIngestion] #{inspect(schema)} batch failed " <>
+              "(#{batch_size} records skipped): " <>
+              Exception.format(:error, error, __STACKTRACE__)
+          )
+
           %{acc | failed: acc.failed + batch_size}
       catch
         kind, reason ->
-          Logger.error("[MultiSchemaIngestion] #{inspect(schema)} batch failed " <>
-            "with #{kind} (#{batch_size} records skipped): #{inspect(reason)}")
+          Logger.error(
+            "[MultiSchemaIngestion] #{inspect(schema)} batch failed " <>
+              "with #{kind} (#{batch_size} records skipped): #{inspect(reason)}"
+          )
+
           %{acc | failed: acc.failed + batch_size}
       end
     end)

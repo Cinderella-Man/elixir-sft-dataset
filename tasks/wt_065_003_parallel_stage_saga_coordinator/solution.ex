@@ -88,8 +88,8 @@ defmodule ParallelSaga do
     {compensated, compensations} =
       Enum.reduce(to_compensate, {[], %{}}, fn
         %{name: name, compensation: comp}, {names, results} ->
-        result = comp.(context)
-        {[name | names], Map.put(results, name, result)}
+          result = comp.(context)
+          {[name | names], Map.put(results, name, result)}
       end)
 
     {:error,

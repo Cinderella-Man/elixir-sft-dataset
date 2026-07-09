@@ -205,11 +205,41 @@ defmodule Catalog.RankedTest do
 
   defp products do
     [
-      %{id: 1, name: "Running Shoes", description: "Lightweight shoes for running and trail", category: "footwear", price_cents: 8999},
-      %{id: 2, name: "Trail Runner Pro", description: "Durable running shoe for rugged trails", category: "footwear", price_cents: 12_999},
-      %{id: 3, name: "Wireless Mouse", description: "Ergonomic mouse for office work", category: "electronics", price_cents: 2999},
-      %{id: 4, name: "Keyboard Wrist Rest", description: "Comfort rest for keyboard users", category: "accessories", price_cents: 1500},
-      %{id: 5, name: "Yoga Mat", description: "Non-slip mat for yoga and workouts", category: "fitness", price_cents: 2999}
+      %{
+        id: 1,
+        name: "Running Shoes",
+        description: "Lightweight shoes for running and trail",
+        category: "footwear",
+        price_cents: 8999
+      },
+      %{
+        id: 2,
+        name: "Trail Runner Pro",
+        description: "Durable running shoe for rugged trails",
+        category: "footwear",
+        price_cents: 12_999
+      },
+      %{
+        id: 3,
+        name: "Wireless Mouse",
+        description: "Ergonomic mouse for office work",
+        category: "electronics",
+        price_cents: 2999
+      },
+      %{
+        id: 4,
+        name: "Keyboard Wrist Rest",
+        description: "Comfort rest for keyboard users",
+        category: "accessories",
+        price_cents: 1500
+      },
+      %{
+        id: 5,
+        name: "Yoga Mat",
+        description: "Non-slip mat for yoga and workouts",
+        category: "fitness",
+        price_cents: 2999
+      }
     ]
   end
 

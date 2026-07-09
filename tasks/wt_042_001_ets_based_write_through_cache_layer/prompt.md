@@ -105,7 +105,7 @@ defmodule CacheLayer do
       CacheLayer.fetch(:my_cache, :users, 42, fn -> DB.get_user(42) end)
       #=> {:ok, %User{id: 42, ...}}
   """
-  @spec fetch(GenServer.server(), atom(), term(), (() -> term())) :: {:ok, term()}
+  @spec fetch(GenServer.server(), atom(), term(), (-> term())) :: {:ok, term()}
   def fetch(server, table, key, fallback_fn)
       when is_atom(table) and is_function(fallback_fn, 0) do
     pid = resolve_pid!(server)

@@ -146,7 +146,10 @@ defmodule ORSet do
   @spec merge(server(), or_state()) :: :ok
   def merge(server, %{entries: entries, tombstones: tombstones, clock: clock} = _remote)
       when is_map(entries) and is_map(clock) do
-    GenServer.call(server, {:merge, %{entries: entries, tombstones: MapSet.new(tombstones), clock: clock}})
+    GenServer.call(
+      server,
+      {:merge, %{entries: entries, tombstones: MapSet.new(tombstones), clock: clock}}
+    )
   end
 
   def merge(_server, invalid) do
@@ -537,6 +540,7 @@ defmodule ORSetTest do
 
   test "merge is idempotent", %{s: s} do
     ORSet.add(s, :a, :n1)
+
     remote = %{
       entries: %{b: MapSet.new([{:n2, 1}])},
       tombstones: MapSet.new(),

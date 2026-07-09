@@ -96,26 +96,25 @@ defmodule DataIngestion do
   # Types
   # ---------------------------------------------------------------------------
 
-  @type repo        :: module()
-  @type schema      :: module()
-  @type file_path   :: String.t()
-  @type stats       :: %{total: integer(), inserted: integer(),
-                         updated: integer(), failed: integer()}
+  @type repo :: module()
+  @type schema :: module()
+  @type file_path :: String.t()
+  @type stats :: %{total: integer(), inserted: integer(), updated: integer(), failed: integer()}
   @type ingest_opts :: [
-    batch_size:      pos_integer(),
-    on_conflict:     atom() | keyword(),
-    conflict_target: atom() | [atom()],
-    returning:       boolean()
-  ]
+          batch_size: pos_integer(),
+          on_conflict: atom() | keyword(),
+          conflict_target: atom() | [atom()],
+          returning: boolean()
+        ]
 
   # ---------------------------------------------------------------------------
   # Defaults
   # ---------------------------------------------------------------------------
 
-  @default_batch_size      500
-  @default_on_conflict     :replace_all
+  @default_batch_size 500
+  @default_on_conflict :replace_all
   @default_conflict_target :nothing
-  @default_returning       true
+  @default_returning true
 
   # Tolerance window (seconds) used to tell a fresh INSERT from an UPDATE when
   # comparing the returned inserted_at / updated_at timestamps.
@@ -147,20 +146,19 @@ defmodule DataIngestion do
   @spec ingest(repo(), schema(), file_path(), ingest_opts()) ::
           {:ok, stats()} | {:error, :file_not_found | :invalid_json | :not_a_list}
   def ingest(repo, schema, file_path, opts \\ []) do
-    batch_size      = Keyword.get(opts, :batch_size,       @default_batch_size)
-    on_conflict     = Keyword.get(opts, :on_conflict,      @default_on_conflict)
-    conflict_target = Keyword.get(opts, :conflict_target,  @default_conflict_target)
-    returning       = Keyword.get(opts, :returning,        @default_returning)
+    batch_size = Keyword.get(opts, :batch_size, @default_batch_size)
+    on_conflict = Keyword.get(opts, :on_conflict, @default_on_conflict)
+    conflict_target = Keyword.get(opts, :conflict_target, @default_conflict_target)
+    returning = Keyword.get(opts, :returning, @default_returning)
 
-    with {:ok, raw}     <- read_file(file_path),
-         {:ok, parsed}  <- parse_json(raw),
+    with {:ok, raw} <- read_file(file_path),
+         {:ok, parsed} <- parse_json(raw),
          {:ok, records} <- validate_list(parsed) do
-
       cfg = %{
-        batch_size:      batch_size,
-        on_conflict:     on_conflict,
+        batch_size: batch_size,
+        on_conflict: on_conflict,
         conflict_target: conflict_target,
-        returning:       returning
+        returning: returning
       }
 
       {:ok, process_batches(repo, schema, records, cfg)}
@@ -174,7 +172,9 @@ defmodule DataIngestion do
   @spec read_file(file_path()) :: {:ok, binary()} | {:error, :file_not_found}
   defp read_file(path) do
     case File.read(path) do
-      {:ok, contents}  -> {:ok, contents}
+      {:ok, contents} ->
+        {:ok, contents}
+
       {:error, reason} ->
         Logger.error("[DataIngestion] Could not read file #{inspect(path)}: #{inspect(reason)}")
         {:error, :file_not_found}
@@ -184,7 +184,9 @@ defmodule DataIngestion do
   @spec parse_json(binary()) :: {:ok, term()} | {:error, :invalid_json}
   defp parse_json(raw) do
     case Jason.decode(raw) do
-      {:ok, value}     -> {:ok, value}
+      {:ok, value} ->
+        {:ok, value}
+
       {:error, reason} ->
         Logger.error("[DataIngestion] JSON parse error: #{inspect(reason)}")
         {:error, :invalid_json}
@@ -193,6 +195,7 @@ defmodule DataIngestion do
 
   @spec validate_list(term()) :: {:ok, list()} | {:error, :not_a_list}
   defp validate_list(value) when is_list(value), do: {:ok, value}
+
   defp validate_list(value) do
     Logger.error("[DataIngestion] Expected a JSON array, got: #{inspect(value, limit: 5)}")
     {:error, :not_a_list}
@@ -204,7 +207,7 @@ defmodule DataIngestion do
 
   @spec process_batches(repo(), schema(), list(), map()) :: stats()
   defp process_batches(repo, schema, records, cfg) do
-    total       = length(records)
+    total = length(records)
     schema_keys = schema_field_set(schema)
     initial_acc = %{total: total, inserted: 0, updated: 0, failed: 0}
 
@@ -231,20 +234,28 @@ defmodule DataIngestion do
 
       new_acc = %{acc | inserted: acc.inserted + ins, updated: acc.updated + upd}
 
-      Logger.info("[DataIngestion] Batch done — " <>
-        "size: #{raw_count}, inserted: #{ins}, updated: #{upd}. " <>
-        "Running totals — #{format_stats(new_acc)}")
+      Logger.info(
+        "[DataIngestion] Batch done — " <>
+          "size: #{raw_count}, inserted: #{ins}, updated: #{upd}. " <>
+          "Running totals — #{format_stats(new_acc)}"
+      )
 
       new_acc
     rescue
       error ->
-        Logger.error("[DataIngestion] Batch failed (#{raw_count} records skipped): " <>
-          Exception.format(:error, error, __STACKTRACE__))
+        Logger.error(
+          "[DataIngestion] Batch failed (#{raw_count} records skipped): " <>
+            Exception.format(:error, error, __STACKTRACE__)
+        )
+
         %{acc | failed: acc.failed + raw_count}
     catch
       kind, reason ->
-        Logger.error("[DataIngestion] Batch failed with #{kind} " <>
-          "(#{raw_count} records skipped): #{inspect(reason)}")
+        Logger.error(
+          "[DataIngestion] Batch failed with #{kind} " <>
+            "(#{raw_count} records skipped): #{inspect(reason)}"
+        )
+
         %{acc | failed: acc.failed + raw_count}
     end
   end
@@ -276,17 +287,17 @@ defmodule DataIngestion do
         row
         |> Enum.filter(fn {k, _v} -> MapSet.member?(schema_keys, k) end)
         |> Enum.map(fn {k, v} ->
-             # Safe: the atom already exists because it was interned when the
-             # schema module was compiled.
-             {String.to_existing_atom(k), v}
-           end)
+          # Safe: the atom already exists because it was interned when the
+          # schema module was compiled.
+          {String.to_existing_atom(k), v}
+        end)
         |> Map.new()
 
       # Only inject timestamps if the schema actually has them; avoids errors
       # on schemas that do not call `timestamps()`.
       base
       |> maybe_put_new(:inserted_at, now, schema_keys)
-      |> maybe_put_new(:updated_at,  now, schema_keys)
+      |> maybe_put_new(:updated_at, now, schema_keys)
     end)
   end
 
@@ -306,7 +317,7 @@ defmodule DataIngestion do
   @spec build_insert_opts(map()) :: keyword()
   defp build_insert_opts(cfg) do
     base = [
-      on_conflict:     cfg.on_conflict,
+      on_conflict: cfg.on_conflict,
       conflict_target: cfg.conflict_target
     ]
 
@@ -326,7 +337,7 @@ defmodule DataIngestion do
   @spec classify_rows(list() | nil, non_neg_integer(), boolean()) ::
           {non_neg_integer(), non_neg_integer()}
   defp classify_rows(_rows, count, false), do: {count, 0}
-  defp classify_rows(nil,   count, _ret),  do: {count, 0}
+  defp classify_rows(nil, count, _ret), do: {count, 0}
 
   defp classify_rows(rows, _count, true) do
     Enum.reduce(rows, {0, 0}, fn row, {ins, upd} ->

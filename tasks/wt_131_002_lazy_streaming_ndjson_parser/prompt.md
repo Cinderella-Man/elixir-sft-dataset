@@ -29,8 +29,10 @@ actually consumes it.
 Implement two public functions:
 
 ```elixir
-NdjsonStreamer.stream(file_path)   # => a lazy Enumerable
-NdjsonStreamer.decode_line(line)   # => {:ok, value} | {:error, {:invalid_json, raw}}
+# => a lazy Enumerable
+NdjsonStreamer.stream(file_path)
+# => {:ok, value} | {:error, {:invalid_json, raw}}
+NdjsonStreamer.decode_line(line)
 ```
 
 - `stream/1` returns a **lazy** `Enumerable` (do not eagerly read the file, do

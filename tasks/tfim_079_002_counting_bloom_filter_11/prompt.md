@@ -307,6 +307,7 @@ defmodule CountingBloomFilterTest do
       Enum.count(1..n, fn i -> CountingBloomFilter.member?(filter, "absent-#{i}") end)
 
     observed_rate = false_positives / n
+
     assert observed_rate < p * 2,
            "False positive rate #{observed_rate} exceeded 2x target #{p}"
   end

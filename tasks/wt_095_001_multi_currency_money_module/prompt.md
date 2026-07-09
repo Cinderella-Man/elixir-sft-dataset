@@ -36,8 +36,10 @@ Creates a money struct. `cents` is an **integer** (the amount in cents) and
 `currency` is an **atom**.
 
 ```elixir
-Money.new(100, :USD)   # => %Money{amount: 100, currency: :USD}   (== $1.00)
-Money.new(1000, :USD)  # => %Money{amount: 1000, currency: :USD}  (== $10.00)
+# => %Money{amount: 100, currency: :USD}   (== $1.00)
+Money.new(100, :USD)
+# => %Money{amount: 1000, currency: :USD}  (== $10.00)
+Money.new(1000, :USD)
 ```
 
 If `cents` is not an integer, or `currency` is not an atom, raise
@@ -72,9 +74,12 @@ amount must be rounded to the nearest whole cent, rounding halves away from zero
 the same currency.
 
 ```elixir
-Money.multiply(Money.new(100, :USD), 3)      # => %Money{amount: 300, currency: :USD}
-Money.multiply(Money.new(100, :USD), 0.1)    # => %Money{amount: 10,  currency: :USD}
-Money.multiply(Money.new(101, :USD), 0.5)    # => %Money{amount: 51,  currency: :USD}  (50.5 -> 51)
+# => %Money{amount: 300, currency: :USD}
+Money.multiply(Money.new(100, :USD), 3)
+# => %Money{amount: 10,  currency: :USD}
+Money.multiply(Money.new(100, :USD), 0.1)
+# => %Money{amount: 51,  currency: :USD}  (50.5 -> 51)
+Money.multiply(Money.new(101, :USD), 0.5)
 ```
 
 ### `Money.split(money, n)`

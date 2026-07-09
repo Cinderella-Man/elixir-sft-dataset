@@ -12,7 +12,7 @@ def handle_call({:release, bucket_name, lease_id, outcome}, _from, state) do
           # Lease was either never issued, already released, or expired
           # during refill_and_expire above.
           {:reply, {:error, :unknown_lease},
-            %{state | buckets: Map.put(state.buckets, bucket_name, bucket)}}
+           %{state | buckets: Map.put(state.buckets, bucket_name, bucket)}}
 
         {:ok, {tokens, _expires_at}} ->
           new_bucket =
@@ -30,8 +30,7 @@ def handle_call({:release, bucket_name, lease_id, outcome}, _from, state) do
                 }
             end
 
-          {:reply, :ok,
-            %{state | buckets: Map.put(state.buckets, bucket_name, new_bucket)}}
+          {:reply, :ok, %{state | buckets: Map.put(state.buckets, bucket_name, new_bucket)}}
       end
   end
 end

@@ -9,5 +9,5 @@
 
     base
     |> maybe_put_new(:inserted_at, now, schema_keys)
-    |> maybe_put_new(:updated_at,  now, schema_keys)
+    |> maybe_put_new(:updated_at, now, schema_keys)
   end

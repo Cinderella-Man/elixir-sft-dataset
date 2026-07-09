@@ -440,6 +440,7 @@ defmodule TransactionAnalyzerTest do
 
   test "zero amount is malformed" do
     path = tmp_path("zero_amt")
+
     write_lines(path, [
       Jason.encode!(%{
         "timestamp" => "2024-01-01T00:00:00Z",
@@ -449,6 +450,7 @@ defmodule TransactionAnalyzerTest do
         "currency" => "USD"
       })
     ])
+
     on_exit(fn -> File.rm(path) end)
 
     assert {:ok, report} = TransactionAnalyzer.analyze(path)
@@ -457,6 +459,7 @@ defmodule TransactionAnalyzerTest do
 
   test "negative amount is malformed" do
     path = tmp_path("neg_amt")
+
     write_lines(path, [
       Jason.encode!(%{
         "timestamp" => "2024-01-01T00:00:00Z",
@@ -466,6 +469,7 @@ defmodule TransactionAnalyzerTest do
         "currency" => "USD"
       })
     ])
+
     on_exit(fn -> File.rm(path) end)
 
     assert {:ok, report} = TransactionAnalyzer.analyze(path)
@@ -474,6 +478,7 @@ defmodule TransactionAnalyzerTest do
 
   test "empty account_id is malformed" do
     path = tmp_path("empty_acct")
+
     write_lines(path, [
       Jason.encode!(%{
         "timestamp" => "2024-01-01T00:00:00Z",
@@ -483,6 +488,7 @@ defmodule TransactionAnalyzerTest do
         "currency" => "USD"
       })
     ])
+
     on_exit(fn -> File.rm(path) end)
 
     assert {:ok, report} = TransactionAnalyzer.analyze(path)
@@ -506,9 +512,11 @@ defmodule TransactionAnalyzerTest do
 
   test "debit produces negative balance" do
     path = tmp_path("neg_balance")
+
     write_lines(path, [
       txn_line("2024-01-01T00:00:00Z", "acct_x", "debit", 500.00, "USD")
     ])
+
     on_exit(fn -> File.rm(path) end)
 
     assert {:ok, report} = TransactionAnalyzer.analyze(path)

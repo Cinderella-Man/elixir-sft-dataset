@@ -100,7 +100,8 @@ defmodule PriorityDLQ do
     to_visit = entries |> ordered() |> Enum.take(count)
 
     {outcomes, stats} =
-      Enum.reduce(to_visit, {%{}, %{succeeded: 0, failed: 0, processed: []}}, fn entry, {out, acc} ->
+      Enum.reduce(to_visit, {%{}, %{succeeded: 0, failed: 0, processed: []}}, fn entry,
+                                                                                 {out, acc} ->
         acc = %{acc | processed: acc.processed ++ [entry.id]}
 
         case run_handler(handler, entry.message) do
@@ -241,7 +242,11 @@ defmodule PriorityDLQTest do
     {:ok, hid} = PriorityDLQ.push(dlq, "q", :h1, :err, %{}, :high)
     {:ok, nid} = PriorityDLQ.push(dlq, "q", :n1, :err, %{}, :normal)
 
-    handler = fn msg -> Recorder.record(msg); :ok end
+    handler = fn msg ->
+      Recorder.record(msg)
+      :ok
+    end
+
     assert {:ok, stats} = PriorityDLQ.drain(dlq, "q", handler, 2)
 
     assert Recorder.order() == [:h1, :n1]

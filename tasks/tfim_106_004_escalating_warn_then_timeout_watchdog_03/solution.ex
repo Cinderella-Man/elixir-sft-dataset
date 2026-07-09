@@ -3,7 +3,12 @@
 
     :ok =
       EscalatingWatchdog.register(
-        :w, dummy_pid(), 60, 150, warn_notifier(test), timeout_notifier(test)
+        :w,
+        dummy_pid(),
+        60,
+        150,
+        warn_notifier(test),
+        timeout_notifier(test)
       )
 
     assert_receive {:warned, :w}, 1_000

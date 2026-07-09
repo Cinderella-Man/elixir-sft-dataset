@@ -54,7 +54,13 @@ defmodule RetryScheduler do
     GenServer.start_link(__MODULE__, opts, server_opts)
   end
 
-  @spec schedule(GenServer.server(), term(), NaiveDateTime.t(), {module(), atom(), list()}, keyword()) ::
+  @spec schedule(
+          GenServer.server(),
+          term(),
+          NaiveDateTime.t(),
+          {module(), atom(), list()},
+          keyword()
+        ) ::
           :ok | {:error, :already_exists | :invalid_opts}
   def schedule(server, job_name, %NaiveDateTime{} = run_at, {mod, fun, args} = mfa, opts \\ [])
       when is_atom(mod) and is_atom(fun) and is_list(args) do
@@ -219,6 +225,7 @@ defmodule RetryScheduler do
   # ---------------------------------------------------------------------------
 
   defp schedule_tick(:infinity), do: :ok
+
   defp schedule_tick(ms) when is_integer(ms) and ms > 0 do
     Process.send_after(self(), :tick, ms)
   end

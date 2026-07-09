@@ -22,7 +22,9 @@
 
     {chosen_pct, extra_pcts} =
       case percentages do
-        [] -> {nil, []}
+        [] ->
+          {nil, []}
+
         _ ->
           best = Enum.max_by(percentages, fn {_cs, c} -> c.value end)
           {best, List.delete(percentages, best)}
@@ -38,7 +40,9 @@
 
     {remaining, applied} =
       case chosen_pct do
-        nil -> {remaining, applied}
+        nil ->
+          {remaining, applied}
+
         {cs, c} ->
           d = min(round(order_total * c.value / 100), remaining)
           {remaining - d, applied ++ [%{code: cs, type: :percentage, discount: d}]}
@@ -46,7 +50,9 @@
 
     {remaining, applied} =
       case chosen_ship do
-        nil -> {remaining, applied}
+        nil ->
+          {remaining, applied}
+
         {cs, c} ->
           d = min(c.value, remaining)
           {remaining - d, applied ++ [%{code: cs, type: :free_shipping, discount: d}]}

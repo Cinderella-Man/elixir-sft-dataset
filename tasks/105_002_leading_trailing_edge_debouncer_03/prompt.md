@@ -58,7 +58,8 @@ defmodule EdgeDebouncer do
     edge = Keyword.get(opts, :edge, :trailing)
 
     unless edge in @valid_edges do
-      raise ArgumentError, "invalid :edge #{inspect(edge)}, expected one of #{inspect(@valid_edges)}"
+      raise ArgumentError,
+            "invalid :edge #{inspect(edge)}, expected one of #{inspect(@valid_edges)}"
     end
 
     GenServer.cast(__MODULE__, {:debounce, key, delay_ms, func, edge})

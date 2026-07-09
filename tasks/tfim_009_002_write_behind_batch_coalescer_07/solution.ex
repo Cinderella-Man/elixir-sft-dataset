@@ -4,9 +4,7 @@
         tasks =
           for i <- 1..3 do
             Task.async(fn ->
-              BatchCollector.submit(bc, :fast, i, fn items -> {:ok, items} end,
-                max_batch_size: 3
-              )
+              BatchCollector.submit(bc, :fast, i, fn items -> {:ok, items} end, max_batch_size: 3)
             end)
           end
 

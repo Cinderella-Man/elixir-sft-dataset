@@ -220,7 +220,7 @@ defmodule CalendarScheduler do
 
   # For each rule type, compute the target datetime within the given
   # {year, month}, or return :no_match if the rule has no target there.
-  #TODO defp target_in_month
+  # TODO defp target_in_month
 
   # ---------------------------------------------------------------------------
   # Execution helper
@@ -237,6 +237,7 @@ defmodule CalendarScheduler do
   end
 
   defp schedule_tick(:infinity), do: :ok
+
   defp schedule_tick(ms) when is_integer(ms) and ms > 0 do
     Process.send_after(self(), :tick, ms)
   end

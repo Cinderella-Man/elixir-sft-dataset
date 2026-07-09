@@ -155,7 +155,8 @@ defmodule LRUCache do
     data_table =
       :ets.new(data_table_name(name), [
         :set,
-        :public,          # allow direct reads from any process
+        # allow direct reads from any process
+        :public,
         :named_table,
         read_concurrency: true
       ])
@@ -163,7 +164,8 @@ defmodule LRUCache do
     order_table =
       :ets.new(order_table_name(name), [
         :ordered_set,
-        :protected,       # only the owner writes; no external reads needed
+        # only the owner writes; no external reads needed
+        :protected,
         :named_table
       ])
 

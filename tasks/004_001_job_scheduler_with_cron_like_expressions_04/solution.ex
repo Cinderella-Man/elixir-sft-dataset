@@ -8,8 +8,8 @@ defp parse_range_or_value(str, lo, hi) do
 
     [from_str, to_str] ->
       with {:ok, from} <- parse_int(from_str),
-            {:ok, to} <- parse_int(to_str),
-            true <- from >= lo && to <= hi && from <= to || :error do
+           {:ok, to} <- parse_int(to_str),
+           true <- (from >= lo && to <= hi && from <= to) || :error do
         {:ok, MapSet.new(from..to)}
       else
         _ -> :error

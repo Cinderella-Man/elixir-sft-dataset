@@ -52,11 +52,11 @@ defmodule WorkerPool do
 
   @doc "Awaits the result of a submitted task by its reference."
   @spec await(GenServer.server(), reference(), non_neg_integer()) ::
-            {:ok, any()} | {:error, any()}
+          {:ok, any()} | {:error, any()}
   def await(_pool, ref, timeout \\ 5_000) when is_reference(ref) do
     receive do
       {^ref, :result, result} -> {:ok, result}
-      {^ref, :error, reason}  -> {:error, reason}
+      {^ref, :error, reason} -> {:error, reason}
     after
       timeout -> {:error, :timeout}
     end
@@ -77,8 +77,10 @@ defmodule WorkerPool do
       :pool_size,
       queue: :queue.new(),
       idle_workers: [],
-      busy_workers: %{}, # %{worker_pid => {ref, client_pid}}
-      monitors: %{}      # %{monitor_ref => worker_pid}
+      # %{worker_pid => {ref, client_pid}}
+      busy_workers: %{},
+      # %{monitor_ref => worker_pid}
+      monitors: %{}
     ]
   end
 
@@ -97,12 +99,17 @@ defmodule WorkerPool do
     }
 
     # Initialize the worker pool
-    new_state = Enum.reduce(1..pool_size, state, fn _, acc ->
-      {:ok, pid} = start_worker(acc.sup)
-      mref = Process.monitor(pid)
-      %{acc | idle_workers: [pid | acc.idle_workers],
-              monitors: Map.put(acc.monitors, mref, pid)}
-    end)
+    new_state =
+      Enum.reduce(1..pool_size, state, fn _, acc ->
+        {:ok, pid} = start_worker(acc.sup)
+        mref = Process.monitor(pid)
+
+        %{
+          acc
+          | idle_workers: [pid | acc.idle_workers],
+            monitors: Map.put(acc.monitors, mref, pid)
+        }
+      end)
 
     {:ok, new_state}
   end
@@ -118,10 +125,12 @@ defmodule WorkerPool do
         [worker | rest] = state.idle_workers
         send(worker, {:run, task})
 
-        new_state = %{state |
-          idle_workers: rest,
-          busy_workers: Map.put(state.busy_workers, worker, {ref, from_pid})
+        new_state = %{
+          state
+          | idle_workers: rest,
+            busy_workers: Map.put(state.busy_workers, worker, {ref, from_pid})
         }
+
         {:reply, {:ok, ref}, new_state}
 
       # Case 2: Enqueue if there is room
@@ -142,6 +151,7 @@ defmodule WorkerPool do
       idle_workers: length(state.idle_workers),
       queue_length: :queue.len(state.queue)
     }
+
     {:reply, status, state}
   end
 
@@ -159,14 +169,18 @@ defmodule WorkerPool do
     case :queue.out(state.queue) do
       {{:value, {ref, client_pid, func}}, remaining_queue} ->
         send(worker, {:run, {ref, client_pid, func}})
-        %{state |
-          queue: remaining_queue,
-          busy_workers: Map.put(state.busy_workers, worker, {ref, client_pid})
+
+        %{
+          state
+          | queue: remaining_queue,
+            busy_workers: Map.put(state.busy_workers, worker, {ref, client_pid})
         }
+
       {:empty, _} ->
-        %{state |
-          idle_workers: [worker | state.idle_workers],
-          busy_workers: Map.delete(state.busy_workers, worker)
+        %{
+          state
+          | idle_workers: [worker | state.idle_workers],
+            busy_workers: Map.delete(state.busy_workers, worker)
         }
     end
   end
@@ -190,5 +204,4 @@ defmodule WorkerPool do
     end
   end
 end
-
 ```

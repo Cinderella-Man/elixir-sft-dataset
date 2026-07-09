@@ -80,7 +80,6 @@ defmodule ConcurrencyCounter do
   def handle_call(:peak, _from, %{peak: peak} = state), do: {:reply, peak, state}
 end
 
-
 defmodule RetryMap do
   @moduledoc """
   Concurrency-limited parallel map with per-attempt timeouts and bounded retries.

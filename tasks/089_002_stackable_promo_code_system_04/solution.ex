@@ -4,9 +4,15 @@
     value = Map.get(attrs, :value)
 
     cond do
-      not is_binary(code) -> {:error, :invalid_code}
-      type not in @valid_types -> {:error, :invalid_type}
-      not is_number(value) -> {:error, :invalid_value}
+      not is_binary(code) ->
+        {:error, :invalid_code}
+
+      type not in @valid_types ->
+        {:error, :invalid_type}
+
+      not is_number(value) ->
+        {:error, :invalid_value}
+
       true ->
         {:ok,
          %{

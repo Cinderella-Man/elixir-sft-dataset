@@ -11,10 +11,14 @@ minor part on the left to `exp` digits, and join them with a `"."`, followed by 
 and the currency.
 
 ```elixir
-Money.to_string(Money.new(12345, :USD))    # => "123.45 USD"
-Money.to_string(Money.new(500, :JPY))      # => "500 JPY"
-Money.to_string(Money.new(1234567, :BHD))  # => "1234.567 BHD"
-Money.to_string(Money.new(-5, :USD))       # => "-0.05 USD"
+# => "123.45 USD"
+Money.to_string(Money.new(12345, :USD))
+# => "500 JPY"
+Money.to_string(Money.new(500, :JPY))
+# => "1234.567 BHD"
+Money.to_string(Money.new(1_234_567, :BHD))
+# => "-0.05 USD"
+Money.to_string(Money.new(-5, :USD))
 ```
 
 ```elixir

@@ -157,10 +157,7 @@ defmodule GenTask.Prompts do
     #{prompt_md}
 
     #{@house_style}
-    #{output_contract([
-      {"lib/<app_path>.ex", "one <file> block PER source file, its path mirroring the module name"},
-      {"priv/repo/migrations/<name>.exs", "any migration file(s) the prompt requires"}
-    ])}
+    #{output_contract([{"lib/<app_path>.ex", "one <file> block PER source file, its path mirroring the module name"}, {"priv/repo/migrations/<name>.exs", "any migration file(s) the prompt requires"}])}
     """
 
     {@solver_persona, user}

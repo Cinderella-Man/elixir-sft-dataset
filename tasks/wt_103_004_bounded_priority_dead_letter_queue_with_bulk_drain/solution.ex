@@ -97,16 +97,16 @@ defmodule PriorityDLQ do
     {outcomes, stats} =
       Enum.reduce(to_visit, {%{}, %{succeeded: 0, failed: 0, processed: []}}, fn
         entry, {out, acc} ->
-        acc = %{acc | processed: acc.processed ++ [entry.id]}
+          acc = %{acc | processed: acc.processed ++ [entry.id]}
 
-        case run_handler(handler, entry.message) do
-          :success ->
-            {Map.put(out, entry.id, :remove), %{acc | succeeded: acc.succeeded + 1}}
+          case run_handler(handler, entry.message) do
+            :success ->
+              {Map.put(out, entry.id, :remove), %{acc | succeeded: acc.succeeded + 1}}
 
-          {:failure, _reason} ->
-            {Map.put(out, entry.id, {:keep, entry.retry_count + 1}),
-             %{acc | failed: acc.failed + 1}}
-        end
+            {:failure, _reason} ->
+              {Map.put(out, entry.id, {:keep, entry.retry_count + 1}),
+               %{acc | failed: acc.failed + 1}}
+          end
       end)
 
     new_entries =

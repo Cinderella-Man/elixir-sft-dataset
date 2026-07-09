@@ -154,8 +154,7 @@ defmodule ProgressiveRecoveryCircuitBreaker do
         new_count = state.failure_count + 1
 
         if new_count >= state.config.failure_threshold do
-          {reply,
-           %{state | state: :open, opened_at: state.clock.(), failure_count: 0}}
+          {reply, %{state | state: :open, opened_at: state.clock.(), failure_count: 0}}
         else
           {reply, %{state | failure_count: new_count}}
         end
@@ -179,8 +178,7 @@ defmodule ProgressiveRecoveryCircuitBreaker do
          }}
 
       {:error, reply} ->
-        {reply,
-         %{state | state: :open, opened_at: state.clock.(), probes_in_flight: 0}}
+        {reply, %{state | state: :open, opened_at: state.clock.(), probes_in_flight: 0}}
     end
   end
 
@@ -189,6 +187,7 @@ defmodule ProgressiveRecoveryCircuitBreaker do
 
     # 1. Calculate updated counters based on the latest call
     new_stage_calls = state.stage_calls + 1
+
     new_stage_failures =
       case outcome do
         :error -> state.stage_failures + 1
@@ -207,13 +206,15 @@ defmodule ProgressiveRecoveryCircuitBreaker do
       # Scenario A: Failure limit exceeded -> Crash back to :open
       new_stage_failures > tolerated_failures ->
         new_state = %{
-          updated_state # Start with updated counts, then override for :open
-          | state: :open,
+          updated_state
+          | # Start with updated counts, then override for :open
+            state: :open,
             opened_at: state.clock.(),
             recovery_stage: 0,
             stage_calls: 0,
             stage_failures: 0
         }
+
         {reply, new_state}
 
       # Scenario B: Target reached -> Try to move to next stage or close
@@ -242,8 +243,7 @@ defmodule ProgressiveRecoveryCircuitBreaker do
        }}
     else
       # Move to next stage with fresh counters.
-      {reply,
-       %{state | recovery_stage: next_stage, stage_calls: 0, stage_failures: 0}}
+      {reply, %{state | recovery_stage: next_stage, stage_calls: 0, stage_failures: 0}}
     end
   end
 

@@ -4,14 +4,14 @@
         agg_value =
           case Map.fetch(grouped[name], bucket_start) do
             {:ok, pts} -> aggregate(pts, agg)
-            :error     -> nil
+            :error -> nil
           end
 
         filled =
           case {agg_value, fill} do
             {nil, :forward} -> Map.get(acc_last, name)
-            {nil, :nil}     -> nil
-            {v, _}          -> v
+            {nil, nil} -> nil
+            {v, _} -> v
           end
 
         new_last =

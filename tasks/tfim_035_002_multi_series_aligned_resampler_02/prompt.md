@@ -20,13 +20,13 @@ defmodule MultiSeriesResampler do
   """
 
   @type series_name :: term()
-  @type value       :: number()
-  @type datapoint   :: {integer(), value()}
-  @type agg_mode    :: :last | :first | :mean | :sum | :count | :max | :min
-  @type fill_mode   :: :nil | :forward
+  @type value :: number()
+  @type datapoint :: {integer(), value()}
+  @type agg_mode :: :last | :first | :mean | :sum | :count | :max | :min
+  @type fill_mode :: nil | :forward
 
-  @valid_agg  [:last, :first, :mean, :sum, :count, :max, :min]
-  @valid_fill [:nil, :forward]
+  @valid_agg [:last, :first, :mean, :sum, :count, :max, :min]
+  @valid_fill [nil, :forward]
 
   @doc """
   Resamples `series` onto a shared fixed-interval grid of width `interval_ms`.
@@ -48,8 +48,8 @@ defmodule MultiSeriesResampler do
 
   def resample(series, interval_ms, opts)
       when is_map(series) and is_integer(interval_ms) and interval_ms > 0 do
-    agg  = fetch_opt!(opts, :agg,  :last, @valid_agg)
-    fill = fetch_opt!(opts, :fill, :nil,  @valid_fill)
+    agg = fetch_opt!(opts, :agg, :last, @valid_agg)
+    fill = fetch_opt!(opts, :fill, nil, @valid_fill)
 
     sorted =
       Map.new(series, fn {name, points} ->
@@ -64,8 +64,8 @@ defmodule MultiSeriesResampler do
 
       _ ->
         first_bucket = floor_bucket(Enum.min(all_ts), interval_ms)
-        last_bucket  = floor_bucket(Enum.max(all_ts), interval_ms)
-        names        = Map.keys(sorted)
+        last_bucket = floor_bucket(Enum.max(all_ts), interval_ms)
+        names = Map.keys(sorted)
 
         grouped =
           Map.new(sorted, fn {name, pts} ->
@@ -107,14 +107,14 @@ defmodule MultiSeriesResampler do
         agg_value =
           case Map.fetch(grouped[name], bucket_start) do
             {:ok, pts} -> aggregate(pts, agg)
-            :error     -> nil
+            :error -> nil
           end
 
         filled =
           case {agg_value, fill} do
             {nil, :forward} -> Map.get(acc_last, name)
-            {nil, :nil}     -> nil
-            {v, _}          -> v
+            {nil, nil} -> nil
+            {v, _} -> v
           end
 
         new_last =
@@ -132,12 +132,12 @@ defmodule MultiSeriesResampler do
 
   defp floor_bucket(ts, interval_ms), do: div(ts, interval_ms) * interval_ms
 
-  defp aggregate(points, :last),  do: points |> List.last() |> elem(1)
+  defp aggregate(points, :last), do: points |> List.last() |> elem(1)
   defp aggregate(points, :first), do: points |> hd() |> elem(1)
   defp aggregate(points, :count), do: length(points)
-  defp aggregate(points, :sum),   do: Enum.reduce(points, 0, fn {_t, v}, acc -> acc + v end)
-  defp aggregate(points, :max),   do: points |> Enum.map(&elem(&1, 1)) |> Enum.max()
-  defp aggregate(points, :min),   do: points |> Enum.map(&elem(&1, 1)) |> Enum.min()
+  defp aggregate(points, :sum), do: Enum.reduce(points, 0, fn {_t, v}, acc -> acc + v end)
+  defp aggregate(points, :max), do: points |> Enum.map(&elem(&1, 1)) |> Enum.max()
+  defp aggregate(points, :min), do: points |> Enum.map(&elem(&1, 1)) |> Enum.min()
 
   defp aggregate(points, :mean) do
     {sum, count} =
@@ -194,7 +194,7 @@ defmodule MultiSeriesResamplerTest do
   end
 
   test ":last picks per-series latest value in the bucket" do
-    result = MultiSeriesResampler.resample(@series, @interval, agg: :last, fill: :nil)
+    result = MultiSeriesResampler.resample(@series, @interval, agg: :last, fill: nil)
 
     assert row(result, 0) == %{cpu: 20, mem: 1}
     assert row(result, 2_000) == %{cpu: 15, mem: 2}
@@ -202,7 +202,7 @@ defmodule MultiSeriesResamplerTest do
   end
 
   test ":count counts per-series points in the bucket" do
-    result = MultiSeriesResampler.resample(@series, @interval, agg: :count, fill: :nil)
+    result = MultiSeriesResampler.resample(@series, @interval, agg: :count, fill: nil)
 
     assert row(result, 0) == %{cpu: 2, mem: 1}
     assert row(result, 2_000) == %{cpu: 2, mem: 1}
@@ -210,7 +210,7 @@ defmodule MultiSeriesResamplerTest do
   end
 
   test ":mean produces per-series floats" do
-    result = MultiSeriesResampler.resample(@series, @interval, agg: :mean, fill: :nil)
+    result = MultiSeriesResampler.resample(@series, @interval, agg: :mean, fill: nil)
 
     m0 = row(result, 0)
     assert_in_delta m0.cpu, 15.0, 0.001
@@ -222,7 +222,7 @@ defmodule MultiSeriesResamplerTest do
   end
 
   test "fill: :nil leaves each series nil in empty buckets" do
-    result = MultiSeriesResampler.resample(@series, @interval, agg: :last, fill: :nil)
+    result = MultiSeriesResampler.resample(@series, @interval, agg: :last, fill: nil)
 
     assert row(result, 4_000) == %{cpu: nil, mem: nil}
     assert row(result, 6_000) == %{cpu: nil, mem: nil}
@@ -239,7 +239,7 @@ defmodule MultiSeriesResamplerTest do
   end
 
   test "every bucket in the joint range is present and sorted" do
-    result = MultiSeriesResampler.resample(@series, @interval, agg: :last, fill: :nil)
+    result = MultiSeriesResampler.resample(@series, @interval, agg: :last, fill: nil)
     buckets = Enum.map(result, fn {b, _} -> b end)
 
     assert buckets == [0, 2_000, 4_000, 6_000, 8_000]
@@ -247,7 +247,7 @@ defmodule MultiSeriesResamplerTest do
   end
 
   test "every row's value map contains every series name" do
-    result = MultiSeriesResampler.resample(@series, @interval, agg: :sum, fill: :nil)
+    result = MultiSeriesResampler.resample(@series, @interval, agg: :sum, fill: nil)
 
     Enum.each(result, fn {_b, map} ->
       assert Map.has_key?(map, :cpu)
@@ -257,7 +257,7 @@ defmodule MultiSeriesResamplerTest do
 
   test "a present-but-empty series still appears in every row" do
     series = %{a: [], b: [{0, 5}, {2_500, 9}]}
-    result = MultiSeriesResampler.resample(series, @interval, agg: :sum, fill: :nil)
+    result = MultiSeriesResampler.resample(series, @interval, agg: :sum, fill: nil)
 
     assert row(result, 0) == %{a: nil, b: 5}
     assert row(result, 2_000) == %{a: nil, b: 9}

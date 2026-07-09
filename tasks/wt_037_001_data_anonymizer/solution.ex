@@ -96,7 +96,7 @@ defmodule Anonymizer do
     Enum.reduce(rules, record, fn {field, rule}, acc ->
       case Map.fetch(acc, field) do
         {:ok, value} -> Map.put(acc, field, apply_rule(value, rule))
-        :error       -> acc
+        :error -> acc
       end
     end)
   end
@@ -131,8 +131,8 @@ defmodule Anonymizer do
         str
 
       len ->
-        first  = String.at(str, 0)
-        last   = String.at(str, len - 1)
+        first = String.at(str, 0)
+        last = String.at(str, len - 1)
         middle = String.duplicate("*", len - 2)
         first <> middle <> last
     end
@@ -158,11 +158,11 @@ defmodule Anonymizer do
       :crypto.hash(:sha256, "#{inspect(seed)}:#{value}")
 
     first_names = @first_names
-    last_names  = @last_names
-    domains     = @domains
+    last_names = @last_names
+    domains = @domains
 
     first = Enum.at(first_names, rem(b0, length(first_names)))
-    last  = Enum.at(last_names,  rem(b1, length(last_names)))
+    last = Enum.at(last_names, rem(b1, length(last_names)))
 
     # Use b2 to pick one of four output formats for variety
     case rem(b2, 4) do

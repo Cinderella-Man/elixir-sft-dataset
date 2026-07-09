@@ -11,16 +11,22 @@
         b_graphs
         |> Enum.with_index(1)
         |> Enum.reduce({[i], i}, fn {b_char, j}, {acc, left} ->
-          diag = elem(prev_row, j - 1)   # prev[j-1]
-          up   = elem(prev_row, j)        # prev[j]
+          # prev[j-1]
+          diag = elem(prev_row, j - 1)
+          # prev[j]
+          up = elem(prev_row, j)
 
           cost = if a_char == b_char, do: 0, else: 1
 
-          val = Enum.min([
-            left + 1,        # deletion
-            up   + 1,        # insertion
-            diag + cost      # substitution (or match)
-          ])
+          val =
+            Enum.min([
+              # deletion
+              left + 1,
+              # insertion
+              up + 1,
+              # substitution (or match)
+              diag + cost
+            ])
 
           {[val | acc], val}
         end)
@@ -30,5 +36,6 @@
 
       curr_row
     end)
-    |> elem(n)   # bottom-right cell = final distance
+    # bottom-right cell = final distance
+    |> elem(n)
   end

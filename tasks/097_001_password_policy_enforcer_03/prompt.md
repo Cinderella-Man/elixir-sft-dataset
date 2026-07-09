@@ -47,14 +47,14 @@ defmodule PasswordPolicy do
   # Defaults
   # ---------------------------------------------------------------------------
 
-  @default_min_length           8
-  @default_max_length           128
-  @default_require_uppercase    true
-  @default_require_lowercase    true
-  @default_require_digit        true
-  @default_require_special      true
-  @default_common_passwords     []
-  @default_previous_passwords   []
+  @default_min_length 8
+  @default_max_length 128
+  @default_require_uppercase true
+  @default_require_lowercase true
+  @default_require_digit true
+  @default_require_special true
+  @default_common_passwords []
+  @default_previous_passwords []
   @default_max_username_similarity 3
 
   # ---------------------------------------------------------------------------
@@ -82,16 +82,17 @@ defmodule PasswordPolicy do
 
   defp build_config(context) do
     %{
-      username:               Map.fetch!(context, :username),
-      min_length:             Map.get(context, :min_length,             @default_min_length),
-      max_length:             Map.get(context, :max_length,             @default_max_length),
-      require_uppercase:      Map.get(context, :require_uppercase,      @default_require_uppercase),
-      require_lowercase:      Map.get(context, :require_lowercase,      @default_require_lowercase),
-      require_digit:          Map.get(context, :require_digit,          @default_require_digit),
-      require_special:        Map.get(context, :require_special,        @default_require_special),
-      common_passwords:       Map.get(context, :common_passwords,       @default_common_passwords),
-      previous_passwords:     Map.get(context, :previous_passwords,     @default_previous_passwords),
-      max_username_similarity: Map.get(context, :max_username_similarity, @default_max_username_similarity)
+      username: Map.fetch!(context, :username),
+      min_length: Map.get(context, :min_length, @default_min_length),
+      max_length: Map.get(context, :max_length, @default_max_length),
+      require_uppercase: Map.get(context, :require_uppercase, @default_require_uppercase),
+      require_lowercase: Map.get(context, :require_lowercase, @default_require_lowercase),
+      require_digit: Map.get(context, :require_digit, @default_require_digit),
+      require_special: Map.get(context, :require_special, @default_require_special),
+      common_passwords: Map.get(context, :common_passwords, @default_common_passwords),
+      previous_passwords: Map.get(context, :previous_passwords, @default_previous_passwords),
+      max_username_similarity:
+        Map.get(context, :max_username_similarity, @default_max_username_similarity)
     }
   end
 
@@ -109,21 +110,25 @@ defmodule PasswordPolicy do
   end
 
   defp check_uppercase(_password, %{require_uppercase: false}), do: :ok
+
   defp check_uppercase(password, _cfg) do
     if String.match?(password, ~r/[A-Z]/), do: :ok, else: {:violation, :no_uppercase}
   end
 
   defp check_lowercase(_password, %{require_lowercase: false}), do: :ok
+
   defp check_lowercase(password, _cfg) do
     if String.match?(password, ~r/[a-z]/), do: :ok, else: {:violation, :no_lowercase}
   end
 
   defp check_digit(_password, %{require_digit: false}), do: :ok
+
   defp check_digit(password, _cfg) do
     if String.match?(password, ~r/[0-9]/), do: :ok, else: {:violation, :no_digit}
   end
 
   defp check_special(_password, %{require_special: false}), do: :ok
+
   defp check_special(password, _cfg) do
     # "special" = any character that is not a-z, A-Z, or 0-9
     if String.match?(password, ~r/[^a-zA-Z0-9]/), do: :ok, else: {:violation, :no_special}
@@ -139,7 +144,10 @@ defmodule PasswordPolicy do
     if password in list, do: {:violation, :reused_password}, else: :ok
   end
 
-  defp check_username_similarity(password, %{username: username, max_username_similarity: threshold}) do
+  defp check_username_similarity(password, %{
+         username: username,
+         max_username_similarity: threshold
+       }) do
     dist = levenshtein(String.downcase(password), String.downcase(username))
     if dist > threshold, do: :ok, else: {:violation, :too_similar_to_username}
   end
@@ -169,7 +177,7 @@ defmodule PasswordPolicy do
     cond do
       m == 0 -> n
       n == 0 -> m
-      true   -> do_levenshtein(a_graphs, b_graphs, m, n)
+      true -> do_levenshtein(a_graphs, b_graphs, m, n)
     end
   end
 
@@ -186,16 +194,22 @@ defmodule PasswordPolicy do
         b_graphs
         |> Enum.with_index(1)
         |> Enum.reduce({[i], i}, fn {b_char, j}, {acc, left} ->
-          diag = elem(prev_row, j - 1)   # prev[j-1]
-          up   = elem(prev_row, j)        # prev[j]
+          # prev[j-1]
+          diag = elem(prev_row, j - 1)
+          # prev[j]
+          up = elem(prev_row, j)
 
           cost = if a_char == b_char, do: 0, else: 1
 
-          val = Enum.min([
-            left + 1,        # deletion
-            up   + 1,        # insertion
-            diag + cost      # substitution (or match)
-          ])
+          val =
+            Enum.min([
+              # deletion
+              left + 1,
+              # insertion
+              up + 1,
+              # substitution (or match)
+              diag + cost
+            ])
 
           {[val | acc], val}
         end)
@@ -205,7 +219,8 @@ defmodule PasswordPolicy do
 
       curr_row
     end)
-    |> elem(n)   # bottom-right cell = final distance
+    # bottom-right cell = final distance
+    |> elem(n)
   end
 end
 ```

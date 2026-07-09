@@ -255,7 +255,9 @@ defmodule PromoCodes do
   defp total_uses(state, code_string), do: Map.get(state.total_uses, code_string, 0)
 
   defp user_uses(_state, _code_string, nil), do: 0
-  defp user_uses(state, code_string, user_id), do: Map.get(state.user_uses, {code_string, user_id}, 0)
+
+  defp user_uses(state, code_string, user_id),
+    do: Map.get(state.user_uses, {code_string, user_id}, 0)
 
   defp record_use(state, code_string, user_id) do
     state = update_in(state.total_uses[code_string], &((&1 || 0) + 1))
@@ -310,6 +312,7 @@ defmodule PromoCodesTest do
 
   test "create rejects duplicate codes" do
     assert {:ok, _} = PromoCodes.create(%{code: "DUP", type: :percentage, value: 10})
+
     assert {:error, :already_exists} =
              PromoCodes.create(%{code: "DUP", type: :fixed_amount, value: 500})
   end
@@ -537,6 +540,7 @@ defmodule PromoCodesTest do
       })
 
     assert {:ok, 500} = PromoCodes.apply("ONEEACH", 10_000, user_id: "u1")
+
     assert {:error, :max_uses_per_user_exceeded} =
              PromoCodes.apply("ONEEACH", 10_000, user_id: "u1")
 

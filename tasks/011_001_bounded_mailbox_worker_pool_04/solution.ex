@@ -9,10 +9,12 @@
         [worker | rest] = state.idle_workers
         send(worker, {:run, task})
 
-        new_state = %{state |
-          idle_workers: rest,
-          busy_workers: Map.put(state.busy_workers, worker, {ref, from_pid})
+        new_state = %{
+          state
+          | idle_workers: rest,
+            busy_workers: Map.put(state.busy_workers, worker, {ref, from_pid})
         }
+
         {:reply, {:ok, ref}, new_state}
 
       # Case 2: Enqueue if there is room
@@ -33,5 +35,6 @@
       idle_workers: length(state.idle_workers),
       queue_length: :queue.len(state.queue)
     }
+
     {:reply, status, state}
   end

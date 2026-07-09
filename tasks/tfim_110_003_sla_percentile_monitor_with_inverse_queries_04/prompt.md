@@ -178,7 +178,7 @@ defmodule RankPercentileTest do
 
   test "forward percentile query matches nearest-rank" do
     start_server([])
-    for v <- 1..100, do: assert :ok = RankPercentile.record(:d, v)
+    for v <- 1..100, do: assert(:ok = RankPercentile.record(:d, v))
 
     assert {:ok, 50} = RankPercentile.query(:d, 0.50)
     assert {:ok, 95} = RankPercentile.query(:d, 0.95)

@@ -132,8 +132,8 @@ defmodule NotificationRouter do
 
   use Plug.Router, copy_opts_to_assign: :poller_opts
 
-  plug :match
-  plug :dispatch
+  plug(:match)
+  plug(:dispatch)
 
   get "/api/notifications/poll" do
     opts = conn.assigns.poller_opts
@@ -178,7 +178,10 @@ defmodule CoalescingNotificationPollerTest do
   # Coalescing — the defining feature
   # -------------------------------------------------------
 
-  test "coalesces a burst of notifications into one batched response", %{server: server, opts: opts} do
+  test "coalesces a burst of notifications into one batched response", %{
+    server: server,
+    opts: opts
+  } do
     task = Task.async(fn -> poll(opts, "user:1") end)
     Process.sleep(100)
 
@@ -273,7 +276,10 @@ defmodule CoalescingNotificationPollerTest do
   # Multiple subscribers for the same user
   # -------------------------------------------------------
 
-  test "multiple pollers for the same user each receive the full batch", %{server: server, opts: opts} do
+  test "multiple pollers for the same user each receive the full batch", %{
+    server: server,
+    opts: opts
+  } do
     task1 = Task.async(fn -> poll(opts, "user:1") end)
     task2 = Task.async(fn -> poll(opts, "user:1") end)
     Process.sleep(100)

@@ -4,6 +4,7 @@
 
     {:ok, %{data: desc}} =
       QueryPaginator.paginate(items(), %{"sort" => "name", "order" => "desc"})
+
     assert Enum.map(desc, & &1.name) ==
              Enum.reverse(["Alice", "Carol", "Eve", "amanda", "bob", "dave"])
   end

@@ -126,7 +126,7 @@ defmodule Anonymizer do
     Enum.reduce(rules, record, fn {field, rule}, acc ->
       case Map.fetch(acc, field) do
         {:ok, value} -> Map.put(acc, field, apply_rule(value, rule))
-        :error       -> acc
+        :error -> acc
       end
     end)
   end
@@ -161,8 +161,8 @@ defmodule Anonymizer do
         str
 
       len ->
-        first  = String.at(str, 0)
-        last   = String.at(str, len - 1)
+        first = String.at(str, 0)
+        last = String.at(str, len - 1)
         middle = String.duplicate("*", len - 2)
         first <> middle <> last
     end

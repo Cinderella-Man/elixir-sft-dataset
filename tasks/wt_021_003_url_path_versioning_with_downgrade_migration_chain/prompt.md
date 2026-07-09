@@ -143,8 +143,8 @@ defmodule PathVersionApi.Router do
     }
   }
 
-  plug :match
-  plug :dispatch
+  plug(:match)
+  plug(:dispatch)
 
   get "/api/:version/users/:id" do
     supported = PathVersionApi.Migrations.supported()

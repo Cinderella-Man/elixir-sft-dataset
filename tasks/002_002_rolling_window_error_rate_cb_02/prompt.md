@@ -119,8 +119,7 @@ defmodule RollingRateCircuitBreaker do
   end
 
   def handle_call(:reset, _from, state) do
-    {:reply, :ok,
-     %{state | state: :closed, outcomes: [], opened_at: nil, probes_in_flight: 0}}
+    {:reply, :ok, %{state | state: :closed, outcomes: [], opened_at: nil, probes_in_flight: 0}}
   end
 
   # ---------------------------------------------------------------------------

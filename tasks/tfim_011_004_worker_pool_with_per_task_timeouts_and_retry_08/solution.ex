@@ -3,7 +3,8 @@
       RetryPool.submit(
         pool,
         slow_task(2_000, :too_slow),
-        task_timeout: 200, max_retries: 0
+        task_timeout: 200,
+        max_retries: 0
       )
 
     assert {:error, {:task_timeout, 1}} = RetryPool.await(pool, ref, 3_000)

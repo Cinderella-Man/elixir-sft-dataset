@@ -103,5 +103,4 @@ defmodule Pipeline do
     # TODO
   end
 end
-
 ```

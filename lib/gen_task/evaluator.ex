@@ -172,6 +172,58 @@ defmodule GenTask.Evaluator do
   defp add_if(list, false, _msg), do: list
 
   @doc """
+  Canonically format the stageable pair of a triplet — `solution.ex` (plain module
+  or `<file>` bundle, per part) and `test_harness.exs` — with `Code.format_string!/1`.
+
+  Runs BEFORE grading (see `GenTask.Cycle.run/3`) so accepted bytes are
+  formatter-canonical under the pinned toolchain (docs/10 R6) and the graded bytes
+  are exactly the promoted bytes. A file that does not parse is left unchanged: the
+  compile gate then reports it with real diagnostics instead of a formatter raise
+  here. Other keys (`prompt.md`, …) pass through untouched.
+  """
+  @spec autoformat(%{String.t() => String.t()}) :: %{String.t() => String.t()}
+  def autoformat(%{} = files) do
+    Map.new(files, fn
+      {name, body} when name in ["solution.ex", "test_harness.exs"] and is_binary(body) ->
+        {name, autoformat_body(body)}
+
+      other ->
+        other
+    end)
+  end
+
+  @bundle_block ~r/(<file path="[^"]+">\n)(.*?)(\n<\/file>)/s
+
+  defp autoformat_body(body) do
+    if String.contains?(body, "<file path=") do
+      formatted =
+        Regex.replace(@bundle_block, body, fn whole, open, part, close ->
+          if Regex.match?(~r/path="[^"]+\.exs?"/, open) do
+            open <> format_or_keep(part, false) <> close
+          else
+            whole
+          end
+        end)
+
+      String.trim_trailing(formatted, "\n") <> "\n"
+    else
+      format_or_keep(body, true)
+    end
+  end
+
+  # Formats `src`; returns it unchanged when it does not parse. Whole files always
+  # end with exactly one newline (the `mix format` convention); bundle parts are
+  # re-embedded bare.
+  defp format_or_keep(src, newline?) do
+    formatted =
+      src |> Code.format_string!() |> IO.iodata_to_binary() |> String.trim_trailing("\n")
+
+    if newline?, do: formatted <> "\n", else: formatted
+  rescue
+    _ -> src
+  end
+
+  @doc """
   Human-readable repair feedback for a failed cycle. Handles a timeout/crash, a
   vacuous harness (the mutant survived), a house-style/warning shortfall, and ordinary
   compile/test failures.

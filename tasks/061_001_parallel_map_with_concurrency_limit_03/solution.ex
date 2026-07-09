@@ -6,8 +6,8 @@
 
         outcome =
           case result do
-            {:ok, value}      -> value
-            {:error, reason}  -> {:error, reason}
+            {:ok, value} -> value
+            {:error, reason} -> {:error, reason}
           end
 
         {our_ref, idx, outcome}
@@ -16,7 +16,7 @@
         # Unexpected external kill — locate the task by its monitor ref.
         case Enum.find(running, fn {_ref, {mon, _idx}} -> mon == mon_ref end) do
           {our_ref, {_mon, idx}} -> {our_ref, idx, {:error, reason}}
-          nil                    -> await_one(running)
+          nil -> await_one(running)
         end
 
       _other ->

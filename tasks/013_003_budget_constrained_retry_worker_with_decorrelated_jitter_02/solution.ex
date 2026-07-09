@@ -30,8 +30,15 @@
           await_clock(target_time, clock_fn)
 
           do_attempt(
-            func, clock_fn, random_fn, started_at,
-            base_delay, budget, max_delay, capped_delay, attempts
+            func,
+            clock_fn,
+            random_fn,
+            started_at,
+            base_delay,
+            budget,
+            max_delay,
+            capped_delay,
+            attempts
           )
         end
     end

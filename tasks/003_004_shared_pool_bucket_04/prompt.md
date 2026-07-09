@@ -78,8 +78,8 @@ defmodule SharedPoolBucket do
           | {:error, :key_empty | :global_empty, pos_integer()}
   def acquire(server, bucket_name, key_capacity, key_refill_rate, tokens \\ 1)
       when is_integer(key_capacity) and key_capacity > 0 and
-           is_number(key_refill_rate) and key_refill_rate > 0 and
-           is_integer(tokens) and tokens > 0 do
+             is_number(key_refill_rate) and key_refill_rate > 0 and
+             is_integer(tokens) and tokens > 0 do
     GenServer.call(
       server,
       {:acquire, bucket_name, key_capacity, key_refill_rate * 1.0, tokens}
@@ -98,7 +98,7 @@ defmodule SharedPoolBucket do
           {:ok, non_neg_integer()}
   def key_level(server, bucket_name, key_capacity, key_refill_rate)
       when is_integer(key_capacity) and key_capacity > 0 and
-           is_number(key_refill_rate) and key_refill_rate > 0 do
+             is_number(key_refill_rate) and key_refill_rate > 0 do
     GenServer.call(
       server,
       {:key_level, bucket_name, key_capacity, key_refill_rate * 1.0}

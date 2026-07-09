@@ -117,9 +117,9 @@ defmodule Sanitizer do
   # Uses a case-insensitive, dotall regex so multiline script blocks are caught.
   @raw_tag_pattern Enum.join(@raw_content_tags, "|")
   @raw_tag_re Regex.compile!(
-    "<(#{@raw_tag_pattern})(\\s[^>]*)?>.*?<\\/\\1>",
-    [:caseless, :dotall]
-  )
+                "<(#{@raw_tag_pattern})(\\s[^>]*)?>.*?<\\/\\1>",
+                [:caseless, :dotall]
+              )
 
   defp strip_raw_content_tags(input),
     do: Regex.replace(@raw_tag_re, input, "")

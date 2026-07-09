@@ -3,6 +3,7 @@ defp execute_in_recovering(state, func) do
 
   # 1. Calculate updated counters based on the latest call
   new_stage_calls = state.stage_calls + 1
+
   new_stage_failures =
     case outcome do
       :error -> state.stage_failures + 1
@@ -21,13 +22,15 @@ defp execute_in_recovering(state, func) do
     # Scenario A: Failure limit exceeded -> Crash back to :open
     new_stage_failures > tolerated_failures ->
       new_state = %{
-        updated_state # Start with updated counts, then override for :open
-        | state: :open,
+        updated_state
+        | # Start with updated counts, then override for :open
+          state: :open,
           opened_at: state.clock.(),
           recovery_stage: 0,
           stage_calls: 0,
           stage_failures: 0
       }
+
       {reply, new_state}
 
     # Scenario B: Target reached -> Try to move to next stage or close

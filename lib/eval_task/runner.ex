@@ -337,7 +337,9 @@ defmodule EvalTask.Runner do
       File.write!(Path.join(tmp, "test_harness.exs"), harness_src)
 
       parent_manifest = Path.join(parent_dir, "manifest.exs")
-      if File.regular?(parent_manifest), do: File.cp!(parent_manifest, Path.join(tmp, "manifest.exs"))
+
+      if File.regular?(parent_manifest),
+        do: File.cp!(parent_manifest, Path.join(tmp, "manifest.exs"))
 
       result = run_multifile(tmp, Path.join(tmp, "solution.ex"))
       File.rm_rf!(tmp)

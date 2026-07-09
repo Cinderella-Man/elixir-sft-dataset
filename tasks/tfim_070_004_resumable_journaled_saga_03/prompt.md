@@ -182,18 +182,30 @@ defmodule SagaTest do
 
     saga =
       Saga.new()
-      |> Saga.step(:a, fn _ ->
-        mark.(:a)
-        {:ok, 1}
-      end, fn _ -> :ua end)
-      |> Saga.step(:b, fn _ ->
-        mark.(:b)
-        {:ok, 2}
-      end, fn _ -> :ub end)
-      |> Saga.step(:c, fn ctx ->
-        mark.(:c)
-        {:ok, ctx.a + ctx.b}
-      end, fn _ -> :uc end)
+      |> Saga.step(
+        :a,
+        fn _ ->
+          mark.(:a)
+          {:ok, 1}
+        end,
+        fn _ -> :ua end
+      )
+      |> Saga.step(
+        :b,
+        fn _ ->
+          mark.(:b)
+          {:ok, 2}
+        end,
+        fn _ -> :ub end
+      )
+      |> Saga.step(
+        :c,
+        fn ctx ->
+          mark.(:c)
+          {:ok, ctx.a + ctx.b}
+        end,
+        fn _ -> :uc end
+      )
 
     journal = [{:completed, :a, 1}, {:completed, :b, 2}]
     result = Saga.resume(saga, %{}, journal)

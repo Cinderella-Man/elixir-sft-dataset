@@ -1,5 +1,6 @@
   test "uses field_mapping to map CSV headers to schema fields" do
     header = ["Product ID", "Product Name", "Unit Price"]
+
     rows = [
       ["eid-1", "Widget A", "500"],
       ["eid-2", "Widget B", "600"]
@@ -9,9 +10,9 @@
     write_csv!(path, header, rows)
 
     mapping = %{
-      "Product ID"   => :external_id,
+      "Product ID" => :external_id,
       "Product Name" => :name,
-      "Unit Price"   => :price
+      "Unit Price" => :price
     }
 
     assert {:ok, stats} =

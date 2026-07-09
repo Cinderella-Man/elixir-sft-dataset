@@ -115,8 +115,13 @@ defmodule MintRepairs do
       true ->
         File.mkdir_p!(target)
         File.write!(Path.join(target, "prompt.md"), repair_prompt(id, broken))
-        File.write!(Path.join(target, "solution.ex"), final.files["solution.ex"])
-        File.write!(Path.join(target, "test_harness.exs"), final.files["test_harness.exs"])
+        File.write!(Path.join(target, "solution.ex"), ensure_nl(final.files["solution.ex"]))
+
+        File.write!(
+          Path.join(target, "test_harness.exs"),
+          ensure_nl(final.files["test_harness.exs"])
+        )
+
         :minted
     end
   end
@@ -169,6 +174,10 @@ defmodule MintRepairs do
       {:error, _} -> %{}
     end
   end
+
+  # Captured attempt files are written verbatim and may lack a trailing newline;
+  # minted corpus files must end with one (mix format / format_corpus convention).
+  defp ensure_nl(body), do: String.trim_trailing(body, "\n") <> "\n"
 
   defp green?(json) do
     json["compiled"] == true and (json["tests_passed"] || 0) > 0 and

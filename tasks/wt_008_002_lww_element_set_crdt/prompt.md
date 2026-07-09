@@ -238,19 +238,21 @@ defmodule LWWSet do
 
   @impl GenServer
   def handle_call({:add, element, timestamp}, _from, state) do
-    new_state = update_in(state, [:adds, element], fn
-      nil -> timestamp
-      current -> max(current, timestamp)
-    end)
+    new_state =
+      update_in(state, [:adds, element], fn
+        nil -> timestamp
+        current -> max(current, timestamp)
+      end)
 
     {:reply, :ok, new_state}
   end
 
   def handle_call({:remove, element, timestamp}, _from, state) do
-    new_state = update_in(state, [:removes, element], fn
-      nil -> timestamp
-      current -> max(current, timestamp)
-    end)
+    new_state =
+      update_in(state, [:removes, element], fn
+        nil -> timestamp
+        current -> max(current, timestamp)
+      end)
 
     {:reply, :ok, new_state}
   end

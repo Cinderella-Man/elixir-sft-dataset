@@ -75,7 +75,7 @@ defmodule QuotaTracker do
           entries: %{key() => [usage_entry()]},
           max_window_ms: non_neg_integer(),
           cleanup_interval_ms: non_neg_integer(),
-          clock: (() -> integer())
+          clock: (-> integer())
         }
 
   # ---------------------------------------------------------------------------
@@ -237,5 +237,4 @@ defmodule QuotaTracker do
     Enum.reduce(entries, 0, fn entry, acc -> acc + entry.amount end)
   end
 end
-
 ```

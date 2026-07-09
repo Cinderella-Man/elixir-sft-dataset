@@ -159,8 +159,7 @@ defmodule LeakyBucketCircuitBreaker do
          }}
 
       {:error, reply} ->
-        {reply,
-         %{state | state: :open, opened_at: state.clock.(), probes_in_flight: 0}}
+        {reply, %{state | state: :open, opened_at: state.clock.(), probes_in_flight: 0}}
     end
   end
 

@@ -33,7 +33,7 @@ complete module in a single file.
 ```elixir
 PolicySaga.new()
 |> PolicySaga.step(:reserve, &reserve/1, &cancel/1, on_error: :abort)
-|> PolicySaga.step(:charge,  &charge/1,  &refund/1)
+|> PolicySaga.step(:charge, &charge/1, &refund/1)
 |> PolicySaga.execute(%{order_id: 42})
 ```
 
@@ -131,8 +131,13 @@ defmodule PolicySaga do
   @doc """
   Appends a step. `opts` supports `:on_error` (`:continue` default, or `:abort`).
   """
-  @spec step(t(), term(), (context() -> {:ok, term()} | {:error, term()}),
-          (context() -> term()), keyword()) :: t()
+  @spec step(
+          t(),
+          term(),
+          (context() -> {:ok, term()} | {:error, term()}),
+          (context() -> term()),
+          keyword()
+        ) :: t()
   def step(%__MODULE__{steps: steps} = saga, name, action, compensation, opts \\ [])
       when is_function(action, 1) and is_function(compensation, 1) do
     policy = Keyword.get(opts, :on_error, :continue)

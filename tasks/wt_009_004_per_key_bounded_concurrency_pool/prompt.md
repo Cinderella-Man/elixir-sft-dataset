@@ -78,20 +78,24 @@ defmodule KeyedPool do
     max_concurrency = Keyword.fetch!(opts, :max_concurrency)
 
     if not is_integer(max_concurrency) or max_concurrency < 1 do
-      raise ArgumentError, ":max_concurrency must be a positive integer, got: #{inspect(max_concurrency)}"
+      raise ArgumentError,
+            ":max_concurrency must be a positive integer, got: #{inspect(max_concurrency)}"
     end
 
     server_opts = Keyword.take(opts, [:name])
     GenServer.start_link(__MODULE__, %{max_concurrency: max_concurrency}, server_opts)
   end
 
-  @spec execute(GenServer.server(), term(), (() -> term())) ::
+  @spec execute(GenServer.server(), term(), (-> term())) ::
           {:ok, term()} | {:error, term()}
   def execute(server, key, func) when is_function(func, 0) do
     GenServer.call(server, {:execute, key, func}, :infinity)
   end
 
-  @spec status(GenServer.server(), term()) :: %{running: non_neg_integer(), queued: non_neg_integer()}
+  @spec status(GenServer.server(), term()) :: %{
+          running: non_neg_integer(),
+          queued: non_neg_integer()
+        }
   def status(server, key) do
     GenServer.call(server, {:status, key})
   end

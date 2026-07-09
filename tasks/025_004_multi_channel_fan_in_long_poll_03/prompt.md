@@ -120,8 +120,8 @@ defmodule NotificationRouter do
 
   use Plug.Router, copy_opts_to_assign: :poller_opts
 
-  plug :match
-  plug :dispatch
+  plug(:match)
+  plug(:dispatch)
 
   get "/api/notifications/poll" do
     opts = conn.assigns.poller_opts

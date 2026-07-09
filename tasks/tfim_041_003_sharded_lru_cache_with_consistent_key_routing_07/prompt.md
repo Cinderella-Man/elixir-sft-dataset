@@ -202,8 +202,7 @@ defmodule LRUCacheSharded.Shard do
         :named_table
       ])
 
-    {:ok,
-     %{data_table: data_table, order_table: order_table, max_size: max_size, counter: 0}}
+    {:ok, %{data_table: data_table, order_table: order_table, max_size: max_size, counter: 0}}
   end
 
   @impl true

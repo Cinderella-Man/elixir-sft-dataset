@@ -18,6 +18,6 @@
     cond do
       m == 0 -> n
       n == 0 -> m
-      true   -> do_levenshtein(a_graphs, b_graphs, m, n)
+      true -> do_levenshtein(a_graphs, b_graphs, m, n)
     end
   end

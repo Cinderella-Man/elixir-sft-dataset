@@ -203,7 +203,8 @@ defmodule LogfmtValidator do
   end
 
   # Parse inside a quoted value, handling escaped quotes.
-  defp parse_quoted_value("", _acc), do: :error  # Unterminated quote
+  # Unterminated quote
+  defp parse_quoted_value("", _acc), do: :error
 
   defp parse_quoted_value("\\\"" <> rest, acc) do
     parse_quoted_value(rest, acc <> "\"")

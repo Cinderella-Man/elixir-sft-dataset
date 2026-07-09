@@ -13,8 +13,7 @@ def handle_call({:put, key, value, fresh_ms, stale_ms, loader}, _from, state) do
   # Invalidate any in-flight revalidation so a stale result can't clobber.
   new_in_flight = Map.delete(state.in_flight, key)
 
-  {:reply, :ok,
-   %{state | entries: Map.put(state.entries, key, entry), in_flight: new_in_flight}}
+  {:reply, :ok, %{state | entries: Map.put(state.entries, key, entry), in_flight: new_in_flight}}
 end
 
 def handle_call({:get, key}, _from, state) do
@@ -65,6 +64,5 @@ end
 
 def handle_call(:stats, _from, state) do
   {:reply,
-   %{entries: map_size(state.entries), revalidations_in_flight: map_size(state.in_flight)},
-   state}
+   %{entries: map_size(state.entries), revalidations_in_flight: map_size(state.in_flight)}, state}
 end

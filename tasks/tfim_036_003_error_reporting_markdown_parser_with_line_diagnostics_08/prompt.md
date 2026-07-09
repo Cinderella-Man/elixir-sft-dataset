@@ -160,7 +160,9 @@ defmodule MarkdownReportTest do
              categories: [
                %{
                  category: "Tools",
-                 items: [%{name: "Hammer", description: "Drives nails", tags: ["hardware", "manual"]}]
+                 items: [
+                   %{name: "Hammer", description: "Drives nails", tags: ["hardware", "manual"]}
+                 ]
                }
              ],
              errors: []
@@ -271,7 +273,9 @@ defmodule MarkdownReportTest do
 
   test "handles CRLF line endings" do
     md = "## Category\r\n- **Item**: Desc (tag)\r\n"
-    assert %{categories: [%{category: "Category", items: [%{name: "Item"}]}], errors: []} = parse(md)
+
+    assert %{categories: [%{category: "Category", items: [%{name: "Item"}]}], errors: []} =
+             parse(md)
   end
 end
 ```

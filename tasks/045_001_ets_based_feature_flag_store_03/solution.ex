@@ -4,6 +4,6 @@
 
     case :ets.lookup(table, flag_name) do
       [{^flag_name, value}] -> value
-      []                    -> nil
+      [] -> nil
     end
   end

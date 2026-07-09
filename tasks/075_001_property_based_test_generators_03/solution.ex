@@ -5,7 +5,7 @@
     # correctly propagates shrinking through the underlying generators.
     expanded =
       Enum.flat_map(weighted_list, fn {weight, gen}
-          when is_integer(weight) and weight >= 0 ->
+                                      when is_integer(weight) and weight >= 0 ->
         # weight 0 → List.duplicate returns [] → generator is never selected
         List.duplicate(gen, weight)
       end)

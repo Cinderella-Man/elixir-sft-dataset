@@ -113,8 +113,8 @@ defmodule WebhookReceiver.Router do
 
   alias WebhookReceiver.{Signature, Store}
 
-  plug :match
-  plug :dispatch
+  plug(:match)
+  plug(:dispatch)
 
   post "/api/webhooks/stripe" do
     opts = conn.assigns.webhook_opts
@@ -162,5 +162,4 @@ defmodule WebhookReceiver.Router do
     |> send_resp(status, Jason.encode!(data))
   end
 end
-
 ```

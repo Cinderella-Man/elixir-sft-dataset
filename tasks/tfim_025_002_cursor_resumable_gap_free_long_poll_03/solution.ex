@@ -7,9 +7,11 @@
     conn = poll(opts, "user:1", 0)
 
     assert conn.status == 200
+
     assert decode(conn) == %{
              "cursor" => 3,
              "events" => [%{"n" => 1}, %{"n" => 2}, %{"n" => 3}]
            }
+
     assert cursor_header(conn) == ["3"]
   end

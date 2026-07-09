@@ -4,15 +4,15 @@ defmodule MyApp.Repo.Migrations.CreateProducts do
 
   def change do
     create table(:products) do
-      add :name, :string, null: false
-      add :category, :string, null: false
-      add :price, :numeric, null: false
+      add(:name, :string, null: false)
+      add(:category, :string, null: false)
+      add(:price, :numeric, null: false)
 
       timestamps()
     end
 
-    create index(:products, [:category])
-    create index(:products, [:price])
+    create(index(:products, [:category]))
+    create(index(:products, [:price]))
   end
 end
 </file>
@@ -37,9 +37,9 @@ defmodule MyApp.Products.Product do
         }
 
   schema "products" do
-    field :name, :string
-    field :category, :string
-    field :price, :decimal
+    field(:name, :string)
+    field(:category, :string)
+    field(:price, :decimal)
 
     timestamps()
   end
@@ -214,13 +214,13 @@ defmodule MyAppWeb.Router do
   use MyAppWeb, :router
 
   pipeline :api do
-    plug :accepts, ["json"]
+    plug(:accepts, ["json"])
   end
 
   scope "/api", MyAppWeb do
-    pipe_through :api
+    pipe_through(:api)
 
-    get "/products", ProductController, :index
+    get("/products", ProductController, :index)
   end
 end
 </file>

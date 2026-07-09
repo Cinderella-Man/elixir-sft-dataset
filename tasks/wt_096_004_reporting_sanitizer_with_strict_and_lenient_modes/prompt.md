@@ -122,8 +122,10 @@ defmodule Sanitizer do
       violations =
         []
         |> maybe(String.contains?(input, "\0"), :removed_null_bytes)
-        |> maybe(String.contains?(input, "/") or String.contains?(input, "\\"),
-          :removed_path_separators)
+        |> maybe(
+          String.contains?(input, "/") or String.contains?(input, "\\"),
+          :removed_path_separators
+        )
         |> maybe(filtered != no_sep, :removed_illegal_chars)
         |> maybe(collapsed != filtered, :collapsed_dots)
         |> maybe(trimmed != collapsed, :trimmed_dots)

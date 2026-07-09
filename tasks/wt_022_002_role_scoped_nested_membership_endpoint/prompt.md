@@ -287,9 +287,9 @@ defmodule TeamRouter do
   @privileged ["owner", "admin"]
   @roles ["owner", "admin", "member"]
 
-  plug AuthPlug
-  plug :match
-  plug :dispatch
+  plug(AuthPlug)
+  plug(:match)
+  plug(:dispatch)
 
   get "/api/teams/:team_id/members" do
     store = store(conn)

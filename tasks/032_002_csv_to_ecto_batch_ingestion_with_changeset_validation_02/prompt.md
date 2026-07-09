@@ -69,28 +69,28 @@ defmodule CsvIngestion do
   # Types
   # ---------------------------------------------------------------------------
 
-  @type repo   :: module()
+  @type repo :: module()
   @type schema :: module()
-  @type stats  :: %{
-    total:             integer(),
-    inserted:          integer(),
-    invalid:           integer(),
-    failed:            integer(),
-    validation_errors: [{pos_integer(), keyword()}]
-  }
+  @type stats :: %{
+          total: integer(),
+          inserted: integer(),
+          invalid: integer(),
+          failed: integer(),
+          validation_errors: [{pos_integer(), keyword()}]
+        }
   @type ingest_opts :: [
-    batch_size:      pos_integer(),
-    on_conflict:     atom() | keyword(),
-    conflict_target: atom() | [atom()],
-    field_mapping:   map() | nil
-  ]
+          batch_size: pos_integer(),
+          on_conflict: atom() | keyword(),
+          conflict_target: atom() | [atom()],
+          field_mapping: map() | nil
+        ]
 
   # ---------------------------------------------------------------------------
   # Defaults
   # ---------------------------------------------------------------------------
 
-  @default_batch_size      500
-  @default_on_conflict     :nothing
+  @default_batch_size 500
+  @default_on_conflict :nothing
   @default_conflict_target :nothing
 
   # ---------------------------------------------------------------------------
@@ -123,17 +123,16 @@ defmodule CsvIngestion do
   @spec ingest(repo(), schema(), String.t(), ingest_opts()) ::
           {:ok, stats()} | {:error, :file_not_found | :empty_file}
   def ingest(repo, schema, file_path, opts \\ []) do
-    batch_size      = Keyword.get(opts, :batch_size,      @default_batch_size)
-    on_conflict     = Keyword.get(opts, :on_conflict,     @default_on_conflict)
+    batch_size = Keyword.get(opts, :batch_size, @default_batch_size)
+    on_conflict = Keyword.get(opts, :on_conflict, @default_on_conflict)
     conflict_target = Keyword.get(opts, :conflict_target, @default_conflict_target)
-    field_mapping   = Keyword.get(opts, :field_mapping,   nil)
+    field_mapping = Keyword.get(opts, :field_mapping, nil)
 
-    with :ok          <- check_file(file_path),
-         {:ok, rows}  <- parse_csv(file_path) do
-
+    with :ok <- check_file(file_path),
+         {:ok, rows} <- parse_csv(file_path) do
       cfg = %{
-        batch_size:      batch_size,
-        on_conflict:     on_conflict,
+        batch_size: batch_size,
+        on_conflict: on_conflict,
         conflict_target: conflict_target
       }
 
@@ -175,7 +174,7 @@ defmodule CsvIngestion do
       raw
       |> CsvIngestion.Parser.parse_string(skip_headers: false)
       |> then(fn
-        []          -> {[], []}
+        [] -> {[], []}
         [hdr | rows] -> {hdr, rows}
       end)
 
@@ -188,7 +187,8 @@ defmodule CsvIngestion do
   # Row processing
   # ---------------------------------------------------------------------------
 
-  @spec process_rows(repo(), schema(), {[String.t()], [[String.t()]]}, map() | nil, map()) :: stats()
+  @spec process_rows(repo(), schema(), {[String.t()], [[String.t()]]}, map() | nil, map()) ::
+          stats()
   defp process_rows(repo, schema, {headers, data_rows}, field_mapping, cfg) do
     # TODO
   end
@@ -236,7 +236,7 @@ defmodule CsvIngestion do
   end
 
   defp normalize_value(""), do: nil
-  defp normalize_value(v),  do: String.trim(v)
+  defp normalize_value(v), do: String.trim(v)
 
   # ---------------------------------------------------------------------------
   # Schema introspection
@@ -285,20 +285,28 @@ defmodule CsvIngestion do
 
       new_acc = %{acc | inserted: acc.inserted + count}
 
-      Logger.info("[CsvIngestion] Batch done — " <>
-        "size: #{batch_size}, inserted: #{count}. " <>
-        "Running totals — #{format_stats(new_acc)}")
+      Logger.info(
+        "[CsvIngestion] Batch done — " <>
+          "size: #{batch_size}, inserted: #{count}. " <>
+          "Running totals — #{format_stats(new_acc)}"
+      )
 
       new_acc
     rescue
       error ->
-        Logger.error("[CsvIngestion] Batch failed (#{batch_size} records skipped): " <>
-          Exception.format(:error, error, __STACKTRACE__))
+        Logger.error(
+          "[CsvIngestion] Batch failed (#{batch_size} records skipped): " <>
+            Exception.format(:error, error, __STACKTRACE__)
+        )
+
         %{acc | failed: acc.failed + batch_size}
     catch
       kind, reason ->
-        Logger.error("[CsvIngestion] Batch failed with #{kind} " <>
-          "(#{batch_size} records skipped): #{inspect(reason)}")
+        Logger.error(
+          "[CsvIngestion] Batch failed with #{kind} " <>
+            "(#{batch_size} records skipped): #{inspect(reason)}"
+        )
+
         %{acc | failed: acc.failed + batch_size}
     end
   end

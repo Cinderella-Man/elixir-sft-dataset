@@ -48,7 +48,7 @@ defmodule FeatureFlags do
   @default_name __MODULE__
 
   @pt_server {__MODULE__, :server}
-  @pt_table  {__MODULE__, :table_name}
+  @pt_table {__MODULE__, :table_name}
 
   # ---------------------------------------------------------------------------
   # Public API
@@ -66,7 +66,7 @@ defmodule FeatureFlags do
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
     table_name = Keyword.get(opts, :table_name, @default_table)
-    name       = Keyword.get(opts, :name, @default_name)
+    name = Keyword.get(opts, :name, @default_name)
 
     # Only forward the :name option when a non-nil name is requested;
     # passing `name: nil` to GenServer.start_link/3 is not valid.
@@ -110,7 +110,7 @@ defmodule FeatureFlags do
   def enabled?(flag_name) do
     case lookup(flag_name) do
       {:on} -> true
-      _     -> false
+      _ -> false
     end
   end
 
@@ -127,10 +127,10 @@ defmodule FeatureFlags do
   @spec enabled_for?(atom(), term()) :: boolean()
   def enabled_for?(flag_name, user_id) do
     case lookup(flag_name) do
-      {:on}              -> true
-      {:off}             -> false
+      {:on} -> true
+      {:off} -> false
       {:percentage, pct} -> :erlang.phash2({flag_name, user_id}, 100) < pct
-      nil                -> false
+      nil -> false
     end
   end
 

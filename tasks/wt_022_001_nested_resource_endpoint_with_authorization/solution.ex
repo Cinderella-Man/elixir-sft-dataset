@@ -143,9 +143,9 @@ defmodule TeamRouter do
 
   use Plug.Router, copy_opts_to_assign: :router_opts
 
-  plug AuthPlug
-  plug :match
-  plug :dispatch
+  plug(AuthPlug)
+  plug(:match)
+  plug(:dispatch)
 
   get "/api/teams/:team_id/members" do
     store = store(conn)

@@ -117,6 +117,7 @@ defmodule BiMap do
           | forward: Map.delete(forward, key),
             reverse: Map.delete(reverse, value)
         }
+
         {:reply, :ok, new_state}
 
       :error ->

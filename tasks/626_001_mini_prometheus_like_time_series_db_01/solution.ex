@@ -36,7 +36,7 @@ defmodule TSDB do
           chunk_duration_ms: pos_integer(),
           retention_ms: pos_integer(),
           cleanup_interval_ms: pos_integer() | :infinity,
-          clock: (() -> integer())
+          clock: (-> integer())
         }
 
   # ---------------------------------------------------------------------------

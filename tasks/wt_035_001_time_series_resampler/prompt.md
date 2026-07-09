@@ -81,14 +81,14 @@ defmodule TimeSeriesResampler do
   """
 
   @type timestamp_ms :: integer()
-  @type value        :: number()
-  @type datapoint    :: {timestamp_ms(), value()}
-  @type bucket       :: {timestamp_ms(), value() | nil}
-  @type agg_mode     :: :last | :first | :mean | :sum | :count | :max | :min
-  @type fill_mode    :: :nil | :forward
+  @type value :: number()
+  @type datapoint :: {timestamp_ms(), value()}
+  @type bucket :: {timestamp_ms(), value() | nil}
+  @type agg_mode :: :last | :first | :mean | :sum | :count | :max | :min
+  @type fill_mode :: nil | :forward
 
-  @valid_agg  [:last, :first, :mean, :sum, :count, :max, :min]
-  @valid_fill [:nil, :forward]
+  @valid_agg [:last, :first, :mean, :sum, :count, :max, :min]
+  @valid_fill [nil, :forward]
 
   # ---------------------------------------------------------------------------
   # Public API
@@ -118,8 +118,8 @@ defmodule TimeSeriesResampler do
 
   def resample(data, interval_ms, opts)
       when is_list(data) and is_integer(interval_ms) and interval_ms > 0 do
-    agg  = fetch_opt!(opts, :agg,  :last,  @valid_agg)
-    fill = fetch_opt!(opts, :fill, :nil,   @valid_fill)
+    agg = fetch_opt!(opts, :agg, :last, @valid_agg)
+    fill = fetch_opt!(opts, :fill, nil, @valid_fill)
 
     # 1. Sort ascending by timestamp so :first/:last are well-defined.
     sorted = Enum.sort_by(data, &elem(&1, 0))
@@ -129,7 +129,7 @@ defmodule TimeSeriesResampler do
     {max_ts, _} = List.last(sorted)
 
     first_bucket = floor_bucket(min_ts, interval_ms)
-    last_bucket  = floor_bucket(max_ts, interval_ms)
+    last_bucket = floor_bucket(max_ts, interval_ms)
 
     # 3. Group data points into their buckets.
     grouped =
@@ -143,14 +143,15 @@ defmodule TimeSeriesResampler do
       agg_value =
         case Map.fetch(grouped, bucket_start) do
           {:ok, points} -> aggregate(points, agg)
-          :error        -> nil
+          :error -> nil
         end
 
       filled_value =
         case {agg_value, fill} do
-          {nil, :forward} -> last_value          # carry forward (may still be nil)
-          {nil, :nil}     -> nil
-          {v,   _}        -> v
+          # carry forward (may still be nil)
+          {nil, :forward} -> last_value
+          {nil, nil} -> nil
+          {v, _} -> v
         end
 
       next_last = if agg_value != nil, do: agg_value, else: last_value

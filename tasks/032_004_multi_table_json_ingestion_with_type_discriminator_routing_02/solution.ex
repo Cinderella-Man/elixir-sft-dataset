@@ -43,9 +43,9 @@
       end)
 
     %{
-      total:        total,
-      by_schema:    by_schema,
-      unroutable:   unroutable,
+      total: total,
+      by_schema: by_schema,
+      unroutable: unroutable,
       missing_type: missing_type
     }
   end

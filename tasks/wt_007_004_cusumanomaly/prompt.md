@@ -203,12 +203,10 @@ defmodule CusumAnomaly do
 
         cond do
           new_s_high >= state.threshold ->
-            {:reply, {:alert, :upward_shift},
-             put_stream(state, name, alerted_stream())}
+            {:reply, {:alert, :upward_shift}, put_stream(state, name, alerted_stream())}
 
           new_s_low >= state.threshold ->
-            {:reply, {:alert, :downward_shift},
-             put_stream(state, name, alerted_stream())}
+            {:reply, {:alert, :downward_shift}, put_stream(state, name, alerted_stream())}
 
           true ->
             {:reply, :ok, put_stream(state, name, updated)}

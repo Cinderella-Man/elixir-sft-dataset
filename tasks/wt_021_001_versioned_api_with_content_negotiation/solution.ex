@@ -15,13 +15,17 @@ end
 defmodule VersionedApi.Plugs.ApiVersion do
   import Plug.Conn
   def init(opts), do: opts
+
   def call(conn, opts) do
     supported = Keyword.get(opts, :supported, ["v1", "v2"])
     default = Keyword.get(opts, :default, "v2")
-    version = case get_req_header(conn, "accept-version") do
-      [v | _] -> v
-      [] -> default
-    end
+
+    version =
+      case get_req_header(conn, "accept-version") do
+        [v | _] -> v
+        [] -> default
+      end
+
     if version in supported do
       assign(conn, :api_version, version)
     else
@@ -36,6 +40,7 @@ end
 <file path="lib/versioned_api/router.ex">
 defmodule VersionedApi.Router do
   use Plug.Router
+
   @users %{
     "1" => %{
       first_name: "Alice",
@@ -50,20 +55,25 @@ defmodule VersionedApi.Router do
       created_at: "2024-06-20T14:00:00Z"
     }
   }
-  plug VersionedApi.Plugs.ApiVersion, supported: ["v1", "v2"], default: "v2"
-  plug :match
-  plug :dispatch
+  plug(VersionedApi.Plugs.ApiVersion, supported: ["v1", "v2"], default: "v2")
+  plug(:match)
+  plug(:dispatch)
+
   get "/api/users/:id" do
     case Map.get(@users, id) do
-      nil -> send_json(conn, 404, %{error: "not found"})
+      nil ->
+        send_json(conn, 404, %{error: "not found"})
+
       user ->
         rendered = VersionedApi.Views.UserView.render(conn.assigns.api_version, user)
         send_json(conn, 200, rendered)
     end
   end
+
   match _ do
     send_json(conn, 404, %{error: "not found"})
   end
+
   defp send_json(conn, status, body) do
     conn |> put_resp_content_type("application/json") |> send_resp(status, Jason.encode!(body))
   end

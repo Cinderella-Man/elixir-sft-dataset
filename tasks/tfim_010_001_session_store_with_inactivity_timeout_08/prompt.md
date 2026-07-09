@@ -55,7 +55,7 @@ defmodule SessionStore do
           sessions: %{session_id() => session()},
           timeout_ms: non_neg_integer(),
           cleanup_interval_ms: non_neg_integer(),
-          clock: (() -> integer())
+          clock: (-> integer())
         }
 
   # ---------------------------------------------------------------------------

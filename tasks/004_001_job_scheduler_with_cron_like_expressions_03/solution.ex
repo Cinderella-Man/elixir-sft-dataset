@@ -7,8 +7,8 @@ defp parse_part(part, lo, hi) do
 
     [base, step_str] ->
       with {:ok, step} <- parse_int(step_str),
-            true <- step > 0 || :error,
-            {:ok, values} <- parse_range_or_star(base, lo, hi) do
+           true <- step > 0 || :error,
+           {:ok, values} <- parse_range_or_star(base, lo, hi) do
         # apply step: keep only values whose offset from the range start is
         # divisible by the step.
         sorted = Enum.sort(values)

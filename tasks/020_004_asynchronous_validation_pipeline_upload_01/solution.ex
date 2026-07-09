@@ -158,8 +158,8 @@ defmodule FileUpload.Router do
 
   @max_bytes 5_242_880
 
-  plug :match
-  plug :dispatch
+  plug(:match)
+  plug(:dispatch)
 
   post "/api/uploads" do
     opts = conn.assigns.router_opts

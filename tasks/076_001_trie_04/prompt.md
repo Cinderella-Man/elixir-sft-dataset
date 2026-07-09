@@ -181,5 +181,4 @@ defmodule Trie do
     collect(root, "") |> Enum.sort()
   end
 end
-
 ```

@@ -258,6 +258,7 @@ defmodule BudgetPromoCodesTest do
 
   test "create rejects duplicates and invalid type" do
     {:ok, _} = BudgetPromoCodes.create(%{code: "DUP", type: :percentage, value: 10})
+
     assert {:error, :already_exists} =
              BudgetPromoCodes.create(%{code: "DUP", type: :fixed_amount, value: 500})
 
@@ -333,7 +334,13 @@ defmodule BudgetPromoCodesTest do
 
   test "max_uses is enforced ahead of budget exhaustion" do
     {:ok, _} =
-      BudgetPromoCodes.create(%{code: "MU", type: :fixed_amount, value: 100, budget: 10_000, max_uses: 2})
+      BudgetPromoCodes.create(%{
+        code: "MU",
+        type: :fixed_amount,
+        value: 100,
+        budget: 10_000,
+        max_uses: 2
+      })
 
     assert {:ok, 100} = BudgetPromoCodes.apply_code("MU", 10_000)
     assert {:ok, 100} = BudgetPromoCodes.apply_code("MU", 10_000)

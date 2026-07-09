@@ -262,6 +262,7 @@ defmodule CartTest do
 
   test "rejects coupons below the minimum subtotal" do
     cart = with_items(0.0)
+
     assert {:error, :below_minimum} =
              Cart.apply_coupon(cart, %{
                code: "VIP",
@@ -281,8 +282,12 @@ defmodule CartTest do
   test "rejects malformed coupons" do
     cart = with_items(0.0)
     assert {:error, :invalid_coupon} = Cart.apply_coupon(cart, %{type: :percentage, value: 0.1})
-    assert {:error, :invalid_coupon} = Cart.apply_coupon(cart, %{code: "Z", type: :bogus, value: 1})
-    assert {:error, :invalid_coupon} = Cart.apply_coupon(cart, %{code: "Z", type: :fixed, value: -1})
+
+    assert {:error, :invalid_coupon} =
+             Cart.apply_coupon(cart, %{code: "Z", type: :bogus, value: 1})
+
+    assert {:error, :invalid_coupon} =
+             Cart.apply_coupon(cart, %{code: "Z", type: :fixed, value: -1})
   end
 
   test "no coupons means discount is zero" do

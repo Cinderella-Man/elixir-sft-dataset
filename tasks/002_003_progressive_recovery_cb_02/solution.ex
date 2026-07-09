@@ -8,8 +8,7 @@ defp execute_in_closed(state, func) do
       new_count = state.failure_count + 1
 
       if new_count >= state.config.failure_threshold do
-        {reply,
-          %{state | state: :open, opened_at: state.clock.(), failure_count: 0}}
+        {reply, %{state | state: :open, opened_at: state.clock.(), failure_count: 0}}
       else
         {reply, %{state | failure_count: new_count}}
       end

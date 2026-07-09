@@ -146,8 +146,7 @@ defmodule LeakyBucketCircuitBreaker do
 
         if new_level >= state.config.bucket_capacity do
           # Trip.  Reset bucket so the eventual probe cycle starts clean.
-          {reply,
-           %{state | state: :open, opened_at: state.clock.(), bucket_level: 0.0}}
+          {reply, %{state | state: :open, opened_at: state.clock.(), bucket_level: 0.0}}
         else
           {reply, state}
         end
@@ -169,8 +168,7 @@ defmodule LeakyBucketCircuitBreaker do
          }}
 
       {:error, reply} ->
-        {reply,
-         %{state | state: :open, opened_at: state.clock.(), probes_in_flight: 0}}
+        {reply, %{state | state: :open, opened_at: state.clock.(), probes_in_flight: 0}}
     end
   end
 

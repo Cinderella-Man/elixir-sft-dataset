@@ -23,7 +23,7 @@ Roles are defined as a map from a role atom to a list of permission-pattern stri
 %{
   viewer: ["posts:read", "comments:read"],
   editor: ["posts:read", "posts:write", "comments:read", "comments:write"],
-  admin:  ["*:*"]
+  admin: ["*:*"]
 }
 ```
 

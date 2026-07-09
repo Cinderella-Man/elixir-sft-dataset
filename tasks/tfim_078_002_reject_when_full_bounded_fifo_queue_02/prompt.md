@@ -237,6 +237,7 @@ defmodule RejectingRingBufferTest do
       end)
 
     assert RejectingRingBuffer.size(final) <= 4
+
     assert RejectingRingBuffer.to_list(final) |> Enum.sort() ==
              RejectingRingBuffer.to_list(final)
   end

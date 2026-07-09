@@ -197,7 +197,9 @@ defmodule TaskAggregateTest do
 
   test "creating an already-existing task fails", %{agg: agg} do
     TaskAggregate.execute(agg, "task:1", {:create, "Fix bug", :high})
-    assert {:error, :already_exists} = TaskAggregate.execute(agg, "task:1", {:create, "Other", :low})
+
+    assert {:error, :already_exists} =
+             TaskAggregate.execute(agg, "task:1", {:create, "Other", :low})
   end
 
   test "creating with invalid priority fails", %{agg: agg} do
@@ -406,9 +408,16 @@ defmodule TaskAggregateTest do
     assert length(events) == 8
 
     types = Enum.map(events, & &1.type)
+
     assert types == [
-             :task_created, :task_assigned, :task_started, :task_completed,
-             :task_reopened, :task_assigned, :task_started, :task_completed
+             :task_created,
+             :task_assigned,
+             :task_started,
+             :task_completed,
+             :task_reopened,
+             :task_assigned,
+             :task_started,
+             :task_completed
            ]
   end
 

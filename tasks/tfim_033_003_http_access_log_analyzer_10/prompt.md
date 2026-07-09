@@ -274,7 +274,11 @@ defmodule AccessLogAnalyzerTest do
 
   defp tmp_path(name) do
     dir = System.tmp_dir!()
-    Path.join(dir, "access_log_test_#{name}_#{System.pid()}_#{System.unique_integer([:positive])}.jsonl")
+
+    Path.join(
+      dir,
+      "access_log_test_#{name}_#{System.pid()}_#{System.unique_integer([:positive])}.jsonl"
+    )
   end
 
   defp write_lines(path, lines) do
@@ -498,6 +502,7 @@ defmodule AccessLogAnalyzerTest do
 
   test "status_code as float is malformed" do
     path = tmp_path("float_status")
+
     write_lines(path, [
       Jason.encode!(%{
         "timestamp" => "2024-01-01T00:00:00Z",
@@ -507,6 +512,7 @@ defmodule AccessLogAnalyzerTest do
         "duration_ms" => 5
       })
     ])
+
     on_exit(fn -> File.rm(path) end)
 
     assert {:ok, report} = AccessLogAnalyzer.analyze(path)

@@ -109,5 +109,4 @@ defmodule Aggregate do
     %{state | balance: state.balance - amount}
   end
 end
-
 ```

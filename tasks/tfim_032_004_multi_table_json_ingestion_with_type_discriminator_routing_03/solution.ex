@@ -1,8 +1,8 @@
   test "counts records with unknown type as unroutable" do
     records = [
-      %{"type" => "order",   "order_id" => "o-1", "customer" => "Alice", "amount" => 100},
+      %{"type" => "order", "order_id" => "o-1", "customer" => "Alice", "amount" => 100},
       %{"type" => "unknown", "foo" => "bar"},
-      %{"type" => "refund",  "refund_id" => "r-1", "reason" => "oops", "amount" => 25},
+      %{"type" => "refund", "refund_id" => "r-1", "reason" => "oops", "amount" => 25},
       %{"type" => "mystery", "baz" => "qux"}
     ]
 

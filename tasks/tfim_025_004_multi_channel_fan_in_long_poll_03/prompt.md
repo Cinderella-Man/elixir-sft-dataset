@@ -128,8 +128,8 @@ defmodule NotificationRouter do
 
   use Plug.Router, copy_opts_to_assign: :poller_opts
 
-  plug :match
-  plug :dispatch
+  plug(:match)
+  plug(:dispatch)
 
   get "/api/notifications/poll" do
     opts = conn.assigns.poller_opts
@@ -191,7 +191,10 @@ defmodule MultiChannelNotificationPollerTest do
     # TODO
   end
 
-  test "a publish to an unsubscribed channel does not wake the poll", %{server: server, opts: opts} do
+  test "a publish to an unsubscribed channel does not wake the poll", %{
+    server: server,
+    opts: opts
+  } do
     task = Task.async(fn -> poll(opts, "user:1", ["a", "b"]) end)
     Process.sleep(100)
     Notifications.publish(server, "user:1", "c", %{"ignored" => true})
@@ -272,7 +275,10 @@ defmodule MultiChannelNotificationPollerTest do
   # Multiple subscribers on the same channel
   # -------------------------------------------------------
 
-  test "multiple pollers on the same channel all receive the notification", %{server: server, opts: opts} do
+  test "multiple pollers on the same channel all receive the notification", %{
+    server: server,
+    opts: opts
+  } do
     task1 = Task.async(fn -> poll(opts, "user:1", ["x"]) end)
     task2 = Task.async(fn -> poll(opts, "user:1", ["x", "y"]) end)
     Process.sleep(100)

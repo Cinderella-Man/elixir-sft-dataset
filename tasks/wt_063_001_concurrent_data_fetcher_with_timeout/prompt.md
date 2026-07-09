@@ -70,7 +70,8 @@ defmodule ConcurrentFetcher do
           %{term() => {:ok, term()} | {:error, term()}}
   def fetch_all([], _timeout_ms), do: %{}
 
-  def fetch_all(sources, timeout_ms) when is_list(sources) and is_integer(timeout_ms) and timeout_ms >= 0 do
+  def fetch_all(sources, timeout_ms)
+      when is_list(sources) and is_integer(timeout_ms) and timeout_ms >= 0 do
     # ── 1. Spawn every fetch concurrently ──────────────────────────────────
     # Task.async/1 links the task to the caller, which lets us kill it later
     # via Task.shutdown/2. We pair each Task struct with its source name so we

@@ -168,21 +168,11 @@ defmodule CircuitBreaker do
   end
 
   defp trip_open(state) do
-    %{state |
-      circuit_state: :open,
-      opened_at: state.clock.(),
-      failure_count: 0,
-      probe_count: 0
-    }
+    %{state | circuit_state: :open, opened_at: state.clock.(), failure_count: 0, probe_count: 0}
   end
 
   defp reset_to_closed(state) do
-    %{state |
-      circuit_state: :closed,
-      failure_count: 0,
-      opened_at: nil,
-      probe_count: 0
-    }
+    %{state | circuit_state: :closed, failure_count: 0, opened_at: nil, probe_count: 0}
   end
 end
 ```

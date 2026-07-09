@@ -77,15 +77,15 @@ defmodule MarkdownParser do
   defp classify_line(line) do
     cond do
       match_heading(line) -> match_heading(line)
-      match_item(line)    -> match_item(line)
-      true                -> :ignore
+      match_item(line) -> match_item(line)
+      true -> :ignore
     end
   end
 
   defp match_heading(line) do
     case Regex.run(@heading_re, line, capture: :all_but_first) do
       [name] -> {:heading, String.trim(name)}
-      _      -> nil
+      _ -> nil
     end
   end
 
@@ -105,8 +105,12 @@ defmodule MarkdownParser do
   defp build_item(name, description, raw_tags) do
     tags =
       case raw_tags do
-        nil -> []
-        ""  -> []
+        nil ->
+          []
+
+        "" ->
+          []
+
         str ->
           str
           |> String.split(",")

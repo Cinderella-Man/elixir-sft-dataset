@@ -278,7 +278,10 @@ defmodule LayeredConfigTest do
   # -------------------------------------------------------
 
   test "locked key preserves the earlier value and provenance" do
-    layers = [{:base, %{secret: "s3cr3t", other: "base"}}, {:env, %{secret: "pwned", other: "new"}}]
+    layers = [
+      {:base, %{secret: "s3cr3t", other: "base"}},
+      {:env, %{secret: "pwned", other: "new"}}
+    ]
 
     result = LayeredConfig.merge(layers, locked: [[:secret]])
 

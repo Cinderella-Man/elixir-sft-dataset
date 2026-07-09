@@ -275,9 +275,12 @@ defmodule ConfigStoreTest do
   end
 
   test "per-key list strategy overrides the global strategy" do
-    s = start(base: %{tags: ["a"], plugins: ["core"]},
-              list_strategy: :replace,
-              list_strategies: %{[:tags] => :append})
+    s =
+      start(
+        base: %{tags: ["a"], plugins: ["core"]},
+        list_strategy: :replace,
+        list_strategies: %{[:tags] => :append}
+      )
 
     ConfigStore.put_layer(s, :env, %{tags: ["b"], plugins: ["extra"]})
 

@@ -134,7 +134,8 @@ defmodule NotificationPollerTest do
 
     opts = [
       notifications_server: server,
-      timeout_ms: 500  # short timeout so tests run fast
+      # short timeout so tests run fast
+      timeout_ms: 500
     ]
 
     %{server: server, opts: opts}
@@ -155,7 +156,10 @@ defmodule NotificationPollerTest do
   # Basic publish / receive
   # -------------------------------------------------------
 
-  test "returns notification immediately when one is published during poll", %{server: server, opts: opts} do
+  test "returns notification immediately when one is published during poll", %{
+    server: server,
+    opts: opts
+  } do
     payload = %{"type" => "message", "body" => "hello"}
 
     # Start the long-poll in a background task
@@ -204,7 +208,10 @@ defmodule NotificationPollerTest do
     # TODO
   end
 
-  test "notification reaches the correct user among multiple pollers", %{server: server, opts: opts} do
+  test "notification reaches the correct user among multiple pollers", %{
+    server: server,
+    opts: opts
+  } do
     task_a = Task.async(fn -> poll(opts, "user:a") end)
     task_b = Task.async(fn -> poll(opts, "user:b") end)
 
@@ -225,7 +232,10 @@ defmodule NotificationPollerTest do
   # Multiple subscribers for the same user
   # -------------------------------------------------------
 
-  test "multiple pollers for the same user all receive the notification", %{server: server, opts: opts} do
+  test "multiple pollers for the same user all receive the notification", %{
+    server: server,
+    opts: opts
+  } do
     task1 = Task.async(fn -> poll(opts, "user:1") end)
     task2 = Task.async(fn -> poll(opts, "user:1") end)
 
@@ -246,7 +256,10 @@ defmodule NotificationPollerTest do
   # Only the first notification is returned (single shot)
   # -------------------------------------------------------
 
-  test "poll returns only the first notification even if multiple arrive", %{server: server, opts: opts} do
+  test "poll returns only the first notification even if multiple arrive", %{
+    server: server,
+    opts: opts
+  } do
     task = Task.async(fn -> poll(opts, "user:1") end)
 
     Process.sleep(100)

@@ -32,7 +32,7 @@ complete module in a single file.
 ```elixir
 RetrySaga.new()
 |> RetrySaga.step(:reserve, &reserve/1, &cancel/1, max_attempts: 3)
-|> RetrySaga.step(:charge,  &charge/1,  &refund/1)
+|> RetrySaga.step(:charge, &charge/1, &refund/1)
 |> RetrySaga.execute(%{order_id: 42})
 ```
 
@@ -94,7 +94,7 @@ saga =
   |> RetrySaga.step(:b, always_fails, fn _ -> {:ok, :undo_b} end, max_attempts: 2)
 
 RetrySaga.execute(saga, %{})
-#=> {:error, %{
+# => {:error, %{
 #     step: :b, error: :nope, attempts: 2,
 #     compensated: [:a], compensations: %{a: {:ok, :undo_a}}
 #   }}
@@ -139,14 +139,20 @@ defmodule RetrySaga do
   @doc """
   Appends a step. `opts` supports `:max_attempts` (a positive integer, default 1).
   """
-  @spec step(t(), term(), (context() -> {:ok, term()} | {:error, term()}),
-          (context() -> term()), keyword()) :: t()
+  @spec step(
+          t(),
+          term(),
+          (context() -> {:ok, term()} | {:error, term()}),
+          (context() -> term()),
+          keyword()
+        ) :: t()
   def step(%__MODULE__{steps: steps} = saga, name, action, compensation, opts \\ [])
       when is_function(action, 1) and is_function(compensation, 1) do
     max_attempts = Keyword.get(opts, :max_attempts, 1)
 
     unless is_integer(max_attempts) and max_attempts >= 1 do
-      raise ArgumentError, "max_attempts must be a positive integer, got: #{inspect(max_attempts)}"
+      raise ArgumentError,
+            "max_attempts must be a positive integer, got: #{inspect(max_attempts)}"
     end
 
     step = %{name: name, action: action, compensation: compensation, max_attempts: max_attempts}

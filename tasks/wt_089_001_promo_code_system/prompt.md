@@ -370,7 +370,9 @@ defmodule PromoCodes do
   defp total_uses(state, code_string), do: Map.get(state.total_uses, code_string, 0)
 
   defp user_uses(_state, _code_string, nil), do: 0
-  defp user_uses(state, code_string, user_id), do: Map.get(state.user_uses, {code_string, user_id}, 0)
+
+  defp user_uses(state, code_string, user_id),
+    do: Map.get(state.user_uses, {code_string, user_id}, 0)
 
   defp record_use(state, code_string, user_id) do
     state = update_in(state.total_uses[code_string], &((&1 || 0) + 1))

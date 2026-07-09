@@ -56,25 +56,25 @@ defmodule MultiSchemaIngestion do
   # Types
   # ---------------------------------------------------------------------------
 
-  @type repo           :: module()
-  @type schema         :: module()
-  @type routing        :: %{String.t() => schema()}
+  @type repo :: module()
+  @type schema :: module()
+  @type routing :: %{String.t() => schema()}
   @type per_schema_stats :: %{inserted: integer(), failed: integer()}
-  @type stats          :: %{
-    total:        integer(),
-    by_schema:    %{schema() => per_schema_stats()},
-    unroutable:   integer(),
-    missing_type: integer()
-  }
+  @type stats :: %{
+          total: integer(),
+          by_schema: %{schema() => per_schema_stats()},
+          unroutable: integer(),
+          missing_type: integer()
+        }
 
   # ---------------------------------------------------------------------------
   # Defaults
   # ---------------------------------------------------------------------------
 
-  @default_batch_size      500
-  @default_on_conflict     :nothing
+  @default_batch_size 500
+  @default_on_conflict :nothing
   @default_conflict_target :nothing
-  @default_type_field      "type"
+  @default_type_field "type"
 
   # ---------------------------------------------------------------------------
   # Public API
@@ -90,14 +90,14 @@ defmodule MultiSchemaIngestion do
           {:ok, stats()} | {:error, :file_not_found | :invalid_json | :not_a_list}
   def ingest(repo, routing, file_path, opts \\ []) do
     cfg = %{
-      batch_size:      Keyword.get(opts, :batch_size,      @default_batch_size),
-      on_conflict:     Keyword.get(opts, :on_conflict,     @default_on_conflict),
+      batch_size: Keyword.get(opts, :batch_size, @default_batch_size),
+      on_conflict: Keyword.get(opts, :on_conflict, @default_on_conflict),
       conflict_target: Keyword.get(opts, :conflict_target, @default_conflict_target),
-      type_field:      Keyword.get(opts, :type_field,      @default_type_field)
+      type_field: Keyword.get(opts, :type_field, @default_type_field)
     }
 
-    with {:ok, raw}     <- read_file(file_path),
-         {:ok, parsed}  <- parse_json(raw),
+    with {:ok, raw} <- read_file(file_path),
+         {:ok, parsed} <- parse_json(raw),
          {:ok, records} <- validate_list(parsed) do
       {:ok, process_records(repo, routing, records, cfg)}
     end
@@ -109,16 +109,23 @@ defmodule MultiSchemaIngestion do
 
   defp read_file(path) do
     case File.read(path) do
-      {:ok, contents}  -> {:ok, contents}
+      {:ok, contents} ->
+        {:ok, contents}
+
       {:error, reason} ->
-        Logger.error("[MultiSchemaIngestion] Could not read file #{inspect(path)}: #{inspect(reason)}")
+        Logger.error(
+          "[MultiSchemaIngestion] Could not read file #{inspect(path)}: #{inspect(reason)}"
+        )
+
         {:error, :file_not_found}
     end
   end
 
   defp parse_json(raw) do
     case Jason.decode(raw) do
-      {:ok, value}     -> {:ok, value}
+      {:ok, value} ->
+        {:ok, value}
+
       {:error, reason} ->
         Logger.error("[MultiSchemaIngestion] JSON parse error: #{inspect(reason)}")
         {:error, :invalid_json}
@@ -126,6 +133,7 @@ defmodule MultiSchemaIngestion do
   end
 
   defp validate_list(value) when is_list(value), do: {:ok, value}
+
   defp validate_list(value) do
     Logger.error("[MultiSchemaIngestion] Expected a JSON array, got: #{inspect(value, limit: 5)}")
     {:error, :not_a_list}
@@ -145,7 +153,10 @@ defmodule MultiSchemaIngestion do
       Enum.reduce(records, {%{}, 0, 0}, fn record, {groups, unr, miss} ->
         case Map.fetch(record, type_field) do
           :error ->
-            Logger.warning("[MultiSchemaIngestion] Record missing '#{type_field}' field, skipping")
+            Logger.warning(
+              "[MultiSchemaIngestion] Record missing '#{type_field}' field, skipping"
+            )
+
             {groups, unr, miss + 1}
 
           {:ok, type_value} ->
@@ -180,9 +191,9 @@ defmodule MultiSchemaIngestion do
       end)
 
     %{
-      total:        total,
-      by_schema:    by_schema,
-      unroutable:   unroutable,
+      total: total,
+      by_schema: by_schema,
+      unroutable: unroutable,
       missing_type: missing_type
     }
   end
@@ -194,11 +205,11 @@ defmodule MultiSchemaIngestion do
   @spec insert_schema_group(repo(), schema(), [map()], map()) :: per_schema_stats()
   defp insert_schema_group(repo, schema, records, cfg) do
     schema_keys = schema_field_set(schema)
-    now         = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+    now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
     conflict_target = resolve_conflict_target(cfg.conflict_target, schema)
 
     insert_opts = [
-      on_conflict:     cfg.on_conflict,
+      on_conflict: cfg.on_conflict,
       conflict_target: conflict_target
     ]
 
@@ -215,21 +226,29 @@ defmodule MultiSchemaIngestion do
 
         new_acc = %{acc | inserted: acc.inserted + count}
 
-        Logger.info("[MultiSchemaIngestion] #{inspect(schema)} batch done — " <>
-          "size: #{batch_size}, inserted: #{count}. " <>
-          "Running totals — inserted=#{new_acc.inserted} failed=#{new_acc.failed}")
+        Logger.info(
+          "[MultiSchemaIngestion] #{inspect(schema)} batch done — " <>
+            "size: #{batch_size}, inserted: #{count}. " <>
+            "Running totals — inserted=#{new_acc.inserted} failed=#{new_acc.failed}"
+        )
 
         new_acc
       rescue
         error ->
-          Logger.error("[MultiSchemaIngestion] #{inspect(schema)} batch failed " <>
-            "(#{batch_size} records skipped): " <>
-            Exception.format(:error, error, __STACKTRACE__))
+          Logger.error(
+            "[MultiSchemaIngestion] #{inspect(schema)} batch failed " <>
+              "(#{batch_size} records skipped): " <>
+              Exception.format(:error, error, __STACKTRACE__)
+          )
+
           %{acc | failed: acc.failed + batch_size}
       catch
         kind, reason ->
-          Logger.error("[MultiSchemaIngestion] #{inspect(schema)} batch failed " <>
-            "with #{kind} (#{batch_size} records skipped): #{inspect(reason)}")
+          Logger.error(
+            "[MultiSchemaIngestion] #{inspect(schema)} batch failed " <>
+              "with #{kind} (#{batch_size} records skipped): #{inspect(reason)}"
+          )
+
           %{acc | failed: acc.failed + batch_size}
       end
     end)
@@ -266,6 +285,7 @@ defmodule MultiSchemaIngestion do
   @spec resolve_conflict_target(atom() | [atom()] | map(), schema()) :: atom() | [atom()]
   defp resolve_conflict_target(target, _schema) when is_atom(target), do: target
   defp resolve_conflict_target(target, _schema) when is_list(target), do: target
+
   defp resolve_conflict_target(target, schema) when is_map(target) do
     Map.get(target, schema, :nothing)
   end

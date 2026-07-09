@@ -165,8 +165,8 @@ defmodule WebhookReceiver.Router do
 
   alias WebhookReceiver.{Signature, Store}
 
-  plug :match
-  plug :dispatch
+  plug(:match)
+  plug(:dispatch)
 
   post "/api/webhooks/stripe" do
     opts = conn.assigns.webhook_opts
@@ -428,6 +428,7 @@ defmodule WebhookReceiverReplayTest do
 
   test "POST to unknown path returns 404", %{opts: opts} do
     payload = build_event("evt_999")
+
     conn =
       do_request(opts, :post, "/api/webhooks/unknown", payload, [
         {"stripe-signature", header(@now, payload, @secret)}

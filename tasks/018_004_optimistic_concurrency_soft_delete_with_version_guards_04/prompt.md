@@ -206,7 +206,8 @@ defmodule SoftCrud.Documents do
                 updated_at: t
             }
 
-            {:reply, {:ok, updated}, %{state | docs: Map.put(state.docs, id, updated), tick: t + 1}}
+            {:reply, {:ok, updated},
+             %{state | docs: Map.put(state.docs, id, updated), tick: t + 1}}
 
           {:error, errors} ->
             {:reply, {:error, errors}, state}

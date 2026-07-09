@@ -203,8 +203,8 @@ defmodule FileUpload.Router do
 
   @max_bytes 5_242_880
 
-  plug :match
-  plug :dispatch
+  plug(:match)
+  plug(:dispatch)
 
   post "/api/uploads" do
     opts = conn.assigns.router_opts
@@ -328,7 +328,10 @@ defmodule FileUploadTest do
   import Plug.Test
   import Plug.Conn
 
-  @upload_dir Path.join(System.tmp_dir!(), "file_upload_quota_test_#{System.pid()}_#{System.unique_integer([:positive])}")
+  @upload_dir Path.join(
+                System.tmp_dir!(),
+                "file_upload_quota_test_#{System.pid()}_#{System.unique_integer([:positive])}"
+              )
 
   setup_all do
     File.mkdir_p!(@upload_dir)
@@ -359,7 +362,12 @@ defmodule FileUploadTest do
   end
 
   defp upload_conn(opts, account, filename, content, content_type \\ nil) do
-    tmp_path = Path.join(System.tmp_dir!(), "upl_#{System.pid()}_#{System.unique_integer([:positive])}_#{filename}")
+    tmp_path =
+      Path.join(
+        System.tmp_dir!(),
+        "upl_#{System.pid()}_#{System.unique_integer([:positive])}_#{filename}"
+      )
+
     File.write!(tmp_path, content)
 
     ct =

@@ -94,7 +94,7 @@ defmodule QuotaTracker do
           entries: %{key() => [usage_entry()]},
           max_window_ms: non_neg_integer(),
           cleanup_interval_ms: non_neg_integer(),
-          clock: (() -> integer())
+          clock: (-> integer())
         }
 
   # ---------------------------------------------------------------------------
@@ -220,6 +220,7 @@ defmodule QuotaTracker do
 
       # Lazily clean up state using max_window_ms
       retained_entries = evict_expired(entries, now, state.max_window_ms)
+
       new_entries =
         if retained_entries == [] do
           Map.delete(state.entries, key)

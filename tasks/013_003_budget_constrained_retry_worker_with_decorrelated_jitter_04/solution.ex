@@ -5,6 +5,14 @@
     max_delay = Keyword.get(opts, :max_delay_ms, 10_000)
 
     do_attempt(
-      func, clock_fn, random_fn, started_at, base_delay, budget, max_delay, base_delay, 0
+      func,
+      clock_fn,
+      random_fn,
+      started_at,
+      base_delay,
+      budget,
+      max_delay,
+      base_delay,
+      0
     )
   end

@@ -245,7 +245,11 @@ defmodule LogAnalyzerTest do
 
   defp tmp_path(name) do
     dir = System.tmp_dir!()
-    Path.join(dir, "log_analyzer_test_#{name}_#{System.pid()}_#{System.unique_integer([:positive])}.log")
+
+    Path.join(
+      dir,
+      "log_analyzer_test_#{name}_#{System.pid()}_#{System.unique_integer([:positive])}.log"
+    )
   end
 
   defp write_lines(path, lines) do

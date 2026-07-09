@@ -46,7 +46,11 @@ defmodule BatchCollector do
     flush_interval_ms = Keyword.fetch!(opts, :flush_interval_ms)
     server_opts = Keyword.take(opts, [:name])
     # Initializing state with an empty batches map
-    GenServer.start_link(__MODULE__, %{flush_interval_ms: flush_interval_ms, batches: %{}}, server_opts)
+    GenServer.start_link(
+      __MODULE__,
+      %{flush_interval_ms: flush_interval_ms, batches: %{}},
+      server_opts
+    )
   end
 
   @doc """
@@ -86,7 +90,8 @@ defmodule BatchCollector do
         timer_ref = Process.send_after(self(), {:flush_timer, key}, state.flush_interval_ms)
 
         batch = %{
-          items: [item], # Prepend is O(1)
+          # Prepend is O(1)
+          items: [item],
           callers: [from],
           flush_fn: flush_fn,
           max_batch_size: max_batch_size,
@@ -103,9 +108,10 @@ defmodule BatchCollector do
 
       {:ok, batch} ->
         updated_batch = %{
-          batch |
-          items: [item | batch.items], # Prepend is O(1)
-          callers: [from | batch.callers]
+          batch
+          | # Prepend is O(1)
+            items: [item | batch.items],
+            callers: [from | batch.callers]
         }
 
         new_state = put_in(state, [:batches, key], updated_batch)
@@ -273,9 +279,7 @@ defmodule BatchCollectorTest do
         tasks =
           for i <- 1..3 do
             Task.async(fn ->
-              BatchCollector.submit(bc, :fast, i, fn items -> {:ok, items} end,
-                max_batch_size: 3
-              )
+              BatchCollector.submit(bc, :fast, i, fn items -> {:ok, items} end, max_batch_size: 3)
             end)
           end
 
@@ -420,9 +424,7 @@ defmodule BatchCollectorTest do
 
     {elapsed, result} =
       :timer.tc(fn ->
-        BatchCollector.submit(bc, :fast, :item, fn items -> {:ok, items} end,
-          max_batch_size: 1
-        )
+        BatchCollector.submit(bc, :fast, :item, fn items -> {:ok, items} end, max_batch_size: 1)
       end)
 
     assert result == {:ok, [:item]}

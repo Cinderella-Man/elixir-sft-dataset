@@ -7,10 +7,39 @@ defmodule InvertedIndex do
   use GenServer
 
   @default_stop_words MapSet.new([
-    "the", "a", "an", "is", "are", "was", "were", "in", "on", "at", "to",
-    "of", "and", "or", "it", "this", "that", "for", "with", "as", "by",
-    "not", "be", "has", "had", "have", "do", "does", "did", "but", "if", "from"
-  ])
+                        "the",
+                        "a",
+                        "an",
+                        "is",
+                        "are",
+                        "was",
+                        "were",
+                        "in",
+                        "on",
+                        "at",
+                        "to",
+                        "of",
+                        "and",
+                        "or",
+                        "it",
+                        "this",
+                        "that",
+                        "for",
+                        "with",
+                        "as",
+                        "by",
+                        "not",
+                        "be",
+                        "has",
+                        "had",
+                        "have",
+                        "do",
+                        "does",
+                        "did",
+                        "but",
+                        "if",
+                        "from"
+                      ])
 
   # ── State shape ──────────────────────────────────────────────────────────────
   #
@@ -276,10 +305,12 @@ defmodule InvertedIndex do
     len = byte_size(word)
     last = String.at(word, len - 1)
     second_last = String.at(word, len - 2)
+
     if last == second_last and last not in ~w(a e i o u),
       do: String.slice(word, 0, len - 1),
       else: word
   end
+
   defp dedup_trailing_consonant(word), do: word
 
   # Only strip if the remaining root has at least 2 characters.

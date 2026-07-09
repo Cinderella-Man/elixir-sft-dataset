@@ -224,6 +224,7 @@ defmodule WorkflowTest do
 
   test "submit guard is record-based and ignores the payload" do
     empty = Workflow.new(%{items: []})
+
     assert {:error, :guard_failed, :draft, :submit} =
              Workflow.transition(empty, :submit, %{whatever: 1})
 
@@ -233,8 +234,10 @@ defmodule WorkflowTest do
 
   test "guard failure leaves the record unchanged" do
     rec = submitted()
+
     assert {:error, :guard_failed, :submitted, :approve} =
              Workflow.transition(rec, :approve, %{})
+
     assert rec.state == :submitted
     refute Map.has_key?(rec, :approved_by)
   end

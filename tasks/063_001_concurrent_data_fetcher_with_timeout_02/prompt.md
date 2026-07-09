@@ -52,7 +52,8 @@ defmodule ConcurrentFetcher do
           %{term() => {:ok, term()} | {:error, term()}}
   def fetch_all([], _timeout_ms), do: %{}
 
-  def fetch_all(sources, timeout_ms) when is_list(sources) and is_integer(timeout_ms) and timeout_ms >= 0 do
+  def fetch_all(sources, timeout_ms)
+      when is_list(sources) and is_integer(timeout_ms) and timeout_ms >= 0 do
     # TODO
   end
 

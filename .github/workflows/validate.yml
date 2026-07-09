@@ -39,9 +39,12 @@ jobs:
           key: mix-${{ hashFiles('mix.lock', '.tool-versions') }}
       - run: mix deps.get
       - run: mix compile --warnings-as-errors
+      - run: mix format --check-formatted
       - run: mix test
       # Whole-solution raise-mutant gate over single/multifile/wt shapes.
       - run: elixir scripts/validate.exs --mutants
+      # Corpus canonical-format gate (docs/10 R6).
+      - run: elixir scripts/format_corpus.exs --check
       # Full perfect-score sweep: weekly + manual only (too slow per push).
       - if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: elixir scripts/validate.exs

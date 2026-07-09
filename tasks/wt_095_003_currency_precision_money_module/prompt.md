@@ -52,9 +52,12 @@ Creates a money struct directly from an **integer** number of minor units and a
 is not a supported currency, raise `ArgumentError`.
 
 ```elixir
-Money.new(12345, :USD)  # => %Money{amount: 12345, currency: :USD}   (== 123.45)
-Money.new(500, :JPY)    # => %Money{amount: 500, currency: :JPY}     (== 500)
-Money.new(100, :XYZ)    # raises ArgumentError (unknown currency)
+# => %Money{amount: 12345, currency: :USD}   (== 123.45)
+Money.new(12345, :USD)
+# => %Money{amount: 500, currency: :JPY}     (== 500)
+Money.new(500, :JPY)
+# raises ArgumentError (unknown currency)
+Money.new(100, :XYZ)
 ```
 
 ### `Money.from_major(major, currency)`
@@ -64,9 +67,13 @@ e.g. dollars/euros/yen) by scaling to minor units using the currency's exponent
 and rounding to the nearest whole minor unit (round halves away from zero).
 
 ```elixir
-Money.from_major(12.34, :USD)  # => %Money{amount: 1234, currency: :USD}
-Money.from_major(500, :JPY)    # => %Money{amount: 500,  currency: :JPY}
-Money.from_major(1.2345, :BHD) # => %Money{amount: 1234, currency: :BHD}  (1.2345 -> 1234.5 -> 1235? no: 1.2345*1000=1234.5 -> 1235)
+# => %Money{amount: 1234, currency: :USD}
+Money.from_major(12.34, :USD)
+# => %Money{amount: 500,  currency: :JPY}
+Money.from_major(500, :JPY)
+
+# => %Money{amount: 1234, currency: :BHD}  (1.2345 -> 1234.5 -> 1235? no: 1.2345*1000=1234.5 -> 1235)
+Money.from_major(1.2345, :BHD)
 ```
 
 (`from_major(1.2345, :BHD)` scales `1.2345 * 1000 = 1234.5` and rounds to
@@ -108,10 +115,14 @@ followed by a space and the currency code. Zero-exponent currencies have **no
 decimal point**. Negative amounts get a leading `-`.
 
 ```elixir
-Money.to_string(Money.new(12345, :USD))    # => "123.45 USD"
-Money.to_string(Money.new(500, :JPY))      # => "500 JPY"
-Money.to_string(Money.new(1234567, :BHD))  # => "1234.567 BHD"
-Money.to_string(Money.new(-5, :USD))       # => "-0.05 USD"
+# => "123.45 USD"
+Money.to_string(Money.new(12345, :USD))
+# => "500 JPY"
+Money.to_string(Money.new(500, :JPY))
+# => "1234.567 BHD"
+Money.to_string(Money.new(1_234_567, :BHD))
+# => "-0.05 USD"
+Money.to_string(Money.new(-5, :USD))
 ```
 
 ## Constraints

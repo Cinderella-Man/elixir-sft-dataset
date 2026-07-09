@@ -1,7 +1,7 @@
   def resample(series, interval_ms, opts)
       when is_map(series) and is_integer(interval_ms) and interval_ms > 0 do
-    agg  = fetch_opt!(opts, :agg,  :last, @valid_agg)
-    fill = fetch_opt!(opts, :fill, :nil,  @valid_fill)
+    agg = fetch_opt!(opts, :agg, :last, @valid_agg)
+    fill = fetch_opt!(opts, :fill, nil, @valid_fill)
 
     sorted =
       Map.new(series, fn {name, points} ->
@@ -16,8 +16,8 @@
 
       _ ->
         first_bucket = floor_bucket(Enum.min(all_ts), interval_ms)
-        last_bucket  = floor_bucket(Enum.max(all_ts), interval_ms)
-        names        = Map.keys(sorted)
+        last_bucket = floor_bucket(Enum.max(all_ts), interval_ms)
+        names = Map.keys(sorted)
 
         grouped =
           Map.new(sorted, fn {name, pts} ->

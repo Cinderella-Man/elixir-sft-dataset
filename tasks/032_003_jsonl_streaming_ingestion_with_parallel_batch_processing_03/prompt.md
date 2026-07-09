@@ -52,31 +52,31 @@ defmodule JsonlIngestion do
   # Types
   # ---------------------------------------------------------------------------
 
-  @type repo   :: module()
+  @type repo :: module()
   @type schema :: module()
-  @type stats  :: %{
-    total:    integer(),
-    inserted: integer(),
-    skipped:  integer(),
-    failed:   integer()
-  }
+  @type stats :: %{
+          total: integer(),
+          inserted: integer(),
+          skipped: integer(),
+          failed: integer()
+        }
   @type ingest_opts :: [
-    batch_size:      pos_integer(),
-    on_conflict:     atom() | keyword(),
-    conflict_target: atom() | [atom()],
-    max_concurrency: pos_integer(),
-    timeout:         pos_integer()
-  ]
+          batch_size: pos_integer(),
+          on_conflict: atom() | keyword(),
+          conflict_target: atom() | [atom()],
+          max_concurrency: pos_integer(),
+          timeout: pos_integer()
+        ]
 
   # ---------------------------------------------------------------------------
   # Defaults
   # ---------------------------------------------------------------------------
 
-  @default_batch_size      500
-  @default_on_conflict     :replace_all
+  @default_batch_size 500
+  @default_on_conflict :replace_all
   @default_conflict_target :nothing
   @default_max_concurrency 1
-  @default_timeout         30_000
+  @default_timeout 30_000
 
   # ---------------------------------------------------------------------------
   # Public API
@@ -103,11 +103,11 @@ defmodule JsonlIngestion do
   def ingest(repo, schema, file_path, opts \\ []) do
     if File.exists?(file_path) do
       cfg = %{
-        batch_size:      Keyword.get(opts, :batch_size,      @default_batch_size),
-        on_conflict:     Keyword.get(opts, :on_conflict,     @default_on_conflict),
+        batch_size: Keyword.get(opts, :batch_size, @default_batch_size),
+        on_conflict: Keyword.get(opts, :on_conflict, @default_on_conflict),
         conflict_target: Keyword.get(opts, :conflict_target, @default_conflict_target),
         max_concurrency: Keyword.get(opts, :max_concurrency, @default_max_concurrency),
-        timeout:         Keyword.get(opts, :timeout,         @default_timeout)
+        timeout: Keyword.get(opts, :timeout, @default_timeout)
       }
 
       {:ok, stream_and_process(repo, schema, file_path, cfg)}
@@ -124,7 +124,7 @@ defmodule JsonlIngestion do
   @spec stream_and_process(repo(), schema(), String.t(), map()) :: stats()
   defp stream_and_process(repo, schema, file_path, cfg) do
     schema_keys = schema_field_set(schema)
-    now         = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+    now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
 
     # Phase 1: Stream, parse, classify each line.
     {parsed_records, skipped_count, total_count} =
@@ -202,7 +202,7 @@ defmodule JsonlIngestion do
 
     base
     |> maybe_put_new(:inserted_at, now, schema_keys)
-    |> maybe_put_new(:updated_at,  now, schema_keys)
+    |> maybe_put_new(:updated_at, now, schema_keys)
   end
 
   @spec maybe_put_new(map(), atom(), term(), MapSet.t(String.t())) :: map()
@@ -236,16 +236,20 @@ defmodule JsonlIngestion do
       |> Task.async_stream(
         fn batch -> try_insert_batch(repo, schema, batch, cfg) end,
         max_concurrency: cfg.max_concurrency,
-        timeout:         cfg.timeout,
-        on_timeout:      :kill_task
+        timeout: cfg.timeout,
+        on_timeout: :kill_task
       )
       |> Enum.to_list()
 
     Enum.reduce(results, initial_acc, fn
       {:ok, {:ok, count}}, acc ->
         new_acc = %{acc | inserted: acc.inserted + count}
-        Logger.info("[JsonlIngestion] Batch done — inserted: #{count}. " <>
-          "Running totals — #{format_stats(new_acc)}")
+
+        Logger.info(
+          "[JsonlIngestion] Batch done — inserted: #{count}. " <>
+            "Running totals — #{format_stats(new_acc)}"
+        )
+
         new_acc
 
       {:ok, {:error, batch_size}}, acc ->
@@ -261,7 +265,7 @@ defmodule JsonlIngestion do
           {:ok, non_neg_integer()} | {:error, non_neg_integer()}
   defp try_insert_batch(repo, schema, batch, cfg) do
     insert_opts = [
-      on_conflict:     cfg.on_conflict,
+      on_conflict: cfg.on_conflict,
       conflict_target: cfg.conflict_target
     ]
 
@@ -270,8 +274,11 @@ defmodule JsonlIngestion do
       {:ok, count}
     rescue
       error ->
-        Logger.error("[JsonlIngestion] Batch failed (#{length(batch)} records): " <>
-          Exception.format(:error, error, __STACKTRACE__))
+        Logger.error(
+          "[JsonlIngestion] Batch failed (#{length(batch)} records): " <>
+            Exception.format(:error, error, __STACKTRACE__)
+        )
+
         {:error, length(batch)}
     catch
       kind, reason ->

@@ -83,13 +83,17 @@ defmodule Catalog do
     {parent_of, unknown_parent} =
       Enum.reduce(indices, {%{}, MapSet.new()}, fn i, {po, up} ->
         case attrs_by_index[i]["parent"] do
-          nil -> {Map.put(po, i, nil), up}
+          nil ->
+            {Map.put(po, i, nil), up}
+
           p when is_binary(p) ->
             case Map.fetch(ref_index, p) do
               {:ok, pi} -> {Map.put(po, i, pi), up}
               :error -> {Map.put(po, i, nil), MapSet.put(up, i)}
             end
-          _ -> {Map.put(po, i, nil), MapSet.put(up, i)}
+
+          _ ->
+            {Map.put(po, i, nil), MapSet.put(up, i)}
         end
       end)
 
@@ -287,7 +291,8 @@ defmodule CatalogTest do
     assert length(results) == 3
     assert Catalog.count() == 3
 
-    for {i, expected} <- Enum.with_index(["Alpha", "Beta", "Gamma"]) |> Enum.map(fn {n, i} -> {i, n} end) do
+    for {i, expected} <-
+          Enum.with_index(["Alpha", "Beta", "Gamma"]) |> Enum.map(fn {n, i} -> {i, n} end) do
       it = item(results, i)
       assert it.name == expected
       assert is_integer(it.id)

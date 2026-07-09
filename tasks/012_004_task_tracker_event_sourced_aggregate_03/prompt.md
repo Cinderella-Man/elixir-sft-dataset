@@ -147,5 +147,4 @@ defmodule TaskAggregate do
     %{state | status: :created, assignee: nil}
   end
 end
-
 ```

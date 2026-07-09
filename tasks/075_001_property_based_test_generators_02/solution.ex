@@ -9,12 +9,12 @@
       # Relying on bias alone (e.g. integer(0..36524) happening to pick 0) is
       # too probabilistic; with 100 default runs it fails intermittently.
       same_day = SD.constant(start_day)
-      any_day  = SD.integer(start_day..max_day)
+      any_day = SD.integer(start_day..max_day)
 
       SD.bind(SD.one_of([same_day, any_day]), fn end_day ->
         SD.constant(%{
           start_date: Date.from_gregorian_days(start_day),
-          end_date:   Date.from_gregorian_days(end_day)
+          end_date: Date.from_gregorian_days(end_day)
         })
       end)
     end)

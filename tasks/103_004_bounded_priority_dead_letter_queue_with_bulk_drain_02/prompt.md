@@ -114,7 +114,8 @@ defmodule PriorityDLQ do
     to_visit = entries |> ordered() |> Enum.take(count)
 
     {outcomes, stats} =
-      Enum.reduce(to_visit, {%{}, %{succeeded: 0, failed: 0, processed: []}}, fn entry, {out, acc} ->
+      Enum.reduce(to_visit, {%{}, %{succeeded: 0, failed: 0, processed: []}}, fn entry,
+                                                                                 {out, acc} ->
         acc = %{acc | processed: acc.processed ++ [entry.id]}
 
         case run_handler(handler, entry.message) do
