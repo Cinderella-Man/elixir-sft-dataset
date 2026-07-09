@@ -20,7 +20,7 @@
 #   mix run scripts/triage_screen.exs --model opus
 #   mix run scripts/triage_screen.exs --report          # NO calls: summarize ledger
 
-alias GenTask.{Config, Cycle}
+alias GenTask.{Config, Cycle, CycleLog}
 
 defmodule TriageScreen do
   @moduledoc false
@@ -212,13 +212,24 @@ defmodule TriageScreen do
   defp summarize(cfg) do
     entries = latest_entries(triage_path(cfg))
     keep = Enum.filter(entries, &(&1["entailed"] == true))
-    gaps = Enum.filter(entries, &(&1["entailed"] == false))
     errors = Enum.filter(entries, &(&1["error"] != nil))
+
+    # A gap verdict is only actionable while it refers to the CURRENT prompt and the
+    # task is still red: an applied backfill changes the prompt sha (and usually
+    # re-screens green), so those entries are history, not work.
+    screen = latest_entries(screen_path(cfg)) |> Map.new(&{&1["task"], &1})
+
+    {gaps, stale} =
+      entries
+      |> Enum.filter(&(&1["entailed"] == false))
+      |> Enum.split_with(fn g ->
+        current_sha(g["task"]) == g["sha"] and get_in(screen, [g["task"], "green"]) != true
+      end)
 
     IO.puts("""
 
     === SCREEN TRIAGE SUMMARY (whole ledger) ===
-      triaged: #{length(entries)}   entailed/keep: #{length(keep)}   prompt gaps: #{length(gaps)}   errors: #{length(errors)}
+      triaged: #{length(entries)}   entailed/keep: #{length(keep)}   open prompt gaps: #{length(gaps)}   stale/resolved gaps: #{length(stale)}   errors: #{length(errors)}
     """)
 
     if gaps != [] do
@@ -227,6 +238,15 @@ defmodule TriageScreen do
       Enum.each(gaps, fn g ->
         IO.puts("    - #{g["task"]}\n        #{g["missing_contract"]}")
       end)
+    end
+  end
+
+  defp current_sha(task) do
+    path = Path.join(["tasks", task, "prompt.md"])
+
+    case File.read(path) do
+      {:ok, prompt} -> CycleLog.content_sha(prompt)
+      _ -> nil
     end
   end
 
