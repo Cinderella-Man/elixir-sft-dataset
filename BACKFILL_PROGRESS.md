@@ -153,3 +153,10 @@ _(newest last; each entry = a supervised checkpoint with counts + verification n
   gap and just reconcile the single-file variations. Recommend (a) for a consistent catalog.
 - Run still paused on the 2nd usage window (seed 52); resumes automatically. Deterministic verification
   exhausted for now — holding for resume/completion, then Phase 2.
+
+---
+
+> **Closed (2026-07-09).** The backfill completed; the corpus then went through the full
+> QA-audit campaign — blind-solve screen, prompt/harness backfills, mutation + format +
+> flake gates, CI. This file is a historical ledger; current state and operations live in
+> `docs/10-quality-assurance-audit.md` (§7 orientation) and `README.md`.

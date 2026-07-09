@@ -5,7 +5,7 @@ Each solution runs in its own BEAM process — a non-compiling solution cannot a
 any other task's evaluation.
 
 The evaluator (`lib/eval_task/`, driven by `scripts/eval_task.exs`) auto-detects and grades
-**three task shapes**:
+**five task shapes**:
 
 - **single-file** — one module + `test_harness.exs` (`tasks/<name>/`)
 - **multi-file** — a `tasks/<name>/` whose `solution.ex` is a `<file path="…">…</file>` bundle
@@ -14,10 +14,18 @@ The evaluator (`lib/eval_task/`, driven by `scripts/eval_task.exs`) auto-detects
 - **fill-in-the-middle (FIM)** — a `_02+` subtask dir with only a `prompt.md` (module with a
   `# TODO`) + a single-function `solution.ex`; the evaluator reconstructs the full module from
   the prompt skeleton and runs the parent `_01` harness against it
+- **write-tests (`wt_` prefix)** — prompt = module + spec, completion = the harness
+- **test-FIM (`tfim_` prefix)** — prompt = module + harness with one `test` blanked,
+  completion = that gold test block; reconstructed and run against the parent module
 
-Scoring is `tests·0.7 + analysis·0.2 + compilation·0.1`. The analysis component (moduledoc,
-`@spec`, `@doc`, line-length ≤98, no-TODO, no-SQLi; 8 points) is real — a solution missing docs
-scores below 1.0.
+plus **`repair_` dirs** — verified bug→fix pairs minted deterministically from captured
+generation attempts (broken code + failure report → the accepted fix); they grade as
+single-file tasks.
+
+Scoring is `tests·0.7 + analysis·0.2 + compilation·0.1`, with hard-fails: `overall`
+is 0.0 when nothing compiles, when zero tests ran, or when any test errored. The
+analysis component (moduledoc, `@spec`, `@doc`, line-length ≤98, no-TODO, no-SQLi;
+8 points) is real — a solution missing docs scores below 1.0.
 
 ## Prerequisites
 
@@ -89,11 +97,22 @@ mix run scripts/screen_blind_solve.exs                   # full corpus (~299 cal
 # unit tests for the evaluator itself
 mix test test/eval_task
 
+# local pre-push gate (mix test + perfect/mutant/format gates on touched families):
+git config core.hooksPath .githooks
+# CI (.github/workflows/validate.yml) runs test + format + mutant gates per push,
+# and the full perfect + FIM sweep weekly / on manual dispatch.
+
 # dataset summary for SFT planning — example counts by shape, token volume, length
 # distributions, context-window fit, diversity, quality signals, roadmap coverage
 mix run scripts/dataset_stats.exs                      # pretty report
 mix run scripts/dataset_stats.exs --json               # machine-readable
 mix run scripts/dataset_stats.exs --chars-per-token 3.5   # tune the token estimate
+
+# assertion-tightness measurement (docs/10 R10, report-only): semantic mutants
+# (comparison swap, ±1 on int literals, :ok<->:error, bool flip) of each reference;
+# per-task kill rate + corpus histogram + weakest-20; ledger logs/semantic_mutants.jsonl
+elixir ./scripts/validate.exs --semantic-mutants --only "003_002*"   # spot check
+elixir ./scripts/validate.exs --semantic-mutants                     # full corpus (slow)
 
 # what work still needs to happen on which task sets (re-runnable; rows come from
 # the GenTask.Work registry — docs/09 §12). generate.exs performs exactly the
@@ -102,6 +121,35 @@ mix run scripts/work_status.exs             # work-type × corpus matrix
 mix run scripts/work_status.exs --pending   # per-seed detail
 mix run scripts/work_status.exs --counts    # one compact progress line
 ```
+
+## Nightly flake sweep (runs on a dedicated machine, not a dev box)
+
+Flaky harnesses are found statistically: a test failure under parallel load that
+recovers serially is appended to `logs/flaky.jsonl` **with the failing test name and
+assertion message**; a task (stronger: the same test) reaching **≥2 ledger occurrences**
+is the threshold for fixing it (docs/10 R9 — widen wall-clock bounds or inject a fake
+clock, never weaken assertions). The evidence only accumulates when full sweeps run
+regularly, so schedule `scripts/nightly_sweep.sh` from cron on whichever machine owns
+this job. No LLM calls are made — it is pure CPU work (~15 min on 16 cores).
+
+Setup on the sweep machine:
+
+```bash
+git clone <this-repo> && cd elixir-sft-dataset
+# toolchain: install the EXACT .tool-versions pin (asdf install / mise install) —
+# gate results are only reproducible on the pin
+mix deps.get && mix compile
+docker compose up -d db        # optional; without it the db-tagged task grades RED
+crontab -e                     # then add:
+# 17 3 * * * cd /path/to/elixir-sft-dataset && ./scripts/nightly_sweep.sh
+```
+
+The script compiles first (stale beams silently run old logic), runs
+`validate.exs --stability 3`, prints the ledger's per-task and per-test aggregation,
+and keeps the last 30 logs under `logs/nightly/`. It exits non-zero on any hard
+failure — wire cron mail or your monitoring to that. `logs/` is gitignored: sync
+`logs/flaky.jsonl` back to wherever triage happens (commit it from the sweep machine,
+or fetch it) — the ledger, not the sweep console, is the artifact that matters.
 
 ## Naming convention
 
@@ -128,6 +176,11 @@ tfim_001_001_rate_limiter_02     # test fill-in-the-middle: prompt = harness wit
 `tfim_` dirs carry `solution.ex` (the one gold `test` block) and reconstruct against the parent `_01`.
 The evaluator (`eval_task.exs`) auto-detects these shapes (`:write_test` / `:test_fim`) by prefix.
 
+A third derived kind, **`repair_<id>_<NN>`**, is minted by `scripts/mint_repairs.exs` from
+captured generation attempts: `prompt.md` = the original request + the broken attempt + its
+real failure report; `solution.ex`/`test_harness.exs` = the accepted fix. Every pair is
+double-verified before minting (fix green AND broken red against the same harness).
+
 ## Design & internals
 
 The multi-file and FIM auto-testing design, decisions, and the as-built evaluator (module layout,
@@ -136,6 +189,15 @@ scoring, the Phoenix/SQLite host kit, the validator, known issues) are documente
 - `docs/01-multifile-task-support.md` — multi-file design + prototypes
 - `docs/02-multifile-task-breakdown.md` — decisions + task backlog
 - `docs/03-implementation-spec.md` — the definitive how-it-works + per-task status + known issues
+- `docs/04-task-generation-loop.md` — the automated generation loop (design + env knobs)
+- `docs/05-generation-loop-audit.md` — loop audit + fixes
+- `docs/06-dataset-multiplication.md` — the derived `wt_`/`tfim_` minting design
+- `docs/07-dataset-audit-and-growth-roadmap.md` — dataset-level audit + growth roadmap
+- `docs/08-gate-fixes-and-attempt-capture.md` — gate fixes; per-attempt capture (repair-pair source)
+- `docs/09-loop-hardening.md` — work registry, backfill, loop hardening
+- `docs/10-quality-assurance-audit.md` — **the QA audit campaign (2026-07)**: blind-solve
+  screen (250/299 green, every red a judge-confirmed hard-task keep), prompt↔harness
+  consistency backfills, mutation/format/flake gates, CI — read its §7 orientation first
 
 ## How to contribute:
 
@@ -148,9 +210,26 @@ There are multiple activities that people can do:
 - generate variations of the tasks
 - generate subtasks (fill-in-the-middle)
 
-After adding or changing a task, run `elixir ./scripts/validate.exs` — it evaluates every
-reference solution (catching harness bugs that compile-only checks miss) and confirms each FIM
-target is actually exercised by its parent harness.
+After adding or changing a task, run the gates scoped to it (the pre-push hook does this
+automatically for touched families):
+
+```bash
+elixir ./scripts/validate.exs --only "<family>*"            # perfect-score
+elixir ./scripts/validate.exs --mutants --only "<family>*"  # harness kills a raise-mutant
+elixir ./scripts/format_corpus.exs --check --only "<family>*"  # canonical formatting
+```
+
+Editing any `_01` task **cascades**: its FIM children, `wt_` copy, and `tfim_` children embed
+the parent's module/harness text verbatim — `ls tasks/ | grep <NNN>_<VVV>` before editing and
+re-validate the whole family (`--only "*<NNN>_<VVV>*"`). Prompt edits to `_01` tasks change
+their sha in the blind-screen ledger and will re-screen (one LLM call) on the next screen run.
+
+> **Note (2026-07):** the step-by-step manual workflows below predate the automated
+> generation loop and are kept for historical reference — the loop (next section) performs
+> all three end-to-end with grading, repair, and mutation/quality gates. The meta-prompts
+> they reference (`tasks/single_shot_prompt.md`, `variation_prompt.md`,
+> `fill_in_the_middle_prompt.md`) are NOT what the loop uses (its templates live in
+> `lib/gen_task/prompts.ex`).
 
 ### Implement single file task out of `tasks/tasks.md` file
 
@@ -254,9 +333,11 @@ GEN_DRY_RUN=1 mix run scripts/generate.exs 80
 # The first N pending base ideas (plus their derivatives + backfill):
 GEN_LIMIT=5 mix run scripts/generate.exs
 
-# The whole catalog — leave it running (overnight is fine; it pauses and retries on the
-# 5-hour subscription limit). Detach so it survives your terminal closing:
-nohup mix run scripts/generate.exs > logs/loop_console.log 2>&1 &
+# The whole catalog — leave it running (overnight is fine; running out of tokens is a
+# NORMAL condition: the transport retries every 15 min indefinitely until the 5-hour
+# window resets — GEN_USAGE_MAX_WAIT_MS=0 default). ALWAYS launch LLM sweeps through
+# the detacher so they survive the launching session being dropped:
+scripts/run_detached.sh logs/loop_console.log mix run scripts/generate.exs
 ```
 
 The two work-lists run in order — **catch-up first, then new ground**:

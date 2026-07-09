@@ -13,6 +13,28 @@
 > The **analysis score was also fixed** (it used to be a constant 1.0). See `README.md` and
 > `docs/01`–`03` (esp. `docs/03` §12–13) for the current state.
 
+> **⚠️ Post-campaign update (2026-07-09).** The corpus and harness have since grown ~20×
+> through the automated generation loop (docs/04–09) and passed a full QA-audit campaign
+> (docs/10). Headline deltas against the text below:
+> - **Scale:** `tasks/` now holds **3,753 dirs** (~600 gradable `_01`/`wt_`/`repair_` tasks +
+>   FIM/tfim derivatives), grown by `scripts/generate.exs`, not by hand.
+> - **Two more shapes + repair pairs:** `wt_` (write-tests) and `tfim_` (test-FIM) derived
+>   dirs, plus `repair_` bug→fix pairs minted from captured generation attempts.
+> - **Toolchain is pinned** (`.tool-versions`: Elixir 1.20.2 / OTP 29); the whole corpus is
+>   `Code.format_string!`-canonical and gated (`scripts/format_corpus.exs --check`, CI,
+>   pre-push, and `Evaluator.autoformat/1` inside the loop).
+> - **Gates beyond "green":** perfect-score raw invariants (0 failed/errored, ≥1 passed,
+>   0 warnings, full analysis — `overall` hard-fails to 0.0 on zero tests or any error),
+>   whole-solution + per-function raise-mutant kills, FIM mutation, flake filter with an
+>   enriched ledger (`logs/flaky.jsonl` carries failing test + message), and a report-only
+>   semantic-mutant tightness measurement (`--semantic-mutants`, corpus kill rate 71.4%).
+> - **Prompt↔harness consistency is now verified empirically:** every `_01` passed (or is a
+>   judge-confirmed hard-task keep in) a blind-solve screen — an independent solver must go
+>   green from `prompt.md` alone (`logs/screen_blind.jsonl`, 250/299 green).
+> - `§5`'s manual-era notes and the at-a-glance numbers are historical;
+>   `scripts/validate_harnesses.sh` was removed (audit docs/10 §2.3). For current
+>   operations read `README.md` + `docs/10` §7 (orientation, invariants, playbook).
+
 ---
 
 ## 1. What this project is
@@ -40,7 +62,7 @@ dependencies and drill deep OTP idioms (GenServer, ETS, `Process.monitor`, `Task
 | Fact | Value |
 |---|---|
 | Purpose | Generate & evaluate Elixir SFT training tasks |
-| Elixir / OTP | `~> 1.17` / OTP 27+ (README); Postgres 16+ only for DB-tagged tasks |
+| Elixir / OTP | **pinned** `.tool-versions`: 1.20.2 / OTP 29 (was `~> 1.17` when written); Postgres 16+ only for DB-tagged tasks |
 | Task directories in `tasks/` | **165** (each has `prompt.md` + `solution.ex`; **111** also have `test_harness.exs`) |
 | Task directories in `tasks_multifile/` | **11** (7 are unsolved: prompt + harness, no solution) |
 | Distinct base task ideas realized | ~57 (of a ~1000-idea backlog ≈ 6%) |
@@ -85,8 +107,14 @@ elixir-sft-dataset/
 │   ├── eval_task.exs      # ★ Core evaluator: compile one solution + run its harness → JSON score
 │   ├── run_all.exs        # Batch-run eval_task across all tasks → results/*.json + summary
 │   ├── generate.exs       # ★ Entry point for the generation loop → GenTask.CLI.main (docs/04)
-│   ├── validate.exs       # Quality gate: every reference green + every FIM target mutation-killed
-│   └── validate_harnesses.sh # Sanity-compiles every harness (catches harness syntax bugs)
+│   ├── validate.exs       # Quality gate: perfect-score + mutants/fim/stability/semantic modes
+│   ├── format_corpus.exs  # Canonical-format status/apply/--check gate (docs/10 R6)
+│   ├── screen_blind_solve.exs # Blind-solve screen (prompt↔harness consistency, docs/10 R4)
+│   ├── triage_screen.exs  # LLM-judge triage of screen reds (docs/10 R12d)
+│   ├── lint_harnesses.exs # Harness anti-pattern lint + prompt backfill (docs/10 R5)
+│   ├── mint_repairs.exs   # Mint verified repair_ pairs from captured attempts
+│   ├── nightly_sweep.sh   # Cron entry: stability-3 sweep + flake-ledger aggregation (R9)
+│   └── run_detached.sh    # setsid+nohup launcher — REQUIRED for all LLM sweeps
 ├── tasks/                 # ★ ~312 single-file/FIM task dirs (a_b_c_d naming) + the meta files below
 │   ├── tasks.md           # Master catalog of PURE (stdlib/OTP) task ideas (~558 numbered)
 │   ├── tasks_external.md   # Master catalog of EXTERNAL-dep task ideas (~442 numbered)
@@ -239,11 +267,11 @@ Batch driver: `elixir scripts/run_all.exs <solution_filename> [--parallel N]`. G
 and average score. Tasks lacking the named solution file are reported "missing," not failed.
 (`results/` is gitignored.)
 
-### `scripts/validate_harnesses.sh`
-A bash sanity check run after adding tasks: for each harness it compiles the `.exs` with ExUnit
-loaded and classifies the result — a missing solution/dep module is fine (`OK_NEEDS_MODULE`), but a
-genuine `SyntaxError`/`TokenMissingError` (or an unexpected error) is flagged `BROKEN`. It
-distinguishes "harness references an undefined module" (expected) from "harness has a real bug."
+### `scripts/validate_harnesses.sh` (REMOVED 2026-07-09)
+Deleted per the QA audit (docs/10 §2.3): it claimed to stub referenced modules but never did,
+so its `OK_NEEDS_MODULE` class whitelisted typo'd module references — misplaced trust. Its job
+is covered strictly better by `validate.exs` (every harness actually RUNS against its
+reference under the perfect gate).
 
 ---
 
@@ -1316,10 +1344,8 @@ mix run ./scripts/eval_task.exs 76 1 solution_Qwen3.5-4B-Q6_K_gguf.ex | jq   # a
 elixir scripts/run_all.exs solution.ex --parallel 4
 #   → results/<task>.json, results/report_<ts>.json, results/summary_<ts>.txt
 
-# Sanity-check that every harness at least compiles
-./scripts/validate_harnesses.sh
-
-# Quality gate: every reference green + every FIM target actually exercised (mutation)
+# Quality gates (default = perfect-score; see README for --mutants/--fim/--stability/
+# --semantic-mutants and the format gate scripts/format_corpus.exs --check)
 elixir ./scripts/validate.exs
 
 # Dataset summary for SFT planning (example counts by shape, token volume, distributions,
@@ -1333,11 +1359,15 @@ mix format
 mix run scripts/generate.exs 80          # one idea, end-to-end (base → variations → FIM)
 GEN_DRY_RUN=1 mix run scripts/generate.exs 80   # generate + grade, write nothing
 GEN_LIMIT=5 mix run scripts/generate.exs        # first 5 pending ideas
-nohup mix run scripts/generate.exs > logs/loop_console.log 2>&1 &   # whole catalog, detached
+# whole catalog: ALWAYS detach LLM sweeps (token exhaustion is routine; the transport
+# waits 15 min/attempt indefinitely, but only survives if the launching session's death
+# can't kill it):
+scripts/run_detached.sh logs/loop_console.log mix run scripts/generate.exs
 ```
 
-Adding a task follows the README's contribution workflow (§6 above): expand an idea from `tasks.md`
-with `single_shot_prompt.md`, drop `prompt.md` + `test_harness.exs` into a new `{a}_001_{name}_01/`
-dir, generate a solution, iterate against `eval_task.exs` until green, then optionally add variations
-(`variation_prompt.md`) and FIM subtasks (`fill_in_the_middle_prompt.md`). To do all of that
-automatically, run `scripts/generate.exs` (README "Automated generation loop"; design in `docs/04`).
+Adding tasks is normally done by the automated loop (`scripts/generate.exs` — README
+"Automated generation loop"; design in `docs/04`), which authors, grades, repairs, and gates
+each task. The README's manual step-by-step workflow (and the `tasks/*.md` meta-prompts it
+references) is historical. If you hand-edit any existing `_01` task, remember the cascade
+(FIM/wt_/tfim carriers embed its text verbatim) and re-run the family gates — see
+`docs/10` §7 invariants.
