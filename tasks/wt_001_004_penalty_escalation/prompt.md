@@ -44,6 +44,25 @@ Give me the complete module in a single file. Use only OTP standard library, no 
 - Sending the server process a bare `:cleanup` message performs one cleanup
   pass immediately — the same work the periodic timer performs.
 
+- Strike decay is evaluated lazily at each `check` call: one strike is removed for
+  every full `window_ms * 10` period elapsed since the last strike — an elapsed time
+  of exactly one period already removes one strike. For each strike removed, the
+  "last strike" reference time advances by one full period (it does not reset to the
+  current time), so further decay stays on the original schedule.
+
+- Decay forgives cooldowns: whenever at least one strike decays, any outstanding
+  cooldown is cancelled and the request is evaluated against the normal
+  sliding-window limit. `:cooling_down` is only returned while no strike has decayed
+  since the cooldown was recorded. When the strike count decays to zero the key
+  resets entirely, as if never seen.
+
+- The cooldown recorded with a new strike ends exactly `retry_after_ms` — the value
+  returned in the `:rate_limited` tuple, i.e. the max defined above — after the
+  moment the strike was issued.
+
+- A rejected request's timestamp is not added to the sliding window; only allowed
+  requests consume window slots.
+
 ## Module under test
 
 ```elixir
