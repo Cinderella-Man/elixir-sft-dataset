@@ -992,6 +992,15 @@ keep accumulating across days):
   pattern (exemplar: `tasks/008_001_*/test_harness.exs` or `wt_010_001`'s Agent clock).
   A tfim flake means the PARENT harness block is timing-sensitive — fix the parent and
   cascade (same rules as R2a).
+- **Ledger enriched 2026-07-09:** entries now carry a `failures` array (test name,
+  module, first 300 chars of the assertion message) captured from the PARALLEL
+  failure before the serial re-run discards it — a single occurrence now says WHERE
+  the timing sensitivity is, and two occurrences on the same TEST are much stronger
+  evidence than two on the same task. Per-test aggregation:
+  `jq -r '"\(.task) :: \(.failures[]?.test // "?")"' logs/flaky.jsonl | sort | uniq -c`.
+  (Entries before 2026-07-09 predate the field.) Verified end-to-end with a planted
+  fails-once probe task (marker-file harness): recovered, gate green, entry carried
+  the exact test + message; probe removed.
 
 ### R10. Semantic mutants (assertion tightness) — measurement first
 - Extend `GenTask.Mutation` with a small operator set applied per public function:

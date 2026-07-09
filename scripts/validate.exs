@@ -19,7 +19,8 @@
 #                 FAIL (tfim is skipped: its non-vacuousness gate runs at mint time)
 #   --stability N flake filter must see N consecutive serial passes to recover a
 #                 test-failure suspect (default 1). Recovered flakes are always
-#                 appended to logs/flaky.jsonl — a repeat offender there needs fixing.
+#                 appended to logs/flaky.jsonl WITH the failing test name + message
+#                 from the parallel run — a repeat offender there needs fixing.
 #   --semantic-mutants  REPORT-ONLY assertion-tightness measurement: first-order
 #                 semantic mutants (comparison swap, ±1, :ok↔:error, bool flip) of
 #                 the reference; per-task kill-rate + corpus histogram + weakest 20;
@@ -212,13 +213,27 @@ defmodule Validate do
 
   # A task that fails under parallel load and recovers serially is timing-sensitive.
   # The ledger is the quarantine signal `dataset_stats`/reviews can aggregate.
+  # `failures` carries the test NAME + assertion message captured at the moment of
+  # the parallel failure (the serial re-run would otherwise discard them) — a single
+  # occurrence then says WHERE the timing sensitivity is, and two occurrences on the
+  # same test are far stronger evidence than two on the same task (docs/10 R9).
   defp log_flake(task, first_json) do
     File.mkdir_p!("logs")
+
+    failures =
+      for f <- first_json["test_failures"] || [] do
+        %{
+          test: f["test"],
+          module: f["module"],
+          message: String.slice(f["message"] || "", 0, 300)
+        }
+      end
 
     entry = %{
       task: task.name,
       ts: DateTime.utc_now() |> DateTime.to_iso8601(),
-      detail: Enum.join(get_in(first_json, ["score", "reasons"]) || [describe(first_json)], "; ")
+      detail: Enum.join(get_in(first_json, ["score", "reasons"]) || [describe(first_json)], "; "),
+      failures: failures
     }
 
     File.write!("logs/flaky.jsonl", Jason.encode!(entry) <> "\n", [:append])
