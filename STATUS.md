@@ -48,7 +48,10 @@ What that means in practice:
       longer blocked by them); OPEN: §5.1 item 8 (module-FIM/wt embed gate),
       §5.2 decision (accept-time blind screen for repaired bases + entailment
       judge)
-- [ ] Phase 2: derivative top-up run complete (work_status shows 0 pending everywhere)
+- [ ] Phase 2: derivative top-up run **LAUNCHED 2026-07-10 ~18:45** (detached,
+      `logs/backfill_phase2.log`; 111 seeds / 710 units: 29 variation + 57 FIM
+      + 624 test-FIM). First run through the §5.1-hardened loop. Complete when
+      work_status shows 0 pending everywhere
 - [ ] Phase 3: new generation resumed and first batch validated
 - [ ] The line: catch-up tooling deleted per docs/12 §7.2, this file flipped
 
