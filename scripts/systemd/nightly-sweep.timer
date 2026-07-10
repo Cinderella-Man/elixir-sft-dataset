@@ -1,0 +1,13 @@
+# Timer half of the nightly flake sweep — see nightly-sweep.service for install.
+
+[Unit]
+Description=Run the Elixir SFT nightly flake sweep at 03:00
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+# Replay a missed run on next wake instead of silently skipping it
+# (a plain crontab entry would skip runs missed while the machine sleeps).
+Persistent=true
+
+[Install]
+WantedBy=timers.target

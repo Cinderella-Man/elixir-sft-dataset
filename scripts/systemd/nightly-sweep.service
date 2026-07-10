@@ -1,0 +1,20 @@
+# Nightly flake sweep — systemd user service (docs/12 §4.1.10).
+#
+# Install (one time, as your user):
+#   cp scripts/systemd/nightly-sweep.{service,timer} ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now nightly-sweep.timer
+#   loginctl enable-linger $USER   # else the timer sleeps while you are logged out
+#
+# Verify: systemctl --user list-timers nightly-sweep.timer
+
+[Unit]
+Description=Elixir SFT nightly flake sweep (docs/10 R9)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/kamil/projects/elixir-sft-dataset
+# systemd user services do not source ~/.bashrc; the asdf shims (mix/elixir)
+# and /usr/bin (git, jq) must be on PATH explicitly.
+Environment=PATH=/home/kamil/.asdf/shims:/home/kamil/.asdf/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env bash scripts/nightly_sweep.sh
