@@ -71,6 +71,15 @@ defmodule GenTask.WriteTest do
       skipped?(grade) ->
         outcome(wt_id, seed, :skipped, reason: "parent grades `skipped` (e.g. requires Postgres)")
 
+      # A minted gold harness must compile warning-free (docs/12 §5.1 item 1) — the
+      # only zero-LLM raw-invariant that can regress on the copy (the module + harness
+      # are inherited, so `@moduledoc`/`@spec` house-style is NOT re-checked here).
+      Evaluator.green?(grade) and Evaluator.compile_warnings(grade) > 0 ->
+        outcome(wt_id, seed, :rejected,
+          reason:
+            "gold harness compiles with #{Evaluator.compile_warnings(grade)} warning(s) vs the module"
+        )
+
       Evaluator.green?(grade) ->
         _ = Cycle.promote(cfg, wt_id, files)
         stats = Cycle.grade_stats(grade)
@@ -164,7 +173,11 @@ defmodule GenTask.WriteTest do
       tests_passed: stats.tests_passed,
       tests_failed: stats.tests_failed,
       tests_total: stats.tests_total,
-      mutant_failed: status == :accepted,
+      # No mutant EVER runs for a wt_ mint — coverage is inherited from the parent `_01`
+      # (which passed the per-function gate). Recording `mutant_failed: true` claimed a
+      # kill that never happened (docs/12 §5.1 item 5); the honest label is "inherited".
+      mutant_failed: false,
+      mutation: if(status == :accepted, do: "inherited", else: nil),
       reason: Keyword.get(opts, :reason)
     )
   end

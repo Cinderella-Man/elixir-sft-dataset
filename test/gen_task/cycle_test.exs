@@ -78,4 +78,32 @@ defmodule GenTask.CycleTest do
                Cycle.guard_test_deletion(files, %{"test_harness.exs" => @harness_2}, @ctx)
     end
   end
+
+  describe "confirmation_seed/1 (stability confirmation, docs/12 item 6)" do
+    test "is deterministic for a given task id" do
+      assert Cycle.confirmation_seed("001_001_rate_limiter_01") ==
+               Cycle.confirmation_seed("001_001_rate_limiter_01")
+    end
+
+    test "is nonzero (must differ from the evaluator's pinned seed 0)" do
+      for id <- ["a", "001_001_x_01", "tfim_020_001_y_02", ""] do
+        assert Cycle.confirmation_seed(id) > 0
+      end
+    end
+
+    test "differs across task ids (order re-shuffled per task, not one global order)" do
+      seeds = for id <- ["a", "b", "c", "d"], do: Cycle.confirmation_seed(id)
+      assert length(Enum.uniq(seeds)) > 1
+    end
+  end
+
+  describe "reason_text/1 for the new gate rejects" do
+    test "names the flake seed" do
+      assert Cycle.reason_text({:flaky, 42}) =~ "seed 42"
+    end
+
+    test "names the warning count" do
+      assert Cycle.reason_text({:warnings, 2}) =~ "2"
+    end
+  end
 end

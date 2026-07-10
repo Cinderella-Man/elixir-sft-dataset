@@ -15,7 +15,7 @@ defmodule GenTask.Variations do
 
   require Logger
 
-  alias GenTask.{Catalog, Config, Cycle, CycleLog, Prompts, Reply}
+  alias GenTask.{Catalog, Config, Cycle, CycleLog, Mutation, Prompts, Reply}
 
   @variation_header ~r/^###\s+Task\s+\d+\s+-\s+V\d+\s+-\s+(.+?)\s*$/
 
@@ -41,15 +41,90 @@ defmodule GenTask.Variations do
             # Salvage: only the reply groups that passed the contract are built; a
             # malformed vN forfeits its slot (topped up on a later run) instead of
             # discarding the sibling groups from the same expensive call.
-            slots
-            |> Enum.with_index(1)
-            |> Enum.filter(fn {_slot, i} -> i in valid_ns end)
-            |> Enum.map(fn {slot, i} -> build_variation(i, slot, files, base, cfg) end)
+            #
+            # The distinctness gate (docs/12 §5.1 item 4) needs the set of public-function
+            # sets already "taken" — the base's plus every on-disk sibling's — and grows it
+            # as each new variation is accepted, so `map_reduce` threads that accumulator.
+            {outs, _taken} =
+              slots
+              |> Enum.with_index(1)
+              |> Enum.filter(fn {_slot, i} -> i in valid_ns end)
+              |> Enum.map_reduce(taken_public_fn_sets(base, cfg), fn {slot, i}, taken ->
+                out = build_variation(i, slot, files, base, cfg, taken)
+                {out, add_taken(taken, out)}
+              end)
+
+            outs
 
           {:error, out} ->
             [out]
         end
     end
+  end
+
+  # Grow the taken-set list when a variation was accepted with a non-empty public-function
+  # set (so a later sibling in the same call can't duplicate it either).
+  defp add_taken(taken, %{status: :accepted, seed: %{files: files}}) do
+    case public_fn_set(files["solution.ex"]) do
+      set -> if MapSet.size(set) > 0, do: [set | taken], else: taken
+    end
+  end
+
+  defp add_taken(taken, _out), do: taken
+
+  # A variation duplicates a taken set when its co-authored solution's public-function
+  # set is non-empty and equal to any of them. Empty sets never collide (bundle / no
+  # public defs: nothing to compare). Public (@doc false) so the gate decision is
+  # unit-testable without a generation call.
+  @doc false
+  @spec duplicate_public_fn_set?(String.t() | nil, [MapSet.t()]) :: boolean()
+  def duplicate_public_fn_set?(solution_src, taken) do
+    set = public_fn_set(solution_src)
+    MapSet.size(set) > 0 and Enum.any?(taken, &(&1 == set))
+  end
+
+  # The public-function sets a new variation must NOT duplicate: the base's, plus every
+  # already-promoted sibling variation's (read fresh from disk). Empty sets (bundles /
+  # modules with no public defs — `public_functions/1` returns []) are dropped: there is
+  # nothing to compare, and every such solution would otherwise collide on the empty set.
+  # Public (@doc false) for the same testability reason as `duplicate_public_fn_set?/2`.
+  @doc false
+  @spec taken_public_fn_sets(map(), Config.t()) :: [MapSet.t()]
+  def taken_public_fn_sets(base, %Config{tasks_dir: tasks_dir}) do
+    base_set = public_fn_set(base.files["solution.ex"])
+    a = Catalog.pad3(base.num)
+
+    sibling_sets =
+      for b <- 2..4,
+          dir <- Path.wildcard("#{tasks_dir}/#{a}_#{Catalog.pad3(b)}_*_01"),
+          File.dir?(dir),
+          sol = Path.join(dir, "solution.ex"),
+          File.regular?(sol),
+          set = public_fn_set(File.read!(sol)),
+          MapSet.size(set) > 0,
+          do: set
+
+    Enum.reject([base_set | sibling_sets], &(MapSet.size(&1) == 0))
+  end
+
+  defp public_fn_set(nil), do: MapSet.new()
+  defp public_fn_set(src), do: src |> Mutation.public_functions() |> MapSet.new()
+
+  defp fn_set_str(set),
+    do: set |> Enum.map(fn {n, a} -> "#{n}/#{a}" end) |> Enum.sort() |> Enum.join(", ")
+
+  defp not_distinct_outcome(vtask_id, num, vname, var_set) do
+    Cycle.outcome(
+      id: vtask_id,
+      kind: :variation,
+      num: num,
+      name: vname,
+      status: :rejected,
+      attempts: 0,
+      reason:
+        "not distinct: same public-function set as the base or an accepted sibling " <>
+          "(#{fn_set_str(var_set)})"
+    )
   end
 
   # Which of the V1/V2/V3 slots (b = 2/3/4) are still free, and the display names of
@@ -152,7 +227,7 @@ defmodule GenTask.Variations do
   # `i` is the 1-based index within THIS generation call (which file block: v1, v2…);
   # `slot` is the target b-index on disk (2/3/4), which may differ when topping up.
   # The catalog label is `V{slot-1}` (slot 2 → V1).
-  defp build_variation(i, slot, files, base, cfg) do
+  defp build_variation(i, slot, files, base, cfg, taken) do
     prefix = "v#{i}/"
     vnum = slot - 1
     {vname, vdesc} = parse_idea(files[prefix <> "idea.md"], base.name, vnum)
@@ -160,6 +235,26 @@ defmodule GenTask.Variations do
     b = slot
     vtask_id = "#{Catalog.pad3(base.num)}_#{Catalog.pad3(b)}_#{vslug}_01"
 
+    # Distinctness gate (docs/12 §5.1 item 4): a variation whose co-authored solution has
+    # the SAME public-function set as the base or an already-accepted sibling is rejected
+    # here — BEFORE the blind solve + grading cycle — so the LLM cost is never spent.
+    # Skipped when the set is empty (bundle / no public defs: nothing to compare).
+    if duplicate_public_fn_set?(files[prefix <> "solution.ex"], taken) do
+      var_set = public_fn_set(files[prefix <> "solution.ex"])
+
+      Logger.info(
+        "VARIATION #{vtask_id}: rejected pre-cycle — not distinct (#{fn_set_str(var_set)})"
+      )
+
+      not_distinct_outcome(vtask_id, base.num, vname, var_set)
+    else
+      build_variation_cycle(prefix, files, base, cfg, {vtask_id, vname, vdesc, vnum, vslug, b})
+    end
+  end
+
+  # The staged blind-solve + shared-cycle path for a distinct variation (extracted so the
+  # distinctness gate above can early-return without opening a per-cycle log).
+  defp build_variation_cycle(prefix, files, base, cfg, {vtask_id, vname, vdesc, vnum, vslug, b}) do
     handle = CycleLog.open(cfg, vtask_id)
     Logger.info("VARIATION #{vtask_id}: #{vname}")
 
@@ -291,6 +386,7 @@ defmodule GenTask.Variations do
       tests_failed: stats.tests_failed,
       tests_total: stats.tests_total,
       mutant_failed: result.mutant_failed,
+      mutation: result.mutation,
       reason: reason,
       seed: seed
     )

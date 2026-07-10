@@ -42,7 +42,48 @@ defmodule GenTask.CLI do
     run_backfill(plan.backfill, names, cfg)
     run_bases(plan.bases, cfg)
 
+    maybe_mint_repairs(cfg)
+
     IO.puts("\nDone.")
+    :ok
+  end
+
+  # Post-run repair minting (docs/12 §5.1 item 7): every graded attempt chain captured
+  # this run (and any earlier ones still on disk) is turned into verified repair-pair
+  # tasks. `mint_repairs.exs` lives in scripts/ (not compiled into lib/) and the loop
+  # runs under `mix run`, so we shell out to a fresh `mix run` subprocess rather than
+  # `Code.require`. It is add-only and double-verified, so re-running is safe. A failure
+  # of the minting step must NOT fail the run — log and continue. Skipped in dry-run
+  # (minting promotes into tasks/, which dry-run must never do).
+  defp maybe_mint_repairs(%Config{dry_run: true}) do
+    IO.puts("\nRepair minting: skipped (dry-run).")
+    :ok
+  end
+
+  defp maybe_mint_repairs(%Config{} = _cfg) do
+    IO.puts("\nMinting repair tasks from captured attempt chains ...")
+
+    try do
+      {out, status} =
+        System.cmd("mix", ["run", "scripts/mint_repairs.exs"], stderr_to_stdout: true)
+
+      summary = out |> String.split("\n", trim: true) |> Enum.take(-3) |> Enum.join(" | ")
+
+      if status == 0 do
+        IO.puts("  #{summary}")
+      else
+        IO.puts("  repair minting exited #{status} (continuing) — #{summary}")
+        Logger.warning("mint_repairs.exs exited #{status}: #{out}")
+      end
+    rescue
+      e ->
+        IO.puts("  repair minting failed (continuing): #{Exception.message(e)}")
+
+        Logger.warning(
+          "mint_repairs.exs crashed: " <> Exception.format(:error, e, __STACKTRACE__)
+        )
+    end
+
     :ok
   end
 
@@ -352,7 +393,16 @@ defmodule GenTask.CLI do
       tests_passed: out.tests_passed,
       tests_failed: out.tests_failed,
       tests_total: out.tests_total,
+      # `mutant_failed` is now honest per shape (docs/12 §5.1 item 5): true only where a
+      # raise-mutant genuinely ran and was killed. `mutation` is the precise mode.
       mutant_failed: out.mutant_failed,
+      mutation: out.mutation,
+      # Acceptance provenance (S12): which gates were active + the model, so a ledger row
+      # proves what standard the task passed under.
+      model: cfg.model,
+      quality_gate: cfg.quality_gate,
+      per_fn_mutation: cfg.per_fn_mutation,
+      variation_blind: not cfg.skip_variation_blind,
       elapsed_s: ms && Float.round(ms / 1000, 1)
     })
   end
@@ -362,13 +412,21 @@ defmodule GenTask.CLI do
   end
 
   defp status_text(%{status: :accepted} = o) do
-    mutant = if o.mutant_failed, do: "mutant killed", else: "mutant survived?"
-    "ACCEPTED (#{o.tests_passed} passed, #{mutant}, #{o.attempts} attempt(s))"
+    "ACCEPTED (#{o.tests_passed} passed, #{mutation_note(o)}, #{o.attempts} attempt(s))"
   end
 
   defp status_text(%{status: :rejected} = o), do: "REJECTED (#{o.reason})"
   defp status_text(%{status: :skipped} = o), do: "SKIPPED (#{o.reason})"
   defp status_text(%{status: :error} = o), do: "ERROR (#{o.reason})"
+
+  # Honest console note for the accepted mutation mode (docs/12 §5.1 item 5): a wt_ mint
+  # inherits coverage and a tfim-bundle passes only a static check — neither runs a
+  # mutant, so "mutant survived?" (the old `mutant_failed == false` text) was misleading.
+  defp mutation_note(%{mutation: "inherited"}), do: "inherited coverage"
+  defp mutation_note(%{mutation: "static_only"}), do: "static assertion check"
+  defp mutation_note(%{mutation: mode}) when is_binary(mode), do: "mutant killed (#{mode})"
+  defp mutation_note(%{mutant_failed: true}), do: "mutant killed"
+  defp mutation_note(_), do: "no mutant ran"
 
   defp print_header(cfg, plan) do
     mode = if cfg.dry_run, do: " [DRY-RUN — no promotion / tasks.md edits]", else: ""

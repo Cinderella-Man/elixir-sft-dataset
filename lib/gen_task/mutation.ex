@@ -451,25 +451,34 @@ defmodule GenTask.Mutation do
   `{:survived, reason}` naming the uncovered function (or whole-module).
   """
   @spec gate_base(String.t(), %{String.t() => String.t()}, Config.t()) :: result()
-  def gate_base(mutant_dir, files, %Config{per_fn_mutation: true} = cfg) do
-    cond do
+  def gate_base(mutant_dir, files, %Config{} = cfg) do
+    case base_mode(files["solution.ex"], cfg) do
       # A bundle's public API spans several modules; `public_functions`/`mutate_fn`
       # are single-module only, so per-fn mutation cannot address it. `mutate/1`
       # gutting every lib module is the whole-solution coverage check for bundles.
-      Bundle.bundle?(files["solution.ex"]) ->
-        gate_base_whole(mutant_dir, files, cfg)
-
-      true ->
-        case per_fn_targets(files["solution.ex"]) do
-          [] -> gate_base_whole(mutant_dir, files, cfg)
-          fns -> gate_base_per_fn(mutant_dir, files, fns, cfg)
-        end
+      :whole -> gate_base_whole(mutant_dir, files, cfg)
+      :per_fn -> gate_base_per_fn(mutant_dir, files, per_fn_targets(files["solution.ex"]), cfg)
     end
   end
 
-  def gate_base(mutant_dir, files, %Config{} = cfg) do
-    gate_base_whole(mutant_dir, files, cfg)
+  @doc """
+  Whether `gate_base/3` runs a **per-function** or a **whole-solution** raise-mutation
+  sweep for `solution_src` under `cfg` — the single source of truth for the gate's
+  dispatch AND for the honest mutation-mode label recorded in the ledger
+  (docs/12 §5.1 item 5). `:whole` when per-function mutation is disabled, the solution
+  is a `<file>` bundle (multi-module API), or no per-function targets parse; `:per_fn`
+  otherwise.
+  """
+  @spec base_mode(String.t(), Config.t()) :: :per_fn | :whole
+  def base_mode(solution_src, %Config{per_fn_mutation: true}) do
+    cond do
+      Bundle.bundle?(solution_src) -> :whole
+      per_fn_targets(solution_src) == [] -> :whole
+      true -> :per_fn
+    end
   end
+
+  def base_mode(_solution_src, %Config{}), do: :whole
 
   @doc """
   The public functions a per-function raise-mutation sweep should target for `src`

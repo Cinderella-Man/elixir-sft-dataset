@@ -253,6 +253,22 @@ wired in*, and a few is-it-really-true gaps were found today.
 
 ### 5.1 [blocks Phase 3] Trivial, zero-LLM-cost wiring (one batch)
 
+> ✅ **Items 1–7 DONE 2026-07-10** (one batch, 42 new tests, 254 passing;
+> forward-only — the existing corpus is untouched). Highlights: warnings now
+> gate all three derivative accept sites; the four S9 detectors run in the
+> accept gate (`:sys.get_state`/`assert inspect`/exact-raise pins are HARD
+> shortfalls; undocumented `:infinity`/trigger-sends are repair advisories);
+> test-count floor `>= max(3, public_fn_count)`; variation-distinctness gate
+> rejects duplicate public-function sets BEFORE any LLM spend; runs.jsonl now
+> records provenance (model, active gates, honest `mutation` mode — wt_ no
+> longer claims a mutant kill that never ran); stability confirmation
+> re-grades every accept at a derived deterministic ExUnit seed (failures →
+> flake ledger + reject); `mint_repairs.exs` auto-runs post-run.
+> **Retro numbers** (gates are forward-only; for context): 32/303 seeds would
+> violate the test floor; 63/220 accepted variations share a public-function
+> set with base/sibling. Item 8 (below) remains open.
+
+
 1. **Raw perfect invariants for fim/wt_/tfim_ accepts** — today the warnings
    check and style gate run only for base/variation; a FIM child or minted
    harness can be accepted with compile warnings. One cond clause per accept

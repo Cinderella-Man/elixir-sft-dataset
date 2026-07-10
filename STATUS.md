@@ -44,7 +44,10 @@ What that means in practice:
       launch on Kamil's go (paid run).**
 - [x] docs/12 §4.2.1 — 099_002/3/4 screened GREEN; S6 holds for all 303 seeds (2026-07-10)
 - [ ] docs/12 §4.2 decisions signed off (spot-review scope, prompt-monotony scope, semantic floor — tail confirmed at 20 families <0.5 by re-measure)
-- [ ] docs/12 §5 loop hardening items marked [blocks Phase 2] / [blocks Phase 3]
+- [ ] docs/12 §5 loop hardening — §5.1 items 1–7 DONE 2026-07-10 (Phase 3 no
+      longer blocked by them); OPEN: §5.1 item 8 (module-FIM/wt embed gate),
+      §5.2 decision (accept-time blind screen for repaired bases + entailment
+      judge)
 - [ ] Phase 2: derivative top-up run complete (work_status shows 0 pending everywhere)
 - [ ] Phase 3: new generation resumed and first batch validated
 - [ ] The line: catch-up tooling deleted per docs/12 §7.2, this file flipped

@@ -97,6 +97,33 @@ defmodule GenTask.CycleLog do
     append_jsonl(Path.join(logs_dir, "usage.jsonl"), Map.put_new(entry, :ts, ts()))
   end
 
+  @doc """
+  Append a stability-confirmation flake to `logs/flaky.jsonl` — the same ledger
+  `scripts/validate.exs` writes (docs/12 §5.1 item 6), reusing its entry shape
+  (`task`, `ts`, `detail`, `failures[]`) so a repeat offender aggregates across both
+  sources. `grade` is the (non-green) confirmation grade at ExUnit `seed`.
+  """
+  @spec record_flake(Config.t(), String.t(), term(), integer()) :: :ok
+  def record_flake(%Config{logs_dir: logs_dir}, task_id, grade, seed) do
+    json = grade_map(grade)
+
+    failures =
+      for f <- json["test_failures"] || [] do
+        %{
+          test: f["test"],
+          module: f["module"],
+          message: String.slice(f["message"] || "", 0, 300)
+        }
+      end
+
+    append_jsonl(Path.join(logs_dir, "flaky.jsonl"), %{
+      task: task_id,
+      ts: ts(),
+      detail: "stability-confirmation re-grade failed at ExUnit seed #{seed}",
+      failures: failures
+    })
+  end
+
   @doc "Append one line to `logs/waits.jsonl` (one per usage-window pause)."
   @spec record_wait(Config.t(), non_neg_integer(), pos_integer(), String.t()) :: :ok
   def record_wait(%Config{logs_dir: logs_dir}, waited_ms, attempt, signal) do

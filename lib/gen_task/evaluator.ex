@@ -61,9 +61,14 @@ defmodule GenTask.Evaluator do
   @doc """
   Grade `dir` against an explicit `solution` (a filename inside `dir`, or a path to
   an override solution file — used by the FIM mutation gate).
+
+  `seed` optionally overrides the evaluator's pinned ExUnit seed (`0`) via the
+  `EVAL_SEED` env var read in `EvalTask.Runner` — the stability-confirmation re-grade
+  (docs/12 §5.1 item 6) passes a derived nonzero seed to break the pinned test order.
+  `nil` leaves the pinned `seed: 0` (byte-deterministic, the default for every gate).
   """
-  @spec grade(String.t(), Config.t(), String.t()) :: grade()
-  def grade(dir, %Config{} = cfg, solution) do
+  @spec grade(String.t(), Config.t(), String.t(), integer() | nil) :: grade()
+  def grade(dir, %Config{} = cfg, solution, seed \\ nil) do
     args = [
       "--signal=KILL",
       to_string(cfg.eval_timeout_s),
@@ -73,9 +78,11 @@ defmodule GenTask.Evaluator do
       solution
     ]
 
-    Logger.debug("grade: timeout #{Enum.join(args, " ")}")
+    Logger.debug(
+      "grade: timeout #{Enum.join(args, " ")}#{if seed, do: " (seed #{seed})", else: ""}"
+    )
 
-    case System.cmd("timeout", args, stderr_to_stdout: false) do
+    case System.cmd("timeout", args, stderr_to_stdout: false, env: seed_env(seed)) do
       {out, 0} ->
         json = out |> last_json_line() |> Jason.decode!()
         Logger.debug("grade JSON: #{Jason.encode!(json)}")
@@ -86,6 +93,14 @@ defmodule GenTask.Evaluator do
         :timeout_or_crash
     end
   end
+
+  # The environment overlay for a graded subprocess: `[{"EVAL_SEED", "<seed>"}]` when a
+  # seed override is given, else `[]` (inherit the ambient environment, pinned seed `0`).
+  # Public (`@doc false`) so the plumbing is unit-testable without a subprocess.
+  @doc false
+  @spec seed_env(integer() | nil) :: [{String.t(), String.t()}]
+  def seed_env(nil), do: []
+  def seed_env(seed) when is_integer(seed), do: [{"EVAL_SEED", Integer.to_string(seed)}]
 
   @doc "Last `{`-prefixed stdout line (mirrors `run_all.exs`)."
   @spec last_json_line(String.t()) :: String.t()
@@ -155,18 +170,36 @@ defmodule GenTask.Evaluator do
   end
 
   @doc """
-  House-style / warning shortfall for a **green** base/variation grade, or `nil` when
-  the solution already meets the bar. Used by the quality gate (`GenTask.Cycle`): a
-  green, mutant-killing solution should still carry a `@moduledoc`, at least one
-  `@spec` and `@doc`, no `TODO`, stay within 98 columns, avoid SQL-interpolation, and
-  compile with zero warnings — every check the analysis rubric scores, so an accepted
-  reference banks the full analysis subscore. Returns a `; `-joined description of
-  every shortfall.
+  House-style / warning / harness-standard shortfall for a **green** base/variation
+  grade, or `nil` when the solution already meets the bar. Used by the quality gate
+  (`GenTask.Cycle`): a green, mutant-killing solution should still carry a `@moduledoc`,
+  at least one `@spec` and `@doc`, no `TODO`, stay within 98 columns, avoid
+  SQL-interpolation, and compile with zero warnings — every check the analysis rubric
+  scores, so an accepted reference banks the full analysis subscore.
+
+  Two further gates use the `files` (the accepted triplet) when supplied (docs/12 §5.1):
+
+    * **minimum test-count floor** (item 3) — `tests_total >= max(3, public_fn_count)`;
+      both numbers are already in the grade JSON.
+    * **harness anti-pattern lint (S9)** (item 2) — the four detector families ported
+      from `scripts/lint_harnesses.exs`. `:sys.get_state`/`replace_state`,
+      `assert inspect(...)`, and exact `assert_raise Mod, "msg"` pins are HARD
+      shortfalls; an undocumented `:infinity` interval option or an undocumented
+      `:cleanup`/`:sweep`/`:tick` trigger send is a documents-or-removes advisory that
+      fires only when `prompt.md` does not document it.
+
+  Returns a `; `-joined description of every shortfall. `files` defaults to `%{}`, in
+  which case only the grade-JSON checks run (the harness/prompt checks need the text).
   """
-  @spec quality_shortfall(map()) :: String.t() | nil
-  def quality_shortfall(%{} = json) do
+  @spec quality_shortfall(map(), %{optional(String.t()) => String.t()}) :: String.t() | nil
+  def quality_shortfall(%{} = json, files \\ %{}) do
     a = json["analysis"] || %{}
     warnings = json["compile_warnings"] || 0
+    tests_total = json["tests_total"] || 0
+    public_fns = a["public_fn_count"] || 0
+    floor = max(3, public_fns)
+    harness = files["test_harness.exs"] || ""
+    prompt = files["prompt.md"] || ""
 
     []
     |> add_if(warnings > 0, "#{warnings} compile warning(s) — silence them")
@@ -182,6 +215,12 @@ defmodule GenTask.Evaluator do
       a["sql_injection_risk"] == true,
       "string interpolation inside SQL — use parameterized queries"
     )
+    |> add_if(
+      tests_total < floor,
+      "only #{tests_total} test(s) — the harness needs at least #{floor} " <>
+        "(max of 3 and the #{public_fns} public function(s))"
+    )
+    |> add_harness_shortfalls(harness, prompt)
     |> case do
       [] -> nil
       reasons -> reasons |> Enum.reverse() |> Enum.join("; ")
@@ -190,6 +229,95 @@ defmodule GenTask.Evaluator do
 
   defp add_if(list, true, msg), do: [msg | list]
   defp add_if(list, false, _msg), do: list
+
+  @doc """
+  Number of compile warnings in a `grade` (0 for a timeout/crash). Used by the
+  derivative accept sites (fim/wt_/tfim) to gate zero-warnings without reusing the full
+  house-style check — the inherited parent `solution.ex` would misfire `@moduledoc`/
+  `@spec` checks there (docs/12 §5.1 item 1).
+  """
+  @spec compile_warnings(grade() | map()) :: non_neg_integer()
+  def compile_warnings(:timeout_or_crash), do: 0
+  def compile_warnings({:ok, json}), do: compile_warnings(json)
+  def compile_warnings(%{} = json), do: json["compile_warnings"] || 0
+
+  # ── S9 harness anti-pattern detectors (ported from scripts/lint_harnesses.exs) ──
+
+  @trigger_atoms ~w(cleanup sweep tick)
+
+  # No harness text (e.g. quality_shortfall called with only the grade JSON) → skip.
+  defp add_harness_shortfalls(list, "", _prompt), do: list
+
+  defp add_harness_shortfalls(list, harness, prompt) do
+    sys = count(harness, ~r/:sys\.(get_state|replace_state)/)
+    insp = count(harness, ~r/assert\s+inspect\(/)
+    exact_raise = count(harness, ~r/assert_raise\s+[\w.]+,\s*"/)
+    infinity = undocumented_infinity_keys(harness, prompt)
+    triggers = undocumented_trigger_atoms(harness, prompt)
+
+    list
+    # HARD shortfalls — the anti-pattern must go (the fixer reworks the harness).
+    |> add_if(
+      sys > 0,
+      "test_harness.exs reaches into internal state via `:sys.get_state`/`:sys.replace_state` " <>
+        "(#{sys} call(s)) — assert observable behavior through the public API instead"
+    )
+    |> add_if(
+      insp > 0,
+      "test_harness.exs uses `assert inspect(...)` (#{insp}) — assert the value or structure " <>
+        "directly, not its `inspect` string form (brittle to formatting)"
+    )
+    |> add_if(
+      exact_raise > 0,
+      "test_harness.exs pins an exact exception message in `assert_raise Mod, \"…\"` " <>
+        "(#{exact_raise}) — assert the exception TYPE only, not the message text"
+    )
+    # Documents-or-removes advisories — fire only when the prompt does not document
+    # them. The repair contract forbids prompt.md edits, so in-loop the reachable fix
+    # is removing the hidden dependency; an author who WANTS the contract must write it
+    # into prompt.md before generation (the detector then stays silent).
+    |> add_if(
+      infinity != [],
+      "test_harness.exs relies on `:infinity` for the interval option(s) " <>
+        "#{Enum.join(infinity, ", ")}, a behavior prompt.md never documents — rework the " <>
+        "harness so it does not depend on that hidden contract (use a real interval or a " <>
+        "documented seam); prompt.md may not be edited during repair"
+    )
+    |> add_if(
+      triggers != [],
+      "test_harness.exs sends the undocumented trigger message(s) " <>
+        "#{Enum.map_join(triggers, ", ", &":#{&1}")} to the server, which prompt.md never " <>
+        "documents — rework the harness to drive that behavior through the documented " <>
+        "public API instead; prompt.md may not be edited during repair"
+    )
+  end
+
+  defp count(harness, re), do: length(Regex.scan(re, harness))
+
+  # Interval-style option keys passed as `:infinity` that the prompt never mentions.
+  # Narrow key shape (interval/period/_ms) so a legitimate `timeout: :infinity` or
+  # `max_uses: :infinity` — different semantics — is not misflagged.
+  defp undocumented_infinity_keys(harness, prompt) do
+    if String.contains?(prompt, ":infinity") do
+      []
+    else
+      ~r/(\w*(?:interval|period)\w*|\w+_ms):\s*:infinity/
+      |> Regex.scan(harness, capture: :all_but_first)
+      |> List.flatten()
+      |> Enum.uniq()
+    end
+  end
+
+  # Periodic-action trigger messages sent to the server while the prompt never documents
+  # the message. The `\b` after the atom matters: a bare `:cleanup` substring inside the
+  # OPTION name `:cleanup_interval_ms` does not document the MESSAGE.
+  defp undocumented_trigger_atoms(harness, prompt) do
+    ~r/send\(\s*\w+,\s*:(#{Enum.join(@trigger_atoms, "|")})\s*\)/
+    |> Regex.scan(harness, capture: :all_but_first)
+    |> List.flatten()
+    |> Enum.uniq()
+    |> Enum.reject(&Regex.match?(~r/:#{&1}\b/, prompt))
+  end
 
   @doc """
   Canonically format the stageable pair of a triplet — `solution.ex` (plain module
@@ -252,6 +380,8 @@ defmodule GenTask.Evaluator do
           :timeout_or_crash
           | {:vacuous, String.t()}
           | {:quality, String.t()}
+          | {:warnings, non_neg_integer()}
+          | {:flaky, integer()}
           | {:failed, grade()}
         ) :: String.t()
   def repair_report(:timeout_or_crash) do
@@ -266,10 +396,24 @@ defmodule GenTask.Evaluator do
   end
 
   def repair_report({:quality, shortfall}) do
-    "The solution is green but does not meet the house style: #{shortfall}. Fix " <>
-      "solution.ex so it has a `@moduledoc`, an `@spec` and `@doc` on public functions, " <>
-      "no `TODO` markers, and compiles with ZERO warnings. Keep the behavior identical " <>
-      "and do not weaken test_harness.exs."
+    "The files graded green but fall short of the house style / harness standard: " <>
+      "#{shortfall}. Fix solution.ex and/or test_harness.exs to resolve every point above — " <>
+      "keep the module's behavior correct, keep ALL tests (do not delete any), and do not " <>
+      "weaken what the tests verify. When a harness assertion is the problem, rewrite it to " <>
+      "check observable behavior; do not remove coverage."
+  end
+
+  def repair_report({:warnings, n}) do
+    "The files graded green but compile with #{n} warning(s). Silence every warning " <>
+      "(prefix unused variables with `_`, match float zero as `+0.0`/`-0.0`, drop " <>
+      "unreachable clauses) without changing behavior or weakening test_harness.exs."
+  end
+
+  def repair_report({:flaky, seed}) do
+    "The files graded green on the pinned test order but FAILED a re-run with ExUnit " <>
+      "seed #{seed} (a different test order). That is order-dependence or timing " <>
+      "sensitivity — make every test independent of run order (fresh state per test, a " <>
+      "fake clock instead of real sleeps, unique names/ids) so the harness passes at any seed."
   end
 
   def repair_report({:failed, :timeout_or_crash}), do: repair_report(:timeout_or_crash)

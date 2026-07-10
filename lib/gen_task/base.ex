@@ -118,6 +118,7 @@ defmodule GenTask.Base do
       tests_failed: stats.tests_failed,
       tests_total: stats.tests_total,
       mutant_failed: result.mutant_failed,
+      mutation: result.mutation,
       reason: reason,
       seed: seed
     )

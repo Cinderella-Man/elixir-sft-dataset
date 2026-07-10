@@ -276,4 +276,37 @@ defmodule GenTask.MutationTest do
       refute why =~ "every function body is replaced"
     end
   end
+
+  describe "base_mode/2 (honest mutation-mode label, docs/12 item 5)" do
+    @per_fn_cfg %GenTask.Config{per_fn_mutation: true}
+
+    test ":per_fn for a plain module with public functions under per-fn mutation" do
+      assert Mutation.base_mode(@src, @per_fn_cfg) == :per_fn
+    end
+
+    test ":whole when per-function mutation is disabled" do
+      assert Mutation.base_mode(@src, %GenTask.Config{per_fn_mutation: false}) == :whole
+    end
+
+    test ":whole for a <file> bundle (multi-module API)" do
+      bundle = ~s(<file path="lib/a.ex">\ndefmodule A do\n  def go, do: :ok\nend\n</file>)
+      assert Mutation.base_mode(bundle, @per_fn_cfg) == :whole
+    end
+
+    test ":whole when no per-fn targets parse (parse error / no public defs)" do
+      assert Mutation.base_mode("def broken(", @per_fn_cfg) == :whole
+      assert Mutation.base_mode("defmodule T do\n  defp p(x), do: x\nend", @per_fn_cfg) == :whole
+    end
+
+    test ":whole for a Plug whose only public fn is the exempt init/1 (no targets)" do
+      plug = """
+      defmodule P do
+        use Plug.Builder
+        def init(o), do: o
+      end
+      """
+
+      assert Mutation.base_mode(plug, @per_fn_cfg) == :whole
+    end
+  end
 end

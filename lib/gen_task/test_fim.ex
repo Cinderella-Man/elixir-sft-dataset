@@ -127,6 +127,16 @@ defmodule GenTask.TestFim do
            reason: "reconstruct not green: " <> Cycle.reason_for(recon)
          ), false}
 
+      # The reconstructed harness must compile warning-free (docs/12 §5.1 item 1);
+      # deterministic, so cache the rejection like the other two reject classes.
+      Evaluator.compile_warnings(recon) > 0 ->
+        record_rejected(seed, cand, cfg)
+
+        {outcome(tfim_id, seed, cand.name, :rejected,
+           reason:
+             "reconstructed harness compiles with #{Evaluator.compile_warnings(recon)} warning(s)"
+         ), false}
+
       not gate_ok?(
         module_src,
         files["solution.ex"],
@@ -143,7 +153,11 @@ defmodule GenTask.TestFim do
       true ->
         _ = Cycle.promote(cfg, tfim_id, files)
         stats = Cycle.grade_stats(recon)
-        {outcome(tfim_id, seed, cand.name, :accepted, stats: stats), true}
+        # Honest mutation label (docs/12 §5.1 item 5): a single-file target passed the
+        # isolation raise-mutant gate (a real kill); a bundle target passed only the
+        # static assertion check (`asserting_block?/1`) — no mutant ran.
+        mode = if bundle?(module_src), do: "static_only", else: "isolation"
+        {outcome(tfim_id, seed, cand.name, :accepted, stats: stats, mutation: mode), true}
     end
   end
 
@@ -368,6 +382,8 @@ defmodule GenTask.TestFim do
         tests_total: 0
       })
 
+    mutation = Keyword.get(opts, :mutation)
+
     Cycle.outcome(
       id: tfim_id,
       kind: :tfim,
@@ -379,7 +395,10 @@ defmodule GenTask.TestFim do
       tests_passed: stats.tests_passed,
       tests_failed: stats.tests_failed,
       tests_total: stats.tests_total,
-      mutant_failed: status == :accepted,
+      # Only an "isolation" accept (single-file target) actually killed a raise-mutant;
+      # a "static_only" bundle accept ran no mutant (docs/12 §5.1 item 5).
+      mutant_failed: mutation == "isolation",
+      mutation: mutation,
       reason: Keyword.get(opts, :reason)
     )
   end

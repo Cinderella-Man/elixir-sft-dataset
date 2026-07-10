@@ -461,7 +461,10 @@ defmodule EvalTask.Runner do
 
     # seed: 0 pins test order (and StreamData generation) — without it a flaky
     # harness can pass its accept-grade once and fail forever after in validate.exs.
-    ExUnit.start(autorun: false, seed: 0, formatters: [EvalTask.FailureCollector])
+    # EVAL_SEED overrides it: the generation loop's stability-confirmation re-grade
+    # (docs/12 §5.1 item 6) passes a derived nonzero seed to break the pinned order and
+    # surface order-dependence before promotion.
+    ExUnit.start(autorun: false, seed: ex_unit_seed(), formatters: [EvalTask.FailureCollector])
 
     {compile_result, diagnostics} =
       Code.with_diagnostics(fn ->
@@ -514,6 +517,23 @@ defmodule EvalTask.Runner do
             %{test: "crash", message: "Test execution crashed: #{Exception.message(e)}"}
           ]
       }
+  end
+
+  # The ExUnit seed: `EVAL_SEED` when set to a valid integer, else the pinned `0`.
+  # A malformed value falls back to `0` (the deterministic default) rather than crash.
+  @doc false
+  @spec ex_unit_seed() :: non_neg_integer()
+  def ex_unit_seed do
+    case System.get_env("EVAL_SEED") do
+      nil ->
+        0
+
+      v ->
+        case Integer.parse(String.trim(v)) do
+          {n, ""} when n >= 0 -> n
+          _ -> 0
+        end
+    end
   end
 
   defp no_tests do

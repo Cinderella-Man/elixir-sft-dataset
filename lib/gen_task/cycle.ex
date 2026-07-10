@@ -26,6 +26,7 @@ defmodule GenTask.Cycle do
           grade: Evaluator.grade(),
           attempts: pos_integer(),
           mutant_failed: boolean(),
+          mutation: String.t() | nil,
           reason: String.t() | nil
         }
 
@@ -66,11 +67,11 @@ defmodule GenTask.Cycle do
         end
 
       case decision do
-        :accept ->
+        {:accept, mode} ->
           CycleLog.record_attempt(cfg, ctx.id, attempt, files, grade, :accepted, nil)
           progress(attempt, "#{grade_line(grade)} — all gates passed")
           Logger.info("cycle #{ctx.id}: ACCEPTED on attempt #{attempt}")
-          {:halt, mk(:accepted, files, grade, attempt + 1, nil)}
+          {:halt, mk(:accepted, files, grade, attempt + 1, nil, mode)}
 
         {:reject, reason} ->
           report = Evaluator.repair_report(reason)
@@ -108,13 +109,14 @@ defmodule GenTask.Cycle do
     end)
   end
 
-  defp mk(:accepted, files, grade, attempts, _reason),
+  defp mk(:accepted, files, grade, attempts, _reason, mode),
     do: %{
       status: :accepted,
       files: files,
       grade: grade,
       attempts: attempts,
       mutant_failed: true,
+      mutation: Atom.to_string(mode),
       reason: nil
     }
 
@@ -125,6 +127,7 @@ defmodule GenTask.Cycle do
       grade: grade,
       attempts: attempts,
       mutant_failed: false,
+      mutation: nil,
       reason: reason
     }
 
@@ -154,6 +157,8 @@ defmodule GenTask.Cycle do
   def reason_text(:timeout_or_crash), do: "evaluation timed out or crashed"
   def reason_text({:quality, shortfall}), do: "house style: " <> shortfall
   def reason_text({:vacuous, why}), do: "mutation gate: " <> why
+  def reason_text({:warnings, n}), do: "compile warnings: #{n}"
+  def reason_text({:flaky, seed}), do: "stability confirmation failed (seed #{seed})"
 
   def reason_text({:failed, grade}) do
     s = grade_stats(grade)
@@ -174,21 +179,62 @@ defmodule GenTask.Cycle do
     end
   end
 
-  # Green: apply the house-style/zero-warning quality gate (unless disabled), then the
-  # mutation gate. Ordering fails fast — the cheap JSON check runs before the expensive
-  # per-function mutation grades.
+  # Green: apply the house-style/zero-warning/harness-standard quality gate (unless
+  # disabled), then the mutation gate, then a stability re-grade at a derived seed.
+  # Ordering fails fast — the cheap JSON/text checks run before the expensive
+  # per-function mutation grades, and the confirmation eval runs only once, on accept.
   defp accept_green(json, ctx, files, cfg) do
-    shortfall = if cfg.quality_gate, do: Evaluator.quality_shortfall(json), else: nil
+    shortfall = if cfg.quality_gate, do: Evaluator.quality_shortfall(json, files), else: nil
 
-    if shortfall do
-      {:reject, {:quality, shortfall}}
-    else
-      case Mutation.gate_base(ctx.mutant_dir, files, cfg) do
-        :killed -> :accept
-        {:survived, why} -> {:reject, {:vacuous, why}}
-      end
+    cond do
+      shortfall ->
+        {:reject, {:quality, shortfall}}
+
+      true ->
+        case Mutation.gate_base(ctx.mutant_dir, files, cfg) do
+          {:survived, why} ->
+            {:reject, {:vacuous, why}}
+
+          :killed ->
+            case confirm_stability(ctx, cfg) do
+              :ok -> {:accept, Mutation.base_mode(files["solution.ex"], cfg)}
+              {:flaky, seed} -> {:reject, {:flaky, seed}}
+            end
+        end
     end
   end
+
+  # Stability confirmation (docs/12 §5.1 item 6): re-grade the already-staged, already-
+  # green accepted files ONE more time at a DERIVED deterministic nonzero seed. The
+  # evaluator pins ExUnit `seed: 0` and staging is byte-deterministic, so a same-seed
+  # re-eval is a no-op; a different seed breaks the pinned test order and surfaces
+  # order-dependence/timing flakiness BEFORE promotion. The seed is derived from the
+  # task id (no wall-clock randomness), so the confirmation is itself reproducible.
+  #
+  # A failed confirmation is flake evidence: it is appended to `logs/flaky.jsonl` (the
+  # ledger `validate.exs` reads) and the accept is turned into a reject → the normal
+  # repair/reject path. `ctx.dir` still holds exactly the graded files (the mutation
+  # gate stages into `ctx.mutant_dir`, never `ctx.dir`).
+  defp confirm_stability(ctx, cfg) do
+    seed = confirmation_seed(ctx.id)
+    grade = Evaluator.grade(ctx.dir, cfg, "solution.ex", seed)
+
+    if Evaluator.green?(grade) do
+      :ok
+    else
+      Logger.warning("cycle #{ctx.id}: stability confirmation FAILED at seed #{seed} — flake")
+      CycleLog.record_flake(cfg, ctx.id, grade, seed)
+      {:flaky, seed}
+    end
+  end
+
+  @doc """
+  A deterministic, nonzero ExUnit seed derived from `id` — reproducible (no wall-clock
+  randomness) yet different from the evaluator's pinned `0`, so it breaks the pinned
+  test order for the stability-confirmation re-grade (docs/12 §5.1 item 6).
+  """
+  @spec confirmation_seed(String.t()) :: pos_integer()
+  def confirmation_seed(id), do: 1 + :erlang.phash2(id, 2_000_000_000)
 
   defp repair(files, report, ctx, cfg) do
     Logger.info("cycle #{ctx.id}: repairing — #{report}")
@@ -444,6 +490,7 @@ defmodule GenTask.Cycle do
         tests_failed: 0,
         tests_total: 0,
         mutant_failed: false,
+        mutation: nil,
         reason: nil,
         seed: nil
       },

@@ -401,10 +401,26 @@ defmodule GenTask.Fim do
 
       grade = Evaluator.grade(fim_dir, cfg)
       stats = Cycle.grade_stats(grade)
+      warns = Evaluator.compile_warnings(grade)
+
+      # A FIM child must be green AND warning-free (docs/12 §5.1 item 1) — the
+      # reconstructed module can warn even when the parent module did not. Both
+      # failures share the reject/repair plumbing, differing only in the report.
+      failure =
+        cond do
+          not Evaluator.green?(grade) ->
+            {Evaluator.repair_report({:failed, grade}), Cycle.reason_for(grade)}
+
+          warns > 0 ->
+            {Evaluator.repair_report({:warnings, warns}), "compiles with #{warns} warning(s)"}
+
+          true ->
+            nil
+        end
 
       cond do
-        not Evaluator.green?(grade) ->
-          report = Evaluator.repair_report({:failed, grade})
+        failure != nil ->
+          {report, reason} = failure
 
           if attempt >= cfg.max_retries do
             CycleLog.record_attempt(
@@ -417,11 +433,11 @@ defmodule GenTask.Fim do
               report
             )
 
-            {:halt, {reject(seed, log_id, target, stats, Cycle.reason_for(grade)), false}}
+            {:halt, {reject(seed, log_id, target, stats, reason), false}}
           else
             CycleLog.record_attempt(cfg, log_id, attempt, candidate, grade, :rejected, report)
 
-            case repair_fim(ff, grade, log_id, cfg) do
+            case repair_fim(ff, report, log_id, cfg) do
               {:ok, ff2} ->
                 {:cont, ff2}
 
@@ -465,9 +481,7 @@ defmodule GenTask.Fim do
     end)
   end
 
-  defp repair_fim(ff, grade, fim_id, cfg) do
-    report = Evaluator.repair_report({:failed, grade})
-
+  defp repair_fim(ff, report, fim_id, cfg) do
     {system, user} =
       Prompts.fix(
         %{"prompt.md" => ff["prompt.md"], "solution.ex" => ff["solution.ex"]},
@@ -538,7 +552,11 @@ defmodule GenTask.Fim do
       tests_passed: stats.tests_passed,
       tests_failed: stats.tests_failed,
       tests_total: stats.tests_total,
-      mutant_failed: true
+      # A raise-mutant of the candidate FUNCTION genuinely ran and the parent harness
+      # failed against it (`Mutation.gate_fim`) — `mutant_failed: true` stays truthful
+      # here; `mutation` names precisely what ran (docs/12 §5.1 item 5).
+      mutant_failed: true,
+      mutation: "fim_candidate"
     )
   end
 

@@ -103,19 +103,38 @@ defmodule GenTask.EvaluatorTest do
     end
   end
 
-  describe "quality_shortfall/1" do
+  describe "quality_shortfall/2" do
     @full %{
       "compile_warnings" => 0,
+      "tests_total" => 5,
       "analysis" => %{
         "has_moduledoc" => true,
         "has_typespecs" => true,
         "has_doc_on_public_fns" => true,
-        "todo_count" => 0
+        "todo_count" => 0,
+        "public_fn_count" => 2
       }
     }
 
     test "nil when the solution meets the house style" do
       assert Evaluator.quality_shortfall(@full) == nil
+    end
+
+    test "flags a harness with fewer than max(3, public_fn_count) tests (docs/12 item 3)" do
+      # 2 tests, 4 public functions → floor is max(3, 4) = 4.
+      json =
+        @full
+        |> Map.put("tests_total", 2)
+        |> put_in(["analysis", "public_fn_count"], 4)
+
+      shortfall = Evaluator.quality_shortfall(json)
+      assert shortfall =~ "only 2 test(s)"
+      assert shortfall =~ "at least 4"
+    end
+
+    test "the floor never drops below 3 even with 0/1 public functions" do
+      json = @full |> Map.put("tests_total", 2) |> put_in(["analysis", "public_fn_count"], 1)
+      assert Evaluator.quality_shortfall(json) =~ "at least 3"
     end
 
     test "flags a missing @spec" do
@@ -151,6 +170,90 @@ defmodule GenTask.EvaluatorTest do
     end
   end
 
+  describe "quality_shortfall/2 — S9 harness anti-patterns (docs/12 item 2)" do
+    @clean %{
+      "compile_warnings" => 0,
+      "tests_total" => 5,
+      "analysis" => %{
+        "has_moduledoc" => true,
+        "has_typespecs" => true,
+        "has_doc_on_public_fns" => true,
+        "todo_count" => 0,
+        "public_fn_count" => 2
+      }
+    }
+
+    defp sf(harness, prompt \\ "") do
+      Evaluator.quality_shortfall(@clean, %{"test_harness.exs" => harness, "prompt.md" => prompt})
+    end
+
+    test "nil when only the grade JSON is passed (no harness text to lint)" do
+      assert Evaluator.quality_shortfall(@clean) == nil
+    end
+
+    test "HARD: :sys.get_state / :sys.replace_state reach-ins are a shortfall" do
+      assert sf("test \"x\" do\n  s = :sys.get_state(pid)\n  assert s.n == 1\nend") =~
+               ":sys.get_state"
+
+      assert sf(":sys.replace_state(pid, fn s -> s end)") =~ "internal state"
+    end
+
+    test "HARD: `assert inspect(...)` is a shortfall" do
+      assert sf("test \"x\" do\n  assert inspect(result) == \"%{a: 1}\"\nend") =~ "assert inspect"
+    end
+
+    test "HARD: an exact `assert_raise Mod, \"msg\"` message pin is a shortfall" do
+      assert sf(~s[assert_raise ArgumentError, "bad input", fn -> boom() end]) =~
+               "exact exception message"
+    end
+
+    test "HARD: `assert_raise Mod, fn -> ... end` (type only, no message) is NOT flagged" do
+      assert sf("assert_raise ArgumentError, fn -> boom() end") == nil
+    end
+
+    test "ADVISORY: undocumented `:infinity` interval option is a shortfall" do
+      harness = "start(cleanup_interval_ms: :infinity)"
+      assert sf(harness, "The server takes options.") =~ "cleanup_interval_ms"
+    end
+
+    test "ADVISORY: a documented `:infinity` interval does NOT fire" do
+      harness = "start(cleanup_interval_ms: :infinity)"
+      assert sf(harness, "Passing :infinity disables the periodic timer.") == nil
+    end
+
+    test "ADVISORY: an undocumented `:cleanup`/`:sweep`/`:tick` trigger send is a shortfall" do
+      assert sf("send(pid, :cleanup)", "Rate limiter with a periodic sweep.") =~ ":cleanup"
+    end
+
+    test "ADVISORY: a documented trigger send does NOT fire" do
+      assert sf("send(pid, :cleanup)", "Send the server a `:cleanup` message to sweep now.") ==
+               nil
+    end
+
+    test "a clean harness with a documenting prompt yields nil" do
+      assert sf("test \"x\" do\n  assert Foo.bar() == :ok\nend", "Foo.bar/0 returns :ok.") == nil
+    end
+  end
+
+  describe "compile_warnings/1 (docs/12 item 1)" do
+    test "reads the count from a grade tuple or map, 0 for a timeout" do
+      assert Evaluator.compile_warnings({:ok, %{"compile_warnings" => 3}}) == 3
+      assert Evaluator.compile_warnings(%{"compile_warnings" => 2}) == 2
+      assert Evaluator.compile_warnings(%{}) == 0
+      assert Evaluator.compile_warnings(:timeout_or_crash) == 0
+    end
+  end
+
+  describe "seed_env/1 (docs/12 item 6 plumbing)" do
+    test "nil → no env overlay (inherit ambient, pinned seed 0)" do
+      assert Evaluator.seed_env(nil) == []
+    end
+
+    test "an integer seed → the EVAL_SEED env overlay the runner reads" do
+      assert Evaluator.seed_env(12_345) == [{"EVAL_SEED", "12345"}]
+    end
+  end
+
   describe "repair_report/1" do
     test "describes a timeout/crash" do
       report = Evaluator.repair_report(:timeout_or_crash)
@@ -176,7 +279,19 @@ defmodule GenTask.EvaluatorTest do
       report = Evaluator.repair_report({:quality, "no @spec on any public function"})
       assert report =~ "house style"
       assert report =~ "@spec"
-      assert report =~ "ZERO warnings"
+      assert report =~ "test_harness.exs"
+    end
+
+    test "describes a compile-warnings shortfall (docs/12 item 1)" do
+      report = Evaluator.repair_report({:warnings, 3})
+      assert report =~ "3 warning(s)"
+      assert report =~ "Silence"
+    end
+
+    test "describes a stability-confirmation flake (docs/12 item 6)" do
+      report = Evaluator.repair_report({:flaky, 12_345})
+      assert report =~ "seed 12345"
+      assert report =~ "order"
     end
 
     test "shapes compile errors from the json" do
