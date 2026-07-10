@@ -33,6 +33,14 @@
 #                 the reference; per-task kill-rate + corpus histogram + weakest 20;
 #                 ledger logs/semantic_mutants.jsonl. ≤ --sm-limit (40) evals/task —
 #                 EXPENSIVE; scope with --only for spot checks.
+#   --decontam    REPORT-ONLY benchmark decontamination (§4.1.9): loads the fixture
+#                 test/fixtures/benchmarks/benchmarks.jsonl (build with
+#                 scripts/fetch_benchmarks.exs) and checks every prompt.md AND
+#                 solution.ex for exact normalized full-text match + word-level
+#                 8-gram overlap (Tülu-3 recipe) against the public Elixir
+#                 benchmarks. Writes results/decontam_report.txt; exit 0 always,
+#                 EXCEPT exit 1 if the fixture is missing/empty. --self-test plants
+#                 a benchmark prompt as a positive control and asserts it is flagged.
 #
 # Every eval subprocess runs under `timeout --signal=KILL` (EVAL_TIMEOUT_S, default
 # 240s) so one hanging solution cannot stall the sweep.
@@ -58,6 +66,8 @@ defmodule Validate do
           mutants: :boolean,
           per_fn_mutants: :boolean,
           semantic_mutants: :boolean,
+          decontam: :boolean,
+          self_test: :boolean,
           sm_limit: :integer,
           stability: :integer,
           only: :string
@@ -95,6 +105,21 @@ defmodule Validate do
       opts[:semantic_mutants] ->
         semantic_report(tasks, opts[:sm_limit] || 40)
         finish(true, "SEMANTIC-MUTANT REPORT COMPLETE (report-only — no gate)")
+
+      opts[:decontam] ->
+        self_test? = opts[:self_test] || false
+        control_ok = decontam(discovered, opts[:only], self_test?)
+
+        cond do
+          self_test? and not control_ok ->
+            finish(false, "SELF-TEST FAILED — planted benchmark prompt was NOT flagged")
+
+          self_test? ->
+            finish(true, "SELF-TEST PASSED — planted benchmark prompt flagged as EXACT ✓")
+
+          true ->
+            finish(true, "DECONTAM REPORT COMPLETE (report-only) — results/decontam_report.txt")
+        end
 
       true ->
         failures = corpus_failures ++ perfect_score(tasks, opts[:stability] || 1)
@@ -655,6 +680,346 @@ defmodule Validate do
       IO.puts("  no mutable tasks matched")
     end
   end
+
+  # ── benchmark decontamination (§4.1.9, REPORT-ONLY) ─────────────────────────
+
+  # Elixir appears in public code benchmarks. This checks whether any corpus text
+  # (every prompt.md AND every solution.ex) overlaps them, via the Tülu-3 recipe:
+  # exact normalized full-text match + word-level 8-gram overlap. Report-only —
+  # exit 0 always, EXCEPT exit 1 if the fixture is missing/empty (a silent no-op
+  # decontamination check is worse than none). The index is built over the small
+  # BENCHMARK side; the ~3,858×2 corpus texts are streamed against it.
+  @decontam_fixture "test/fixtures/benchmarks/benchmarks.jsonl"
+  @decontam_report "results/decontam_report.txt"
+  @decontam_k 8
+  @decontam_jaccard 0.5
+  @decontam_shared 20
+
+  defp decontam(discovered, only, self_test?) do
+    {meta, records} = load_benchmarks()
+    index = build_bench_index(records)
+
+    corpus =
+      discovered
+      |> Enum.filter(&match_only?(&1.name, only))
+      |> Enum.flat_map(&corpus_texts/1)
+
+    corpus = if self_test?, do: [self_test_text(records) | corpus], else: corpus
+
+    IO.puts(
+      "Decontam: #{length(corpus)} corpus texts (prompt.md + solution.ex) vs " <>
+        "#{index.n_entries} benchmark fields from #{length(records)} rows " <>
+        "(k=#{@decontam_k}-gram, jaccard≥#{@decontam_jaccard} OR ≥#{@decontam_shared} shared) ..."
+    )
+
+    hits =
+      corpus
+      |> Enum.with_index()
+      |> Enum.map(fn {t, i} ->
+        if rem(i, 500) == 0, do: IO.write(".")
+        scan_corpus_text(t, index)
+      end)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.sort_by(&decontam_sort_key/1)
+
+    IO.puts("")
+    write_decontam_report(hits, meta, records, length(corpus))
+    print_decontam_summary(hits, length(corpus))
+
+    self_test_verdict(hits, self_test?)
+  end
+
+  # The fixture is one JSON object per line; the first is a `_meta` record. Missing
+  # or empty is a hard failure (exit 1) — the ONLY case decontam fails loudly.
+  defp load_benchmarks do
+    unless File.regular?(@decontam_fixture) do
+      IO.puts("\n✗ decontam fixture missing: #{@decontam_fixture}")
+      IO.puts("  build it first:  mix run scripts/fetch_benchmarks.exs")
+      shutdown(1)
+    end
+
+    decoded =
+      @decontam_fixture
+      |> File.read!()
+      |> String.split("\n", trim: true)
+      |> Enum.map(&Jason.decode!/1)
+
+    {meta, records} =
+      case decoded do
+        [%{"_meta" => true} = m | rest] -> {m, rest}
+        all -> {%{}, all}
+      end
+
+    if records == [] do
+      IO.puts("\n✗ decontam fixture has no benchmark rows: #{@decontam_fixture}")
+      IO.puts("  re-fetch:  mix run scripts/fetch_benchmarks.exs --force")
+      shutdown(1)
+    end
+
+    {meta, records}
+  end
+
+  # Every corpus task contributes its prompt.md and (when solved) its solution.ex.
+  defp corpus_texts(task) do
+    prompt_path = Path.join(task.dir, "prompt.md")
+
+    [
+      text_entry(task.name, "prompt", prompt_path),
+      if(task.found, do: text_entry(task.name, "solution", task.solution))
+    ]
+    |> Enum.reject(&(is_nil(&1) or &1.text == ""))
+  end
+
+  defp text_entry(name, kind, path) do
+    if File.regular?(path),
+      do: %{task: name, kind: kind, path: path, text: File.read!(path)}
+  end
+
+  # Positive control: the first benchmark prompt, fed back through the SAME matcher
+  # as a synthetic corpus text. It MUST come back an EXACT hit — that proves the
+  # check detects real contamination without touching the tree.
+  defp self_test_text(records) do
+    r = Enum.find(records, &(&1["prompt_text"] not in [nil, ""]))
+
+    %{
+      task: "__SELF_TEST__",
+      kind: "planted-benchmark-prompt",
+      path: "(synthetic — #{r["source"]}:#{r["id"]})",
+      text: r["prompt_text"]
+    }
+  end
+
+  # ── benchmark index (built once over the small benchmark side) ───────────────
+
+  # One entry per non-empty benchmark FIELD (prompt_text / solution_text). Each
+  # carries its normalized full-text (for exact match) and its 8-gram shingle set,
+  # folded into an inverted index shingle→[entry] so a corpus text's shared-8-gram
+  # count against every benchmark row is one pass over its own shingles.
+  defp build_bench_index(records) do
+    entries =
+      for {r, _ri} <- Enum.with_index(records),
+          {field, text} <- [{"prompt", r["prompt_text"]}, {"solution", r["solution_text"]}],
+          is_binary(text),
+          toks = normalize_tokens(text),
+          toks != [] do
+        %{
+          source: r["source"],
+          id: r["id"],
+          field: field,
+          exact: Enum.join(toks, " "),
+          shingles: shingle_set(toks)
+        }
+      end
+      |> Enum.with_index()
+      |> Enum.map(fn {e, i} -> Map.put(e, :eidx, i) end)
+
+    inverted =
+      Enum.reduce(entries, %{}, fn e, acc ->
+        Enum.reduce(e.shingles, acc, fn sh, a ->
+          Map.update(a, sh, [e.eidx], &[e.eidx | &1])
+        end)
+      end)
+
+    %{
+      exact: Map.new(entries, &{&1.exact, {&1.source, &1.id, &1.field}}),
+      meta: Map.new(entries, &{&1.eidx, {&1.source, &1.id, &1.field}}),
+      sizes: Map.new(entries, &{&1.eidx, MapSet.size(&1.shingles)}),
+      inverted: inverted,
+      n_entries: length(entries)
+    }
+  end
+
+  # Normalization (Tülu-3 recipe): lowercase, then split on whitespace — one token
+  # stream drives BOTH the exact-match key (re-joined by single spaces = "collapse
+  # whitespace") and the 8-gram shingles, so the two granularities stay coherent.
+  defp normalize_tokens(text), do: text |> String.downcase() |> String.split(~r/\s+/, trim: true)
+
+  # Same word-level 8-gram / phash2 shingle machinery as dataset_stats.exs, so this
+  # gate is consistent with the repo's internal-dedup logic.
+  defp shingle_set(tokens) do
+    tokens
+    |> Enum.chunk_every(@decontam_k, 1, :discard)
+    |> MapSet.new(&:erlang.phash2/1)
+  end
+
+  # Stream ONE corpus text against the benchmark index. Returns a hit map (most
+  # severe match) or nil. Exact match wins over near; among near, higher Jaccard
+  # then more shared 8-grams.
+  defp scan_corpus_text(%{text: text} = t, index) do
+    toks = normalize_tokens(text)
+    exact_key = Enum.join(toks, " ")
+    shingles = shingle_set(toks)
+    ssize = MapSet.size(shingles)
+
+    # shared-8-gram count against every benchmark entry that shares ≥1 shingle
+    tally =
+      Enum.reduce(shingles, %{}, fn sh, acc ->
+        case Map.get(index.inverted, sh) do
+          nil -> acc
+          eidxs -> Enum.reduce(eidxs, acc, fn e, a -> Map.update(a, e, 1, &(&1 + 1)) end)
+        end
+      end)
+
+    {best, near_count} =
+      Enum.reduce(tally, {nil, 0}, fn {eidx, shared}, {best, nc} ->
+        jac = jaccard_of(ssize, Map.get(index.sizes, eidx), shared)
+        flagged? = jac >= @decontam_jaccard or shared >= @decontam_shared
+        nc = if flagged?, do: nc + 1, else: nc
+
+        best =
+          cond do
+            not flagged? -> best
+            best == nil -> {eidx, jac, shared}
+            jac > elem(best, 1) -> {eidx, jac, shared}
+            jac == elem(best, 1) and shared > elem(best, 2) -> {eidx, jac, shared}
+            true -> best
+          end
+
+        {best, nc}
+      end)
+
+    exact = if exact_key != "", do: Map.get(index.exact, exact_key)
+
+    cond do
+      exact != nil ->
+        {src, id, field} = exact
+        decontam_hit(t, :exact, src, id, field, 1.0, ssize, near_count)
+
+      best != nil ->
+        {eidx, jac, shared} = best
+        {src, id, field} = Map.get(index.meta, eidx)
+        decontam_hit(t, :near, src, id, field, jac, shared, near_count)
+
+      true ->
+        nil
+    end
+  end
+
+  defp jaccard_of(ssize, other, shared) do
+    denom = ssize + other - shared
+    if denom <= 0, do: 0.0, else: shared / denom
+  end
+
+  defp decontam_hit(t, type, src, id, field, jac, shared, near_count) do
+    %{
+      task: t.task,
+      kind: t.kind,
+      path: t.path,
+      type: type,
+      bench: "#{src}:#{id}",
+      bench_field: field,
+      jaccard: Float.round(jac, 3),
+      shared: shared,
+      near_count: near_count
+    }
+  end
+
+  # Exact hits first, then near by descending Jaccard, then by descending shared.
+  defp decontam_sort_key(h), do: {if(h.type == :exact, do: 0, else: 1), -h.jaccard, -h.shared}
+
+  # ── decontam output ─────────────────────────────────────────────────────────
+
+  defp write_decontam_report(hits, meta, records, scanned) do
+    File.mkdir_p!("results")
+    exact = Enum.filter(hits, &(&1.type == :exact))
+    near = Enum.filter(hits, &(&1.type == :near))
+
+    source_lines =
+      (meta["sources"] || tally_sources(records))
+      |> Enum.sort()
+      |> Enum.map(fn {s, n} -> "#   - #{s}: #{n} rows" end)
+
+    header =
+      [
+        "# Benchmark decontamination report — §4.1.9 (REPORT-ONLY, no gate)",
+        "# Generated #{DateTime.utc_now() |> DateTime.to_iso8601()}",
+        "#",
+        "# WHAT IS CHECKED: every corpus prompt.md AND every solution.ex (#{scanned} texts)",
+        "# against the Elixir subsets of public code benchmarks, fetched #{meta["generated_at"] || "?"}:",
+        Enum.join(source_lines, "\n"),
+        "#   (fixture: #{@decontam_fixture}, #{length(records)} rows total)",
+        "#",
+        "# NORMALIZATION: lowercase + collapse whitespace (Tülu-3 recipe).",
+        "# SIGNALS (per corpus text, most severe match reported):",
+        "#   * EXACT  — normalized full text equals a benchmark prompt or solution.",
+        "#   * near   — word-level #{@decontam_k}-gram overlap with a single benchmark row of",
+        "#              Jaccard ≥ #{@decontam_jaccard} OR ≥ #{@decontam_shared} shared consecutive-token #{@decontam_k}-grams.",
+        "#     (Two signals because a long verbatim SPAN inside an otherwise-different",
+        "#      text keeps a high shared-count while its Jaccard is diluted; either trips.)",
+        "#",
+        "# NOTE: classic-exercise IDEAS (rate limiter, LRU, bloom filter, trie, …)",
+        "# legitimately overlap public exercises at the IDEA level — that is expected and",
+        "# fine. This check targets TEXT overlap (copied prompt/solution wording), which",
+        "# is what actually contaminates an eval. Idea-level kinship is not a hit.",
+        "#",
+        "# SUMMARY: #{length(hits)} corpus texts flagged — #{length(exact)} EXACT, #{length(near)} near.",
+        "# Each line: [TYPE jac=<J> shared=<N>] <task> <kind>  <=  <benchmark source:id> (<field>)",
+        ""
+      ]
+
+    lines = Enum.map(hits, &decontam_line/1)
+
+    body =
+      Enum.join(header ++ if(hits == [], do: ["# (no overlaps found)"], else: lines), "\n") <>
+        "\n"
+
+    File.write!(@decontam_report, body)
+  end
+
+  defp decontam_line(h) do
+    tag = if h.type == :exact, do: "EXACT", else: "near "
+
+    "[#{tag} jac=#{fmt_j(h.jaccard)} shared=#{h.shared}] " <>
+      "#{h.task} #{h.kind}  <=  #{h.bench} (#{h.bench_field})"
+  end
+
+  defp print_decontam_summary(hits, scanned) do
+    exact = Enum.filter(hits, &(&1.type == :exact))
+    near = Enum.filter(hits, &(&1.type == :near))
+
+    IO.puts("\n=== BENCHMARK DECONTAMINATION (report-only, §4.1.9) ===")
+    IO.puts("  corpus texts scanned: #{scanned}")
+    IO.puts("  EXACT full-text matches: #{length(exact)}")
+    IO.puts("  near-miss overlaps:      #{length(near)}")
+
+    if hits != [] do
+      IO.puts("\n  top #{min(5, length(hits))} hits (most severe first):")
+      for h <- Enum.take(hits, 5), do: IO.puts("    #{decontam_line(h)}")
+    else
+      IO.puts("  no overlaps found ✓")
+    end
+
+    IO.puts("\n  full report: #{@decontam_report}")
+  end
+
+  # Self-test: the planted benchmark prompt (task "__SELF_TEST__") must be an EXACT
+  # hit. Not a self-test run → always true (report-only, exit 0).
+  defp self_test_verdict(_hits, false), do: true
+
+  defp self_test_verdict(hits, true) do
+    control = Enum.find(hits, &(&1.task == "__SELF_TEST__"))
+
+    case control do
+      %{type: :exact} = h ->
+        IO.puts("\n  SELF-TEST: planted control flagged EXACT against #{h.bench} ✓")
+        true
+
+      %{type: :near} = h ->
+        IO.puts(
+          "\n  SELF-TEST: planted control flagged only NEAR (jac=#{h.jaccard}) — expected EXACT"
+        )
+
+        false
+
+      nil ->
+        IO.puts("\n  SELF-TEST: planted control was NOT flagged — the check is broken")
+        false
+    end
+  end
+
+  defp tally_sources(records), do: Enum.frequencies_by(records, & &1["source"])
+
+  defp fmt_j(j), do: :erlang.float_to_binary(j / 1, decimals: 3)
 
   defp mutant_file(solution_path, mutate_fun) do
     mutated = solution_path |> File.read!() |> mutate_fun.()

@@ -86,6 +86,7 @@ practice (the full campaign is documented in `docs/10`).
 | **Embed staleness** — child prompts must byte-match regeneration from current parent files | fixing a parent while children keep showing the old code to the trainee | CI + pre-push (dry run of the resync tool) |
 | **Flake ledger** — a test that fails under parallel load but recovers serially still passes, but is *recorded*; repeat offenders get fixed (fake clocks / wider deadlines), never weakened | timing-sensitive harnesses silently gating on machine load | every validation sweep → `logs/flaky.jsonl`; `--stability N` |
 | **Vacuous-seed gate** — derivatives (`wt_`/`tfim_`) are never built on a parent whose tests can't kill a mutant | multiplying a weak family 13× | generation loop |
+| **Benchmark decontamination** (report) — every prompt AND solution checked for exact + 8-gram overlap against the public Elixir benchmarks (MultiPL-E, McEval, Exercism) | shipping a corpus that overlaps an eval a downstream consumer will score against | manual sweep (`--decontam`); see below |
 | **Work registry** — "what remains to generate" is recomputed from disk every run; every step idempotent | half-finished families after an interrupted run | generation loop + `work_status.exs` |
 
 Current standard and what's still being brought in line:
@@ -132,6 +133,7 @@ elixir ./scripts/validate.exs --green            # lighter: compiles + tests pas
 elixir ./scripts/validate.exs --mutants          # vacuous-harness detector
 elixir ./scripts/validate.exs --fim              # FIM mutants vs parent harness
 elixir ./scripts/validate.exs --semantic-mutants # assertion-tightness report
+elixir ./scripts/validate.exs --decontam         # benchmark-overlap report (see below)
 elixir ./scripts/validate.exs --stability 3      # flake recovery needs 3 serial passes
 elixir ./scripts/validate.exs --only "001_001*"  # scope any mode by task name
 
@@ -150,6 +152,54 @@ mix run scripts/work_status.exs --counts         # one compact line
 # the evaluator's own unit tests
 mix test
 ```
+
+## Benchmark decontamination
+
+Elixir appears in public code benchmarks, so the first question any downstream
+consumer asks is whether this corpus overlaps them. It does not.
+
+**What is checked.** Every corpus `prompt.md` **and** every `solution.ex`
+(7,716 texts) is checked against the Elixir subsets of the public benchmarks,
+using the Tülu-3 recipe: exact normalized full-text match (lowercase + collapse
+whitespace) **plus** word-level 8-gram token overlap. A corpus text is flagged
+if it exactly matches a benchmark prompt/solution, or shares a word-level 8-gram
+Jaccard ≥ 0.5 **or** ≥ 20 identical consecutive-token 8-grams with any single
+benchmark row (two signals so a long verbatim span in an otherwise-different
+text still trips even though its Jaccard is diluted). The check is **report-only
+— it never blocks**; promoting it to a gate is a later human decision.
+
+**Snapshots checked** (fetched 2026-07-10, 786 rows total):
+
+| Benchmark | Elixir subset | Rows |
+|---|---|---|
+| MultiPL-E (`nuprl/MultiPL-E`) | `humaneval-elixir` | 161 |
+| MultiPL-E (`nuprl/MultiPL-E`) | `mbpp-elixir` | 397 |
+| McEval (`Multilingual-Multimodal-NLP/McEval`) | `generation/Elixir.jsonl` | 50 |
+| Exercism (`github.com/exercism/elixir`) | practice + concept exercises | 178 |
+
+MultiPL-E is a code-*completion* benchmark with no reference solutions, so those
+558 rows contribute prompt text only; McEval and Exercism contribute both.
+
+**Result (2026-07-10): 0 exact matches, 0 near-misses across all 7,716 texts.**
+The corpus is clean by a wide margin — the single highest 8-gram Jaccard anywhere
+is **0.038** (threshold 0.5) and the most identical 8-grams any text shares with
+any benchmark row is **2** (threshold 20), both trivial shared Elixir phrasing.
+Classic-exercise *ideas* (rate limiter, LRU, bloom filter, trie…) do overlap
+these tracks at the idea level — that is expected and legitimate; the check
+targets copied *text*, which is what actually contaminates an eval.
+
+```bash
+# 1) build/refresh the fixture (public data, no auth; --force to re-download)
+mix run scripts/fetch_benchmarks.exs
+#    → test/fixtures/benchmarks/benchmarks.jsonl (machine-generated)
+
+# 2) run the check over the whole corpus (report-only, exit 0)
+elixir ./scripts/validate.exs --decontam          # → results/decontam_report.txt
+elixir ./scripts/validate.exs --decontam --self-test  # + planted positive control
+```
+
+The check fails loudly (exit 1) only if the fixture is missing or empty — a
+silent no-op decontamination check is worse than none.
 
 ## The generation loop
 

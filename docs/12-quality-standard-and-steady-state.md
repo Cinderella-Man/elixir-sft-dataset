@@ -85,7 +85,7 @@ checklist is versioned. Raising the checklist = starting an improvement round
 | S8 | Semantic-mutant kill rate measured and recorded; floor TBD after tail fixed | manual sweep, report-only |
 | S9 | No harness anti-patterns: `:sys.get_state`, undocumented internal messages, undocumented `:infinity` options, `assert inspect(...)`, exact exception-message pins | manual lint script — **not gated (§5.1)** |
 | S10 | No leaked assistant chatter in gold files (repair commentary, chain-of-thought, emoji markers) | **nothing checks this today (§4.1.4)** |
-| S11 | Prompt/solution/harness free of overlap with public Elixir benchmarks (MultiPL-E humaneval-elixir + mbpp-elixir, McEval Elixir, Exercism Elixir track) | **nothing checks this today (§4.1.9)** |
+| S11 | Prompt/solution/harness free of overlap with public Elixir benchmarks (MultiPL-E humaneval-elixir + mbpp-elixir, McEval Elixir, Exercism Elixir track) | `validate.exs --decontam` (since 2026-07-10; report-only, 0 hits) |
 | S12 | Acceptance provenance recorded: which gates were active, what mutation mode ran, attempts count | **runs.jsonl records none of it (§5.1)** |
 
 The steady-state goal (§7): S1–S12 all enforced by the loop or CI, so a task
@@ -183,14 +183,17 @@ everything else can run in parallel with it (Kamil's call, as agreed in docs/11)
    re-measure moved nothing in or out: the 7 rewrites reproduced identical
    kill-rates, and the 4 new families all landed ≥0.5. The <0.5 tier is
    therefore real weakness, not stale-measurement noise — input to §4.2.3.
-9. **Benchmark decontamination check — new gate, no LLM.** Download the
-   MultiPL-E `humaneval-elixir` (161 rows) + `mbpp-elixir` (397 rows) subsets,
-   McEval's Elixir tasks, and the public Exercism Elixir track; run 8-gram
-   token overlap (the Tülu-3 recipe) plus exact-match over every prompt AND
-   reference solution. Report near-misses for human review; wire the check as a
-   `validate.exs` mode and publish the decontamination statement in the README.
-   Classic-exercise ideas (rate limiter, LRU, trie…) make idea-level overlap
-   plausible; this is the one gap any downstream consumer would flag first.
+9. ✅ DONE 2026-07-10: benchmark decontamination check.
+   `scripts/fetch_benchmarks.exs` normalizes 786 rows (MultiPL-E
+   humaneval-elixir 161 + mbpp-elixir 397, McEval Elixir 50, Exercism Elixir
+   178) into `test/fixtures/benchmarks/benchmarks.jsonl`;
+   `validate.exs --decontam` runs exact normalized full-text match + 8-gram
+   overlap (Jaccard ≥ 0.5 OR ≥ 20 shared consecutive 8-grams) over all 7,716
+   corpus texts. **Result: 0 exact, 0 near-miss — max Jaccard anywhere is
+   0.038.** Detector proven by `--self-test` positive control (planted
+   benchmark prompt flags EXACT); fixture-missing fails loudly (exit 1).
+   README carries the decontamination statement. Report-only; promoting to a
+   blocking gate is a §4.2-class decision.
 10. ◐ STAGED 2026-07-10: systemd user units live in `scripts/systemd/`
     (`Persistent=true` timer at 03:00 + explicit PATH for the asdf shims).
     Install needs Kamil's hands (touches user machine config):

@@ -37,8 +37,9 @@ What that means in practice:
       re-measure (tail = 20 <0.5), register metric, backfill-script removal;
       001_004 redesign (re-screen GREEN), §4.1.3 per-fn+init/1 sweep (ZERO
       survivors across 1,612 evals — populations #1/#2 closed empty);
-      STAGED: nightly-sweep systemd units (needs install, §4.1.10);
-      REMAINING: §4.1.9 decontamination gate.
+      §4.1.9 decontamination gate (0 exact / 0 near-miss vs 786 benchmark
+      rows); STAGED: nightly-sweep systemd units (needs install, §4.1.10).
+      **§4.1 is COMPLETE** except the staged timer install.
       **Every [blocks Phase 2] item is now done — Phase 2 top-up is ready to
       launch on Kamil's go (paid run).**
 - [x] docs/12 §4.2.1 — 099_002/3/4 screened GREEN; S6 holds for all 303 seeds (2026-07-10)
