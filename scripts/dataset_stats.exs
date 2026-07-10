@@ -65,6 +65,10 @@ defmodule DatasetStats do
       wtest?: t.shape == :write_test,
       tfim?: t.shape == :test_fim,
       has_harness?: harness != "",
+      # Raw prompt opening carried through for the register/diversity histogram — row/2
+      # otherwise keeps only measure/2 size stats and drops the text (docs/12 §7.4).
+      prompt_open_line: first_line(prompt),
+      prompt_open_words: first_words(prompt, 8),
       prompt: measure(prompt, cpt),
       sol: measure(sol, cpt),
       harness: measure(harness, cpt),
@@ -99,6 +103,22 @@ defmodule DatasetStats do
       lines: text |> String.split("\n") |> length(),
       tokens: ceil(chars / cpt)
     }
+  end
+
+  # First non-blank line of the prompt (trimmed) — the "opening line" for the register
+  # histogram. Blank leading lines are skipped so a stray newline can't split a group.
+  defp first_line(""), do: ""
+
+  defp first_line(text) do
+    text
+    |> String.split("\n")
+    |> Enum.map(&String.trim/1)
+    |> Enum.find("", &(&1 != ""))
+  end
+
+  # First n whitespace-delimited words of the whole prompt, re-joined by single spaces.
+  defp first_words(text, n) do
+    text |> String.split(~r/\s+/, trim: true) |> Enum.take(n) |> Enum.join(" ")
   end
 
   defp parse_name(name) do
@@ -150,6 +170,7 @@ defmodule DatasetStats do
       distributions: distributions(found),
       context_windows: context_windows(found),
       structure: structure(rows, found),
+      register: register(rows),
       quality: quality(with_harness),
       coverage: coverage(rows),
       duplication: duplication()
@@ -399,6 +420,59 @@ defmodule DatasetStats do
     }
   end
 
+  # ---------------------------------------------------------------- register / diversity
+
+  # Per-shape prompt-opening histograms (docs/12 §7.4 "before" numbers). The 5-way split
+  # is keyed off the row's shape/flags, NOT a dir-name prefix: :fim is detected
+  # structurally (a harness-less _02+ dir), so there are no fim_-prefixed dirs to match on.
+  @register_shapes [:seed, :variation, :fim, :wt, :tfim]
+
+  defp reg_group(r) do
+    cond do
+      r.tfim? -> :tfim
+      r.wtest? -> :wt
+      r.shape == :fim or r.fim? -> :fim
+      r.variation? -> :variation
+      r.base? -> :seed
+      true -> :other
+    end
+  end
+
+  defp register(rows) do
+    groups =
+      rows
+      |> Enum.filter(&(&1.prompt.chars > 0))
+      |> Enum.group_by(&reg_group/1)
+
+    by_shape =
+      Map.new(@register_shapes, fn shape ->
+        rs = Map.get(groups, shape, [])
+        lines = Enum.map(rs, & &1.prompt_open_line)
+        words = Enum.map(rs, & &1.prompt_open_words)
+
+        {shape,
+         %{
+           n: length(rs),
+           distinct_first_line: lines |> Enum.uniq() |> length(),
+           distinct_first_8_words: words |> Enum.uniq() |> length(),
+           top_first_line: top_openings(lines),
+           top_first_8_words: top_openings(words)
+         }}
+      end)
+
+    %{by_shape: by_shape, unclassified: length(Map.get(groups, :other, []))}
+  end
+
+  defp top_openings(list) do
+    total = max(length(list), 1)
+
+    list
+    |> Enum.frequencies()
+    |> Enum.sort_by(fn {_open, c} -> -c end)
+    |> Enum.take(5)
+    |> Enum.map(fn {open, c} -> %{opening: open, count: c, pct: pct(c, total)} end)
+  end
+
   defp quality(with_harness) do
     n = max(length(with_harness), 1)
 
@@ -582,6 +656,24 @@ defmodule DatasetStats do
     kv("  bundle file kinds", inspect(st.multifile_file_kinds))
     kv("OTP behaviours (in solutions)", inspect(st.otp_behaviours))
 
+    section("PROMPT REGISTER / DIVERSITY (per shape)")
+
+    Enum.each(@register_shapes, fn shape ->
+      g = s.register.by_shape[shape]
+
+      kv(
+        "#{shape} (n=#{g.n})",
+        "distinct first-line=#{g.distinct_first_line}  distinct first-8-words=#{g.distinct_first_8_words}"
+      )
+
+      for %{opening: o, count: c, pct: p} <- g.top_first_line do
+        IO.puts("      #{String.pad_trailing("#{fmt(c)} (#{p}%)", 16)} #{trunc_open(o)}")
+      end
+    end)
+
+    if s.register.unclassified > 0,
+      do: kv("  unclassified prompts", s.register.unclassified)
+
     q = s.quality
     section("QUALITY SIGNALS (single+multifile refs)")
     kv("Refs measured", q.solutions_scored)
@@ -620,6 +712,12 @@ defmodule DatasetStats do
 
     kv("Split recommendation", d.split_recommendation)
     IO.puts("\n#{line}\n")
+  end
+
+  defp trunc_open(""), do: "(empty)"
+
+  defp trunc_open(o) do
+    if String.length(o) > 72, do: String.slice(o, 0, 69) <> "…", else: o
   end
 
   defp section(title),
