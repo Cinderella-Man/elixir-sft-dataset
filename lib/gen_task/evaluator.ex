@@ -135,6 +135,26 @@ defmodule GenTask.Evaluator do
   end
 
   @doc """
+  True when a mutant's grade shows the harness ERRORED against it while the mutant
+  itself compiled: load-time raise (a gutted `defmacro` blowing up harness
+  compilation), a `setup` crash, an exit mid-test.
+
+  On its own this is NOT proof of coverage — that is `killed_by_tests?/1`'s bar
+  (docs/05 #18). But every mutation gate runs only after the same harness graded
+  green against the reference, and under that precondition an error appearing only
+  against the mutant is CAUSED by the mutation and is a kill — the argument
+  `scripts/validate.exs --mutants` already encodes (docs/10 §5.1, the 074 macro
+  family). Callers must ensure reference-green before treating this as a kill.
+  """
+  @spec errored_against_mutant?(grade() | map()) :: boolean()
+  def errored_against_mutant?(:timeout_or_crash), do: false
+  def errored_against_mutant?({:ok, json}), do: errored_against_mutant?(json)
+
+  def errored_against_mutant?(%{} = json) do
+    json["compiled"] == true and (json["tests_errors"] || 0) > 0
+  end
+
+  @doc """
   House-style / warning shortfall for a **green** base/variation grade, or `nil` when
   the solution already meets the bar. Used by the quality gate (`GenTask.Cycle`): a
   green, mutant-killing solution should still carry a `@moduledoc`, at least one

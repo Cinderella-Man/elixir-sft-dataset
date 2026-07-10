@@ -70,6 +70,28 @@ defmodule GenTask.EvaluatorTest do
     end
   end
 
+  describe "errored_against_mutant?/1" do
+    # The 074 macro-family shape (docs/10 §5.1): a gutted `defmacro` raises while the
+    # harness COMPILES against the mutant — tests_errors with zero tests run. With
+    # reference-green established by the caller, that error is mutation-caused.
+    @errored %{"compiled" => true, "tests_total" => 0, "tests_errors" => 1}
+
+    test "true when the mutant compiled and the harness errored" do
+      assert Evaluator.errored_against_mutant?(@errored)
+      assert Evaluator.errored_against_mutant?({:ok, @errored})
+      assert Evaluator.errored_against_mutant?(%{@errored | "tests_total" => 5})
+    end
+
+    test "false when the mutant itself did not compile (tier-B manifest missing)" do
+      refute Evaluator.errored_against_mutant?(%{@errored | "compiled" => false})
+    end
+
+    test "false without errors, and on eval timeout" do
+      refute Evaluator.errored_against_mutant?(%{"compiled" => true, "tests_errors" => 0})
+      refute Evaluator.errored_against_mutant?(:timeout_or_crash)
+    end
+  end
+
   describe "last_json_line/1" do
     test "returns the last brace-prefixed line" do
       out = "compiling...\n{\"a\":1}\nnoise\n{\"b\":2}\n"

@@ -527,8 +527,8 @@ defmodule GenTask.Mutation do
         Logger.debug("base mutation gate (whole-module): inconclusive")
 
         {:survived,
-         "the whole-module raise-mutant graded inconclusively (mutant compile failure, " <>
-           "harness load error, or eval timeout) — coverage cannot be verified"}
+         "the whole-module raise-mutant graded inconclusively (mutant compile failure " <>
+           "or eval timeout) — coverage cannot be verified"}
     end
   end
 
@@ -556,7 +556,7 @@ defmodule GenTask.Mutation do
           {:halt,
            {:survived,
             "the raise-mutant of `#{name}/#{arity}` graded inconclusively (mutant compile " <>
-              "failure, harness load error, or eval timeout) — coverage cannot be verified"}}
+              "failure or eval timeout) — coverage cannot be verified"}}
       end
     end)
   end
@@ -590,8 +590,8 @@ defmodule GenTask.Mutation do
         Logger.debug("fim mutation gate: inconclusive")
 
         {:survived,
-         "the gutted-candidate mutant graded inconclusively (mutant compile failure, " <>
-           "harness load error, or eval timeout) — coverage cannot be verified"}
+         "the gutted-candidate mutant graded inconclusively (mutant compile failure " <>
+           "or eval timeout) — coverage cannot be verified"}
     end
   end
 
@@ -649,14 +649,19 @@ defmodule GenTask.Mutation do
   end
 
   # A mutant's fate needs POSITIVE evidence in both directions (docs/05 #18):
-  # :killed only when the harness ran and failed (`killed_by_tests?`), :survived
-  # only when it ran and passed (`green?`). Everything else — the mutant failing
-  # to compile, the harness failing to load against it, or the eval timing out —
-  # is :inconclusive: the harness never observed the mutated behavior, so it must
-  # not count as coverage.
+  # :killed when the harness ran and failed (`killed_by_tests?`) — or ERRORED while
+  # the mutant compiled (`errored_against_mutant?`): every gate in this module runs
+  # only after the same harness graded green against the reference, so an error
+  # appearing only against the mutant is caused by the mutation and is a kill
+  # (docs/10 §5.1 — a gutted `defmacro` raises at harness COMPILE time; the 074
+  # family). :survived only when it ran and passed (`green?`). Everything else —
+  # the MUTANT failing to compile (e.g. staged without a tier-B manifest) or the
+  # eval timing out — is :inconclusive: the harness never observed the mutated
+  # behavior, so it must not count as coverage.
   defp fate(grade) do
     cond do
       Evaluator.killed_by_tests?(grade) -> :killed
+      Evaluator.errored_against_mutant?(grade) -> :killed
       Evaluator.green?(grade) -> :survived
       true -> :inconclusive
     end

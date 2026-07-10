@@ -46,6 +46,24 @@ defmodule GenTask.CLIVacuousSeedTest do
     assert CycleLog.cached_seed_verdict(cfg, "001_001_x_01", sha_new) == :miss
   end
 
+  test "a seed dir's manifest.exs joins the staged files and the cache key", %{cfg: cfg} do
+    # Tier-B fix (docs/10 §5.13): the manifest must reach the mutant staging dir and
+    # the verdict cache key, so editing it re-checks. A cache hit under the
+    # manifest-inclusive sha short-circuits before any eval subprocess — this test
+    # passing fast IS the evidence the new key was consulted.
+    dir = Path.join(System.tmp_dir!(), "vacuous_manifest_#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf!(dir) end)
+    manifest = "%{archetype: :ecto_repo}\n"
+    File.write!(Path.join(dir, "manifest.exs"), manifest)
+
+    sha = CycleLog.content_sha(@files["solution.ex"] <> @files["test_harness.exs"] <> manifest)
+    CycleLog.record_seed_verdict(cfg, "016_001_x_01", sha, %{"vacuous" => false})
+
+    refute CLI.vacuous_seed?(cfg, %{task_id: "016_001_x_01", dir: dir}, @files)
+    assert sha != CycleLog.content_sha(@files["solution.ex"] <> @files["test_harness.exs"])
+  end
+
   test "verdicts for other tasks do not leak", %{cfg: cfg} do
     cache_verdict(cfg, "002_001_other_01", %{"vacuous" => true, "why" => "x"})
     sha = CycleLog.content_sha(@files["solution.ex"] <> @files["test_harness.exs"])

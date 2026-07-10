@@ -218,7 +218,17 @@ defmodule GenTask.CLI do
   @spec vacuous_seed?(Config.t(), %{:task_id => String.t(), optional(any()) => any()}, map()) ::
           boolean()
   def vacuous_seed?(cfg, seed, files) do
-    sha = CycleLog.content_sha(files["solution.ex"] <> (files["test_harness.exs"] || ""))
+    # Tier-B parents (archetype declared in manifest.exs) compile only with that
+    # manifest staged alongside — the bare triplet grades every mutant
+    # "inconclusive" and wrongly blocks derivation (docs/10 §5.13). The manifest
+    # joins the cache key so editing it re-checks, and its absence changes nothing.
+    files = put_manifest(files, Map.get(seed, :dir))
+
+    sha =
+      CycleLog.content_sha(
+        files["solution.ex"] <>
+          (files["test_harness.exs"] || "") <> (files["manifest.exs"] || "")
+      )
 
     verdict =
       case CycleLog.cached_seed_verdict(cfg, seed.task_id, sha) do
@@ -247,6 +257,13 @@ defmodule GenTask.CLI do
       )
 
       false
+  end
+
+  defp put_manifest(files, nil), do: files
+
+  defp put_manifest(files, dir) do
+    path = Path.join(dir, "manifest.exs")
+    if File.regular?(path), do: Map.put(files, "manifest.exs", File.read!(path)), else: files
   end
 
   defp emit_seed_verdict(seed, %{"vacuous" => true, "why" => why}) do
