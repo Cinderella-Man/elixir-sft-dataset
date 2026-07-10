@@ -7,7 +7,6 @@ test so the harness passes for a correct implementation of the module.
 ## Module under test
 
 ```elixir
-<file path="lib/webhook_receiver.ex">
 defmodule WebhookReceiver.Signature do
   @moduledoc """
   HMAC-SHA256 signature verification for webhook payloads.
@@ -17,6 +16,7 @@ defmodule WebhookReceiver.Signature do
   Computes HMAC-SHA256 of `payload` with `secret` and compares it, in
   constant time, against the hex-encoded `signature`. Returns `:ok` or `:error`.
   """
+  @spec verify(binary(), binary(), binary()) :: :ok | :error
   def verify(payload, signature, secret)
       when is_binary(payload) and is_binary(signature) and is_binary(secret) do
     expected =
@@ -123,8 +123,8 @@ defmodule WebhookReceiver.Router do
 
   alias WebhookReceiver.{Signature, Store}
 
-  plug :match
-  plug :dispatch
+  plug(:match)
+  plug(:dispatch)
 
   post "/api/webhooks/stripe" do
     opts = conn.assigns.webhook_opts
@@ -172,7 +172,6 @@ defmodule WebhookReceiver.Router do
     |> send_resp(status, Jason.encode!(data))
   end
 end
-</file>
 ```
 
 ## Test harness — implement the `# TODO` test

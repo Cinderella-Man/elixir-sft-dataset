@@ -7,7 +7,6 @@ test so the harness passes for a correct implementation of the module.
 ## Module under test
 
 ```elixir
-<file path="lib/file_upload.ex">
 defmodule FileUpload.Store do
   @moduledoc """
   A `GenServer` that stores uploaded-file metadata in memory, keyed by a
@@ -16,10 +15,7 @@ defmodule FileUpload.Store do
 
   use GenServer
 
-  @max_bytes 5_242_880
-
-  def max_bytes, do: @max_bytes
-
+  @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
   end
@@ -134,8 +130,8 @@ defmodule FileUpload.Router do
 
   @max_bytes 5_242_880
 
-  plug :match
-  plug :dispatch
+  plug(:match)
+  plug(:dispatch)
 
   post "/api/uploads" do
     opts = conn.assigns.router_opts
@@ -200,7 +196,6 @@ defmodule FileUpload.Router do
     |> send_resp(status, Jason.encode!(data))
   end
 end
-</file>
 ```
 
 ## Test harness — implement the `# TODO` test

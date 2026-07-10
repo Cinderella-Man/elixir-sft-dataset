@@ -28,6 +28,14 @@ if [ -n "$families" ]; then
   elixir scripts/validate.exs --mutants --only "$globs" | tail -1
   echo "[pre-push] format check on touched families"
   elixir scripts/format_corpus.exs --check --only "$globs" | tail -1
+  echo "[pre-push] tfim embed staleness check on touched families"
+  resync_out=$(mix run scripts/resync_tfim_embeds.exs -- --only "$globs")
+  echo "$resync_out" | tail -1
+  if echo "$resync_out" | grep -q "would_resync\|error"; then
+    echo "[pre-push] FAIL: tfim prompt embeds drifted from their parents —" \
+      "run: mix run scripts/resync_tfim_embeds.exs -- --only \"$globs\" --apply"
+    exit 1
+  fi
 else
   echo "[pre-push] no task families touched — skipping corpus gates"
 fi

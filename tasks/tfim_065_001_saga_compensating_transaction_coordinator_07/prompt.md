@@ -67,7 +67,12 @@ defmodule Saga do
     * `compensation` — a 1-arity function receiving the current context that
       undoes the step's effect. Its return value is recorded.
   """
-  @spec step(t(), term(), (context() -> {:ok, term()} | {:error, term()}), (context() -> term())) ::
+  @spec step(
+          t(),
+          term(),
+          (context() -> {:ok, term()} | {:error, term()}),
+          (context() -> term())
+        ) ::
           t()
   def step(%__MODULE__{steps: steps} = saga, name, action, compensation)
       when is_function(action, 1) and is_function(compensation, 1) do

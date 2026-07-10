@@ -53,6 +53,10 @@ defmodule KeyedPool do
     GenServer.start_link(__MODULE__, %{max_concurrency: max_concurrency}, server_opts)
   end
 
+  @doc """
+  Runs `func` under `key` with per-key bounded concurrency, queueing when the key is
+  at capacity. Returns the function's result.
+  """
   @spec execute(GenServer.server(), term(), (-> term())) ::
           {:ok, term()} | {:error, term()}
   def execute(server, key, func) when is_function(func, 0) do

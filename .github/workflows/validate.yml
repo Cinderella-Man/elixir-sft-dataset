@@ -45,6 +45,13 @@ jobs:
       - run: elixir scripts/validate.exs --mutants
       # Corpus canonical-format gate (docs/10 R6).
       - run: elixir scripts/format_corpus.exs --check
+      # tfim prompt embeds must match their parents (docs/10 §5.14 / docs/11 §1a):
+      # the dry run must report 0 errors and 0 would_resync, else prompts have
+      # drifted from the parent files they display.
+      - run: |
+          out=$(mix run scripts/resync_tfim_embeds.exs)
+          echo "$out"
+          echo "$out" | grep -q "would_resync\|error" && exit 1 || true
       # Full perfect-score sweep: weekly + manual only (too slow per push).
       - if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: elixir scripts/validate.exs

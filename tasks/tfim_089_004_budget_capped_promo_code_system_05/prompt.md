@@ -25,6 +25,7 @@ defmodule BudgetPromoCodes do
 
   # --- lifecycle ---
 
+  @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
     clock = Keyword.get(opts, :clock, fn -> DateTime.utc_now() end)
     name = Keyword.get(opts, :name, __MODULE__)
@@ -38,6 +39,7 @@ defmodule BudgetPromoCodes do
 
   # --- public API ---
 
+  @doc "Creates a budget-capped promo code from `attrs`. Returns `{:ok, code}` or error."
   def create(attrs) when is_map(attrs), do: GenServer.call(__MODULE__, {:create, attrs})
 
   def apply_code(code_string, order_total, opts \\ [])

@@ -32,6 +32,7 @@ defmodule BoundedBiMap do
     GenServer.start_link(__MODULE__, capacity, [name: name] ++ opts)
   end
 
+  @doc "Stores the `key`<->`value` pair, evicting the LRU entry when at capacity. Returns `:ok`."
   @spec put(GenServer.server(), term(), term()) :: :ok
   def put(name, key, value), do: GenServer.call(name, {:put, key, value})
 

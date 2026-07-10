@@ -116,7 +116,7 @@ defmodule ORSet do
 
       {:error, :not_a_member} ->
         raise ArgumentError,
-              "cannot remove element #{inspect(element)}: it is not a current member of the OR-Set"
+              "cannot remove element #{inspect(element)}: not a current member"
     end
   end
 
@@ -154,7 +154,7 @@ defmodule ORSet do
 
   def merge(_server, invalid) do
     raise ArgumentError,
-          "remote_state must have :entries, :tombstones, and :clock keys, got: #{inspect(invalid)}"
+          "remote_state must have :entries, :tombstones, :clock keys, got: #{inspect(invalid)}"
   end
 
   @doc """

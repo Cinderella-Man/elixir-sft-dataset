@@ -7,7 +7,6 @@ test so the harness passes for a correct implementation of the module.
 ## Module under test
 
 ```elixir
-<file path="lib/idempotent_payments.ex">
 defmodule IdempotentPayments do
   @moduledoc """
   A GenServer that simulates an idempotent payment processing system with
@@ -24,6 +23,7 @@ defmodule IdempotentPayments do
   # Public API
   # ---------------------------------------------------------------------------
 
+  @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
   end
@@ -164,7 +164,6 @@ defmodule IdempotentPayments do
     Process.send_after(self(), :cleanup, interval)
   end
 end
-</file>
 ```
 
 ## Test harness — implement the `# TODO` test

@@ -24,6 +24,10 @@ defmodule BudgetRetryWorker do
     GenServer.start_link(__MODULE__, opts, gen_opts)
   end
 
+  @doc """
+  Runs `func`, retrying with decorrelated-jitter backoff until it succeeds or the retry
+  budget in `opts` is exhausted.
+  """
   @spec execute(GenServer.server(), (-> any()), keyword()) ::
           {:ok, any()} | {:error, :budget_exhausted, any(), pos_integer()}
   def execute(server, func, opts \\ []) do
