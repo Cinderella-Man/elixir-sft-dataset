@@ -188,5 +188,4 @@ defmodule SecureToken do
 
   defp constant_time_equal?(_, _), do: false
 end
-
 ```

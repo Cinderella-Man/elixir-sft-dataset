@@ -195,5 +195,4 @@ defmodule BloomFilter do
     Bitwise.band(Bitwise.bsr(word, bo), 1)
   end
 end
-
 ```

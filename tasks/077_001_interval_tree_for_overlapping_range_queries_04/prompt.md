@@ -282,5 +282,4 @@ defmodule IntervalTree do
     # TODO
   end
 end
-
 ```

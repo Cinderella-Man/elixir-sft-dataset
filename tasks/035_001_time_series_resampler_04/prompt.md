@@ -159,5 +159,4 @@ defmodule TimeSeriesResampler do
     value
   end
 end
-
 ```

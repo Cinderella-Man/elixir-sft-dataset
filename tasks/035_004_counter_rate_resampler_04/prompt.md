@@ -138,5 +138,4 @@ defmodule CounterResampler do
     value
   end
 end
-
 ```

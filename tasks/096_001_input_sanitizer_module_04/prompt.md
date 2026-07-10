@@ -354,5 +354,4 @@ defmodule Sanitizer do
     end
   end
 end
-
 ```

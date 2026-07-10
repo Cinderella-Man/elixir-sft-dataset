@@ -428,5 +428,4 @@ defmodule TeamRouter do
     |> Plug.Conn.send_resp(status, Jason.encode!(payload))
   end
 end
-
 ```

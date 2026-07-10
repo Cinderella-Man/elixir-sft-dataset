@@ -217,5 +217,4 @@ defmodule FieldMasker do
     raise ArgumentError, "invalid masking strategy: #{inspect(strategy)}"
   end
 end
-
 ```

@@ -199,5 +199,4 @@ defmodule MarkdownParser do
     %{category: name, items: Enum.reverse(items)}
   end
 end
-
 ```

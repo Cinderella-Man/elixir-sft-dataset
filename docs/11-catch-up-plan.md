@@ -3,6 +3,10 @@
 Date: 2026-07-10. Agreed with Kamil. This doc is deliberately written in plain
 language — see the glossary at the bottom for the project's shorthand terms.
 
+> **Current status always lives in [`/STATUS.md`](../STATUS.md).** The concrete
+> work list inside these phases, the quality standard, and the exit protocol
+> live in `docs/12-quality-standard-and-steady-state.md`.
+
 ## The plan, in one paragraph
 
 We stop generating new content until the quality-assurance work on the

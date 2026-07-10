@@ -39,6 +39,12 @@ defmodule TriageScreen do
   """
 
   def main(argv) do
+    # `mix run script.exs -- --report` leaves the literal `--` in System.argv, and
+    # OptionParser treats it as an end-of-options terminator — silently dropping every
+    # flag and turning a report-only invocation into a PAID screen run. Accept both
+    # invocations by dropping a leading `--` (same fix as resync_tfim_embeds.exs).
+    argv = Enum.drop_while(argv, &(&1 == "--"))
+
     {opts, _, _} =
       OptionParser.parse(argv,
         strict: [only: :string, limit: :integer, model: :string, report: :boolean]
