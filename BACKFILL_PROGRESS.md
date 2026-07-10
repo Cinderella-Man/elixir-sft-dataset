@@ -5,7 +5,7 @@
 > (`scripts/generate.exs`, `GEN_ONLY=backfill`), subscription-backed `claude -p`,
 > mutation-gated + self-repairing + insert-only + resumable. Started 2026-07-02.
 >
-> Live status any time: `mix run scripts/backfill_status.exs` (recomputed from disk).
+> Live status any time: `mix run scripts/work_status.exs` (recomputed from disk).
 > Structured per-task ledger: `logs/runs.jsonl`. Console: `logs/backfill_console.log`.
 
 ## Baseline (2026-07-02, before this run)

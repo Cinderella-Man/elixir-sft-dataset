@@ -309,9 +309,9 @@ pure disk/config inspection; gate-expensive checks belong in the runner behind a
 negative-cache ledger (the `tfim_rejected.jsonl` / `seed_verdicts.jsonl` pattern).
 
 Covered by `test/gen_task/work_test.exs` (registry contract, top-up semantics,
-gradable-skip exclusions, summary aggregation); the legacy
-`backfill_plan.exs`/`backfill_status.exs` still work and now agree with the
-registry by construction.
+gradable-skip exclusions, summary aggregation). (Historical: the legacy
+`backfill_plan.exs`/`backfill_status.exs` planners have since been removed,
+superseded by `work_status.exs`.)
 
 ---
 
