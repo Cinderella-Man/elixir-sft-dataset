@@ -65,10 +65,10 @@ defmodule PenaltyLimiterTest do
     for _ <- 1..3, do: PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
     assert {:error, :rate_limited, _, 1} = PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
 
-    # Advance past the sliding window but NOT past the strike-1 cooldown (1_000ms).
-    # Wait, the cooldown starts at the moment of rejection (t=0), so it ends at t=1000.
-    # The window (t=0..999) also ends around t=1000. We need a case where the window
-    # has cleared but the cooldown is still active. Use a ladder with longer first strike.
+    # With the default ladder the first cooldown (1_000ms) ends at the same
+    # moment the window clears, so the two effects cannot be told apart. Use a
+    # separate limiter with a longer first cooldown so the window clears while
+    # the cooldown is still active.
     {:ok, pl2} = PenaltyLimiter.start_link(clock: &Clock.now/0, cleanup_interval_ms: :infinity)
     long_ladder = [5_000, 30_000]
 
@@ -233,27 +233,65 @@ defmodule PenaltyLimiterTest do
   # -------------------------------------------------------
 
   test "keys with no activity, no strikes, no cooldown are cleaned up", %{pl: pl, ladder: ladder} do
+    # Populate keys whose windows then expire — they become indistinguishable
+    # from never-seen keys and eligible for removal.
     for i <- 1..50 do
-      # One successful call per key — no strikes, no cooldowns.
-      PenaltyLimiter.check(pl, "key:#{i}", 1, 100, ladder)
+      assert {:ok, 0} = PenaltyLimiter.check(pl, "key:#{i}", 1, 100, ladder)
     end
 
-    # Advance past the sliding window so timestamps clear too.
     Clock.advance(200)
-
-    # Manually advance any internal state that depends on timestamps being pruned.
-    # Our cleanup only drops entries that are fully inert. Trigger it.
     send(pl, :cleanup)
-    :sys.get_state(pl)
 
-    state = :sys.get_state(pl)
+    # Removal itself is deliberately invisible through the public API — a
+    # removed key must behave exactly like a fresh one, and that equivalence
+    # IS the contract. After the cleanup pass every expired key must present a
+    # full fresh allowance, and the server must keep serving new keys.
+    for i <- 1..50 do
+      assert {:ok, 0} = PenaltyLimiter.check(pl, "key:#{i}", 1, 100, ladder)
+    end
 
-    # Since cleanup keeps entries with non-empty timestamps, we need a check
-    # that actually prunes them. The cleanup in this implementation keeps
-    # entries with has_timestamps=true, so we'd need a check call to prune.
-    # Instead, verify the weaker property: after a check on a fresh key, the
-    # limiter behaves cleanly.
-    refute Map.has_key?(state.keys, "never_seen_key")
     assert {:ok, 0} = PenaltyLimiter.check(pl, "never_seen_key", 1, 100, ladder)
+  end
+
+  test "cleanup preserves in-window request history", %{pl: pl, ladder: ladder} do
+    # Two of three window slots consumed, no strikes: the key is NOT inert, so
+    # a cleanup pass must leave it alone. A cleanup that drops or trims live
+    # keys would hand back a fresh allowance here.
+    assert {:ok, 2} = PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
+    assert {:ok, 1} = PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
+
+    Clock.advance(100)
+    send(pl, :cleanup)
+
+    # Still the same window: exactly one slot left, then a rejection.
+    assert {:ok, 0} = PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
+    assert {:error, :rate_limited, _, 1} = PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
+  end
+
+  test "cleanup preserves active cooldowns and strike counts", %{pl: pl} do
+    long_ladder = [5_000, 30_000]
+
+    for _ <- 1..3, do: PenaltyLimiter.check(pl, "k", 3, 1_000, long_ladder)
+    assert {:error, :rate_limited, _, 1} = PenaltyLimiter.check(pl, "k", 3, 1_000, long_ladder)
+
+    # Past the window, inside the 5_000ms cooldown.
+    Clock.advance(1_500)
+    send(pl, :cleanup)
+
+    # The cooldown must survive the cleanup pass untouched.
+    assert {:error, :cooling_down, retry_after, 1} =
+             PenaltyLimiter.check(pl, "k", 3, 1_000, long_ladder)
+
+    assert retry_after > 3_000 and retry_after <= 5_000
+
+    # Past the cooldown but well inside the decay period: the strike count
+    # must also have survived, so the next violation escalates to strike 2.
+    Clock.advance(4_000)
+    for _ <- 1..3, do: PenaltyLimiter.check(pl, "k", 3, 1_000, long_ladder)
+
+    assert {:error, :rate_limited, retry_after_2, 2} =
+             PenaltyLimiter.check(pl, "k", 3, 1_000, long_ladder)
+
+    assert retry_after_2 >= 30_000
   end
 end

@@ -6,7 +6,7 @@ def handle_call({:check, key, max_requests, window_ms, ladder}, _from, state) do
   # Step 1: decay strikes
   entry = decay_strikes(entry, now, window_ms)
 
-  # ✅ FIX: expire cooldown if time has passed
+  # An elapsed cooldown is cleared before the window is evaluated.
   entry =
     if entry.cooldown_end && entry.cooldown_end <= now do
       %{entry | cooldown_end: nil}

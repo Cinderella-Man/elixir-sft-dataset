@@ -31,10 +31,15 @@ What that means in practice:
 - [x] Stale child-prompt copies resynced + staleness gate wired (docs/11 §1a, 2026-07-10)
 - [x] Seed self-check fixed, 50 blocked units freed (docs/11 §1b, 2026-07-10)
 - [x] Corpus format gate green again (23 embeds, 2026-07-10)
-- [ ] docs/12 §4.1 deterministic punch list — 020_001 rebuilt around real
-      `Plug.Parsers` + blind re-screen GREEN (2026-07-10); 001_004 and the rest
-      still open
-- [ ] docs/12 §4.2 decisions signed off (spot-review scope, prompt-monotony scope, semantic floor)
+- [ ] docs/12 §4.1 deterministic punch list — DONE 2026-07-10: 020_001 rebuild
+      (re-screen GREEN), 001_002 reach-in, chatter sweep (4 families), fence
+      artifacts, 23-tfim re-gate (0/23), repair audit (0 flags), semantic
+      re-measure (tail = 20 <0.5), register metric, backfill-script removal;
+      STAGED: nightly-sweep systemd units (needs install, §4.1.10); REMAINING:
+      §4.1.3 mutation sweep, §4.1.9 decontamination, 001_004 (redesigned,
+      re-screen in flight)
+- [x] docs/12 §4.2.1 — 099_002/3/4 screened GREEN; S6 holds for all 303 seeds (2026-07-10)
+- [ ] docs/12 §4.2 decisions signed off (spot-review scope, prompt-monotony scope, semantic floor — tail confirmed at 20 families <0.5 by re-measure)
 - [ ] docs/12 §5 loop hardening items marked [blocks Phase 2] / [blocks Phase 3]
 - [ ] Phase 2: derivative top-up run complete (work_status shows 0 pending everywhere)
 - [ ] Phase 3: new generation resumed and first batch validated

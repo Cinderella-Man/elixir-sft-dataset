@@ -14,16 +14,13 @@ defp decay_strikes(entry, now, window_ms) do
       new_strikes = entry.strikes - forgive
       new_last = entry.last_strike_at + forgive * decay_period
 
-      # ✅ Recalculate cooldown based on the NEW strike level
-      # We approximate the "new cooldown" as if it started at new_last
-      # using the ladder logic (same as when strike was created)
-      # BUT since we don't have ladder here, safest option:
-
+      # Decay forgives cooldowns: once any strike decays, an outstanding
+      # cooldown is cancelled and the next request is evaluated against the
+      # normal sliding-window limit.
       %{
         entry
         | strikes: new_strikes,
           last_strike_at: new_last,
-          # 🔑 clear stale cooldown
           cooldown_end: nil
       }
   end

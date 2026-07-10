@@ -6,10 +6,10 @@
     for _ <- 1..3, do: PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
     assert {:error, :rate_limited, _, 1} = PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
 
-    # Advance past the sliding window but NOT past the strike-1 cooldown (1_000ms).
-    # Wait, the cooldown starts at the moment of rejection (t=0), so it ends at t=1000.
-    # The window (t=0..999) also ends around t=1000. We need a case where the window
-    # has cleared but the cooldown is still active. Use a ladder with longer first strike.
+    # With the default ladder the first cooldown (1_000ms) ends at the same
+    # moment the window clears, so the two effects cannot be told apart. Use a
+    # separate limiter with a longer first cooldown so the window clears while
+    # the cooldown is still active.
     {:ok, pl2} = PenaltyLimiter.start_link(clock: &Clock.now/0, cleanup_interval_ms: :infinity)
     long_ladder = [5_000, 30_000]
 

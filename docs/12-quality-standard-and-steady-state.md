@@ -125,15 +125,20 @@ everything else can run in parallel with it (Kamil's call, as agreed in docs/11)
    (`✅`, `🔑`, `# FIX`, `# Fixed:`, `Wait,`, `BUT since`, "the evaluator",
    emoji generally) over all gold `solution.ex`/`test_harness.exs`, then hand
    review of hits. Known confirmed cases to fix regardless:
-   - `001_004_penalty_escalation_01` — gold carries five leaked repair comments
-     AND a real bug: cleanup prunes with `ts > now` (solution.ex:183), which is
-     always empty under the injected clock, so strike-free keys are deleted
-     mid-window (fresh allowance after `:cleanup`) — contradicting prompt line
-     18. Its own cleanup test knows it can't test this and self-weakened into a
-     `refute Map.has_key?(state.keys, "never_seen_key")` that cannot fail
-     (test_harness.exs:247-256), plus leaked "Wait, …" chain-of-thought at
-     lines 69-71. Fix gold + harness (observable-behavior test), cascade to the
-     5 FIM children + wt_ + tfim children, revalidate, re-screen.
+   - ✅ DONE 2026-07-10: `001_004_penalty_escalation_01` — redesigned on the
+     stable-API reading of prompt line 18: each key now stores the `window_ms`
+     of its last check (internal field, no API change), and `:cleanup` removes
+     ONLY keys that are indistinguishable from never-seen (timestamps expired
+     against their own window, strikes fully decayed — computed to decide, not
+     to mutate — and cooldown elapsed). The `ts > now` bug and all leaked
+     chatter are gone. Harness: the vacuous refute replaced by observable
+     negative-guarantee tests (cleanup must not reset in-window allowances,
+     active cooldowns, or undecayed strike counts) — verified DISCRIMINATING:
+     the old buggy gold fails exactly the new in-window test. Cascade: 4 FIM
+     golds re-sliced + embeds regenerated (also fixed pre-existing @doc-drift
+     conventions), _03/_05 prose updated to the new contract, wt_ copies +
+     embed refreshed, tfim _04 gold reworded, 10 tfim embeds resynced. All
+     gates green; blind re-screen GREEN (13/13) against the new harness.
    - ✅ DONE 2026-07-10: `020_001_file_upload_with_validation_01` — Kamil chose
      REBUILD over re-spec (prompt stayed byte-identical). Gold now genuinely
      enforces the limit via `Plug.Parsers` (rescued `RequestTooLargeError` →
@@ -148,29 +153,32 @@ everything else can run in parallel with it (Kamil's call, as agreed in docs/11)
      §5.1 item 8). Verified: every family gate green, and a fresh blind
      re-screen GREEN. (The first re-screen was RED and correctly caught both
      harness defects — the screen doing its job.)
-   - `001_002_fixed_window_counter_01` — still asserts
-     `map_size(state.counters) == 0` via `:sys.get_state` (the exact reach-in
-     its sibling 001_001 had removed on 07-08; the tfim child embeds it
-     verbatim). Finish the family: rewrite to the observable-contract pattern,
-     resync embeds.
-5. **Fix the stray fence artifact** in `001_001_rate_limiter_02/prompt.md:142`
-   (a quote character after the closing code fence; 2 occurrences corpus-wide,
-   both family 001). One-line edits.
-6. **Re-gate the 23 bundle-parent tfim gold blocks** (016_001, 021_001,
-   102_001) with today's AST `asserting_block?` check — seconds; re-mint any
-   failures.
-7. **Retro repair audit over `logs/attempts/`** — 60 accepted units went
-   through repairs before the test-deletion guard existed (07-08), plus
-   unledgered April repairs. Deterministic script: compare `test`/`property`
-   block counts across each chain's attempts (reuse the cycle.ex counting
-   regex); flag any acceptance whose final harness has fewer tests than an
-   earlier attempt.
-8. **Semantic-mutant hygiene re-measure** — re-run `--semantic-mutants` for the
-   7 families whose harnesses were rewritten after measurement (001_001,
-   023_001, 023_003, 042_004, 104_004, 623_001, 077_001), the 4 unmeasured
-   Night-shift families, and drop wt_ rows from analysis (their harnesses are
-   byte-copies of parents; 11 of the 15 "weakest tasks" are stale wt_
-   duplicates). CPU-only.
+   - ✅ DONE 2026-07-10: `001_002_fixed_window_counter_01` — cleanup test
+     rewritten to the observable-contract pattern of sibling commit 5f29311;
+     wt_ harness refreshed as byte-copy; 10 tfim embeds resynced; zero
+     `:sys.get_state` remains in the family; scoped gates green. The chatter
+     sweep half of this item also ran corpus-wide: genuine chatter found and
+     reworded in 4 families (007_002, 012_004, and — via a widened marker
+     pass — 032_002 and 002_001); deliberate unicode payloads and two benign
+     false positives documented and left alone.
+5. ✅ DONE 2026-07-10: both stray fence artifacts removed
+   (`001_001_rate_limiter_02/prompt.md:142` and `_03/prompt.md:153`); zero
+   remain corpus-wide.
+6. ✅ DONE 2026-07-10: all 23 bundle-parent tfim golds (016_001×10,
+   021_001×10, 102_001×3) re-gated with `asserting_block?/1` — 0 failures,
+   nothing to re-mint.
+7. ✅ DONE 2026-07-10: `scripts/audit_repairs.exs` (one-shot; delete at the
+   line per §7.2) audited 581 chains — 54 multi-attempt + 9 FIM skipped; 6
+   chains changed test counts and ALL added tests; **0 flagged**. Caveat:
+   `reset_attempts` wipes a chain's history on re-run, so only retained
+   cycles are auditable — the clean result covers what evidence exists.
+8. ✅ DONE 2026-07-10: re-measured the 7 rewritten-harness families + the 4
+   unmeasured ones (ledger 618→629 rows). Latest-per-task, wt_ dropped:
+   corpus mean 0.747 / median 0.769; **the tail is 20 families <0.5** (not
+   19 — the prior figure predates this ledger snapshot) and 69 <0.6. The
+   re-measure moved nothing in or out: the 7 rewrites reproduced identical
+   kill-rates, and the 4 new families all landed ≥0.5. The <0.5 tier is
+   therefore real weakness, not stale-measurement noise — input to §4.2.3.
 9. **Benchmark decontamination check — new gate, no LLM.** Download the
    MultiPL-E `humaneval-elixir` (161 rows) + `mbpp-elixir` (397 rows) subsets,
    McEval's Elixir tasks, and the public Exercism Elixir track; run 8-gram
@@ -179,24 +187,26 @@ everything else can run in parallel with it (Kamil's call, as agreed in docs/11)
    `validate.exs` mode and publish the decontamination statement in the README.
    Classic-exercise ideas (rate limiter, LRU, trie…) make idea-level overlap
    plausible; this is the one gap any downstream consumer would flag first.
-10. **Schedule the nightly flake sweep — it has never actually run.** There is
-    no crontab on this machine and no `logs/nightly/`; the R9 flake watch
-    (the only still-open docs/10 item) accumulates evidence only if
-    `scripts/nightly_sweep.sh` runs. Both current repeat offenders (104_004,
-    625_001) are fixed; 24 tasks sit at one occurrence. Put it on a machine.
-11. **Delete the superseded planner scripts**: `scripts/backfill_plan.exs` and
-    `scripts/backfill_status.exs` (both replaced by `work_status.exs`;
-    backfill_status even documents a `--md` flag it never implemented). Update
-    the two references (BACKFILL_PROGRESS.md:8,109 → work_status; docs/09:313
-    marked historical).
-12. **Register/diversity metric in `dataset_stats.exs`** (docs/10 §4.2, never
-    landed): first-line and first-8-words histograms per shape, so the §7.4
-    rewrite round has a before/after number.
+10. ◐ STAGED 2026-07-10: systemd user units live in `scripts/systemd/`
+    (`Persistent=true` timer at 03:00 + explicit PATH for the asdf shims).
+    Install needs Kamil's hands (touches user machine config):
+    `cp scripts/systemd/nightly-sweep.{service,timer} ~/.config/systemd/user/`
+    → `systemctl --user daemon-reload` → `systemctl --user enable --now
+    nightly-sweep.timer` → `loginctl enable-linger kamil`.
+11. ✅ DONE 2026-07-10: both planner scripts deleted; BACKFILL_PROGRESS.md:8
+    updated to `work_status.exs`; docs/09:313 marked historical;
+    BACKFILL_PROGRESS.md:109 left as historical prose; no other live
+    references remain.
+12. ✅ DONE 2026-07-10: `dataset_stats.exs` now reports per-shape first-line
+    + first-8-words histograms (shape-keyed, not dir-prefix-keyed — fim dirs
+    are detected structurally). Baseline for §7.4 confirmed: tfim and wt_
+    each collapse to a single opening line; ~76% of seed/variation prompts
+    open "Write me".
 
 ### 4.2 Items that cost LLM tokens or need Kamil's scope decision
 
-1. **[blocks Phase 2, tiny] Screen the 3 unscreened seeds** (099_002/3/4,
-   ~$2) so S6 holds corpus-wide before derivatives are built on them.
+1. ✅ DONE 2026-07-10: 099_002/3/4 screened — all three GREEN. **S6 now
+   holds for all 303 seeds** (254 green, 49 documented keeps).
 2. **Spot-review of accepted tasks (docs/10 §4.4) — first tranche done.**
    Today's fresh-eyes 12-task stratified review IS the pilot: it found the
    001_004 and 020_001 defects (§4.1.4) at a 2-defects-per-12 rate,

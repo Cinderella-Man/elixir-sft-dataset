@@ -1,6 +1,6 @@
 Implement the `handle_info/2` callback for the `:cleanup` message.
 
-Iterate through the `keys` map and remove any entries that are functionally "empty." An entry should only be kept if it has an active cooldown, at least one recorded strike, or non-expired timestamps.
+Iterate through the `keys` map and remove every entry that `removable?/2` (defined below in the module) judges removable at the current clock time — i.e. entries that have become indistinguishable from never-seen keys. Entries that are not removable must be kept exactly as they are: cleanup never rewrites a retained entry's state.
 
 Once the map is cleaned, update the state and use `schedule_cleanup/1` to ensure the next cleanup cycle is triggered according to the `cleanup_interval_ms`. Return the updated state in a `{:noreply, state}` tuple.
 
@@ -50,7 +50,7 @@ defmodule PenaltyLimiter do
   @default_cleanup_interval_ms 60_000
 
   defp empty_entry do
-    %{timestamps: [], strikes: 0, last_strike_at: nil, cooldown_end: nil}
+    %{timestamps: [], strikes: 0, last_strike_at: nil, cooldown_end: nil, window_ms: nil}
   end
 
   @impl true
@@ -76,7 +76,7 @@ defmodule PenaltyLimiter do
     # Step 1: decay strikes
     entry = decay_strikes(entry, now, window_ms)
 
-    # ✅ FIX: expire cooldown if time has passed
+    # An elapsed cooldown is cleared before the window is evaluated.
     entry =
       if entry.cooldown_end && entry.cooldown_end <= now do
         %{entry | cooldown_end: nil}
@@ -100,13 +100,13 @@ defmodule PenaltyLimiter do
   defp evaluate_window(state, key, entry, now, max_requests, window_ms, ladder) do
     window_start = now - window_ms
 
-    # Highly efficient: stops traversing as soon as we hit expired timestamps
+    # Timestamps are stored newest-first, so the scan stops at the first
+    # expired entry.
     active = Enum.take_while(entry.timestamps, fn ts -> ts > window_start end)
     count = length(active)
 
     if count < max_requests do
-      # O(1) prepend
-      new_entry = %{entry | timestamps: [now | active], cooldown_end: nil}
+      new_entry = %{entry | timestamps: [now | active], cooldown_end: nil, window_ms: window_ms}
       remaining = max_requests - count - 1
 
       {:reply, {:ok, remaining}, %{state | keys: Map.put(state.keys, key, new_entry)}}
@@ -114,21 +114,23 @@ defmodule PenaltyLimiter do
       new_strikes = entry.strikes + 1
       cooldown_ms = ladder_value(ladder, new_strikes)
 
-      # List.last is perfectly safe because monotonic time + prepending guarantees order
+      # Newest-first order makes the last active entry the oldest one.
       oldest = List.last(active)
       window_retry = oldest + window_ms - now
 
-      # Calculate the true retry duration
+      # retry_after covers both the window expiry and the new strike's cooldown.
       retry_after = max(max(window_retry, cooldown_ms), 1)
 
       new_entry = %{
         entry
-        | # Do NOT add 'now' for rejected requests
+        | # A rejected request does not consume a window slot.
           timestamps: active,
           strikes: new_strikes,
           last_strike_at: now,
-          # Fixed: Align stored state with returned value
-          cooldown_end: now + retry_after
+          # The cooldown ends exactly retry_after past the moment the strike
+          # was issued.
+          cooldown_end: now + retry_after,
+          window_ms: window_ms
       }
 
       {:reply, {:error, :rate_limited, retry_after, new_strikes},
@@ -160,16 +162,13 @@ defmodule PenaltyLimiter do
         new_strikes = entry.strikes - forgive
         new_last = entry.last_strike_at + forgive * decay_period
 
-        # ✅ Recalculate cooldown based on the NEW strike level
-        # We approximate the "new cooldown" as if it started at new_last
-        # using the ladder logic (same as when strike was created)
-        # BUT since we don't have ladder here, safest option:
-
+        # Decay forgives cooldowns: once any strike decays, an outstanding
+        # cooldown is cancelled and the next request is evaluated against the
+        # normal sliding-window limit.
         %{
           entry
           | strikes: new_strikes,
             last_strike_at: new_last,
-            # 🔑 clear stale cooldown
             cooldown_end: nil
         }
     end
@@ -181,6 +180,23 @@ defmodule PenaltyLimiter do
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
+
+  # A key is removed only when it has become indistinguishable from a
+  # never-seen key: every timestamp has expired (judged against the window the
+  # key was last checked with), the strike count has fully decayed, and no
+  # cooldown is outstanding. Decay is computed here only to DECIDE removal —
+  # retained entries keep their stored state, so decay still materializes
+  # lazily at the next `check`.
+  defp removable?(%{window_ms: nil}, _now), do: false
+
+  defp removable?(entry, now) do
+    decayed = decay_strikes(entry, now, entry.window_ms)
+    window_start = now - entry.window_ms
+
+    Enum.all?(decayed.timestamps, fn ts -> ts <= window_start end) and
+      decayed.strikes == 0 and
+      (decayed.cooldown_end == nil or decayed.cooldown_end <= now)
+  end
 
   defp schedule_cleanup(:infinity), do: :ok
 
