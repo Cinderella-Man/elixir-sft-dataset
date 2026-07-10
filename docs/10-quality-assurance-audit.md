@@ -708,6 +708,70 @@ content, which is unchanged, so a code fix alone will NOT re-check.
   validation + format check as its own commit, then wire the dry run
   (`error: 0, would_resync: 0`) into CI as a staleness gate. Needs sign-off
   (632-file churn; no re-screen cost — tfim prompts are not blind-screened).
+  **RESOLVED 2026-07-10 — see §5.15.**
+
+### 5.15 Session 2026-07-10 (day): overnight cleanup + both §5.13/§5.14 open items closed
+
+Plan context: this session starts the catch-up plan agreed in
+`docs/11-catch-up-plan.md` — finish quality assurance on the existing corpus
+first, then one backfill run, then new generation. Written per the new
+plain-language rule: docs must be readable without the project's shorthand
+(glossary in docs/11).
+
+- **Overnight run post-mortem.** The 2026-07-09 22:55 generate run was on
+  Opus the whole time (verified from `logs/usage.jsonl`: $0.0333 per 1k output
+  tokens vs $0.0326 on the known-Opus 07-08 screen sweep — same pricing, so
+  the same model; the suspicion it silently used Fable was wrong). It rode out
+  one token-window exhaustion (02:49–03:35) exactly as designed, completed 73
+  of 119 backfill items, hit the window again at 08:25 — and was then killed
+  by a MACHINE REBOOT at 09:42 (`last reboot`), not by the exhaustion. Nothing
+  was lost (all finished units promoted; committed by Kamil as "Night shift").
+  Belt-and-braces: `scripts/generate.exs` now hardcodes `GEN_MODEL=opus` so
+  not even an environment variable can change the generation model.
+- **The 4 line-length gate failures the overnight run left in
+  `results/perfect_failures.txt` — fixed.** Same root cause as the §5.14
+  name-drift class: parent harness test names longer than 98 chars are legal
+  in the harness (exempt) but illegal in the tfim gold fragments that copy
+  them. Shortened at the source (parent + wt_ byte-copy + child fragments,
+  meaning preserved): 075_003 both `*_program/0` test names, 074_003
+  `no_message`/`assert_no_message` pair, 099_002 one gold-block comment.
+  23 embeds resynced; touched families 39/39 perfect + mutants + format;
+  `mix test` 202 green.
+- **§5.14 [decision] RESOLVED — the 632 stale tfim embeds are resynced.**
+  Corpus dry run reported exactly the documented 632 (0 errors);
+  `--apply` + idempotence re-run (`unchanged: 2396`) green. Full-corpus
+  validation over the settled tree re-run this session. The staleness gate is
+  now wired in: CI runs the corpus dry run and fails on any
+  `would_resync`/`error`; the pre-push hook runs it scoped to touched
+  families.
+- **§5.13 known bug FIXED — the vacuous-seed self-check no longer wrongly
+  blocks derivation.** Two distinct root causes, both confirmed from the six
+  wrongly-cached "vacuous" verdicts (016_001, 018_001, 019_001 = tier-B;
+  074_001/2/4 = macro modules):
+  1. *Manifest-unaware staging*: `CLI.vacuous_seed?` staged the raise-mutant
+     without the task's `manifest.exs`, so tier-B mutants could not compile →
+     "inconclusive" → treated as vacuous. Fix: the manifest is read from the
+     seed dir, staged with the mutant, and JOINS THE CACHE KEY (editing a
+     manifest now re-checks; seeds without one keep their old sha, so the 232
+     remaining cached verdicts stay valid).
+  2. *Mutation-caused harness errors counted as inconclusive*: the 074
+     families define macros; `public_functions/1` sees no plain `def`s, the
+     whole-module fallback guts the `defmacro`s, and the harness then errors
+     at COMPILE time. New `Evaluator.errored_against_mutant?/1` (compiled +
+     `tests_errors > 0`) now counts as a kill in `Mutation.fate/1` — sound
+     because every mutation gate runs only after the same harness graded
+     green against the reference, the argument validate.exs `--mutants` has
+     encoded since §5.1. `killed_by_tests?/1` itself is unchanged (docs/05
+     #18 strictness kept for callers without that precondition).
+  The six stale cached verdicts were deleted from `logs/seed_verdicts.jsonl`
+  (they were exactly the six vacuous entries; the cache is content-keyed, so
+  the code fix alone would never have re-judged them). Tests: 3 new for
+  `errored_against_mutant?/1`, 1 new for the manifest-in-cache-key behavior.
+- Where this leaves the plan: docs/11 Phase 1 items 1a and 1b are done;
+  remaining Phase 1 items are the flake watch (R9), and the two [decision]
+  scopes — prompt-register rewrite and stratified spot-review. After those:
+  Phase 2 backfill (~624 units incl. the ~50 unblocked here), then Phase 3
+  new generation (490 queued ideas).
 
 ---
 
@@ -721,9 +785,11 @@ Steps marked **[decision]** need the user's choice before implementation.
 (§5.14: 073_001 → 11/12, 074_003 → 15/15, both re-screened green). The only
 standing item is **R9 (flake quarantine)** — two repeat offenders fixed so far
 (104_004 §R9, 625_001 §5.14); keep aggregating `logs/flaky.jsonl` across days.
-Follow-up work-lists that outlive the plan: the 632-stale-tfim-embed resync
-(**[decision]**, §5.14), the docs/07 register-monoculture rewrite (§4.2), and
-the §4.4 stratified review loop beyond the blind-screen population.
+Follow-up work-lists that outlive the plan: ~~the 632-stale-tfim-embed resync~~
+(RESOLVED 2026-07-10, §5.15), the docs/07 register-monoculture rewrite (§4.2),
+and the §4.4 stratified review loop beyond the blind-screen population.
+The road ahead is now governed by `docs/11-catch-up-plan.md` (QA catch-up →
+backfill → new generation).
 
 Original priority order for reference: R1 → R12 → R6 → R9 → R10 → R11.
 

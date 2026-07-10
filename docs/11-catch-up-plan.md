@@ -17,7 +17,7 @@ queued **new** base tasks. Generation runs always go through
 
 ## Phase 1 — quality-assurance catch-up (current phase)
 
-### 1a. The 632 stale prompt copies ("stale tfim embeds") — DECIDED: do it
+### 1a. The 632 stale prompt copies ("stale tfim embeds") — ✅ DONE 2026-07-10
 
 Plain-language explanation of the problem: every *tfim* exercise is a child
 of a parent task. The child's `prompt.md` contains a full **copy** of the
@@ -38,7 +38,7 @@ The fix is mechanical and costs zero LLM tokens:
    pre-push hook, so prompts can never silently drift from their parents
    again.
 
-### 1b. Fix the seed self-check that wrongly blocks 5 families (50 tfim units)
+### 1b. Fix the seed self-check that wrongly blocks 5 families (50 tfim units) — ✅ DONE 2026-07-10
 
 Before deriving child exercises from a parent, a self-check verifies the
 parent's test suite actually tests something (it breaks the parent's code on
