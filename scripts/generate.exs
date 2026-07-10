@@ -16,4 +16,11 @@
 #   GEN_LIMIT=5 mix run scripts/generate.exs
 #   GEN_DRY_RUN=1 mix run scripts/generate.exs 80
 
+# The generation model is HARDCODED to Opus. This overrides any GEN_MODEL value
+# leaking in from the environment, so an interactive session's saved default (e.g.
+# Fable) can never silently become the generation model. The transport already
+# passes `--model` explicitly with `--setting-sources ''`, so the CLI's saved
+# default cannot apply either — this line closes the remaining env-var path.
+System.put_env("GEN_MODEL", "opus")
+
 GenTask.CLI.main(System.argv())
