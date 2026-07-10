@@ -510,7 +510,7 @@ defmodule AssertHelpersTest do
   # caught, to state the window it was watching — the `within_ms` value — so
   # a bare no_message/0 that catches a message must report the default of
   # 100. Zero timing dependence: the message is pre-sent.
-  test "no_message reports the documented default window of 100ms when it catches a message" do
+  test "no_message reports the default 100ms window when it catches a message" do
     send(self(), :unexpected)
 
     error =
@@ -524,7 +524,7 @@ defmodule AssertHelpersTest do
 
   # Same contract through the macro: a bare assert_no_message() that catches
   # a message must report the default window of 100ms.
-  test "assert_no_message reports the documented default window of 100ms when it catches a message" do
+  test "assert_no_message reports the default 100ms window when it catches a message" do
     # TODO
   end
 end

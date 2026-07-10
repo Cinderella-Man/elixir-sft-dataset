@@ -306,7 +306,7 @@ defmodule CommandGeneratorsTest do
   # (StreamData.check_all/3 with a fixed :initial_seed)
   # -------------------------------------------------------
 
-  test "stack_program/0 defaults to max_length 20: lengths stay in 0..20 and both endpoints occur" do
+  test "stack_program/0 defaults to max_length 20: lengths in 0..20, both endpoints occur" do
     Process.put(:stack_lengths, [])
 
     {:ok, _} =
@@ -325,7 +325,7 @@ defmodule CommandGeneratorsTest do
     assert 20 in lengths, "the documented default maximum of 20 commands was never attained"
   end
 
-  test "account_program/0 defaults to max_length 20: lengths stay in 0..20 and both endpoints occur" do
+  test "account_program/0 defaults to max_length 20: lengths in 0..20, both endpoints occur" do
     # TODO
   end
 

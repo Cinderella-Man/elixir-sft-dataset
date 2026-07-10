@@ -1,4 +1,4 @@
-  test "stack_program/0 defaults to max_length 20: lengths stay in 0..20 and both endpoints occur" do
+  test "stack_program/0 defaults to max_length 20: lengths in 0..20, both endpoints occur" do
     Process.put(:stack_lengths, [])
 
     {:ok, _} =

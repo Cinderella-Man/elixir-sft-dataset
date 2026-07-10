@@ -1,4 +1,4 @@
-  test "assert_no_message reports the documented default window of 100ms when it catches a message" do
+  test "assert_no_message reports the default 100ms window when it catches a message" do
     send(self(), :unexpected)
 
     error =
