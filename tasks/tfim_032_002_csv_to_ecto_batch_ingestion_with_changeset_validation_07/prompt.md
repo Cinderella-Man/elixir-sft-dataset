@@ -590,11 +590,10 @@ defmodule CsvIngestionTest do
 
     good_before = Enum.map(1..5, fn i -> ["pre-#{i}", "pre #{i}", "#{i}"] end)
 
-    # These rows pass changeset validation (name present) but will fail at DB
-    # level if we somehow bypass the changeset. To simulate a DB-level failure
-    # in a batch, we use the conflict_target mechanism: we seed duplicates.
-    # Actually, let's do it differently — we insert rows first, then try
-    # inserting the same external_ids with on_conflict: :raise.
+    # These rows pass changeset validation (name present). To simulate a
+    # DB-level batch failure, we seed these external_ids first, then ingest
+    # the same ids with on_conflict: :raise so the conflicting batch fails
+    # while the surrounding batches succeed.
     good_after = Enum.map(1..5, fn i -> ["post-#{i}", "post #{i}", "#{i}"] end)
 
     # First, seed some rows that will conflict

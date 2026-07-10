@@ -390,7 +390,7 @@ defmodule TaskAggregateTest do
     {:ok, _} = TaskAggregate.execute(agg, "a", {:assign, "Charlie"})
     {:ok, _} = TaskAggregate.execute(agg, "a", {:start})
 
-    # FIXED: Re-opening an in-progress task must return :not_completed per prompt
+    # Re-opening a task that is in progress (not yet completed) must return :not_completed.
     {:error, :not_completed} = TaskAggregate.execute(agg, "a", {:reopen})
 
     {:ok, _} = TaskAggregate.execute(agg, "a", {:complete})

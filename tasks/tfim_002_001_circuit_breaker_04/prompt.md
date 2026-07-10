@@ -364,13 +364,9 @@ defmodule CircuitBreakerTest do
     for _ <- 1..3, do: CircuitBreaker.call(:test_cb, error_fn())
     Clock.advance(5_000)
 
-    # First call goes through as probe (but don't complete it yet —
-    # we need to test that a second call is blocked)
-    # Since half_open_max_probes is 1, the first call is the probe.
-    # Let the probe succeed to enter the "one probe in flight" state
-    # Actually, with max_probes=1 and synchronous calls, the first call
-    # completes before the second starts. So we need to test that after
-    # a failed probe, it blocks again immediately.
+    # With half_open_max_probes = 1 and synchronous calls, the probe call
+    # completes before any second call starts. A failed probe therefore
+    # returns the breaker to :open and blocks the next call immediately.
 
     # Probe fails → back to open
     CircuitBreaker.call(:test_cb, error_fn())

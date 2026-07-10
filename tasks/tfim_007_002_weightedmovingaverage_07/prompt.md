@@ -384,12 +384,11 @@ defmodule WeightedMovingAverageTest do
     # wma1_period = 2, wma2_period = 4, buffer_size = round(sqrt(4)) = 2
     # Replay oldest-first = [1, 2, 3, 4]:
     #   step 1 (only 1 seen, newest-first [1]):
-    #     wma1 over period 2 using [1]: (2*1)/2 = 1.0 (cold start, weights [2])? Wait,
-    #     the weights go from 1..N where N is the AVAILABLE window size not requested period.
-    #   Actually: the WMA cold-start uses weights n..1 over n values where n is
-    #   the min of (requested period, available). So for 1 value with period=2:
-    #     weights [1], denominator 1 → WMA = 1.0.
-    #   wma2 over period 4 with [1]: weights [1], denominator 1 → 1.0
+    #     WMA cold-start uses weights n..1 over n values, where n is
+    #     min(requested period, available window) — not the full requested period.
+    #     For 1 value with period 2: weights [1], denominator 1 → WMA = 1.0.
+    #     wma1 over period 2 using [1]: 1.0
+    #     wma2 over period 4 with [1]: weights [1], denominator 1 → 1.0
     #   raw_1 = 2*1 - 1 = 1.0
     # step 2 (newest-first [2, 1]):
     #   wma1 over period 2 with [2, 1]: (2*2 + 1*1)/3 = 5/3
