@@ -119,7 +119,8 @@ end
 
 defmodule FileUpload.Router do
   @moduledoc """
-  `Plug.Router` exposing `POST /api/uploads`. Enforces a 5MB size limit,
+  `Plug.Router` exposing `POST /api/uploads`. Parses the multipart upload with
+  `Plug.Parsers` under a 5MB request-body limit (returning 413 when exceeded),
   delegates validation to `FileUpload.Validator` and storage to
   `FileUpload.Store`, and persists the file to disk under its generated UUID.
   """
@@ -130,18 +131,34 @@ defmodule FileUpload.Router do
 
   @max_bytes 5_242_880
 
+  # Multipart parser bound to the 5MB limit. `Plug.Parsers` raises
+  # `Plug.Parsers.RequestTooLargeError` (plug_status 413) once the request body
+  # exceeds `:length`, which the route rescues into a clean 413 response.
+  @multipart_parser Plug.Parsers.init(
+                      parsers: [:multipart],
+                      length: @max_bytes,
+                      pass: ["*/*"]
+                    )
+
   plug(:match)
   plug(:dispatch)
 
   post "/api/uploads" do
     opts = conn.assigns.router_opts
 
-    case conn.params["file"] do
-      %Plug.Upload{} = upload ->
-        handle_upload(conn, upload, opts)
+    try do
+      parsed = Plug.Parsers.call(conn, @multipart_parser)
 
-      _ ->
-        json(conn, 422, %{error: "No file provided"})
+      case parsed.params["file"] do
+        %Plug.Upload{} = upload ->
+          handle_upload(parsed, upload, opts)
+
+        _ ->
+          json(parsed, 422, %{error: "No file provided"})
+      end
+    rescue
+      Plug.Parsers.RequestTooLargeError ->
+        json(conn, 413, %{error: "File too large", max_bytes: @max_bytes})
     end
   end
 
@@ -154,20 +171,13 @@ defmodule FileUpload.Router do
     upload_dir = Keyword.fetch!(opts, :upload_dir)
     base_url = Keyword.fetch!(opts, :base_url)
 
-    size = File.stat!(upload.path).size
+    case Validator.validate(upload) do
+      :ok ->
+        size = File.stat!(upload.path).size
+        store_and_persist(conn, upload, size, store, upload_dir, base_url)
 
-    cond do
-      size > @max_bytes ->
-        json(conn, 413, %{error: "File too large", max_bytes: @max_bytes})
-
-      true ->
-        case Validator.validate(upload) do
-          :ok ->
-            store_and_persist(conn, upload, size, store, upload_dir, base_url)
-
-          {:error, reason} ->
-            json(conn, 422, %{error: reason})
-        end
+      {:error, reason} ->
+        json(conn, 422, %{error: reason})
     end
   end
 
@@ -241,16 +251,90 @@ defmodule FileUploadTest do
   # Helpers
   # -------------------------------------------------------
 
+  # A fresh, unique multipart boundary that cannot collide with any payload.
+  defp multipart_boundary do
+    "----ElixirMultipartBoundary#{System.unique_integer([:positive])}"
+  end
+
+  # Encode a single file part (name + filename + content-type) into a real
+  # `multipart/form-data` request body. Returns `{body, content_type_header}` so
+  # the router's `Plug.Parsers` produces the `%Plug.Upload{}` itself — no
+  # pre-built upload shortcuts.
+  defp multipart_body(field, filename, content, content_type) do
+    boundary = multipart_boundary()
+
+    body =
+      "--#{boundary}\r\n" <>
+        ~s(content-disposition: form-data; name="#{field}"; filename="#{filename}"\r\n) <>
+        "content-type: #{content_type}\r\n" <>
+        "\r\n" <>
+        content <>
+        "\r\n--#{boundary}--\r\n"
+
+    {body, "multipart/form-data; boundary=#{boundary}"}
+  end
+
+  # Encode a single non-file form field (no filename) into a multipart body.
+  defp multipart_field_body(field, value) do
+    boundary = multipart_boundary()
+
+    body =
+      "--#{boundary}\r\n" <>
+        ~s(content-disposition: form-data; name="#{field}"\r\n) <>
+        "\r\n" <>
+        value <>
+        "\r\n--#{boundary}--\r\n"
+
+    {body, "multipart/form-data; boundary=#{boundary}"}
+  end
+
+  # Drive the router with a raw multipart body. Accepts every implementation
+  # whose OBSERVABLE behavior meets the contract under `Plug.Test`:
+  #   * the route returns a sent conn — asserted directly;
+  #   * a response is sent and then re-raised with the conn attached
+  #     (`Plug.Conn.WrapperError`) — the sent conn is recovered;
+  #   * `Plug.ErrorHandler` sends the response and then re-raises the ORIGINAL
+  #     exception (its documented behavior), which carries no conn. The sent
+  #     response is confirmed via the Plug.Test adapter's `{:plug_conn, :sent}`
+  #     notification and reported as `{:sent_and_reraised, status}` with the
+  #     status taken from the exception's `Plug.Exception` implementation.
+  # Anything that raises WITHOUT having sent a response is re-raised — the
+  # client would have received no response, so the test must fail.
+  defp post_multipart(opts, body, content_type) do
+    drain_sent_notifications()
+
+    conn(:post, "/api/uploads", body)
+    |> put_req_header("content-type", content_type)
+    |> FileUpload.Router.call(opts)
+  rescue
+    e in Plug.Conn.WrapperError ->
+      if e.conn.state == :sent, do: e.conn, else: reraise(e, __STACKTRACE__)
+
+    e ->
+      if sent_notification?() do
+        {:sent_and_reraised, Plug.Exception.status(e)}
+      else
+        reraise(e, __STACKTRACE__)
+      end
+  end
+
+  defp drain_sent_notifications do
+    receive do
+      {:plug_conn, :sent} -> drain_sent_notifications()
+    after
+      0 -> :ok
+    end
+  end
+
+  defp sent_notification? do
+    receive do
+      {:plug_conn, :sent} -> true
+    after
+      0 -> false
+    end
+  end
+
   defp call_upload(opts, filename, content, content_type \\ nil) do
-    # Write content to a tmp file so Plug.Upload can reference it
-    tmp_path =
-      Path.join(
-        System.tmp_dir!(),
-        "upload_#{System.pid()}_#{System.unique_integer([:positive])}_#{filename}"
-      )
-
-    File.write!(tmp_path, content)
-
     ct =
       content_type ||
         case Path.extname(filename) do
@@ -259,19 +343,8 @@ defmodule FileUploadTest do
           _ext -> "application/octet-stream"
         end
 
-    upload = %Plug.Upload{
-      path: tmp_path,
-      filename: filename,
-      content_type: ct
-    }
-
-    conn =
-      conn(:post, "/api/uploads", %{"file" => upload})
-      |> put_req_header("content-type", "multipart/form-data")
-      |> FileUpload.Router.call(opts)
-
-    File.rm(tmp_path)
-    conn
+    {body, content_type_header} = multipart_body("file", filename, content, ct)
+    post_multipart(opts, body, content_type_header)
   end
 
   defp json_body(conn), do: Jason.decode!(conn.resp_body)
@@ -355,27 +428,41 @@ defmodule FileUploadTest do
   # -------------------------------------------------------
 
   test "rejects files larger than 5MB with 413", %{opts: opts} do
-    # Create content just over 5MB
+    # The file content alone already exceeds the 5MB request-body limit.
     big_content = String.duplicate("x", 5_242_881)
-    conn = call_upload(opts, "huge.csv", big_content)
 
-    assert conn.status == 413
-    body = json_body(conn)
-    assert body["error"] =~ "too large" or body["error"] =~ "Too large"
+    case call_upload(opts, "huge.csv", big_content) do
+      {:sent_and_reraised, status} ->
+        # `Plug.ErrorHandler` style: the response was sent (confirmed by the
+        # adapter) but its body is unobservable once the error re-raises, so
+        # only the 413 status — carried by the exception — can be asserted.
+        assert status == 413
+
+      conn ->
+        assert conn.status == 413
+        body = json_body(conn)
+        assert body["error"] =~ "too large" or body["error"] =~ "Too large"
+        assert body["max_bytes"] == 5_242_880
+    end
   end
 
   test "accepts a file exactly at 5MB", %{opts: opts} do
-    # Build a valid CSV that is just under 5MB
+    # `:length` caps the WHOLE multipart request body, so size the CSV so that the
+    # encoded body (boundary + part headers included) stays within the 5MB limit.
+    # Aim ~1KB under to leave room for that framing overhead.
     header = "col1,col2\n"
     row = "aaaa,bbbb\n"
-    # Fill up to just under 5MB
-    num_rows = div(5_242_880 - byte_size(header), byte_size(row)) - 1
+    target = 5_242_880 - 1024
+    num_rows = div(target - byte_size(header), byte_size(row))
     content = header <> String.duplicate(row, num_rows)
 
-    # Ensure we're within the limit
-    assert byte_size(content) <= 5_242_880
+    {body, content_type} = multipart_body("file", "big_but_ok.csv", content, "text/csv")
 
-    conn = call_upload(opts, "big_but_ok.csv", content)
+    # Document the reasoning: the constructed request body is within the limit, so
+    # a 201 here is a genuine at-limit acceptance, not an accidental rejection.
+    assert byte_size(body) <= 5_242_880
+
+    conn = post_multipart(opts, body, content_type)
     assert conn.status == 201
   end
 
@@ -439,10 +526,8 @@ defmodule FileUploadTest do
   # -------------------------------------------------------
 
   test "returns 422 when no file field is provided", %{opts: opts} do
-    conn =
-      conn(:post, "/api/uploads", %{"not_file" => "something"})
-      |> put_req_header("content-type", "multipart/form-data")
-      |> FileUpload.Router.call(opts)
+    {req_body, content_type} = multipart_field_body("not_file", "something")
+    conn = post_multipart(opts, req_body, content_type)
 
     assert conn.status == 422
     body = json_body(conn)
@@ -478,7 +563,11 @@ defmodule FileUploadTest do
   end
 
   test "store get returns error for unknown id", _ctx do
-    start_supervised!({FileUpload.Store, name: :lonely_store})
+    # An explicit child id so a second store can run under the test supervisor
+    # regardless of how the solution's `child_spec/1` derives its id — the
+    # prompt only requires `start_link` to accept a `:name` option.
+    lonely = Supervisor.child_spec({FileUpload.Store, name: :lonely_store}, id: :lonely_store)
+    start_supervised!(lonely)
     assert {:error, :not_found} = FileUpload.Store.get(:lonely_store, "nonexistent-uuid")
   end
 

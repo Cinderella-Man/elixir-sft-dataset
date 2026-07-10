@@ -134,12 +134,20 @@ everything else can run in parallel with it (Kamil's call, as agreed in docs/11)
      (test_harness.exs:247-256), plus leaked "Wait, …" chain-of-thought at
      lines 69-71. Fix gold + harness (observable-behavior test), cascade to the
      5 FIM children + wt_ + tfim children, revalidate, re-screen.
-   - `020_001_file_upload_with_validation_01` — prompt requires `Plug.Parsers`
-     with a `:length` limit returning 413; the gold router never mounts
-     `Plug.Parsers` (413 comes from a manual `File.stat!` check) and the harness
-     bypasses multipart parsing entirely, and never asserts the promised
-     `max_bytes` field. Decide: re-spec the prompt (drop the Plug.Parsers
-     claim — cheapest) or rebuild gold+harness around real parsing.
+   - ✅ DONE 2026-07-10: `020_001_file_upload_with_validation_01` — Kamil chose
+     REBUILD over re-spec (prompt stayed byte-identical). Gold now genuinely
+     enforces the limit via `Plug.Parsers` (rescued `RequestTooLargeError` →
+     the promised 413 JSON with `max_bytes`); harness drives real multipart
+     bodies through the router, asserts `max_bytes`, and accepts both
+     legitimate 413 styles (in-route rescue AND `Plug.ErrorHandler`, whose
+     send-then-reraise is otherwise invisible under `Plug.Test`). A hidden
+     requirement (name-keyed `child_spec/1`) was removed from the store test.
+     Cascade: tfim _09 gold + all 10 embeds resynced, wt_ copies refreshed,
+     _02–_04 embedded-router regions updated — which surfaced pre-existing
+     embed drift (a phantom `Store.max_bytes/0` in all three), also fixed (see
+     §5.1 item 8). Verified: every family gate green, and a fresh blind
+     re-screen GREEN. (The first re-screen was RED and correctly caught both
+     harness defects — the screen doing its job.)
    - `001_002_fixed_window_counter_01` — still asserts
      `map_size(state.counters) == 0` via `:sys.get_state` (the exact reach-in
      its sibling 001_001 had removed on 07-08; the tfim child embeds it
@@ -252,6 +260,11 @@ wired in*, and a few is-it-really-true gaps were found today.
 7. **Post-run repair minting** — run `mint_repairs.exs` automatically at the
    end of each generation run (581 captured attempt chains, only 3 repair
    tasks minted so far; it is add-only and double-verified).
+8. **Embed-staleness gate for module-FIM (`_0N`) and wt_ prompts** — only tfim
+   embeds have one (S5). The 020_001 rebuild (2026-07-10) found live drift in
+   `_02`–`_04`: their embedded `Store` carried a phantom `max_bytes/0` that
+   never existed in the gold. Extend the staleness check to these two embed
+   kinds; the 001_004 fix (§4.1.4) needs the same machinery for its cascade.
 
 ### 5.2 Worth one LLM call per task (decide before Phase 3)
 

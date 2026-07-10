@@ -31,7 +31,9 @@ What that means in practice:
 - [x] Stale child-prompt copies resynced + staleness gate wired (docs/11 §1a, 2026-07-10)
 - [x] Seed self-check fixed, 50 blocked units freed (docs/11 §1b, 2026-07-10)
 - [x] Corpus format gate green again (23 embeds, 2026-07-10)
-- [ ] docs/12 §4.1 deterministic punch list (incl. the 001_004 / 020_001 gold fixes)
+- [ ] docs/12 §4.1 deterministic punch list — 020_001 rebuilt around real
+      `Plug.Parsers` + blind re-screen GREEN (2026-07-10); 001_004 and the rest
+      still open
 - [ ] docs/12 §4.2 decisions signed off (spot-review scope, prompt-monotony scope, semantic floor)
 - [ ] docs/12 §5 loop hardening items marked [blocks Phase 2] / [blocks Phase 3]
 - [ ] Phase 2: derivative top-up run complete (work_status shows 0 pending everywhere)

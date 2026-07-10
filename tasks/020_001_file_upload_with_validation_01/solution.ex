@@ -110,7 +110,8 @@ end
 
 defmodule FileUpload.Router do
   @moduledoc """
-  `Plug.Router` exposing `POST /api/uploads`. Enforces a 5MB size limit,
+  `Plug.Router` exposing `POST /api/uploads`. Parses the multipart upload with
+  `Plug.Parsers` under a 5MB request-body limit (returning 413 when exceeded),
   delegates validation to `FileUpload.Validator` and storage to
   `FileUpload.Store`, and persists the file to disk under its generated UUID.
   """
@@ -121,18 +122,34 @@ defmodule FileUpload.Router do
 
   @max_bytes 5_242_880
 
+  # Multipart parser bound to the 5MB limit. `Plug.Parsers` raises
+  # `Plug.Parsers.RequestTooLargeError` (plug_status 413) once the request body
+  # exceeds `:length`, which the route rescues into a clean 413 response.
+  @multipart_parser Plug.Parsers.init(
+                      parsers: [:multipart],
+                      length: @max_bytes,
+                      pass: ["*/*"]
+                    )
+
   plug(:match)
   plug(:dispatch)
 
   post "/api/uploads" do
     opts = conn.assigns.router_opts
 
-    case conn.params["file"] do
-      %Plug.Upload{} = upload ->
-        handle_upload(conn, upload, opts)
+    try do
+      parsed = Plug.Parsers.call(conn, @multipart_parser)
 
-      _ ->
-        json(conn, 422, %{error: "No file provided"})
+      case parsed.params["file"] do
+        %Plug.Upload{} = upload ->
+          handle_upload(parsed, upload, opts)
+
+        _ ->
+          json(parsed, 422, %{error: "No file provided"})
+      end
+    rescue
+      Plug.Parsers.RequestTooLargeError ->
+        json(conn, 413, %{error: "File too large", max_bytes: @max_bytes})
     end
   end
 
@@ -145,20 +162,13 @@ defmodule FileUpload.Router do
     upload_dir = Keyword.fetch!(opts, :upload_dir)
     base_url = Keyword.fetch!(opts, :base_url)
 
-    size = File.stat!(upload.path).size
+    case Validator.validate(upload) do
+      :ok ->
+        size = File.stat!(upload.path).size
+        store_and_persist(conn, upload, size, store, upload_dir, base_url)
 
-    cond do
-      size > @max_bytes ->
-        json(conn, 413, %{error: "File too large", max_bytes: @max_bytes})
-
-      true ->
-        case Validator.validate(upload) do
-          :ok ->
-            store_and_persist(conn, upload, size, store, upload_dir, base_url)
-
-          {:error, reason} ->
-            json(conn, 422, %{error: reason})
-        end
+      {:error, reason} ->
+        json(conn, 422, %{error: reason})
     end
   end
 
