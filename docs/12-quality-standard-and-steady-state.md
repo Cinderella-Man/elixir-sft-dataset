@@ -77,7 +77,7 @@ checklist is versioned. Raising the checklist = starting an improvement round
 |---|-------------|-------------------|
 | S1 | Raw perfect score: compiles, zero warnings, ≥1 test passed, 0 failed, 0 errored, full style analysis | loop (base/variation), CI full sweep |
 | S2 | Harness kills the whole-solution raise mutant (not vacuous) | CI every push |
-| S3 | Harness kills the raise mutant of **every public function, including GenServer `init/1`** | loop only, since 07-02 — **retro sweep missing (§4.1.3)** |
+| S3 | Harness kills the raise mutant of **every public function, including GenServer `init/1`** | loop since 07-02 + retro sweep DONE 2026-07-10 (zero survivors); `--per-fn-mutants` re-runnable on demand |
 | S4 | Files are canonical `Code.format_string!` output on the pinned toolchain | loop autoformat + CI |
 | S5 | Child prompts byte-match regeneration from current parents | CI + pre-push |
 | S6 | Seed prompt is blind-solvable (independent solve from prompt.md alone goes green) or is a triaged, documented hard-task keep | one-off sweep + in-loop for variations — **base accept-time screen missing (§5.2)** |
@@ -112,14 +112,18 @@ everything else can run in parallel with it (Kamil's call, as agreed in docs/11)
    investigation ($0.67, one call; the resulting 022_003 GREEN ledger entry is
    valid data and kept). Both `screen_blind_solve.exs` and `triage_screen.exs`
    now strip a leading `--` like `resync_tfim_embeds.exs` already did.
-3. **[blocks Phase 2] Retro per-function + `init/1` mutation sweep.**
-   Add `--per-fn-mutants` to `validate.exs` (machinery exists:
-   `Mutation.mutate_fn/4`, `public_functions/1`) and fix the unconditional
-   `init/1` exemption in `mutate/1` (`mutation.ex:92`) so whole-solution mutants
-   stop blessing a gutted `init/1`. Run it corpus-wide (~600–1,200 evals, CPU
-   only). Survivors become a work list: fix the harness (never weaken), then
-   cascade + revalidate the family. This closes out-of-line populations #1
-   and #2 — the largest "same standard for all eras" item.
+3. ✅ DONE 2026-07-10: retro per-function + `init/1` mutation sweep.
+   `validate.exs --per-fn-mutants` added (report-only, works with `--only`);
+   `mutation.ex`'s `init/1` exemption is now Plug-conditional and per-file for
+   bundles (a GenServer's `init/1` gets gutted; a Plug's stays intact because
+   Plug.Builder invokes it at compile time); the loop and the sweep share one
+   skip set via the new `Mutation.per_fn_targets/1`. **Corpus-wide result:
+   297 tasks, 1,612 evals, 1,612 killed — ZERO survivors**, including all
+   144 non-Plug `init/1` callbacks CI had never checked. Verified non-vacuous
+   by positive control (a planted untested function is flagged SURVIVOR).
+   Populations #1 and #2 close with an EMPTY remediation list — per-function
+   coverage was already complete; the gap was in verification, not in the
+   harnesses. Phase 2 is no longer blocked by this item.
 4. **[blocks Phase 2] Leaked-chatter sweep + fix the three golds found by
    fresh-eyes review.** Deterministic grep for repair/chain-of-thought markers
    (`✅`, `🔑`, `# FIX`, `# Fixed:`, `Wait,`, `BUT since`, "the evaluator",

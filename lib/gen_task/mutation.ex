@@ -50,28 +50,30 @@ defmodule GenTask.Mutation do
   def mutate(solution_src) do
     if Bundle.bundle?(solution_src),
       do: mutate_bundle(solution_src),
-      else: mutate_module_src(solution_src)
+      else: mutate_module_src(solution_src, plug_module?(solution_src))
   rescue
     _ -> solution_src
   end
 
   # Gut every `def/defp/defmacro(p)` body of a single module source to `raise`,
-  # except compile-time-invoked callbacks (see `compile_time_callback?/1`).
-  defp mutate_module_src(module_src) do
+  # except compile-time-invoked callbacks (see `compile_time_callback?/2`). `plug?`
+  # is whether THIS module is a Plug (per-file for bundles): only then is `init/1`
+  # exempt — a GenServer/plain module's `init/1` is real logic and gets gutted.
+  defp mutate_module_src(module_src, plug?) do
     module_src
     |> Code.string_to_quoted!()
-    |> Macro.prewalk(&mutate_module_node/1)
+    |> Macro.prewalk(&mutate_module_node(&1, plug?))
     |> Macro.to_string()
   end
 
-  defp mutate_module_node({d, m, [head, kw]})
+  defp mutate_module_node({d, m, [head, kw]}, plug?)
        when d in [:def, :defp, :defmacro, :defmacrop] and is_list(kw) do
-    if Keyword.has_key?(kw, :do) and not compile_time_callback?(head),
+    if Keyword.has_key?(kw, :do) and not compile_time_callback?(head, plug?),
       do: {d, m, [head, [do: quote(do: raise("MUTATION"))]]},
       else: {d, m, [head, kw]}
   end
 
-  defp mutate_module_node(node), do: blank_docs(node)
+  defp mutate_module_node(node, _plug?), do: blank_docs(node)
 
   # `@doc`/`@moduledoc`/`@typedoc` bodies are re-serialized by `Macro.to_string`, and an
   # interpolated or heredoc doc with `iex>` code examples can round-trip to *invalid*
@@ -85,11 +87,12 @@ defmodule GenTask.Mutation do
 
   # `Plug.Builder` invokes each plug's `init/1` at COMPILE time and inlines the result,
   # so a gutted `init/1` raises *during compilation* — the mutant never compiles and the
-  # gate reads it as inconclusive rather than killed. Leave `init/1` intact: the tested
-  # request logic lives in `call/2`/handlers, which are still gutted, so a genuine harness
-  # is still killed. (A solution whose only real logic is `init/1` is vanishingly rare and
-  # would merely be flagged vacuous — the safe direction.)
-  defp compile_time_callback?(head), do: head_name_arity(head) == {:init, 1}
+  # gate reads it as inconclusive rather than killed. Leave a *Plug's* `init/1` intact: the
+  # tested request logic lives in `call/2`/handlers, which are still gutted, so a genuine
+  # harness is still killed. This exemption is Plug-ONLY (`plug?`) — a GenServer's `init/1`
+  # runs at RUNTIME and holds real state-construction logic, so it is gutted like any other
+  # function; the blanket exemption previously left GenServer startup semantics unverified.
+  defp compile_time_callback?(head, plug?), do: plug? and head_name_arity(head) == {:init, 1}
 
   # Mutate a `<file>` bundle: gut the module bodies of every `lib/**/*.ex` file and
   # re-emit the bundle unchanged elsewhere (migrations/config/priv left intact so the
@@ -105,7 +108,7 @@ defmodule GenTask.Mutation do
         |> Enum.map_join("\n\n", fn {path, body} ->
           new_body =
             if String.starts_with?(path, "lib/") and String.ends_with?(path, ".ex"),
-              do: mutate_module_src(body),
+              do: mutate_module_src(body, plug_module?(body)),
               else: body
 
           ~s(<file path="#{path}">\n#{new_body}\n</file>)
@@ -457,9 +460,7 @@ defmodule GenTask.Mutation do
         gate_base_whole(mutant_dir, files, cfg)
 
       true ->
-        src = files["solution.ex"]
-
-        case src |> public_functions() |> Enum.reject(&skip_fn?(&1, plug_module?(src))) do
+        case per_fn_targets(files["solution.ex"]) do
           [] -> gate_base_whole(mutant_dir, files, cfg)
           fns -> gate_base_per_fn(mutant_dir, files, fns, cfg)
         end
@@ -468,6 +469,20 @@ defmodule GenTask.Mutation do
 
   def gate_base(mutant_dir, files, %Config{} = cfg) do
     gate_base_whole(mutant_dir, files, cfg)
+  end
+
+  @doc """
+  The public functions a per-function raise-mutation sweep should target for `src`
+  (a single-module solution): every `def` (name/arity), minus the ones `skip_fn?/2`
+  exempts — `init/1` when `src` is a Plug (compile-time invoked; see `skip_fn?/2`)
+  and `__foo__/n` compiler/seam functions. `[]` on a parse error or a module with no
+  public defs (e.g. a test module). Shared by `gate_base/3` and the corpus per-fn
+  mutation sweep (`scripts/validate.exs --per-fn-mutants`) so both apply one skip set.
+  """
+  @spec per_fn_targets(String.t()) :: [{atom(), non_neg_integer()}]
+  def per_fn_targets(src) do
+    plug? = plug_module?(src)
+    src |> public_functions() |> Enum.reject(&skip_fn?(&1, plug?))
   end
 
   # Public functions the per-function gate must not require the harness to kill:

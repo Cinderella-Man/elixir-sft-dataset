@@ -17,6 +17,13 @@
 #   --mutants     whole-solution mutation for :single/:multifile/:write_test — a mutant
 #                 with every function body replaced by `raise` must make the harness
 #                 FAIL (tfim is skipped: its non-vacuousness gate runs at mint time)
+#   --per-fn-mutants  REPORT-ONLY per-function coverage sweep for every :single task:
+#                 mutate EACH public function ALONE to `raise` and grade — a survivor
+#                 (harness still passes) means that function is not exercised. Writes a
+#                 survivor work-list to results/per_fn_survivors.txt grouped by family.
+#                 Unlike --mutants (one whole-module mutant, which any single asserted
+#                 function kills) this catches functions the harness never touches; it
+#                 also mutation-checks a GenServer's init/1 (exempt only for Plugs).
 #   --stability N flake filter must see N consecutive serial passes to recover a
 #                 test-failure suspect (default 1). Recovered flakes are always
 #                 appended to logs/flaky.jsonl WITH the failing test name + message
@@ -49,6 +56,7 @@ defmodule Validate do
           green: :boolean,
           fim: :boolean,
           mutants: :boolean,
+          per_fn_mutants: :boolean,
           semantic_mutants: :boolean,
           sm_limit: :integer,
           stability: :integer,
@@ -79,6 +87,10 @@ defmodule Validate do
         IO.puts("\n=== VALIDATION SUMMARY ===")
         report("whole-mutation", f)
         finish(f == [], "ALL HARNESSES KILL THEIR MUTANT ✓")
+
+      opts[:per_fn_mutants] ->
+        per_fn_mutation(tasks)
+        finish(true, "PER-FN MUTATION SWEEP COMPLETE (report-only — survivor work-list written)")
 
       opts[:semantic_mutants] ->
         semantic_report(tasks, opts[:sm_limit] || 40)
@@ -278,7 +290,7 @@ defmodule Validate do
           nil
 
         json["compiled"] == true and json["tests_failed"] == 0 and
-            (json["tests_errors"] || 0) == 0 and (json["tests_passed"] || 0) > 0 ->
+          (json["tests_errors"] || 0) == 0 and (json["tests_passed"] || 0) > 0 ->
           IO.write(".")
           nil
 
@@ -366,6 +378,189 @@ defmodule Validate do
     end
   end
 
+  # ── per-function mutation sweep (REPORT-ONLY work-list) ─────────────────────
+
+  # For every :single task, mutate EACH public function alone to `raise` and grade.
+  # A survivor (harness still green with just that function gutted) means the harness
+  # does not exercise that function — the whole-module --mutants gate misses this
+  # because any ONE asserted function kills the all-at-once mutant. Skips shapes where
+  # per-fn mutation is meaningless (bundles — public API spans modules; write_test /
+  # fim / tfim — no single-module public API to gut) and :single tasks with no public
+  # defs (a bare test/behaviour module). Writes results/per_fn_survivors.txt.
+  defp per_fn_mutation(tasks) do
+    {single, rest} = Enum.split_with(tasks, &(&1.shape == :single))
+    skipped_by_shape = Enum.frequencies_by(rest, & &1.shape)
+
+    {sweepable, no_targets} =
+      single
+      |> Enum.map(fn task ->
+        {task, GenTask.Mutation.per_fn_targets(File.read!(task.solution))}
+      end)
+      |> Enum.split_with(fn {_task, fns} -> fns != [] end)
+
+    pairs =
+      for {task, fns} <- sweepable, {name, arity} <- fns, do: {task, name, arity}
+
+    IO.puts(
+      "Per-fn mutation: #{length(sweepable)} single-module tasks, #{length(pairs)} evals " <>
+        "(skipping #{inspect(skipped_by_shape)} by shape; " <>
+        "#{length(no_targets)} single tasks have no public defs) ..."
+    )
+
+    results =
+      pairs
+      |> pmap(fn {task, name, arity} ->
+        mutant =
+          mutant_file(task.solution, &GenTask.Mutation.mutate_fn(&1, name, arity))
+
+        verdict = per_fn_verdict(task, name, arity, mutant)
+        File.rm(mutant)
+        verdict
+      end)
+
+    skipped_total = Enum.sum(Map.values(skipped_by_shape)) + length(no_targets)
+
+    per_fn_summarize(
+      results,
+      length(sweepable),
+      skipped_by_shape,
+      length(no_targets),
+      skipped_total
+    )
+
+    persist_per_fn(results, length(sweepable), skipped_total)
+  end
+
+  # A per-fn mutant that fails to COMPILE is INCONCLUSIVE, not killed (positive
+  # evidence of coverage requires the harness to have observed the mutated code) —
+  # and distinctly labelled from an inconclusive "no tests ran" grade. Unlike the
+  # whole-solution gate, a single-function compile failure is not the harness's
+  # fault, so it must not be reported as a survivor.
+  defp per_fn_verdict(task, name, arity, mutant_path) do
+    json = eval(task.dir, mutant_path)
+    failed = (json["tests_failed"] || 0) > 0 or (json["tests_errors"] || 0) > 0
+
+    {verdict, label} =
+      cond do
+        json["compiled"] == true and failed -> {:killed, nil}
+        json["compiled"] != true -> {:inconclusive, "mutant did not COMPILE"}
+        (json["tests_passed"] || 0) > 0 -> {:survived, nil}
+        true -> {:inconclusive, "no tests ran, no errors"}
+      end
+
+    IO.write(
+      case verdict do
+        :killed -> "."
+        :survived -> "U"
+        :inconclusive -> "?"
+      end
+    )
+
+    %{
+      task: task.name,
+      family: family(task.name),
+      fn: "#{name}/#{arity}",
+      verdict: verdict,
+      label: label
+    }
+  end
+
+  # Family = the NNN_VVV prefix (matches dataset_stats.exs grouping); the whole name
+  # if it does not match (defensive — every corpus dir does).
+  defp family(name) do
+    case Regex.run(~r/(\d{3})_(\d{3})/, name) do
+      [_, a, b] -> "#{a}_#{b}"
+      _ -> name
+    end
+  end
+
+  defp per_fn_summarize(results, tasks_swept, skipped_by_shape, no_targets, skipped_total) do
+    killed = Enum.count(results, &(&1.verdict == :killed))
+    survivors = Enum.count(results, &(&1.verdict == :survived))
+    inconclusive = Enum.count(results, &(&1.verdict == :inconclusive))
+
+    IO.puts("\n\n=== PER-FN MUTATION SWEEP (survivor = a public fn the harness ignores) ===")
+
+    IO.puts(
+      "  tasks swept: #{tasks_swept}   evals: #{length(results)}   " <>
+        "killed: #{killed}   SURVIVORS: #{survivors}   inconclusive: #{inconclusive}"
+    )
+
+    IO.puts(
+      "  skipped-by-shape: #{skipped_total} " <>
+        "(#{inspect(skipped_by_shape)} + #{no_targets} single with no public defs)"
+    )
+
+    if survivors > 0 do
+      IO.puts("\n  SURVIVORS (grouped by family) — remediation work-list:")
+
+      results
+      |> Enum.filter(&(&1.verdict == :survived))
+      |> Enum.group_by(& &1.family)
+      |> Enum.sort_by(fn {fam, _} -> fam end)
+      |> Enum.each(fn {fam, rows} ->
+        IO.puts("    #{fam}:")
+        for r <- Enum.sort_by(rows, & &1.task), do: IO.puts("      - #{r.task}  #{r.fn}")
+      end)
+    end
+
+    inconc = Enum.filter(results, &(&1.verdict == :inconclusive))
+
+    if inconc != [] do
+      IO.puts("\n  INCONCLUSIVE (not survivors — could not verify coverage):")
+
+      for r <- Enum.sort_by(inconc, & &1.task),
+          do: IO.puts("      - #{r.task}  #{r.fn} (#{r.label})")
+    end
+  end
+
+  # The survivor work-list is the deliverable: grouped by family, one {task, fn/arity}
+  # per line, with the summary + an inconclusive appendix (compile failures etc. — not
+  # survivors, but coverage was not verified, so a remediator will want them too).
+  defp persist_per_fn(results, tasks_swept, skipped_total) do
+    File.mkdir_p!("results")
+    path = "results/per_fn_survivors.txt"
+
+    killed = Enum.count(results, &(&1.verdict == :killed))
+    survivors = Enum.filter(results, &(&1.verdict == :survived))
+    inconc = Enum.filter(results, &(&1.verdict == :inconclusive))
+
+    header =
+      [
+        "# Per-function raise-mutation survivors — remediation work-list",
+        "# Generated #{DateTime.utc_now() |> DateTime.to_iso8601()}",
+        "# Summary: tasks_swept=#{tasks_swept} evals=#{length(results)} " <>
+          "killed=#{killed} survivors=#{length(survivors)} " <>
+          "inconclusive=#{length(inconc)} skipped_by_shape=#{skipped_total}",
+        "# Each SURVIVOR line: <task>\\t<function/arity> — the harness still passes with",
+        "# that function's body replaced by `raise`, i.e. it does not exercise it.",
+        ""
+      ]
+
+    survivor_lines =
+      survivors
+      |> Enum.group_by(& &1.family)
+      |> Enum.sort_by(fn {fam, _} -> fam end)
+      |> Enum.flat_map(fn {fam, rows} ->
+        ["## family #{fam}"] ++
+          (rows |> Enum.sort_by(& &1.task) |> Enum.map(&"#{&1.task}\t#{&1.fn}"))
+      end)
+
+    inconc_lines =
+      if inconc == [] do
+        []
+      else
+        ["", "# ── INCONCLUSIVE (coverage unverified — NOT survivors) ──"] ++
+          (inconc
+           |> Enum.sort_by(&{&1.family, &1.task})
+           |> Enum.map(&"# #{&1.task}\t#{&1.fn}\t(#{&1.label})"))
+      end
+
+    body = Enum.join(header ++ survivor_lines ++ inconc_lines, "\n") <> "\n"
+    File.write!(path, body)
+    IO.puts("\n  (work-list written to #{path})")
+  end
+
   # ── semantic mutants (docs/10 R10, REPORT-ONLY) ─────────────────────────────
 
   # Measures assertion TIGHTNESS: each first-order semantic mutant (comparison
@@ -439,7 +634,9 @@ defmodule Validate do
       IO.puts("\n  kill-rate histogram:")
 
       for lo <- 0..9 do
-        n = Enum.count(rates, &(&1 >= lo / 10 and (&1 < (lo + 1) / 10 or (lo == 9 and &1 <= 1.0))))
+        n =
+          Enum.count(rates, &(&1 >= lo / 10 and (&1 < (lo + 1) / 10 or (lo == 9 and &1 <= 1.0))))
+
         IO.puts("    #{lo / 10}–#{(lo + 1) / 10}: #{String.duplicate("█", n)} #{n}")
       end
 

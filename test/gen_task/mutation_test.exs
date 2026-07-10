@@ -123,6 +123,7 @@ defmodule GenTask.MutationTest do
 
     <file path="lib/app/plug.ex">
     defmodule App.Plug do
+      use Plug.Builder
       def init(opts), do: opts
       def call(conn, _opts), do: conn
     end
@@ -151,10 +152,90 @@ defmodule GenTask.MutationTest do
       assert mutated =~ "def change, do: :ok"
     end
 
-    test "leaves Plug `init/1` intact (it runs at compile time)" do
+    test "leaves a Plug module's `init/1` intact in a bundle (it runs at compile time)" do
       mutated = Mutation.mutate(@bundle)
       assert mutated =~ ~r/def init\(opts\) do\s*opts\s*end/
       refute mutated =~ ~r/def init\(opts\) do\s*raise/
+    end
+
+    test "leaves a plain Plug module's `init/1` intact, but still guts `call/2`" do
+      src = """
+      defmodule MyPlug do
+        use Plug.Builder
+        def init(opts), do: opts
+        def call(conn, _opts), do: conn
+      end
+      """
+
+      mutated = Mutation.mutate(src)
+      assert mutated =~ ~r/def init\(opts\) do\s*opts\s*end/
+      refute mutated =~ ~r/def init\(opts\) do\s*raise/
+      # Only `init/1` is compile-time; the tested request logic in `call/2` is gutted.
+      assert mutated =~ ~r/def call\(conn, _opts\) do\s*raise/
+    end
+
+    test "mutates a non-Plug module's `init/1` (a GenServer's runs at runtime)" do
+      src = """
+      defmodule Counter do
+        use GenServer
+        def init(opts), do: {:ok, opts}
+        def handle_call(:get, _from, state), do: {:reply, state, state}
+      end
+      """
+
+      mutated = Mutation.mutate(src)
+      # The blanket exemption is gone: GenServer startup logic must be verified.
+      assert mutated =~ ~r/def init\(opts\) do\s*raise/
+    end
+  end
+
+  describe "per_fn_targets/1" do
+    test "includes a GenServer's init/1 (runtime state construction is real logic)" do
+      src = """
+      defmodule Counter do
+        use GenServer
+        def start_link(o), do: GenServer.start_link(__MODULE__, o, [])
+        def init(opts), do: {:ok, opts}
+      end
+      """
+
+      targets = Mutation.per_fn_targets(src)
+      assert {:init, 1} in targets
+      assert {:start_link, 1} in targets
+    end
+
+    test "excludes a Plug module's init/1 (compile-time invoked) but keeps call/2" do
+      src = """
+      defmodule MyPlug do
+        use Plug.Builder
+        def init(opts), do: opts
+        def call(conn, _opts), do: conn
+      end
+      """
+
+      targets = Mutation.per_fn_targets(src)
+      refute {:init, 1} in targets
+      assert {:call, 2} in targets
+    end
+
+    test "excludes __foo__ seam functions and private defs" do
+      src = """
+      defmodule Seam do
+        def run(x), do: x
+        def __clock__, do: :ok
+        defp helper(x), do: x
+      end
+      """
+
+      targets = Mutation.per_fn_targets(src)
+      assert {:run, 1} in targets
+      refute {:__clock__, 0} in targets
+      refute {:helper, 1} in targets
+    end
+
+    test "[] on a module with no public defs (a test module) or a parse error" do
+      assert Mutation.per_fn_targets("def broken(") == []
+      assert Mutation.per_fn_targets("defmodule T do\n  use ExUnit.Case\nend") == []
     end
   end
 

@@ -35,9 +35,12 @@ What that means in practice:
       (re-screen GREEN), 001_002 reach-in, chatter sweep (4 families), fence
       artifacts, 23-tfim re-gate (0/23), repair audit (0 flags), semantic
       re-measure (tail = 20 <0.5), register metric, backfill-script removal;
-      STAGED: nightly-sweep systemd units (needs install, §4.1.10); REMAINING:
-      §4.1.3 mutation sweep, §4.1.9 decontamination, 001_004 (redesigned,
-      re-screen in flight)
+      001_004 redesign (re-screen GREEN), §4.1.3 per-fn+init/1 sweep (ZERO
+      survivors across 1,612 evals — populations #1/#2 closed empty);
+      STAGED: nightly-sweep systemd units (needs install, §4.1.10);
+      REMAINING: §4.1.9 decontamination gate.
+      **Every [blocks Phase 2] item is now done — Phase 2 top-up is ready to
+      launch on Kamil's go (paid run).**
 - [x] docs/12 §4.2.1 — 099_002/3/4 screened GREEN; S6 holds for all 303 seeds (2026-07-10)
 - [ ] docs/12 §4.2 decisions signed off (spot-review scope, prompt-monotony scope, semantic floor — tail confirmed at 20 families <0.5 by re-measure)
 - [ ] docs/12 §5 loop hardening items marked [blocks Phase 2] / [blocks Phase 3]
