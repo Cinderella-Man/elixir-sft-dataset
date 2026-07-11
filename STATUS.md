@@ -95,13 +95,46 @@ Full detail in docs/12 §5.1; short version:
   seam artifacts, not stale embeds). The 137 = 122 resync_embed +
   12 fix_child_gold + 3 one-token wt_ drifts (see ledger for per-dir
   verdicts).
-- **Queued for Kamil (unchanged decision, now with exact scope): after
-  Phase 2 finishes**, remediate 46 reflow + 122 resync-drift dirs with a
-  `resync_embeds.exs` (spirit of `resync_tfim_embeds.exs`) and hand-fix the
-  12 fix_child_gold dirs (parent redesigned at the blanked target — e.g.
-  131_003_04's throughput/2 went single-clause → three-clause). Don't run it
-  under the live loop (it rewrites prompt.md). Then wire the checker into CI
-  next to the S5 tfim gate.
+- **Remediation is built, tested, and queued to run the moment Phase 2
+  finishes** (Kamil's overnight go, 2026-07-11 ~23:30: "keep on working").
+  `scripts/resync_embeds.exs` (one-shot catch-up tool, delete at the line):
+  module-FIM = deterministic skeleton rebuild via `EvalTask.Fim`
+  (bundle parents marker-stripped; reflow-stale golds rewritten from the
+  parent first); wt_ = full refresh via `GenTask.WriteTest.prompt_md/2` +
+  byte-copies of solution/harness/manifest. Dry-run default; `--apply`
+  REFUSES while a generate.exs BEAM is alive; per-file backups in
+  `logs/embed_resync_backup/`; ledger `logs/embed_resync.jsonl`; idempotent.
+  Self-tested in scratch on all five shapes (fim reflow, wt_ reflow, @spec
+  drift, one-token wt_ drift, gold-rewrap) — all resync → CLEAN, second run
+  no-op; a redesigned-parent dir errors, never auto-writes.
+  Dry run over the 183 flagged dirs: **171 would resync + 12 hand-fix
+  errors, exactly the ledger's fix_child_gold set** (021_001_03,
+  034_001_02/03/04, 038_001_02, 039_001_02/04, 072_001_03, 091_001_03,
+  091_002_03, 091_003_04, 131_003_04).
+
+### Overnight runbook (2026-07-11 → 12 night; also the recovery script if this session dies)
+
+Autopilot sequence once the Phase 2 loop exits (a monitor watches the PID):
+
+1. If the loop DIED with pending work (`mix run scripts/work_status.exs
+   --counts` shows pending, no beam alive): relaunch
+   `GEN_ONLY=backfill scripts/run_detached.sh logs/backfill_phase2.log mix run scripts/generate.exs`
+   and go back to waiting. If it FINISHED (0 pending everywhere): tick the
+   Phase 2 checkbox above and continue.
+2. Commit the remaining accepted task dirs (complete dirs only) + tasks.md.
+3. `elixir scripts/check_embeds.exs > /tmp/embed_report.txt` then
+   `grep -E '^(REFLOW|DRIFT)' /tmp/embed_report.txt | awk '{print $2}' > /tmp/embed_dirs.txt`
+   then `mix run scripts/resync_embeds.exs -- --dirs-file /tmp/embed_dirs.txt --apply`
+   (expect ~171 resynced, 12 errors = the hand-fix list).
+4. Re-run the checker: expect 0 reflow and drift == the 12 hand-fix dirs.
+   Re-validate the touched families (`validate.exs --only`, perfect + FIM
+   mutation gates) — resync changed prompt embeds and some golds/harnesses.
+5. Hand-fix the 12 redesigned-parent dirs one at a time (extract the current
+   parent's function as the new gold, rebuild the embed, re-gate the family,
+   check prose still entails). Commit per small batch.
+6. Checker to 0 drift → wire `check_embeds.exs` into CI next to the S5 tfim
+   gate (grep its summary line for `0 drift`). Commit.
+7. Update this file + docs/12 §5.1.8 at every step; commit everything; no push.
 
 Still waiting on Kamil (unchanged): the nightly-sweep systemd timer install
 (§4.1.10, 4 commands in `scripts/systemd/nightly-sweep.service`) and the
