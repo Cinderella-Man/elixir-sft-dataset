@@ -266,7 +266,34 @@ wired in*, and a few is-it-really-true gaps were found today.
 > flake ledger + reject); `mint_repairs.exs` auto-runs post-run.
 > **Retro numbers** (gates are forward-only; for context): 32/303 seeds would
 > violate the test floor; 63/220 accepted variations share a public-function
-> set with base/sibling. Item 8 (below) remains open.
+> set with base/sibling.
+>
+> ✅ **Item 8 DONE 2026-07-11.** `scripts/check_embeds.exs` covers module-FIM
+> (`_0N`) and `wt_` embeds against the current parent `solution.ex` (tfim
+> stays with `resync_tfim_embeds.exs`/S5). Named ignore conventions a–g plus,
+> from the drift classification, i–m (markdown-table separator width, stub
+> scaffold comments, gold-seam myers aliases, swallowed reflowed-`end`
+> symmetry, wt_ AST+comment-identity fallback for formatter parens/alignment)
+> and two checker fixes (indented example fences; wt_ single-file `<file>`
+> wrapper on non-bundle parents). Verified by: planted-phantom self-test
+> (both kinds), per-rule expected-dir clearing, and a full-corpus before/after
+> diff with ZERO clean/reflow→drift regressions.
+> **Classification of the residual drift** (64 families, one Opus reader per
+> family; ledger `logs/embed_classify/recovered.jsonl` — 55 recovered from a
+> killed workflow's journal + 9 re-run): 19 dirs were checker
+> artifacts/conventions (now suppressed), the rest is REAL staleness. A
+> claimed "@spec omission convention" (089_002) was REFUTED deterministically
+> by git: all three 089 parents gained @doc+@spec in cff116d3 (07-07) after
+> their children were minted (737f3806, 07-02) — @spec omission stays DRIFT.
+> **Corpus verdicts 2026-07-11: 1068 clean / 46 reflow / 137 drift** (from
+> 933/162/156 the same morning; 126 one-line "reflows" were gold-seam myers
+> artifacts, not stale embeds — removed from the resync queue). The 137 drift
+> dirs = 122 resync_embed + 12 fix_child_gold (parent redesigned at the
+> target, incl. 131_003_04) + 3 wt_ one-token drifts (`^size` pins etc.)
+> per-verdict in the ledger. REMEDIATION (resync + gold fixes) runs AFTER
+> Phase 2 finishes — it rewrites prompt.md files under what is currently a
+> live loop; wiring the checker into CI as a gate happens with that
+> remediation, once drift is 0.
 
 
 1. **Raw perfect invariants for fim/wt_/tfim_ accepts** — today the warnings

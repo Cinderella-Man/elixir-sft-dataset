@@ -43,7 +43,31 @@
 #   (d) bundle parents only (`<file path=...>` bundles): module-FIM embeds strip
 #       the `<file>`/`</file>` wrapper lines and may differ in blank lines at the
 #       seams, so for those dirs marker lines are dropped from the parent and
-#       blank-only diffs are ignored. (wt_ embeds keep the markers — no allowance.)
+#       blank-only diffs are ignored. When a wt_ parent IS a bundle the embed
+#       keeps the markers and they match — no allowance needed; when a wt_
+#       parent is NOT a bundle, the wt_ generator still wraps the module in a
+#       single-file `<file path=...>` tag, so those wrapper lines are dropped
+#       from the EMBED side (the wrapped content is still diffed in full);
+#   NOT a convention — deliberately absent: removed `@spec` attributes. The
+#       089_002/089_003/089_004 embeds lack @spec lines their parents carry,
+#       which looks like an (a)/(e)-style omission convention but is real
+#       post-mint drift: git shows all three parents gained @doc+@spec in
+#       cff116d3 (2026-07-07) AFTER the children were minted (737f3806,
+#       2026-07-02), and 4k+ embeds repo-wide DO retain @spec. Missing @spec
+#       stays DRIFT (remediation: resync);
+#   (j) synthesized stub scaffold comments (module-FIM only): an extra `#`
+#       comment whose contiguous embed comment block contains the `# TODO`
+#       marker (a TODO comment wrapped over continuation lines — 037_004) or
+#       sits directly above a recognized stub head (the descriptor comment
+#       the generator emits with synthesized multi-clause heads — 061_001,
+#       087_001); comment blocks anywhere else stay flagged;
+#   (k) gold-seam alias lines (module-FIM only): a deleted parent line that is
+#       blank or exactly `@impl true` and contiguous with the blanked-gold span
+#       — collapsing an N-clause gold to one stub makes myers alias the stub's
+#       trailing `end`/blank/`@impl true` onto an interior clause boundary and
+#       push these seam lines out as phantom deletions even though the embed
+#       carries them verbatim (011_001_04, 023_001_04, 104_001_03, 104_002_04,
+#       106_001_03, and the blank-only dels of 037_004_04/041_001_03/087_001_03).
 # One more verdict sits between clean and drift. When EVERY surviving diff line
 # still pairs up — the deleted and inserted text are identical after removing
 # all whitespace, the doctest continuation markers `iex>` / `...>`, and
@@ -52,7 +76,25 @@
 # content) — the embed is byte-stale but content-identical: the 2026-07 corpus
 # format canonicalization rewrapped the parent and the embed kept the old
 # wrapping. That dir is verdict REFLOW, counted separately (it needs a resync,
-# not an investigation).
+# not an investigation). Three refinements of that pairing:
+#
+#   (i) markdown-table separator rows (`|---|----|`) collapse each `-` run to
+#       one dash before comparing — re-aligning a @moduledoc table's column
+#       widths changes dash counts, which is formatting, not content
+#       (041_001); content rows are already covered by whitespace removal;
+#   (m) the stub-end allowance in (b) swallows an INSERTED bare `end` that was
+#       actually the reflowed copy of a re-indented parent `end`, leaving the
+#       deletion unpaired; a del-join that equals the ins-join plus exactly one
+#       trailing `end` when such an insert was swallowed is still a reflow
+#       (103_004_02/03/04);
+#   (l) wt_ only, last resort before DRIFT: if the embed and the parent parse
+#       to the identical AST (line/column metadata stripped) with identical
+#       comment text (whitespace + banner-run normalized), the difference is
+#       formatter variance by construction (optional DSL parens, hand
+#       alignment, line wrapping — wt_016_001, wt_102_001) and the verdict is
+#       REFLOW. Any real code change, edited doc heredoc, or edited comment
+#       fails the test. Module-FIM embeds contain a stub hole and can never
+#       AST-match, so the fallback is not attempted for them.
 #
 # Anything else is DRIFT: extra functions/attributes the parent lacks (the
 # 020_001 phantom `max_bytes/0` case), missing lines beyond @doc blocks and the
@@ -86,7 +128,11 @@ defmodule CheckEmbeds do
 
   # Mirrors EvalTask.Fim @todo / @skeleton.
   @todo ~r/#\s*TODO/i
-  @fence ~r/```elixir\n(.*?)\n```/s
+  # The closing ``` may be indented: a return-shape example fence nested in a
+  # Markdown list (`  ```elixir … \n  ````) must close at its own indented
+  # delimiter instead of swallowing prose up to — and the opening backticks
+  # of — the real module fence (the wt_036 false-drift family).
+  @fence ~r/```elixir[ \t]*\n(.*?)\n[ \t]*```/s
   # `@doc` heredoc opener, on a trimmed line. Conservative (docs/12 §5.1 item 8
   # ignore rule a): the attribute line through the closing `"""` line only.
   @doc_open ~r/^@doc\s+~?[sS]?"""$/
@@ -281,10 +327,14 @@ defmodule CheckEmbeds do
 
   defp compare(kind, parent_src, embed, fence_line, gold) do
     # Mirrors EvalTask.Bundle.bundle?/1.
-    bundle_fim? = kind == :fim and String.contains?(parent_src, "<file path=")
+    parent_bundle? = String.contains?(parent_src, "<file path=")
+    bundle_fim? = kind == :fim and parent_bundle?
+    # Rule d, wt_ side: a non-bundle parent gets a single-file <file> wrapper
+    # from the wt_ generator; drop the wrapper lines from the embed only.
+    wt_wrapped? = kind == :wt and not parent_bundle?
 
     {plines, pnums} = prep_side(parent_src, 1, drop_markers: bundle_fim?)
-    {elines, enums} = prep_side(embed, fence_line, drop_markers: false)
+    {elines, enums} = prep_side(embed, fence_line, drop_markers: wt_wrapped?)
 
     gold_lines = if gold, do: String.split(gold, "\n"), else: []
     {gold_idx, gold_note} = gold_indices(kind, plines, gold_lines)
@@ -294,15 +344,18 @@ defmodule CheckEmbeds do
       kind: kind,
       bundle_fim?: bundle_fim?,
       doc_idx: doc_block_indices(plines),
-      gold_idx: gold_idx,
+      gold_idx: extend_gold_seam(gold_idx, plines),
       gold_trimmed: gold_trimmed,
-      gold_fn_names: gold_fn_names(gold_trimmed)
+      gold_fn_names: gold_fn_names(gold_trimmed),
+      elines_trimmed: Enum.map(elines, &String.trim/1)
     }
 
-    viols =
+    {raw_viols, swallowed_ends} =
       List.myers_difference(plines, elines)
-      |> walk(0, 0, ctx, [])
-      |> Enum.map(fn
+      |> walk(0, 0, ctx, {[], 0})
+
+    viols =
+      Enum.map(raw_viols, fn
         {:del, i, text} -> {:del, Enum.at(pnums, i), text}
         {:ins, j, text} -> {:ins, Enum.at(enums, j), text}
       end)
@@ -310,9 +363,38 @@ defmodule CheckEmbeds do
     notes = if gold_note, do: [gold_note], else: []
 
     cond do
-      viols == [] -> {:clean, notes}
-      reflow_only?(viols) -> {:reflow, viols, notes}
-      true -> {:drift, viols, notes}
+      viols == [] ->
+        {:clean, notes}
+
+      reflow_only?(viols, swallowed_ends) ->
+        {:reflow, viols, notes}
+
+      kind == :wt and ast_reflow?(parent_src, embed) ->
+        {:reflow, viols,
+         ["formatter-only variance: AST and comment text identical (rule l)" | notes]}
+
+      true ->
+        {:drift, viols, notes}
+    end
+  end
+
+  # Rule (k): extend the blanked-gold span over the contiguous run of blank /
+  # `@impl true` lines that trail it. Collapsing an N-clause gold to a single
+  # stub lets myers alias the stub's trailing `end`/blank/`@impl true` onto an
+  # interior clause boundary, pushing these seam lines out as phantom
+  # deletions even though the embed carries them verbatim. Bounded to
+  # metadata-only lines — the first content line ends the run.
+  defp extend_gold_seam(gold_idx, plines) do
+    if MapSet.size(gold_idx) == 0 do
+      gold_idx
+    else
+      mx = Enum.max(gold_idx)
+
+      plines
+      |> Enum.drop(mx + 1)
+      |> Enum.with_index(mx + 1)
+      |> Enum.take_while(fn {l, _} -> String.trim(l) in ["", "@impl true"] end)
+      |> Enum.reduce(gold_idx, fn {_, i}, set -> MapSet.put(set, i) end)
     end
   end
 
@@ -326,11 +408,16 @@ defmodule CheckEmbeds do
 
   # Verdict REFLOW: every surviving del/ins still pairs up — the deleted and
   # inserted text are identical once all whitespace and the doctest
-  # continuation markers `iex>` / `...>` are removed and each `─` banner run
-  # is collapsed to one char (rule g: banner rule width is formatting). The
-  # 2026-07 format canonicalization rewrapped the parent; the embed kept the
-  # old wrapping.
-  defp reflow_only?(viols) do
+  # continuation markers `iex>` / `...>` are removed, each `─` banner run
+  # is collapsed to one char (rule g: banner rule width is formatting), and
+  # `-` runs in pure markdown-table separator rows are collapsed to one dash
+  # (rule i: table column width is formatting). The 2026-07 format
+  # canonicalization rewrapped the parent; the embed kept the old wrapping.
+  #
+  # Rule (m): when ins_allowed? swallowed a bare `end` insert that was really
+  # the reflowed copy of a re-indented parent `end` (not the stub's own), the
+  # del side carries exactly one unpaired trailing `end` — still a reflow.
+  defp reflow_only?(viols, swallowed_ends) do
     join = fn side ->
       viols
       |> Enum.filter(&(elem(&1, 0) == side))
@@ -338,11 +425,69 @@ defmodule CheckEmbeds do
         text
         |> String.replace(["iex>", "...>"], "")
         |> String.replace(~r/─+/u, "─")
+        |> table_sep_collapse()
         |> String.replace(~r/\s+/, "")
       end)
     end
 
-    join.(:del) == join.(:ins)
+    d = join.(:del)
+    i = join.(:ins)
+    d == i or (swallowed_ends > 0 and d == i <> "end")
+  end
+
+  # Rule (i): a row whose cells are only `-`/`:` runs is a markdown-table
+  # separator; its dash counts encode column alignment width, not content.
+  defp table_sep_collapse(text) do
+    if String.match?(String.trim(text), ~r/^\|[\s\-:|]+\|$/) and String.contains?(text, "-"),
+      do: String.replace(text, ~r/-+/, "-"),
+      else: text
+  end
+
+  # Rule (l), wt_ only: identical AST (metadata stripped) + identical comment
+  # text (whitespace and `─`/`-` banner runs normalized) means the two sides
+  # differ only by formatter variance — optional parens on DSL macros, hand
+  # alignment, line wrapping. Any code change, edited doc heredoc (a literal
+  # in the AST), or edited comment text fails this test. Bundle wrapper lines
+  # are stripped from both sides first; a multi-module bundle parses as one
+  # top-level block on both sides alike.
+  defp ast_reflow?(parent_src, embed) do
+    with {:ok, pq, pc} <- quoted_with_comments(strip_marker_lines(parent_src)),
+         {:ok, eq, ec} <- quoted_with_comments(strip_marker_lines(embed)) do
+      strip_meta(pq) == strip_meta(eq) and norm_comments(pc) == norm_comments(ec)
+    else
+      _ -> false
+    end
+  end
+
+  defp quoted_with_comments(src) do
+    case Code.string_to_quoted_with_comments(src) do
+      {:ok, quoted, comments} -> {:ok, quoted, comments}
+      {:error, _} -> :error
+    end
+  rescue
+    _ -> :error
+  end
+
+  defp strip_marker_lines(src) do
+    src
+    |> String.split("\n")
+    |> Enum.reject(&String.match?(String.trim(&1), @bundle_marker))
+    |> Enum.join("\n")
+  end
+
+  defp strip_meta(quoted) do
+    Macro.prewalk(quoted, fn
+      {form, meta, args} when is_list(meta) -> {form, [], args}
+      other -> other
+    end)
+  end
+
+  defp norm_comments(comments) do
+    Enum.map(comments, fn %{text: t} ->
+      t
+      |> String.replace(~r/[─-]{2,}/u, "─")
+      |> String.replace(~r/\s+/, "")
+    end)
   end
 
   # One side of the diff: split into lines, drop bundle `<file>`/`</file>`
@@ -474,15 +619,16 @@ defmodule CheckEmbeds do
   end
 
   # Walk the myers script tracking the parent (pi) and embed (ei) diff-indices;
-  # collect the lines no ignore rule covers.
-  defp walk([], _pi, _ei, _ctx, acc), do: Enum.reverse(acc)
+  # collect the lines no ignore rule covers, plus the count of bare `end`
+  # inserts the stub allowance swallowed (input to reflow rule m).
+  defp walk([], _pi, _ei, _ctx, {acc, ends}), do: {Enum.reverse(acc), ends}
 
   defp walk([{:eq, lines} | rest], pi, ei, ctx, acc) do
     n = length(lines)
     walk(rest, pi + n, ei + n, ctx, acc)
   end
 
-  defp walk([{:del, lines} | rest], pi, ei, ctx, acc) do
+  defp walk([{:del, lines} | rest], pi, ei, ctx, {acc, ends}) do
     acc =
       lines
       |> Enum.with_index(pi)
@@ -490,18 +636,22 @@ defmodule CheckEmbeds do
         if del_allowed?(line, i, ctx), do: acc, else: [{:del, i, line} | acc]
       end)
 
-    walk(rest, pi + length(lines), ei, ctx, acc)
+    walk(rest, pi + length(lines), ei, ctx, {acc, ends})
   end
 
-  defp walk([{:ins, lines} | rest], pi, ei, ctx, acc) do
-    acc =
+  defp walk([{:ins, lines} | rest], pi, ei, ctx, {acc, ends}) do
+    {acc, ends} =
       lines
       |> Enum.with_index(ei)
-      |> Enum.reduce(acc, fn {line, j}, acc ->
-        if ins_allowed?(line, ctx), do: acc, else: [{:ins, j, line} | acc]
+      |> Enum.reduce({acc, ends}, fn {line, j}, {acc, ends} ->
+        cond do
+          not ins_allowed?(line, j, ctx) -> {[{:ins, j, line} | acc], ends}
+          String.trim(line) == "end" -> {acc, ends + 1}
+          true -> {acc, ends}
+        end
       end)
 
-    walk(rest, pi, ei + length(lines), ctx, acc)
+    walk(rest, pi, ei + length(lines), ctx, {acc, ends})
   end
 
   # A parent line missing from the embed is fine only when it sits in a removed
@@ -516,11 +666,11 @@ defmodule CheckEmbeds do
   # An embed line the parent lacks is fine only when it is part of the # TODO
   # stub of a module-FIM hole (rule b): the marker itself, the stub's bare
   # `end`, a one-liner gold head converted `, do: ...` → ` do` — exactly the
-  # forms EvalTask.Fim.signature_stub/3 emits — or a historical synthesized
-  # head for the gold's own function (rule f). Bundle seams may add blank lines
-  # (rule d). Everything else — a phantom function, attribute, or changed body —
-  # is drift.
-  defp ins_allowed?(line, ctx) do
+  # forms EvalTask.Fim.signature_stub/3 emits — a historical synthesized
+  # head for the gold's own function (rule f), or a stub scaffold comment
+  # (rule j). Bundle seams may add blank lines (rule d). Everything else — a
+  # phantom function, attribute, or changed body — is drift.
+  defp ins_allowed?(line, j, ctx) do
     t = String.trim(line)
 
     cond do
@@ -528,10 +678,31 @@ defmodule CheckEmbeds do
       ctx.kind != :fim -> false
       String.match?(t, @todo) -> true
       t == "end" -> true
+      String.starts_with?(t, "#") -> stub_scaffold_comment?(j, ctx)
       oneliner_stub_head?(t, ctx.gold_trimmed) -> true
       stub_head_variant?(t, ctx.gold_fn_names) -> true
       true -> false
     end
+  end
+
+  # Rule (j): a `#` comment is stub scaffold when its contiguous comment block
+  # in the embed either contains the `# TODO` marker (a TODO comment wrapped
+  # over continuation lines — 037_004_04) or sits directly above a recognized
+  # stub head (the descriptor comment the generator emits with synthesized
+  # multi-clause heads — 061_001_02, 087_001_03). A comment block anywhere
+  # else in the embed stays flagged.
+  defp stub_scaffold_comment?(j, ctx) do
+    lines = ctx.elines_trimmed
+    comment? = fn i -> String.starts_with?(Enum.at(lines, i, ""), "#") end
+
+    first = j |> Stream.iterate(&(&1 - 1)) |> Enum.find(fn i -> i == 0 or not comment?.(i - 1) end)
+    last = j |> Stream.iterate(&(&1 + 1)) |> Enum.find(fn i -> not comment?.(i + 1) end)
+    block = Enum.slice(lines, first..last)
+    next = Enum.at(lines, last + 1, "")
+
+    Enum.any?(block, &String.match?(&1, @todo)) or
+      stub_head_variant?(next, ctx.gold_fn_names) or
+      oneliner_stub_head?(next, ctx.gold_trimmed)
   end
 
   # Rule f: a `def`/`defp` block head (`… do`, never `, do:`) whose function
