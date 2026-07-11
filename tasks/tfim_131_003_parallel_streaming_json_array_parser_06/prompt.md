@@ -1,0 +1,311 @@
+# Fill in the middle: implement the blanked test
+
+Below is a module and its ExUnit test harness with the body of ONE `test` removed
+(marked `# TODO`). The test's name states what it must verify. Implement just that one
+test so the harness passes for a correct implementation of the module.
+
+## Module under test
+
+```elixir
+defmodule ParallelJsonStreamer do
+  @moduledoc """
+  Streaming parser for very large JSON array files that decodes lines
+  concurrently across schedulers within a bounded concurrency window, while
+  still invoking the caller's handler exactly once per item, in file order.
+
+  Decoding is fanned out with `Task.async_stream/3` using `ordered: true`, so
+  results are consumed back in the original order even though the CPU-bound
+  `JSON.decode/1` work runs in parallel. The file is read lazily with
+  `File.stream!/2` and only a window proportional to `:max_concurrency` is ever
+  in flight, keeping memory roughly constant regardless of file size.
+  """
+
+  @type stats :: %{
+          processed: non_neg_integer(),
+          errors: non_neg_integer(),
+          elapsed_ms: number(),
+          throughput: float(),
+          max_concurrency: pos_integer()
+        }
+
+  @doc """
+  Streams `file_path`, decoding lines concurrently and calling `handler_fn` once
+  per successfully decoded item in file order. Returns `{:ok, stats}`.
+  """
+  @spec process(Path.t(), (term() -> term()), keyword()) :: {:ok, stats()}
+  def process(file_path, handler_fn, opts \\ []) when is_function(handler_fn, 1) do
+    max_concurrency = Keyword.get(opts, :max_concurrency, System.schedulers_online())
+    start = System.monotonic_time(:microsecond)
+
+    {processed, errors} =
+      file_path
+      |> File.stream!(:line, [])
+      |> Stream.map(&String.trim/1)
+      |> Stream.reject(&(&1 in ["", "[", "]"]))
+      |> Task.async_stream(&decode_line/1,
+        max_concurrency: max_concurrency,
+        ordered: true
+      )
+      |> Enum.reduce({0, 0}, fn
+        {:ok, {:ok, item}}, {p, e} ->
+          handler_fn.(item)
+          {p + 1, e}
+
+        {:ok, {:error, _reason}}, {p, e} ->
+          {p, e + 1}
+      end)
+
+    elapsed_us = System.monotonic_time(:microsecond) - start
+    elapsed_ms = max(elapsed_us / 1000, 0)
+
+    stats = %{
+      processed: processed,
+      errors: errors,
+      elapsed_ms: elapsed_ms,
+      throughput: throughput(processed, elapsed_ms),
+      max_concurrency: max_concurrency
+    }
+
+    {:ok, stats}
+  end
+
+  @spec decode_line(String.t()) :: {:ok, term()} | {:error, term()}
+  defp decode_line(trimmed) do
+    trimmed
+    |> strip_trailing_comma()
+    |> JSON.decode()
+  end
+
+  @spec strip_trailing_comma(String.t()) :: String.t()
+  defp strip_trailing_comma(text) do
+    case String.ends_with?(text, ",") do
+      true -> String.slice(text, 0..-2//1)
+      false -> text
+    end
+  end
+
+  @spec throughput(non_neg_integer(), number()) :: float()
+  defp throughput(_processed, +0.0), do: 0.0
+  defp throughput(_processed, 0), do: 0.0
+  defp throughput(processed, elapsed_ms), do: processed / (elapsed_ms / 1000)
+end
+```
+
+## Test harness — implement the `# TODO` test
+
+```elixir
+defmodule ParallelJsonStreamerTest do
+  use ExUnit.Case, async: false
+
+  defmodule Collector do
+    use Agent
+
+    def start_link(_opts \\ []), do: Agent.start_link(fn -> [] end)
+    def handler(pid), do: fn item -> Agent.update(pid, &[item | &1]) end
+    def items(pid), do: Agent.get(pid, &Enum.reverse/1)
+    def count(pid), do: Agent.get(pid, &length/1)
+  end
+
+  setup do
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "parallel_json_#{System.pid()}_#{System.unique_integer([:positive])}.json"
+      )
+
+    on_exit(fn -> File.rm(path) end)
+
+    {:ok, collector} = Collector.start_link()
+    %{path: path, collector: collector}
+  end
+
+  defp write_array(path, raw_elements) do
+    body =
+      case raw_elements do
+        [] ->
+          "[\n]\n"
+
+        elems ->
+          last = length(elems) - 1
+
+          inner =
+            elems
+            |> Enum.with_index()
+            |> Enum.map_join("\n", fn {enc, idx} ->
+              if idx == last, do: enc, else: enc <> ","
+            end)
+
+          "[\n" <> inner <> "\n]\n"
+      end
+
+    File.write!(path, body)
+  end
+
+  defp valid(item), do: JSON.encode!(item)
+
+  # -------------------------------------------------------
+  # Correctness + ordering under concurrency
+  # -------------------------------------------------------
+
+  test "processes every item in a well-formed file", %{path: path, collector: c} do
+    write_array(path, for(i <- 1..25, do: valid(%{"id" => i})))
+
+    assert {:ok, stats} =
+             ParallelJsonStreamer.process(path, Collector.handler(c), max_concurrency: 4)
+
+    assert stats.processed == 25
+    assert stats.errors == 0
+    assert Collector.count(c) == 25
+  end
+
+  test "handler runs in file order despite concurrent decode", %{path: path, collector: c} do
+    write_array(path, for(i <- 1..500, do: valid(%{"id" => i})))
+
+    assert {:ok, stats} =
+             ParallelJsonStreamer.process(path, Collector.handler(c), max_concurrency: 8)
+
+    assert stats.processed == 500
+    assert Enum.map(Collector.items(c), & &1["id"]) == Enum.to_list(1..500)
+  end
+
+  test "reports the effective max_concurrency", %{path: path, collector: c} do
+    write_array(path, for(i <- 1..3, do: valid(%{"id" => i})))
+
+    assert {:ok, stats} =
+             ParallelJsonStreamer.process(path, Collector.handler(c), max_concurrency: 3)
+
+    assert stats.max_concurrency == 3
+
+    {:ok, c2} = Collector.start_link()
+    assert {:ok, dstats} = ParallelJsonStreamer.process(path, Collector.handler(c2))
+    assert dstats.max_concurrency == System.schedulers_online()
+  end
+
+  test "works with max_concurrency: 1 and preserves order", %{path: path, collector: c} do
+    write_array(path, for(i <- 1..10, do: valid(%{"id" => i})))
+
+    assert {:ok, stats} =
+             ParallelJsonStreamer.process(path, Collector.handler(c), max_concurrency: 1)
+
+    assert stats.processed == 10
+    assert Enum.map(Collector.items(c), & &1["id"]) == Enum.to_list(1..10)
+  end
+
+  test "decodes different JSON value shapes in order", %{path: path, collector: c} do
+    # TODO
+  end
+
+  # -------------------------------------------------------
+  # Empty array
+  # -------------------------------------------------------
+
+  test "empty array yields zero processed and zero errors", %{path: path, collector: c} do
+    write_array(path, [])
+
+    assert {:ok, stats} = ParallelJsonStreamer.process(path, Collector.handler(c))
+    assert stats.processed == 0
+    assert stats.errors == 0
+    assert Collector.count(c) == 0
+  end
+
+  # -------------------------------------------------------
+  # Malformed entries
+  # -------------------------------------------------------
+
+  test "skips malformed entries mid-stream and keeps order of the rest", %{
+    path: path,
+    collector: c
+  } do
+    encoded =
+      for i <- 1..10 do
+        if i in [3, 7], do: "{not valid json", else: valid(%{"id" => i})
+      end
+
+    write_array(path, encoded)
+
+    assert {:ok, stats} =
+             ParallelJsonStreamer.process(path, Collector.handler(c), max_concurrency: 4)
+
+    assert stats.processed == 8
+    assert stats.errors == 2
+    assert Enum.map(Collector.items(c), & &1["id"]) == [1, 2, 4, 5, 6, 8, 9, 10]
+  end
+
+  test "malformed entries never invoke the handler", %{path: path, collector: c} do
+    write_array(path, [
+      valid(%{"id" => 1}),
+      "definitely : not json",
+      valid(%{"id" => 2}),
+      "[1, 2,",
+      valid(%{"id" => 3})
+    ])
+
+    assert {:ok, stats} =
+             ParallelJsonStreamer.process(path, Collector.handler(c), max_concurrency: 4)
+
+    assert stats.processed == 3
+    assert stats.errors == 2
+    assert Enum.map(Collector.items(c), & &1["id"]) == [1, 2, 3]
+  end
+
+  # -------------------------------------------------------
+  # Stats
+  # -------------------------------------------------------
+
+  test "reports well-formed stats", %{path: path, collector: c} do
+    write_array(path, for(i <- 1..1_000, do: valid(%{"id" => i})))
+
+    assert {:ok, stats} =
+             ParallelJsonStreamer.process(path, Collector.handler(c), max_concurrency: 8)
+
+    assert stats.processed == 1_000
+    assert stats.errors == 0
+    assert is_number(stats.elapsed_ms) and stats.elapsed_ms >= 0
+    assert is_float(stats.throughput) and stats.throughput >= 0.0
+  end
+
+  # -------------------------------------------------------
+  # Bounded memory
+  # -------------------------------------------------------
+
+  test "memory stays bounded while streaming a large file", %{path: path} do
+    n = 50_000
+    pad = String.duplicate("x", 240)
+
+    File.open!(path, [:write], fn io ->
+      IO.write(io, "[\n")
+
+      Enum.each(1..n, fn i ->
+        line = JSON.encode!(%{"id" => i, "value" => pad})
+        sep = if i == n, do: "\n", else: ",\n"
+        IO.write(io, line <> sep)
+      end)
+
+      IO.write(io, "]\n")
+    end)
+
+    file_size = File.stat!(path).size
+    assert file_size > 5_000_000
+
+    {:ok, counter} = Agent.start_link(fn -> 0 end)
+    {:ok, peak} = Agent.start_link(fn -> 0 end)
+
+    handler = fn _item ->
+      seen = Agent.get_and_update(counter, fn s -> {s + 1, s + 1} end)
+      if rem(seen, 5_000) == 0, do: Agent.update(peak, &max(&1, :erlang.memory(:total)))
+    end
+
+    :erlang.garbage_collect()
+    baseline = :erlang.memory(:total)
+
+    assert {:ok, stats} = ParallelJsonStreamer.process(path, handler, max_concurrency: 8)
+
+    assert stats.processed == n
+    assert Agent.get(counter, & &1) == n
+
+    growth = Agent.get(peak, & &1) - baseline
+    assert growth < file_size
+    assert is_float(stats.throughput) and stats.throughput > 0.0
+  end
+end
+```

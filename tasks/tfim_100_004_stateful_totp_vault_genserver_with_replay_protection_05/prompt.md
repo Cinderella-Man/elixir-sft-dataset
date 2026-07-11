@@ -1,0 +1,391 @@
+# Fill in the middle: implement the blanked test
+
+Below is a module and its ExUnit test harness with the body of ONE `test` removed
+(marked `# TODO`). The test's name states what it must verify. Implement just that one
+test so the harness passes for a correct implementation of the module.
+
+## Module under test
+
+```elixir
+defmodule TOTPVault do
+  @moduledoc """
+  A `GenServer` that manages per-account TOTP (RFC 6238) secrets and validates
+  codes with replay protection.
+
+  A single server process owns every account's base32 secret together with the
+  highest 30-second time step that has already been "spent". Once a code for a
+  given step is consumed, that same code — and any code for an earlier step —
+  can never be accepted again. Because the server handles one message at a time,
+  concurrent submissions of the same valid code resolve deterministically:
+  exactly one `consume/4` returns `:ok`, all others return `{:error, :replayed}`.
+
+  The implementation relies only on the OTP standard library. Base32
+  (RFC 4648, unpadded) is implemented in this module and HMAC-SHA1 is computed
+  with `:crypto.mac/4`.
+  """
+
+  use GenServer
+
+  @alphabet "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+  @step_seconds 30
+  @digits 6
+  @modulo 1_000_000
+  @secret_bytes 20
+
+  # RFC 4226 dynamic-truncation masks expressed as moduli so no bitwise ops are
+  # needed: `rem(byte, 16)` == `byte &&& 0x0F`, and `rem(v, 2^31)` == the low 31
+  # bits of a 32-bit value (`v &&& 0x7FFFFFFF`).
+  @offset_modulo 16
+  @truncate_modulo 2_147_483_648
+
+  @type server :: GenServer.server()
+  @type account_id :: term()
+  @type secret :: String.t()
+
+  @typep account :: %{secret: secret(), last: non_neg_integer() | nil}
+  @typep state :: %{optional(account_id()) => account()}
+
+  ## Public API
+
+  @doc """
+  Starts the vault server.
+
+  Accepts the standard `:name` option for registering the process. Returns
+  `{:ok, pid}` on success.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {gen_opts, _rest} = Keyword.split(opts, [:name])
+    GenServer.start_link(__MODULE__, %{}, gen_opts)
+  end
+
+  @doc """
+  Generates and stores a fresh secret for `account_id`.
+
+  Returns `{:ok, secret}` with the base32 secret string. If the account is
+  already registered, returns `{:error, :already_registered}` and leaves the
+  stored secret unchanged.
+  """
+  @spec register(server(), account_id()) ::
+          {:ok, secret()} | {:error, :already_registered}
+  def register(server, account_id) do
+    GenServer.call(server, {:register, account_id})
+  end
+
+  @doc """
+  Returns `{:ok, secret}` for a registered account, or `{:error, :not_found}`.
+  """
+  @spec secret(server(), account_id()) :: {:ok, secret()} | {:error, :not_found}
+  def secret(server, account_id) do
+    GenServer.call(server, {:secret, account_id})
+  end
+
+  @doc """
+  Returns `{:ok, code}` — the 6-digit code for the account at the given time —
+  or `{:error, :not_found}`.
+
+  Options:
+
+    * `:time` — UNIX seconds (default: current system time)
+
+  This function is read-only and never consumes anything.
+  """
+  @spec current_code(server(), account_id(), keyword()) ::
+          {:ok, String.t()} | {:error, :not_found}
+  def current_code(server, account_id, opts \\ []) do
+    time = Keyword.get(opts, :time, System.system_time(:second))
+    GenServer.call(server, {:current_code, account_id, time})
+  end
+
+  @doc """
+  Validates `code` and, on success, spends it for `account_id`.
+
+  Options:
+
+    * `:time` — UNIX seconds (default: current system time)
+    * `:window` — 30-second steps accepted in each direction (default: `1`)
+
+  With `base = div(time, 30)`, the steps `base - window .. base + window`
+  (only those `>= 0`) are considered. Returns:
+
+    * `{:error, :not_found}` if the account is not registered
+    * `{:error, :invalid}` if `code` matches no step in the window
+    * `{:error, :replayed}` if the matched step is `<= last`
+    * `:ok` otherwise, recording the matched step as the new highest step
+
+  `code` may be given as a string or an integer.
+  """
+  @spec consume(server(), account_id(), String.t() | integer(), keyword()) ::
+          :ok | {:error, :not_found | :invalid | :replayed}
+  def consume(server, account_id, code, opts \\ []) do
+    time = Keyword.get(opts, :time, System.system_time(:second))
+    window = Keyword.get(opts, :window, 1)
+    GenServer.call(server, {:consume, account_id, normalize_code(code), time, window})
+  end
+
+  ## GenServer callbacks
+
+  @impl true
+  @spec init(state()) :: {:ok, state()}
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_call({:register, account_id}, _from, state) do
+    case Map.fetch(state, account_id) do
+      {:ok, _account} ->
+        {:reply, {:error, :already_registered}, state}
+
+      :error ->
+        secret = generate_secret()
+        account = %{secret: secret, last: nil}
+        {:reply, {:ok, secret}, Map.put(state, account_id, account)}
+    end
+  end
+
+  def handle_call({:secret, account_id}, _from, state) do
+    case Map.fetch(state, account_id) do
+      {:ok, %{secret: secret}} -> {:reply, {:ok, secret}, state}
+      :error -> {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:current_code, account_id, time}, _from, state) do
+    case Map.fetch(state, account_id) do
+      {:ok, %{secret: secret}} ->
+        code = hotp(secret, div(time, @step_seconds))
+        {:reply, {:ok, code}, state}
+
+      :error ->
+        {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:consume, account_id, code, time, window}, _from, state) do
+    case Map.fetch(state, account_id) do
+      :error ->
+        {:reply, {:error, :not_found}, state}
+
+      {:ok, %{secret: secret, last: last} = account} ->
+        base = div(time, @step_seconds)
+
+        case match_step(secret, code, base, window) do
+          nil ->
+            {:reply, {:error, :invalid}, state}
+
+          matched when is_integer(last) and matched <= last ->
+            {:reply, {:error, :replayed}, state}
+
+          matched ->
+            updated = Map.put(state, account_id, %{account | last: matched})
+            {:reply, :ok, updated}
+        end
+    end
+  end
+
+  ## Internal helpers
+
+  @spec generate_secret() :: secret()
+  defp generate_secret do
+    @secret_bytes
+    |> :crypto.strong_rand_bytes()
+    |> base32_encode()
+  end
+
+  @spec normalize_code(String.t() | integer()) :: String.t()
+  defp normalize_code(code) when is_integer(code) do
+    code
+    |> Integer.to_string()
+    |> String.pad_leading(@digits, "0")
+  end
+
+  defp normalize_code(code) when is_binary(code), do: code
+
+  @spec match_step(secret(), String.t(), non_neg_integer(), non_neg_integer()) ::
+          non_neg_integer() | nil
+  defp match_step(secret, code, base, window) do
+    lo = max(base - window, 0)
+    hi = base + window
+    Enum.find(lo..hi, fn step -> hotp(secret, step) == code end)
+  end
+
+  @spec hotp(secret(), non_neg_integer()) :: String.t()
+  defp hotp(secret, step) do
+    key = base32_decode(secret)
+    hash = :crypto.mac(:hmac, :sha, key, <<step::64>>)
+    offset = rem(:binary.at(hash, byte_size(hash) - 1), @offset_modulo)
+
+    truncated =
+      :binary.at(hash, offset) * 16_777_216 +
+        :binary.at(hash, offset + 1) * 65_536 +
+        :binary.at(hash, offset + 2) * 256 +
+        :binary.at(hash, offset + 3)
+
+    truncated
+    |> rem(@truncate_modulo)
+    |> rem(@modulo)
+    |> Integer.to_string()
+    |> String.pad_leading(@digits, "0")
+  end
+
+  @spec base32_encode(binary()) :: String.t()
+  defp base32_encode(binary) do
+    for <<index::5 <- binary>>, into: "", do: binary_part(@alphabet, index, 1)
+  end
+
+  @spec base32_decode(String.t()) :: binary()
+  defp base32_decode(string) do
+    bits = for <<char <- string>>, into: <<>>, do: <<decode_char(char)::5>>
+    for <<byte::8 <- bits>>, into: <<>>, do: <<byte>>
+  end
+
+  @spec decode_char(byte()) :: non_neg_integer()
+  defp decode_char(char) when char in ?A..?Z, do: char - ?A
+  defp decode_char(char) when char in ?2..?7, do: char - ?2 + 26
+end
+```
+
+## Test harness — implement the `# TODO` test
+
+```elixir
+defmodule TOTPVaultTest do
+  use ExUnit.Case, async: false
+
+  setup do
+    {:ok, pid} = TOTPVault.start_link()
+    %{vault: pid}
+  end
+
+  # -------------------------------------------------------------------
+  # register / secret
+  # -------------------------------------------------------------------
+
+  test "register returns a base32 secret", %{vault: v} do
+    assert {:ok, secret} = TOTPVault.register(v, "alice")
+    assert String.match?(secret, ~r/\A[A-Z2-7]+\z/)
+  end
+
+  test "register is idempotent-guarded: second call errors and keeps the secret", %{vault: v} do
+    assert {:ok, secret} = TOTPVault.register(v, "alice")
+    assert {:error, :already_registered} = TOTPVault.register(v, "alice")
+    assert {:ok, ^secret} = TOTPVault.secret(v, "alice")
+  end
+
+  test "secret returns :not_found for an unknown account", %{vault: v} do
+    assert {:error, :not_found} = TOTPVault.secret(v, "nobody")
+  end
+
+  test "different accounts get different secrets", %{vault: v} do
+    # TODO
+  end
+
+  # -------------------------------------------------------------------
+  # current_code
+  # -------------------------------------------------------------------
+
+  test "current_code is read-only and stable within a step", %{vault: v} do
+    {:ok, _} = TOTPVault.register(v, "alice")
+    {:ok, c1} = TOTPVault.current_code(v, "alice", time: 90_000)
+    {:ok, c2} = TOTPVault.current_code(v, "alice", time: 90_029)
+    assert c1 == c2
+    assert byte_size(c1) == 6
+    # Still consumable afterward — reading did not spend it.
+    assert TOTPVault.consume(v, "alice", c1, time: 90_000) == :ok
+  end
+
+  test "current_code returns :not_found for unknown account", %{vault: v} do
+    assert {:error, :not_found} = TOTPVault.current_code(v, "ghost", time: 1)
+  end
+
+  # -------------------------------------------------------------------
+  # consume — basic acceptance / rejection
+  # -------------------------------------------------------------------
+
+  test "consume accepts the current code once", %{vault: v} do
+    {:ok, _} = TOTPVault.register(v, "alice")
+    {:ok, code} = TOTPVault.current_code(v, "alice", time: 90_000)
+    assert TOTPVault.consume(v, "alice", code, time: 90_000) == :ok
+  end
+
+  test "consume rejects a wrong code as :invalid", %{vault: v} do
+    {:ok, _} = TOTPVault.register(v, "alice")
+    {:ok, code} = TOTPVault.current_code(v, "alice", time: 90_000)
+
+    wrong =
+      code
+      |> String.to_integer()
+      |> then(&rem(&1 + 1, 1_000_000))
+      |> Integer.to_string()
+      |> String.pad_leading(6, "0")
+
+    assert TOTPVault.consume(v, "alice", wrong, time: 90_000) == {:error, :invalid}
+  end
+
+  test "consume accepts an integer code", %{vault: v} do
+    {:ok, _} = TOTPVault.register(v, "alice")
+    {:ok, code} = TOTPVault.current_code(v, "alice", time: 90_000)
+    assert TOTPVault.consume(v, "alice", String.to_integer(code), time: 90_000) == :ok
+  end
+
+  test "consume returns :not_found for an unknown account", %{vault: v} do
+    assert TOTPVault.consume(v, "ghost", "123456", time: 90_000) == {:error, :not_found}
+  end
+
+  # -------------------------------------------------------------------
+  # consume — replay protection
+  # -------------------------------------------------------------------
+
+  test "re-consuming the same code returns :replayed", %{vault: v} do
+    {:ok, _} = TOTPVault.register(v, "alice")
+    {:ok, code} = TOTPVault.current_code(v, "alice", time: 90_000)
+
+    assert TOTPVault.consume(v, "alice", code, time: 90_000) == :ok
+    assert TOTPVault.consume(v, "alice", code, time: 90_000) == {:error, :replayed}
+  end
+
+  test "after consuming the current step, an earlier step's code is :replayed", %{vault: v} do
+    {:ok, _} = TOTPVault.register(v, "alice")
+    {:ok, current} = TOTPVault.current_code(v, "alice", time: 90_000)
+    {:ok, prev} = TOTPVault.current_code(v, "alice", time: 90_000 - 30)
+
+    assert TOTPVault.consume(v, "alice", current, time: 90_000) == :ok
+    # prev belongs to step base-1 <= last consumed step base.
+    assert TOTPVault.consume(v, "alice", prev, time: 90_000) == {:error, :replayed}
+  end
+
+  test "a drifted (previous-step) code is accepted when not yet consumed", %{vault: v} do
+    {:ok, _} = TOTPVault.register(v, "alice")
+    {:ok, prev} = TOTPVault.current_code(v, "alice", time: 90_000 - 30)
+    # window default 1 covers base-1
+    assert TOTPVault.consume(v, "alice", prev, time: 90_000) == :ok
+  end
+
+  test "a later step's code still works after an earlier consumption", %{vault: v} do
+    {:ok, _} = TOTPVault.register(v, "alice")
+    {:ok, c1} = TOTPVault.current_code(v, "alice", time: 90_000)
+    {:ok, c2} = TOTPVault.current_code(v, "alice", time: 90_030)
+
+    assert TOTPVault.consume(v, "alice", c1, time: 90_000) == :ok
+    assert TOTPVault.consume(v, "alice", c2, time: 90_030) == :ok
+  end
+
+  # -------------------------------------------------------------------
+  # concurrency — exactly one winner
+  # -------------------------------------------------------------------
+
+  test "concurrent consumption of the same code yields exactly one :ok", %{vault: v} do
+    {:ok, _} = TOTPVault.register(v, "alice")
+    t = 90_000
+    {:ok, code} = TOTPVault.current_code(v, "alice", time: t)
+
+    results =
+      1..25
+      |> Task.async_stream(fn _ -> TOTPVault.consume(v, "alice", code, time: t) end,
+        max_concurrency: 25
+      )
+      |> Enum.map(fn {:ok, r} -> r end)
+
+    assert Enum.count(results, &(&1 == :ok)) == 1
+    assert Enum.count(results, &(&1 == {:error, :replayed})) == 24
+  end
+end
+```
