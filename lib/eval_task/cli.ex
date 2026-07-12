@@ -138,6 +138,12 @@ defmodule EvalTask.CLI do
     |> Map.put_new(:timestamp, DateTime.utc_now() |> DateTime.to_iso8601())
     |> :json.encode()
     |> IO.puts()
+  rescue
+    # The caller (a killed generation loop) can take stdout down mid-eval; the
+    # ErlangError death rattle then spams the appended log and reads like a
+    # crash (Kamil hit it twice on 2026-07-12). Nobody is reading the result —
+    # exit quietly instead.
+    _ -> System.halt(0)
   end
 
   defp compile_support(nil), do: :ok

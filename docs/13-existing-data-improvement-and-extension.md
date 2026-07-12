@@ -63,6 +63,27 @@ or the eval's own shape routing grabs it.
 (`GEN_SKIP_BUGFIX` opt-out); eval shape `:bugfix` rides the perfect/green
 sweeps automatically, excluded from `--mutants` (identical to the parent's).
 
+**Byte-surgical requirement (found by Kamil's accept audit, same night):**
+the original mint used `semantic_mutants/2`, which reprints the module from
+the AST — comments stripped, whole file reflowed — so the "buggy module"
+differed from the gold on 90–300 lines and the pair taught
+restore-comments-and-reformat noise alongside the fix. Bugfix now mints from
+`Mutation.semantic_mutants_textual/2`: the same mutation sites applied
+textually to the ORIGINAL source line (running-line + deep-line tracking for
+meta-less literals; one-occurrence-per-line ambiguity guard). Every unit
+differs from its gold by EXACTLY one line, asserted at promotion.
+
+**Standing audits (both born from spot checks the gates could not perform):**
+- reject side: every rejected label cross-matches the independent survivor
+  measurements, and a live rebuild proves the harness passes with the bug in
+  place (no failing report exists to mint from). The reject ledger keys on
+  solution AND harness sha — a strengthened harness re-opens yesterday's
+  survivors for minting.
+- accept side: `scripts/audit_bugfix.exs` re-derives both sides of sampled
+  units through the real evaluator and checks all six shape properties
+  (reproducible failure, report↔failure match, gold passes, gold≡parent,
+  one-line diff, spec included). 6/6 on the re-piloted units.
+
 **Export caveat (critique):** ~3 sibling units share the parent's module text —
 the export contract (§3.1) must weight or dedupe families.
 
