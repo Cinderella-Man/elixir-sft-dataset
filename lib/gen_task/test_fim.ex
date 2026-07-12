@@ -40,29 +40,61 @@ defmodule GenTask.TestFim do
     module_src = seed.files["solution.ex"]
     harness = seed.files["test_harness.exs"]
 
-    cond do
-      limit <= 0 ->
-        []
+    if limit <= 0,
+      do: [],
+      else: mint_loop(seed, module_src, harness, mintable_candidates(seed, cfg), limit, cfg)
+  end
 
-      true ->
-        covered = covered_names(seed, cfg)
+  @doc """
+  The test blocks the minter could actually promote for this seed RIGHT NOW:
+  carvable top-level `test` blocks, minus blocks already covered by an existing
+  tfim dir, minus the deterministic negative cache for the current harness
+  content, minus blocks whose carved source does not parse.
 
-        rejected =
-          CycleLog.rejected_tfim_targets(cfg, prefix(seed), CycleLog.content_sha(harness))
+  `GenTask.Work` counts `min(remaining slots, length(this))` as the seed's
+  missing tfim units — NOT `tfim_max - existing`: a harness whose tests all sit
+  inside `describe` blocks has zero carvable top-level blocks, and counting
+  slots the minter cannot fill leaves the backfill "pending" forever (found
+  live 2026-07-12: 326 phantom pending units; describe-grouped harnesses are
+  even the §5.3.1 recommendation, so the gap would only have grown).
+  """
+  @spec mintable_candidates(map(), Config.t()) :: [map()]
+  def mintable_candidates(seed, %Config{} = cfg) do
+    harness = seed.files["test_harness.exs"]
+    covered = covered_names(seed, cfg)
 
-        candidates =
-          harness
-          |> test_blocks()
-          |> Enum.reject(&MapSet.member?(covered, &1.name))
-          # Negative cache: blocks that already failed the gates against THIS harness
-          # content are permanent rejects (deterministic gates) — do not re-gate them
-          # on every backfill pass.
-          |> Enum.reject(&MapSet.member?(rejected, &1.name))
-          # Drop any block whose carved source does not parse (heredoc `  end` boundary,
-          # etc.) so a truncated/invalid gold is never promoted.
-          |> Enum.filter(&parses?(block_src(harness, &1)))
+    rejected = CycleLog.rejected_tfim_targets(cfg, prefix(seed), CycleLog.content_sha(harness))
 
-        mint_loop(seed, module_src, harness, candidates, limit, cfg)
+    harness
+    |> test_blocks()
+    |> Enum.reject(&MapSet.member?(covered, &1.name))
+    # Negative cache: blocks that already failed the gates against THIS harness
+    # content are permanent rejects (deterministic gates) — do not re-gate them
+    # on every backfill pass.
+    |> Enum.reject(&MapSet.member?(rejected, &1.name))
+    # Drop any block whose carved source does not parse (heredoc `  end` boundary,
+    # etc.) so a truncated/invalid gold is never promoted.
+    |> Enum.filter(&parses?(block_src(harness, &1)))
+  end
+
+  @doc """
+  The registry's honest missing-unit count for `:test_fim` (see
+  `mintable_candidates/2`): remaining `tfim_max_per_task` slots, capped by what
+  is actually carvable from the seed's CURRENT harness on disk. An unreadable
+  harness counts 0 — a broken dir must not hold the backfill open.
+  """
+  @spec missing_units(%{:task_id => String.t(), :dir => String.t(), optional(any()) => any()}, Config.t()) ::
+          non_neg_integer()
+  def missing_units(seed, %Config{} = cfg) do
+    pseudo = %{task_id: seed.task_id, files: %{}}
+    slots = cfg.tfim_max_per_task - existing_count(pseudo, cfg)
+
+    with true <- slots > 0,
+         {:ok, harness} <- File.read(Path.join(seed.dir, "test_harness.exs")) do
+      pseudo = %{task_id: seed.task_id, files: %{"test_harness.exs" => harness}}
+      min(slots, length(mintable_candidates(pseudo, cfg)))
+    else
+      _ -> 0
     end
   end
 

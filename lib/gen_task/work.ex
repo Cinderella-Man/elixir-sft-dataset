@@ -219,8 +219,13 @@ defmodule GenTask.Work do
 
   defp missing_test_fim(%Catalog.Seed{skip?: true}, _cfg), do: 0
 
+  # Delegated to the minter so the registry counts only units the executor can
+  # actually produce (carvable top-level blocks, minus covered/rejected/unparsable
+  # — see TestFim.mintable_candidates/2). `tfim_max - count_tfim` overcounts:
+  # describe-grouped harnesses carve to fewer (often zero) blocks and would stay
+  # "pending" forever, making the Phase 2 exit criterion (0 pending) unreachable.
   defp missing_test_fim(%Catalog.Seed{} = seed, cfg) do
-    max(cfg.tfim_max_per_task - Catalog.count_tfim(cfg.tasks_dir, a(seed), b(seed)), 0)
+    GenTask.TestFim.missing_units(seed, cfg)
   end
 
   defp a(%Catalog.Seed{num: num}), do: Catalog.pad3(num)
