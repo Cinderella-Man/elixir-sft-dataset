@@ -168,10 +168,7 @@ defmodule Reconciler do
   # If compare_fields is explicitly provided, use it directly.
   # Otherwise, derive it as: (all keys in left ∪ right) minus key_fields.
   defp resolve_compare_fields(_left, _right, _key_fields, compare_fields)
-       when is_list(compare_fields),
-       do: compare_fields
-
-  defp resolve_compare_fields(left, right, key_fields, nil) do
+       when is_list(compare_fields) do
     # TODO
   end
 

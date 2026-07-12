@@ -308,7 +308,7 @@ defmodule ObjectStoreTest do
     # TODO
   end
 
-  test "retrieve returns corrupt when the hash does not match the content", %{store: s, dir: dir} do
+  test "retrieve returns corrupt when the hash does not match", %{store: s, dir: dir} do
     hash_a = sha1("content A")
     path = object_path(dir, hash_a)
     File.mkdir_p!(Path.dirname(path))

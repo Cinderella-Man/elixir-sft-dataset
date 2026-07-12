@@ -310,7 +310,7 @@ defmodule ObjectStoreTest do
     assert {:error, :corrupt} = ObjectStore.retrieve(s, hash)
   end
 
-  test "retrieve returns corrupt when the hash does not match the content", %{store: s, dir: dir} do
+  test "retrieve returns corrupt when the hash does not match", %{store: s, dir: dir} do
     # TODO
   end
 

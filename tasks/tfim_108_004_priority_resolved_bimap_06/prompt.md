@@ -190,7 +190,7 @@ defmodule PriorityBiMapTest do
   # Rejection on insufficient priority
   # -------------------------------------------------------
 
-  test "lower-priority put across two existing pairs is rejected and changes nothing", %{bm: bm} do
+  test "lower-priority put across two pairs is rejected and changes nothing", %{bm: bm} do
     # TODO
   end
 

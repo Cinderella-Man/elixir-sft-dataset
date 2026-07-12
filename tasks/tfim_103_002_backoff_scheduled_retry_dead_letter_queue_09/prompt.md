@@ -277,7 +277,7 @@ defmodule BackoffDLQTest do
     assert r.id == id
   end
 
-  test "message becomes :dead after max_attempts failures and is no longer retryable", %{dlq: dlq} do
+  test "message becomes :dead after max_attempts failures and cannot be retried", %{dlq: dlq} do
     {:ok, id} = BackoffDLQ.push(dlq, "q", :m, :orig, %{})
 
     fail = fn _ -> {:error, :again} end

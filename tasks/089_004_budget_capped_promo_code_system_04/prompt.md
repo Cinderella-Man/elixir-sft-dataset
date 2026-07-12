@@ -204,10 +204,7 @@ defmodule BudgetPromoCodes do
 
   # --- discount & budget drawing ---
 
-  defp raw_discount(%{type: :percentage, value: v}, order_total),
-    do: round(order_total * v / 100)
-
-  defp raw_discount(%{type: :fixed_amount, value: v}, order_total) do
+  defp raw_discount(%{type: :percentage, value: v}, order_total) do
     # TODO
   end
 
