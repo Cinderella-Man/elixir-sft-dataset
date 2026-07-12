@@ -1,0 +1,245 @@
+# Fix the bug
+
+The module below was written for the task that follows, but ONE behavior bug
+slipped in. The test suite (not shown) fails with the report at the bottom.
+Find the bug and fix it — change as little as possible; do not restructure
+working code. Reply with the complete corrected module.
+
+## The task the module implements
+
+# Retrying Saga / Compensating Transaction Coordinator
+
+Write me an Elixir module called `RetrySaga` that executes a **saga** — a sequence
+of steps, each with a forward **action** and a **compensating action** — but where
+each step's action may be **retried** a configurable number of times before it is
+considered failed. Only after a step exhausts its attempts does the coordinator undo
+the work already done by running the compensating actions of all previously-completed
+steps, in reverse completion order.
+
+Use only the Elixir/OTP standard library — no external dependencies. Give me the
+complete module in a single file.
+
+## Public API
+
+```elixir
+RetrySaga.new()
+|> RetrySaga.step(:reserve, &reserve/1, &cancel/1, max_attempts: 3)
+|> RetrySaga.step(:charge,  &charge/1,  &refund/1)
+|> RetrySaga.execute(%{order_id: 42})
+```
+
+### `RetrySaga.new/0`
+
+Returns a new, empty saga value (opaque).
+
+### `RetrySaga.step(saga, name, action, compensation, opts \\ [])`
+
+Appends a step and returns the updated saga.
+
+- `name` — an identifier for the step (typically an atom).
+- `action` — a 1-arity function receiving the current **context** (a map). It must
+  return `{:ok, result}` (success) or `{:error, reason}` (this attempt failed).
+- `compensation` — a 1-arity function receiving the current context that undoes the
+  step's effect. Its return value is recorded (by convention `{:ok, _}` / `{:error, _}`).
+- `opts` — currently supports `:max_attempts`, a **positive integer** (default `1`)
+  giving the total number of times the action may be tried. Any other value must
+  raise `ArgumentError`.
+
+Steps run in the order they were added.
+
+### `RetrySaga.execute(saga, context)`
+
+**Forward pass.** For each step in order, call its `action` with the current context:
+
+- On `{:ok, result}`: store the result under the step's `name` key
+  (`Map.put(context, name, result)`), mark the step **completed**, and continue.
+- On `{:error, reason}`: if the step has attempts remaining, call the action **again**
+  with the *same* context (retry). When `max_attempts` attempts have all returned
+  `{:error, _}`, stop the forward pass and begin compensation. Retrying never runs a
+  later step's action before the current step succeeds or is exhausted.
+
+**Compensation pass.** Run the `compensation` of every **completed** step in reverse
+completion order (most recently completed first). Each compensation receives the
+context accumulated up to the point of failure. Compensation is **best-effort**: an
+`{:error, _}` return is recorded but the remaining compensations still run. The failed
+step is not "completed", so its compensation is not run.
+
+### Return values
+
+- **All steps succeed:** `{:ok, final_context}` (start context with every step's
+  result merged in under its name key).
+- **A step fails (after exhausting attempts):** `{:error, error}` where `error` has
+  exactly these keys:
+  - `:step` — the `name` of the failing step.
+  - `:error` — the `reason` from the last failing attempt.
+  - `:attempts` — the number of attempts actually made on the failing step.
+  - `:compensated` — the list of step names whose compensations ran, in run order.
+  - `:compensations` — a map of `name => compensation_return_value`.
+- **Empty saga:** `{:ok, context}` unchanged.
+
+## Example
+
+```elixir
+saga =
+  RetrySaga.new()
+  |> RetrySaga.step(:a, flaky_twice_then_ok, fn _ -> {:ok, :undo_a} end, max_attempts: 3)
+  |> RetrySaga.step(:b, always_fails, fn _ -> {:ok, :undo_b} end, max_attempts: 2)
+
+RetrySaga.execute(saga, %{})
+#=> {:error, %{
+#     step: :b, error: :nope, attempts: 2,
+#     compensated: [:a], compensations: %{a: {:ok, :undo_a}}
+#   }}
+```
+
+## The buggy module
+
+```elixir
+defmodule RetrySaga do
+  @moduledoc """
+  A saga / compensating-transaction coordinator with **bounded retries** on each
+  step's forward action.
+
+  Steps run in order. A step's action may be retried up to `:max_attempts` times
+  (default 1). Only when all attempts return `{:error, _}` is the step considered
+  failed, at which point the compensations of previously-completed steps are run in
+  reverse completion order (best-effort).
+  """
+
+  @opaque t :: %__MODULE__{steps: [step()]}
+  @type context :: map()
+  @type step :: %{
+          name: term(),
+          action: (context() -> {:ok, term()} | {:error, term()}),
+          compensation: (context() -> term()),
+          max_attempts: pos_integer()
+        }
+  @type error :: %{
+          step: term(),
+          error: term(),
+          attempts: pos_integer(),
+          compensated: [term()],
+          compensations: %{optional(term()) => term()}
+        }
+
+  defstruct steps: []
+
+  @doc "Returns a new, empty saga."
+  @spec new() :: t()
+  def new, do: %__MODULE__{steps: []}
+
+  @doc """
+  Appends a step. `opts` supports `:max_attempts` (a positive integer, default 1).
+  """
+  @spec step(
+          t(),
+          term(),
+          (context() -> {:ok, term()} | {:error, term()}),
+          (context() -> term()),
+          keyword()
+        ) :: t()
+  def step(%__MODULE__{steps: steps} = saga, name, action, compensation, opts \\ [])
+      when is_function(action, 1) and is_function(compensation, 1) do
+    max_attempts = Keyword.get(opts, :max_attempts, 1)
+
+    unless is_integer(max_attempts) and max_attempts >= 1 do
+      raise ArgumentError,
+            "max_attempts must be a positive integer, got: #{inspect(max_attempts)}"
+    end
+
+    step = %{name: name, action: action, compensation: compensation, max_attempts: max_attempts}
+    %__MODULE__{saga | steps: steps ++ [step]}
+  end
+
+  @doc "Runs the saga from `context`."
+  @spec execute(t(), context()) :: {:ok, context()} | {:error, error()}
+  def execute(%__MODULE__{steps: steps}, context) when is_map(context) do
+    forward(steps, context, [])
+  end
+
+  # `completed` is in reverse completion order (most recent first).
+  defp forward([], context, _completed), do: {:error, context}
+
+  defp forward([step | rest], context, completed) do
+    case run_action(step, context, 1) do
+      {:ok, result} ->
+        forward(rest, Map.put(context, step.name, result), [step | completed])
+
+      {:error, reason, attempts} ->
+        compensate(completed, context, step.name, reason, attempts)
+    end
+  end
+
+  defp run_action(step, context, attempt) do
+    case step.action.(context) do
+      {:ok, result} ->
+        {:ok, result}
+
+      {:error, reason} ->
+        if attempt < step.max_attempts do
+          run_action(step, context, attempt + 1)
+        else
+          {:error, reason, attempt}
+        end
+    end
+  end
+
+  defp compensate(completed, context, failed_step, reason, attempts) do
+    {compensated, compensations} =
+      Enum.reduce(completed, {[], %{}}, fn %{name: name, compensation: comp}, {names, results} ->
+        result = comp.(context)
+        {[name | names], Map.put(results, name, result)}
+      end)
+
+    {:error,
+     %{
+       step: failed_step,
+       error: reason,
+       attempts: attempts,
+       compensated: Enum.reverse(compensated),
+       compensations: compensations
+     }}
+  end
+end
+```
+
+## Failing test report
+
+```
+4 of 10 test(s) failed:
+
+  * test happy path: single attempt each, results merged, no compensation
+      
+      
+      match (=) failed
+      code:  assert {:ok, %{a: 1, b: 2}} = RetrySaga.execute(saga, %{})
+      left:  {:ok, %{a: 1, b: 2}}
+      right: {:error, %{a: 1, b: 2}}
+      
+
+  * test a step that fails twice then succeeds retries and completes
+      
+      
+      match (=) failed
+      code:  assert {:ok, ctx} = RetrySaga.execute(saga, %{})
+      left:  {:ok, ctx}
+      right: {:error, %{a: :done, b: :ok}}
+      
+
+  * test retries reuse the same context; later steps see earlier results
+      
+      
+      match (=) failed
+      code:  assert {:ok, %{a: 10, b: 15}} = RetrySaga.execute(saga, %{})
+      left:  {:ok, %{a: 10, b: 15}}
+      right: {:error, %{a: 10, b: 15}}
+      
+
+  * test empty saga returns the context unchanged
+      
+      
+      match (=) failed
+      code:  assert {:ok, %{x: 1}} = RetrySaga.execute(RetrySaga.new(), %{x: 1})
+      left:  {:ok, %{x: 1}}
+      right: {:error, %{x: 1}}
+```

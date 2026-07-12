@@ -1,0 +1,244 @@
+# Fix the bug
+
+The module below was written for the task that follows, but ONE behavior bug
+slipped in. The test suite (not shown) fails with the report at the bottom.
+Find the bug and fix it — change as little as possible; do not restructure
+working code. Reply with the complete corrected module.
+
+## The task the module implements
+
+Write me an Elixir module called `WorkStealQueue` that distributes **prioritized** work across N worker processes using a work-stealing algorithm. Higher-priority work should be done first within each worker, and when an idle worker steals, it should take the *least urgent* work off a busy peer — leaving the busy worker to keep grinding on its most urgent items.
+
+I need one primary public function:
+
+- `WorkStealQueue.run(items, worker_count, process_fn)` — `items` is a list of `{priority, payload}` tuples where `priority` is an integer (higher = more urgent). `worker_count` is the number of workers to spawn. `process_fn` is a one-arity function applied to each **payload**. Returns a list of `%{item: payload, priority: priority, result: term, worker_id: non_neg_integer}` maps — one per input tuple, in any order.
+
+**How it should work internally:**
+
+1. Partition the input list as evenly as possible across `worker_count` workers. Each worker owns a local priority queue kept sorted so the highest-priority item is always next.
+2. Spawn all workers as `Task`s. Each worker repeatedly pops and processes its **highest-priority** local item, applying `process_fn` to the payload.
+3. When a worker empties its local queue, it *steals* from the busiest worker (the one with the most items remaining). Stealing takes the **lowest-priority half** of the victim's queue (the back of its sorted queue), so the victim retains its most urgent work. If no other worker has any remaining work, the stealing worker simply exits.
+4. Each worker tags every result with its own `worker_id` (`0` to `worker_count - 1`) and echoes back the item's `priority`.
+
+**Coordination requirements:**
+
+- Use a shared coordination mechanism (e.g. an `Agent` or `GenServer`) tracking each worker's remaining sorted queue so steal attempts can find the busiest worker and slice off its lowest-priority items atomically. Failed steals (victim emptied first) should be handled gracefully by retrying or moving on.
+- `run/3` must be synchronous: block until every item is processed, then return the full result list.
+
+**Constraints:**
+- Use only OTP/stdlib — no external dependencies.
+- Must work correctly when `worker_count` is greater than `length(items)`.
+- Within a single worker, items must be processed in strictly descending priority order.
+- `process_fn` may be slow or fast — faster workers should naturally pick up the low-priority slack.
+
+Give me the complete implementation in a single file.
+
+## The buggy module
+
+```elixir
+defmodule WorkStealQueue do
+  @moduledoc """
+  Priority-aware work-stealing task queue.
+
+  Items are `{priority, payload}` tuples (higher priority = more urgent). Each
+  worker owns a local queue kept sorted in descending priority order and always
+  processes its most urgent item next. When a worker empties its queue it steals
+  the **lowest-priority half** of the busiest peer's queue — so a busy worker
+  keeps its most urgent work and only sheds its least urgent items.
+
+  Coordination goes through an `Agent` holding `%{worker_id => sorted_queue}`,
+  giving each steal attempt an atomic snapshot of all queues.
+
+  ## Example
+
+      WorkStealQueue.run([{5, :urgent}, {1, :later}], 2, fn p -> {:ran, p} end)
+      # => [%{item: :urgent, priority: 5, result: {:ran, :urgent}, worker_id: 0}, ...]
+  """
+
+  @type item :: {integer(), any()}
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Process every `{priority, payload}` in `items` across `worker_count` workers,
+  highest priority first, stealing low-priority work when idle. Returns one
+  result map per item (any order). Blocks until everything is processed.
+  """
+  @spec run([item()], pos_integer(), (any() -> any())) :: [
+          %{item: any(), priority: integer(), result: any(), worker_id: non_neg_integer()}
+        ]
+  def run(items, worker_count, process_fn)
+      when is_list(items) and is_integer(worker_count) and worker_count > 0 and
+             is_function(process_fn, 1) do
+    partitions = partition(items, worker_count)
+
+    {:ok, coordinator} =
+      Agent.start_link(fn ->
+        partitions
+        |> Enum.with_index()
+        |> Map.new(fn {queue, id} -> {id, queue} end)
+      end)
+
+    results =
+      0..(worker_count - 1)
+      |> Enum.map(fn id ->
+        Task.async(fn -> run_worker(id, coordinator, process_fn) end)
+      end)
+      |> Task.await_many(:infinity)
+      |> List.flatten()
+
+    Agent.stop(coordinator)
+    results
+  end
+
+  # ---------------------------------------------------------------------------
+  # Worker logic
+  # ---------------------------------------------------------------------------
+
+  defp run_worker(id, coordinator, process_fn) do
+    process_local_queue(id, coordinator, process_fn, [])
+  end
+
+  defp process_local_queue(id, coordinator, process_fn, acc) do
+    case pop_item(id, coordinator) do
+      {:error, {priority, payload}} ->
+        result = process_fn.(payload)
+        entry = %{item: payload, priority: priority, result: result, worker_id: id}
+        process_local_queue(id, coordinator, process_fn, [entry | acc])
+
+      :empty ->
+        try_steal(id, coordinator, process_fn, acc)
+    end
+  end
+
+  defp try_steal(id, coordinator, process_fn, acc) do
+    case find_victim(id, coordinator) do
+      nil ->
+        acc
+
+      victim_id ->
+        case steal_low_half(victim_id, coordinator) do
+          [] ->
+            try_steal(id, coordinator, process_fn, acc)
+
+          stolen ->
+            # `stolen` is a sorted-descending suffix; merge into our (empty or
+            # residual) queue keeping descending order.
+            Agent.update(coordinator, fn state ->
+              Map.update(state, id, stolen, fn existing -> merge_desc(existing, stolen) end)
+            end)
+
+            process_local_queue(id, coordinator, process_fn, acc)
+        end
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Coordinator operations
+  # ---------------------------------------------------------------------------
+
+  @spec pop_item(non_neg_integer(), pid()) :: {:ok, item()} | :empty
+  defp pop_item(id, coordinator) do
+    Agent.get_and_update(coordinator, fn state ->
+      case Map.fetch!(state, id) do
+        [] -> {:empty, state}
+        [head | tail] -> {{:ok, head}, Map.put(state, id, tail)}
+      end
+    end)
+  end
+
+  @spec find_victim(non_neg_integer(), pid()) :: non_neg_integer() | nil
+  defp find_victim(thief_id, coordinator) do
+    Agent.get(coordinator, fn state ->
+      state
+      |> Enum.reject(fn {id, queue} -> id == thief_id or queue == [] end)
+      |> case do
+        [] ->
+          nil
+
+        candidates ->
+          {victim_id, _queue} = Enum.max_by(candidates, fn {_id, q} -> length(q) end)
+          victim_id
+      end
+    end)
+  end
+
+  # Take the lowest-priority half (the back of the descending-sorted queue).
+  @spec steal_low_half(non_neg_integer(), pid()) :: [item()]
+  defp steal_low_half(victim_id, coordinator) do
+    Agent.get_and_update(coordinator, fn state ->
+      queue = Map.fetch!(state, victim_id)
+      len = length(queue)
+
+      if len < 2 do
+        {[], state}
+      else
+        steal_count = div(len, 2)
+        keep_count = len - steal_count
+        {keep, stolen} = Enum.split(queue, keep_count)
+        {stolen, Map.put(state, victim_id, keep)}
+      end
+    end)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Sorted-queue helpers
+  # ---------------------------------------------------------------------------
+
+  defp sort_desc(chunk), do: Enum.sort_by(chunk, fn {priority, _payload} -> priority end, :desc)
+
+  # Merge two descending-sorted lists into one descending-sorted list.
+  defp merge_desc(a, []), do: a
+  defp merge_desc([], b), do: b
+
+  defp merge_desc([{pa, _} = ha | ta] = left, [{pb, _} = hb | tb] = right) do
+    if pa >= pb do
+      [ha | merge_desc(ta, right)]
+    else
+      [hb | merge_desc(left, tb)]
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Partitioning
+  # ---------------------------------------------------------------------------
+
+  @spec partition([item()], pos_integer()) :: [[item()]]
+  defp partition(items, n) do
+    total = length(items)
+    base_size = div(total, n)
+    extras = rem(total, n)
+
+    {chunks, _remaining} =
+      Enum.reduce(0..(n - 1), {[], items}, fn i, {acc, rest} ->
+        chunk_size = if i < extras, do: base_size + 1, else: base_size
+        {chunk, tail} = Enum.split(rest, chunk_size)
+        {[sort_desc(chunk) | acc], tail}
+      end)
+
+    Enum.reverse(chunks)
+  end
+end
+```
+
+## Failing test report
+
+```
+8 of 9 test(s) failed:
+
+  * test all payloads are returned exactly once
+      {:EXIT, #PID<0.207.0>}: {{:case_clause, {:ok, {5, 500}}}, [{WorkStealQueue, :process_local_queue, 4, [file: ~c".gen_staging/bugfix_064_003_priority_aware_work_stealing_queue_03_mutant.ex", line: 67]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c"lib/task/supervised.ex", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c"lib/task/supervised.ex", line: 40]}]}
+
+  * test results carry the correct computed value and priority
+      {:EXIT, #PID<0.213.0>}: {{:case_clause, {:ok, {5, 5}}}, [{WorkStealQueue, :process_local_queue, 4, [file: ~c".gen_staging/bugfix_064_003_priority_aware_work_stealing_queue_03_mutant.ex", line: 67]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c"lib/task/supervised.ex", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c"lib/task/supervised.ex", line: 40]}]}
+
+  * test a single worker processes items in strictly descending priority order
+      {:EXIT, #PID<0.217.0>}: {{:case_clause, {:ok, {7, 7}}}, [{WorkStealQueue, :process_local_queue, 4, [file: ~c".gen_staging/bugfix_064_003_priority_aware_work_stealing_queue_03_mutant.ex", line: 67]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c"lib/task/supervised.ex", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c"lib/task/supervised.ex", line: 40]}]}
+
+  * test idle workers steal low-priority items; owners keep their most urgent work
+      {:EXIT, #PID<0.221.0>}: {{:case_clause, {:ok, {8, 8}}}, [{WorkStealQueue, :process_local_queue, 4, [file: ~c".gen_staging/bugfix_064_003_priority_aware_work_stealing_queue_03_mutant.ex", line: 67]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c"lib/task/supervised.ex", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c"lib/task/supervised.ex", line: 40]}]}
+
+  (…4 more)
+```
