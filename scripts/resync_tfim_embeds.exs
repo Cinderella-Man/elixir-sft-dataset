@@ -62,7 +62,7 @@ defmodule ResyncTfimEmbeds do
     gold = File.read!(Path.join(dir, "solution.ex"))
 
     with {:ok, name} <- gold_name(gold),
-         {:ok, block} <- find_block(harness, name) do
+         {:ok, block} <- find_block(harness, name, File.read!(Path.join(dir, "prompt.md"))) do
       new_prompt = TestFim.prompt_md(module_src, TestFim.skeletonize(harness, block))
       prompt_path = Path.join(dir, "prompt.md")
 
@@ -92,9 +92,14 @@ defmodule ResyncTfimEmbeds do
     end
   end
 
-  defp find_block(harness, name) do
-    case Enum.find(TestFim.test_blocks(harness), &(&1.name == name)) do
-      nil -> {:error, "gold test #{inspect(name)} not found in the parent harness"}
+  # Locate by the QUALIFIED name (describe-prefix from the child's own prompt
+  # skeleton): two describes may hold same-named tests, and a describe-nested gold
+  # carries no describe context in its solution.ex.
+  defp find_block(harness, name, child_prompt) do
+    qual = TestFim.qual_from_prompt(child_prompt, name)
+
+    case Enum.find(TestFim.carvable_blocks(harness), &(TestFim.qual(&1) == qual)) do
+      nil -> {:error, "gold test #{inspect(qual)} not found in the parent harness"}
       block -> {:ok, block}
     end
   end

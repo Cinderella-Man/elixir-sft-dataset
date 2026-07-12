@@ -61,17 +61,18 @@ defmodule GenTask.TestFim do
   @spec mintable_candidates(map(), Config.t()) :: [map()]
   def mintable_candidates(seed, %Config{} = cfg) do
     harness = seed.files["test_harness.exs"]
-    covered = covered_names(seed, cfg)
+    covered = covered_quals(seed, cfg)
 
     rejected = CycleLog.rejected_tfim_targets(cfg, prefix(seed), CycleLog.content_sha(harness))
 
     harness
-    |> test_blocks()
-    |> Enum.reject(&MapSet.member?(covered, &1.name))
+    |> carvable_blocks()
+    |> Enum.reject(&MapSet.member?(covered, qual(&1)))
     # Negative cache: blocks that already failed the gates against THIS harness
     # content are permanent rejects (deterministic gates) — do not re-gate them
-    # on every backfill pass.
-    |> Enum.reject(&MapSet.member?(rejected, &1.name))
+    # on every backfill pass. Keyed by the QUALIFIED name (top-level quals equal
+    # the bare name, so pre-describe ledger entries still match).
+    |> Enum.reject(&MapSet.member?(rejected, qual(&1)))
     # Drop any block whose carved source does not parse (heredoc `  end` boundary,
     # etc.) so a truncated/invalid gold is never promoted.
     |> Enum.filter(&parses?(block_src(harness, &1)))
@@ -133,7 +134,7 @@ defmodule GenTask.TestFim do
       rescue
         e ->
           Logger.error("tfim #{tfim_id} crashed: " <> Exception.format(:error, e, __STACKTRACE__))
-          {outcome(tfim_id, seed, cand.name, :error, reason: Exception.message(e)), false}
+          {outcome(tfim_id, seed, qual(cand), :error, reason: Exception.message(e)), false}
       end
 
     CycleLog.close(handle, if(outcome.status == :accepted, do: :ok, else: :error))
@@ -145,7 +146,14 @@ defmodule GenTask.TestFim do
   defp gate_candidate(seed, module_src, iso_harness, tfim_id, cand, files, cfg) do
     stage_root = Path.join(cfg.staging_dir, tfim_id <> "_stage")
     parent_id = prefix(seed) <> "_01"
-    Evaluator.stage!(Path.join(stage_root, parent_id), %{"solution.ex" => module_src})
+
+    # Tier-B/repo parents need their manifest beside the solution or the eval
+    # misdetects tier A (docs/10 §5.13).
+    parent_files =
+      %{"solution.ex" => module_src}
+      |> Map.merge(Map.take(seed.files, ["manifest.exs"]))
+
+    Evaluator.stage!(Path.join(stage_root, parent_id), parent_files)
     tfim_dir = Path.join(stage_root, tfim_id)
     Evaluator.stage!(tfim_dir, files)
 
@@ -155,7 +163,7 @@ defmodule GenTask.TestFim do
       not Evaluator.green?(recon) ->
         record_rejected(seed, cand, cfg)
 
-        {outcome(tfim_id, seed, cand.name, :rejected,
+        {outcome(tfim_id, seed, qual(cand), :rejected,
            reason: "reconstruct not green: " <> Cycle.reason_for(recon)
          ), false}
 
@@ -164,7 +172,7 @@ defmodule GenTask.TestFim do
       Evaluator.compile_warnings(recon) > 0 ->
         record_rejected(seed, cand, cfg)
 
-        {outcome(tfim_id, seed, cand.name, :rejected,
+        {outcome(tfim_id, seed, qual(cand), :rejected,
            reason:
              "reconstructed harness compiles with #{Evaluator.compile_warnings(recon)} warning(s)"
          ), false}
@@ -178,7 +186,7 @@ defmodule GenTask.TestFim do
       ) ->
         record_rejected(seed, cand, cfg)
 
-        {outcome(tfim_id, seed, cand.name, :rejected,
+        {outcome(tfim_id, seed, qual(cand), :rejected,
            reason: "vacuous test block (no mutant killed / not independent)"
          ), false}
 
@@ -189,7 +197,7 @@ defmodule GenTask.TestFim do
         # isolation raise-mutant gate (a real kill); a bundle target passed only the
         # static assertion check (`asserting_block?/1`) — no mutant ran.
         mode = if bundle?(module_src), do: "static_only", else: "isolation"
-        {outcome(tfim_id, seed, cand.name, :accepted, stats: stats, mutation: mode), true}
+        {outcome(tfim_id, seed, qual(cand), :accepted, stats: stats, mutation: mode), true}
     end
   end
 
@@ -198,7 +206,7 @@ defmodule GenTask.TestFim do
   # backfill passes skip the block instead of re-running the gates.
   defp record_rejected(seed, cand, cfg) do
     sha = CycleLog.content_sha(seed.files["test_harness.exs"])
-    CycleLog.record_tfim_rejected(cfg, prefix(seed), cand.name, sha)
+    CycleLog.record_tfim_rejected(cfg, prefix(seed), qual(cand), sha)
   end
 
   # Single-file → isolation-kill; multifile (bundle) → static AST assertion check on
@@ -251,42 +259,84 @@ defmodule GenTask.TestFim do
   defp bundle?(src), do: String.contains?(src, "<file path=")
 
   # ------------------------------------------------------------------
-  # Harness carving (top-level `test "…"` blocks; describe-nested deferred)
+  # Harness carving (top-level `test "…"` blocks + describe-nested ones)
   # ------------------------------------------------------------------
 
-  # Line spans of every two-space-indent block whose opener matches `opener_re`, ending
-  # at the first line equal to two-spaces-then-`end`. NOTE: this is line-based, not AST
-  # based; a block whose carved source does not PARSE (e.g. a heredoc line that is
-  # literally `  end`) is filtered out by `parses?/1` before it can become a target.
-  defp block_spans(harness, opener_re) do
+  # Line spans of every block whose opener matches `opener_re`, ending at the first
+  # line equal to `end_line`, optionally restricted to the `{lo, hi}` line range.
+  # NOTE: this is line-based, not AST based; a block whose carved source does not
+  # PARSE (e.g. a heredoc line that is literally the end line) is filtered out by
+  # `parses?/1` before it can become a target.
+  defp block_spans(harness, opener_re, end_line, range \\ nil) do
     lines = String.split(harness, "\n")
     n = length(lines)
+    {lo, hi} = range || {0, n - 1}
 
-    for {line, s} <- Enum.with_index(lines), Regex.match?(opener_re, line) do
+    for {line, s} <- Enum.with_index(lines),
+        s >= lo and s <= hi,
+        Regex.match?(opener_re, line) do
       e =
-        Enum.reduce_while((s + 1)..(n - 1)//1, nil, fn j, _ ->
-          if Enum.at(lines, j) == "  end", do: {:halt, j}, else: {:cont, nil}
+        Enum.reduce_while((s + 1)..hi//1, nil, fn j, _ ->
+          if Enum.at(lines, j) == end_line, do: {:halt, j}, else: {:cont, nil}
         end)
 
-      %{name: test_name(line), s: s, e: e}
+      %{name: block_name(line), s: s, e: e}
     end
     |> Enum.reject(&is_nil(&1.e))
   end
 
-  @doc "Top-level `test \"…\"` blocks in `harness` as `%{name, s, e}` (start/end line idx)."
+  @doc "Top-level `test \"…\"` blocks in `harness` as `%{name, s, e, describe: nil}`."
   @spec test_blocks(String.t()) :: [
-          %{name: String.t(), s: non_neg_integer(), e: non_neg_integer()}
+          %{name: String.t(), s: non_neg_integer(), e: non_neg_integer(), describe: nil}
         ]
   def test_blocks(harness) do
-    harness |> block_spans(~r/^  test\s+"/) |> Enum.reject(&is_nil(&1.name))
+    harness
+    |> block_spans(~r/^  test\s+"/, "  end")
+    |> Enum.reject(&is_nil(&1.name))
+    |> Enum.map(&Map.put(&1, :describe, nil))
   end
+
+  @doc "Top-level `describe \"…\"` blocks in `harness` as `%{name, s, e}`."
+  @spec describe_blocks(String.t()) :: [
+          %{name: String.t(), s: non_neg_integer(), e: non_neg_integer()}
+        ]
+  def describe_blocks(harness) do
+    harness |> block_spans(~r/^  describe\s+"/, "  end") |> Enum.reject(&is_nil(&1.name))
+  end
+
+  @doc """
+  Every carvable `test` block: top-level plus describe-nested (4-space indent),
+  in source order. Nested entries carry their enclosing describe under
+  `:describe` — §5.3.1 RECOMMENDS describe grouping, so a top-level-only carver
+  minted zero tfim units from 32 harnesses / 426 nested tests (decision 4,
+  2026-07-12).
+  """
+  @spec carvable_blocks(String.t()) :: [map()]
+  def carvable_blocks(harness) do
+    nested =
+      for d <- describe_blocks(harness),
+          t <- block_spans(harness, ~r/^    test\s+"/, "    end", {d.s + 1, d.e - 1}),
+          not is_nil(t.name),
+          do: Map.put(t, :describe, Map.take(d, [:name, :s, :e]))
+
+    Enum.sort_by(test_blocks(harness) ++ nested, & &1.s)
+  end
+
+  @doc """
+  ExUnit-style qualified test name: `"describe-name test-name"` for a nested
+  block, the bare name otherwise. The covered/rejected bookkeeping keys on this —
+  two describes may legally hold same-named tests.
+  """
+  @spec qual(map()) :: String.t()
+  def qual(%{describe: %{name: dname}, name: name}), do: dname <> " " <> name
+  def qual(%{name: name}), do: name
 
   # True if `src` is syntactically valid Elixir. Guards against a line-scan that carved a
   # block across a heredoc boundary (unterminated string → parse error → skip target).
   defp parses?(src), do: match?({:ok, _}, Code.string_to_quoted(src))
 
-  defp test_name(line) do
-    case Regex.run(~r/^  test\s+"((?:[^"\\]|\\.)*)"/, line) do
+  defp block_name(line) do
+    case Regex.run(~r/^\s*(?:test|describe)\s+"((?:[^"\\]|\\.)*)"/, line) do
       [_, name] -> name
       _ -> nil
     end
@@ -297,31 +347,62 @@ defmodule GenTask.TestFim do
   end
 
   # The harness with the target block's BODY replaced by `# TODO` (name line kept).
+  # Indent-generic: the stub takes the opener's own indentation, so a describe-nested
+  # target (4-space) stubs as deeply as it sits — byte-identical to the old fixed
+  # 2-space form for top-level targets.
   # Public (@doc false): `scripts/resync_tfim_embeds.exs` rebuilds prompt embeds from
   # the CURRENT parent harness after a harness edit (docs/10 R10 cascade).
   @doc false
   def skeletonize(harness, %{s: s, e: e}) do
     lines = String.split(harness, "\n")
-    stub = [Enum.at(lines, s), "    # TODO", "  end"]
+    opener = Enum.at(lines, s)
+    [_, ws] = Regex.run(~r/^(\s*)/, opener)
+    stub = [opener, ws <> "  # TODO", ws <> "end"]
     (Enum.slice(lines, 0, s) ++ stub ++ Enum.slice(lines, (e + 1)..-1//1)) |> Enum.join("\n")
   end
 
   # The harness reduced to the target block + all non-test content (setup/helpers), with
-  # every OTHER test-bearing top-level block removed — `test`, `describe` (and its nested
-  # tests), and `property`. Dropping `describe` blocks is essential: otherwise their
-  # nested tests would still kill mutants and the kill would be mis-attributed to the
-  # target, letting a vacuous target pass the isolation gate.
-  defp isolate(harness, target) do
-    lines = String.split(harness, "\n")
+  # every OTHER test-bearing block removed. Dropping sibling `describe` blocks is
+  # essential: otherwise their nested tests would still kill mutants and the kill would
+  # be mis-attributed to the target, letting a vacuous target pass the isolation gate.
+  #
+  # A top-level target drops every other top-level `test`/`describe`/`property` block.
+  # A describe-nested target keeps its OWN describe (with its describe-scoped `setup`
+  # and helpers) but drops the sibling tests inside it, plus every other top-level
+  # test-bearing block.
+  @doc false
+  def isolate_for_test(harness, target), do: isolate(harness, target)
 
+  defp isolate(harness, %{describe: nil} = target) do
     drop =
       harness
-      |> block_spans(~r/^  (test|describe|property)\b/)
+      |> block_spans(~r/^  (test|describe|property)\b/, "  end")
       |> Enum.reject(&(&1.s == target.s))
       |> Enum.flat_map(&Enum.to_list(&1.s..&1.e))
       |> MapSet.new()
 
-    lines
+    drop_lines(harness, drop)
+  end
+
+  defp isolate(harness, %{describe: d} = target) do
+    top_drop =
+      harness
+      |> block_spans(~r/^  (test|describe|property)\b/, "  end")
+      |> Enum.reject(&(&1.s == d.s))
+      |> Enum.flat_map(&Enum.to_list(&1.s..&1.e))
+
+    sibling_drop =
+      harness
+      |> block_spans(~r/^    (test|property)\b/, "    end", {d.s + 1, d.e - 1})
+      |> Enum.reject(&(&1.s == target.s))
+      |> Enum.flat_map(&Enum.to_list(&1.s..&1.e))
+
+    drop_lines(harness, MapSet.new(top_drop ++ sibling_drop))
+  end
+
+  defp drop_lines(harness, drop) do
+    harness
+    |> String.split("\n")
     |> Enum.with_index()
     |> Enum.reject(fn {_l, i} -> MapSet.member?(drop, i) end)
     |> Enum.map(&elem(&1, 0))
@@ -364,18 +445,41 @@ defmodule GenTask.TestFim do
 
   defp existing_count(seed, cfg), do: seed |> existing_dirs(cfg) |> length()
 
-  # Test names already turned into a tfim subtask (skip on a top-up run).
-  defp covered_names(seed, cfg) do
+  # Qualified test names already turned into a tfim subtask (skip on a top-up run).
+  # The gold holds only the bare test block, so the describe context is read from
+  # the child's own prompt skeleton (which describe contains the `# TODO`).
+  defp covered_quals(seed, cfg) do
     seed
     |> existing_dirs(cfg)
     |> Enum.map(fn d ->
-      case File.read(Path.join(d, "solution.ex")) do
-        {:ok, src} -> src |> String.split("\n") |> Enum.find_value(&test_name/1)
+      with {:ok, gold} <- File.read(Path.join(d, "solution.ex")),
+           name when is_binary(name) <-
+             gold |> String.split("\n") |> Enum.find_value(&block_name/1),
+           {:ok, prompt} <- File.read(Path.join(d, "prompt.md")) do
+        qual_from_prompt(prompt, name)
+      else
         _ -> nil
       end
     end)
     |> Enum.reject(&is_nil/1)
     |> MapSet.new()
+  end
+
+  @doc """
+  The qualified name of the stubbed test in a tfim `prompt.md`: `name` prefixed
+  with the describe block enclosing the skeleton's `# TODO`, or bare `name` for a
+  top-level stub. `scripts/resync_tfim_embeds.exs` uses it to locate the gold
+  block in the CURRENT parent harness unambiguously.
+  """
+  @spec qual_from_prompt(String.t(), String.t()) :: String.t()
+  def qual_from_prompt(prompt_md, name) do
+    skeleton = EvalTask.Fim.extract_skeleton(prompt_md)
+    lines = String.split(skeleton, "\n")
+    todo = Enum.find_index(lines, &String.match?(&1, ~r/#\s*TODO/))
+    d = todo && Enum.find(describe_blocks(skeleton), &(&1.s < todo and todo < &1.e))
+    if d, do: d.name <> " " <> name, else: name
+  rescue
+    _ -> name
   end
 
   defp next_index(seed, cfg) do

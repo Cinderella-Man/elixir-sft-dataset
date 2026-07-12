@@ -100,9 +100,10 @@ defmodule GenTask.WorkTest do
       {s, cfg} = seed(dir, "012_001_zeta_01")
       assert Work.missing(:test_fim, s, cfg) == 2
 
-      # All tests inside describe blocks → nothing carvable → 0 missing,
-      # NOT tfim_max: the minter cannot fill those slots and the backfill
-      # must not stay pending forever (the 2026-07-12 phantom-326 case).
+      # Describe-nested tests ARE carvable since decision 4 (2026-07-12): the
+      # same harness that once produced the phantom-326 zero now counts its 2
+      # nested tests. Counting stays capped by what the minter can carve — a
+      # harness with NO test blocks at all still counts 0 (see below).
       File.write!(Path.join([dir, "013_001_eta_01", "test_harness.exs"]) |> tap(fn p -> File.mkdir_p!(Path.dirname(p)) end), """
       defmodule EtaTest do
         use ExUnit.Case
@@ -120,7 +121,21 @@ defmodule GenTask.WorkTest do
       """)
 
       {s2, cfg2} = seed(dir, "013_001_eta_01")
-      assert Work.missing(:test_fim, s2, cfg2) == 0
+      assert Work.missing(:test_fim, s2, cfg2) == 2
+
+      # A harness with no test blocks (setup/helpers only) → nothing carvable → 0.
+      File.write!(Path.join([dir, "015_001_iota_01", "test_harness.exs"]) |> tap(fn p -> File.mkdir_p!(Path.dirname(p)) end), """
+      defmodule IotaTest do
+        use ExUnit.Case
+
+        setup do
+          :ok
+        end
+      end
+      """)
+
+      {s5, cfg5} = seed(dir, "015_001_iota_01")
+      assert Work.missing(:test_fim, s5, cfg5) == 0
 
       # No harness on disk at all → 0 (a broken dir must not hold the backfill open).
       {s3, cfg3} = seed(dir, "014_001_theta_01")
