@@ -394,7 +394,19 @@ wired in*, and a few is-it-really-true gaps were found today.
     nine 074_x rejects predated the errored-kill fix and were purged with this
     change; when a gate is repaired, audit its ledger.
 
-13. **(added 2026-07-12, landed) Prompt–gate alignment rule.** Every automatic
+13. **(added 2026-07-12, landed) Describe-carving for tfim.** Nested `test`
+    blocks inside `describe` groups are carvable targets with ExUnit-style
+    qualified names; skeletonize is indent-generic (byte-identical for
+    top-level, proven by a corpus-wide resync dry-run), isolation keeps the
+    target's describe + its scoped setup and drops sibling tests. 219 units
+    unlocked across 27 seeds at zero token cost. **Staging completeness rule
+    (from the same day's bundle-fim live failures):** whatever an eval needs
+    to classify a task must be staged with it — the parent's manifest.exs now
+    travels with every staged parent (read_triplet + tfim gate), and repair
+    replies can never clobber generator-derived files (the fim skeleton is
+    re-derived after every repair).
+
+14. **(added 2026-07-12, landed) Prompt–gate alignment rule.** Every automatic
     gate criterion a generator is graded by must be STATED in its prompt.
     The variation-distinctness gate rejected on public-function-set equality
     while the prompt only listed existing variation names — the model

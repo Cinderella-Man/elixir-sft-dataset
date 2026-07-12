@@ -166,9 +166,24 @@ tested), so the loop cannot repeat yesterday's rejected-nearly-everything run.
    accepted data was ever deleted by these rejections. 018_001's variation
    (0/N tests every attempt) is a different failure mode — watch it on the
    next pass.
-4. **tfim describe-carving** (unchanged from yesterday): §5.3.1 recommends
-   describe grouping, the carver only takes top-level tests — decide before
-   Phase 3.
+4. **tfim describe-carving — RESOLVED 2026-07-12: FIXED** (same criterion;
+   the strongest case of the four: tfim is fully deterministic — gold carved
+   from the harness, prompt templated, gates local — so the unlock costs ZERO
+   tokens). The carver, isolation gate, embeds resync and bookkeeping are now
+   describe-aware with ExUnit-style qualified names; the eval splice needed no
+   changes (already indent-generic). Backward compatibility proven corpus-wide:
+   resync dry-run over all 2,924 existing tfim embeds reports unchanged.
+   Pre-flight: seed 037_003 (zero top-level tests — minted nothing before)
+   carved 8 nested tests, all isolation-kill gated, all grade 8/8 clean.
+   **Registry: test_fim 0 → 219 pending units / 27 seeds — all free to mint;
+   the running backfill loop mints them as derived work.**
+
+### All four queued decisions are now resolved (2026-07-12, Kamil's criterion:
+### fix if valuable). Bundle-fim additionally needed two live fixes after its
+### first real run (see git log): the staged parent lacked manifest.exs (tier
+### misdetection — the docs/10 §5.13 class, now fixed at read_triplet), and
+### repair replies could clobber the deterministic skeleton (now re-derived
+### after every repair).
 
 Still waiting on Kamil (unchanged): nightly-sweep systemd timer install
 (§4.1.10) and the §4.2 / §5.2 decisions.
