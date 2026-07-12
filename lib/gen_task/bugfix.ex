@@ -88,8 +88,14 @@ defmodule GenTask.Bugfix do
 
     with true <- slots > 0,
          {:ok, solution} <- File.read(Path.join(seed.dir, "solution.ex")),
-         false <- EvalTask.Bundle.bundle?(solution) do
-      pseudo = %{task_id: seed.task_id, files: %{"solution.ex" => solution}}
+         false <- EvalTask.Bundle.bundle?(solution),
+         {:ok, harness} <- File.read(Path.join(seed.dir, "test_harness.exs")) do
+      # the harness joins the pseudo files so reject_key/1 matches mint time
+      pseudo = %{
+        task_id: seed.task_id,
+        files: %{"solution.ex" => solution, "test_harness.exs" => harness}
+      }
+
       min(slots, length(candidates(pseudo, cfg)))
     else
       _ -> 0
@@ -101,9 +107,8 @@ defmodule GenTask.Bugfix do
   @doc false
   def candidates(seed, cfg) do
     solution = seed.files["solution.ex"]
-    sha = CycleLog.content_sha(solution)
     covered = covered_labels(seed, cfg)
-    rejected = rejected_labels(cfg, prefix(seed), sha)
+    rejected = rejected_labels(cfg, prefix(seed), reject_key(seed))
 
     solution
     |> Mutation.semantic_mutants()
@@ -346,7 +351,18 @@ defmodule GenTask.Bugfix do
     |> MapSet.new()
   end
 
-  defp rejected_labels(cfg, prefix, sha) do
+  # A "mutant survives" verdict depends on BOTH sides: the solution the mutant
+  # is derived from AND the harness that failed to kill it — a strengthened
+  # harness can make yesterday's survivor mintable, so the key must invalidate
+  # with either file (found during the 2026-07-12 reject audit; entries without
+  # the harness sha are inert and simply re-gate once).
+  defp reject_key(seed) do
+    CycleLog.content_sha(
+      seed.files["solution.ex"] <> "\n@@\n" <> (seed.files["test_harness.exs"] || "")
+    )
+  end
+
+  defp rejected_labels(cfg, prefix, key) do
     path = Path.join(cfg.logs_dir, @rejected_ledger)
 
     case File.read(path) do
@@ -355,7 +371,7 @@ defmodule GenTask.Bugfix do
         |> String.split("\n", trim: true)
         |> Enum.reduce(MapSet.new(), fn line, acc ->
           case JSON.decode(line) do
-            {:ok, %{"prefix" => ^prefix, "sha" => ^sha, "label" => label}} ->
+            {:ok, %{"prefix" => ^prefix, "sha" => ^key, "label" => label}} ->
               MapSet.put(acc, label)
 
             _ ->
@@ -375,7 +391,7 @@ defmodule GenTask.Bugfix do
       Path.join(cfg.logs_dir, @rejected_ledger),
       JSON.encode!(%{
         prefix: prefix(seed),
-        sha: CycleLog.content_sha(seed.files["solution.ex"]),
+        sha: reject_key(seed),
         label: label,
         ts: DateTime.utc_now() |> DateTime.to_iso8601()
       }) <> "\n",

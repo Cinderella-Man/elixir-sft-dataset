@@ -218,8 +218,10 @@ defmodule GenTask.WorkTest do
       dir = tmp_dir()
 
       # 3 functions with mutable literals/comparisons -> a non-empty diverse pool,
-      # capped at the 3-slot maximum.
+      # capped at the 3-slot maximum. The harness joins the fixture because the
+      # reject-ledger key hashes solution AND harness.
       write_solution(dir, "020_001_nu_01", 3)
+      write_harness(dir, "020_001_nu_01", 3)
       {s, cfg} = seed(dir, "020_001_nu_01")
       assert Work.missing(:bugfix, s, cfg) in 1..3
 
