@@ -80,11 +80,10 @@ defmodule GenTask.Fim do
   Phase 2 exit criterion (0 pending) unreachable and sends every backfill pass
   into guaranteed-reject selection calls.
 
-  Bundle parents keep the raw slot count: their pool cannot be enumerated
-  (`Mutation.all_functions/1` parses a bundle to `[]`), and whether fim applies
-  to bundles at all is a queued triage decision — capping them to zero would
-  hide the units before it is made. An unreadable solution counts 0 — a broken
-  dir must not hold the backfill open.
+  Bundle parents are pool-capped through the same marker-stripped view the
+  prompt embeds use (`module_view/1`) — since the 2026-07-12 bundle-fim fix
+  they are ordinary producible fim work. An unreadable solution counts 0 — a
+  broken dir must not hold the backfill open.
   """
   @spec missing_units(%{:task_id => String.t(), :dir => String.t(), optional(any()) => any()}, Config.t()) ::
           non_neg_integer()
@@ -94,17 +93,14 @@ defmodule GenTask.Fim do
 
     with true <- slots > 0,
          {:ok, parent} <- File.read(Path.join(seed.dir, "solution.ex")) do
-      if EvalTask.Bundle.bundle?(parent) do
-        slots
-      else
-        all =
-          parent
-          |> Mutation.all_functions()
-          |> MapSet.new(fn {_kind, name, arity} -> "#{name}/#{arity}" end)
+      all =
+        parent
+        |> module_view()
+        |> Mutation.all_functions()
+        |> MapSet.new(fn {_kind, name, arity} -> "#{name}/#{arity}" end)
 
-        viable = MapSet.difference(all, excluded_targets(pseudo, cfg))
-        min(slots, MapSet.size(viable))
-      end
+      viable = MapSet.difference(all, excluded_targets(pseudo, cfg))
+      min(slots, MapSet.size(viable))
     else
       _ -> 0
     end
@@ -189,7 +185,7 @@ defmodule GenTask.Fim do
 
         case Cycle.opus(cfg, seed.task_id, "fim_select", system, user) do
           {:ok, text, _meta} ->
-            {:targets, parse_candidates(text, limit, excluded, seed.files["solution.ex"])}
+            {:targets, parse_candidates(text, limit, excluded, module_view(seed.files["solution.ex"]))}
 
           {:error, reason} ->
             {:error, select_error(sel_id, seed, inspect(reason))}
@@ -332,21 +328,21 @@ defmodule GenTask.Fim do
   # Replace the model's hand-written skeleton with a deterministic one built from the
   # clean parent module + the candidate. The model over-stubs multi-clause functions,
   # leaving redundant clauses that warn; building from the parent guarantees a clean
-  # reconstruction. Falls back to the model's `prompt.md` for multifile parents or when
-  # the candidate can't be located verbatim in the parent — but a hand-written fallback
-  # skeleton is only shipped after an AST integrity check: every function OUTSIDE the
-  # hole must be structurally identical to the parent, or the promoted prompt's
-  # "every other function intact" claim would be false (docs/10 §1.7). The fallback
-  # used to ship silently and unchecked.
+  # reconstruction. Bundle parents are marker-stripped first — the prompt-embed
+  # convention (`EvalTask.Bundle.strip_markers/1`, same view `reconstruct_bundle/3`
+  # maps back onto files at eval). The deterministic fence is REPLACED over the
+  # model's TODO fence when present and INSERTED when absent — a missing fence was
+  # the dominant bundle rejection (`:contract`), and there is no reason to bounce a
+  # candidate over prompt plumbing we build ourselves anyway. Falls back to the
+  # model's `prompt.md` when the candidate can't be located verbatim in the parent —
+  # but a hand-written fallback skeleton is only shipped after an AST integrity
+  # check: every function OUTSIDE the hole must be structurally identical to the
+  # parent, or the promoted prompt's "every other function intact" claim would be
+  # false (docs/10 §1.7). The fallback used to ship silently and unchecked.
   defp deterministic_skeleton(ff, seed, target, log_id) do
-    parent = seed.files["solution.ex"]
-
-    if EvalTask.Bundle.bundle?(parent) do
-      {:ok, ff}
-    else
-      skeleton = EvalTask.Fim.build_skeleton(parent, ff["solution.ex"])
-      {:ok, Map.update!(ff, "prompt.md", &EvalTask.Fim.rewrite_skeleton(&1, skeleton))}
-    end
+    parent = module_view(seed.files["solution.ex"])
+    skeleton = EvalTask.Fim.build_skeleton(parent, ff["solution.ex"])
+    {:ok, Map.update!(ff, "prompt.md", &put_skeleton_fence(&1, skeleton))}
   rescue
     e ->
       Logger.warning(
@@ -354,13 +350,37 @@ defmodule GenTask.Fim do
           "checking the model's hand-written skeleton against the parent"
       )
 
-      if skeleton_matches_parent?(ff["prompt.md"], seed.files["solution.ex"], target) do
+      if skeleton_matches_parent?(ff["prompt.md"], module_view(seed.files["solution.ex"]), target) do
         {:ok, ff}
       else
         {:error,
          "model skeleton rewrites code outside the hole (functions differ from the " <>
            "parent) — the FIM prompt would falsely claim every other function is intact"}
       end
+  end
+
+  # The parent as the prompt-embed convention displays it: bundles marker-stripped
+  # into one blob of modules, single files verbatim.
+  defp module_view(parent_src) do
+    if EvalTask.Bundle.bundle?(parent_src),
+      do: EvalTask.Bundle.strip_markers(parent_src),
+      else: parent_src
+  end
+
+  # Put the deterministic skeleton fence into the prompt: replace the model's
+  # TODO-bearing fence when it wrote one, append the fence otherwise. Fences
+  # wrapping `<file path=` blocks are never legitimate in a fim prompt (embeds are
+  # marker-stripped by convention) — drop them so a wrong-format model attempt
+  # doesn't ship as a second, contradictory embed. Public (@doc false) for tests.
+  @doc false
+  @spec put_skeleton_fence(String.t(), String.t()) :: String.t()
+  def put_skeleton_fence(prompt_md, skeleton) do
+    prompt_md = Regex.replace(~r/```elixir\n[^`]*<file path="[^`]*?```\n?/s, prompt_md, "")
+
+    case safe_extract_skeleton(prompt_md) do
+      {:ok, _} -> EvalTask.Fim.rewrite_skeleton(prompt_md, skeleton)
+      :error -> String.trim_trailing(prompt_md) <> "\n\n```elixir\n#{skeleton}\n```\n"
+    end
   end
 
   # Every function of the skeleton except the target (and stub clauses holding the

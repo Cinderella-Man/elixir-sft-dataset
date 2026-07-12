@@ -95,4 +95,40 @@ defmodule GenTask.FimSkeletonTest do
              )
     end
   end
+  describe "put_skeleton_fence/2" do
+    @skeleton "defmodule A do\n  def go(x) do\n    # TODO\n  end\nend"
+
+    test "replaces the model's TODO-bearing fence" do
+      prompt = "Do the thing.\n\n```elixir\ndefmodule A do\n  def go(x) do\n    # TODO wrong stub\n  end\nend\n```\n"
+      out = Fim.put_skeleton_fence(prompt, @skeleton)
+
+      assert out =~ @skeleton
+      refute out =~ "wrong stub"
+      assert length(String.split(out, "```elixir")) == 2
+    end
+
+    test "appends a fence when the model wrote none (the bundle :contract case)" do
+      out = Fim.put_skeleton_fence("Prose only, no fence.", @skeleton)
+
+      assert out == "Prose only, no fence.\n\n```elixir\n" <> @skeleton <> "\n```\n"
+    end
+
+    test "drops an illegitimate <file>-bundle fence before deciding" do
+      prompt =
+        "Do the thing.\n\n```elixir\n<file path=\"lib/a.ex\">\ndefmodule A do\nend\n</file>\n```\n"
+
+      out = Fim.put_skeleton_fence(prompt, @skeleton)
+
+      refute out =~ "<file path="
+      assert out =~ @skeleton
+    end
+
+    test "keeps a non-TODO example fence intact and appends the skeleton" do
+      prompt = "Example:\n\n```elixir\nA.go(1)\n```\n"
+      out = Fim.put_skeleton_fence(prompt, @skeleton)
+
+      assert out =~ "A.go(1)"
+      assert out =~ @skeleton
+    end
+  end
 end

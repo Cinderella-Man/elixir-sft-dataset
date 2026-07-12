@@ -166,17 +166,19 @@ defmodule GenTask.WorkTest do
       {s2, cfg2} = seed(dir, "016_001_kappa_01")
       assert Work.missing(:fim, s2, cfg2) == 0
 
-      # A bundle parent keeps the raw slot count (pool not enumerable; whether
-      # fim applies to bundles is a queued triage decision, not a zero).
+      # A bundle parent is pool-capped through the marker-stripped view (the
+      # 2026-07-12 bundle-fim fix made bundles ordinary fim work): 2 functions
+      # across 2 files, 3 slots → 2 missing.
       File.mkdir_p!(Path.join(dir, "018_001_lambda_01"))
 
       File.write!(
         Path.join([dir, "018_001_lambda_01", "solution.ex"]),
-        "<file path=\"lib/a.ex\">\ndefmodule A do\n  def go(x), do: x\nend\n</file>\n"
+        "<file path=\"lib/a.ex\">\ndefmodule A do\n  def go(x), do: x\nend\n</file>\n\n" <>
+          "<file path=\"lib/b.ex\">\ndefmodule B do\n  def stop(x), do: x\nend\n</file>\n"
       )
 
       {s3, cfg3} = seed(dir, "018_001_lambda_01")
-      assert Work.missing(:fim, s3, cfg3) == 3
+      assert Work.missing(:fim, s3, cfg3) == 2
 
       # No solution.ex on disk → 0 (a broken dir must not hold the backfill open).
       {s4, cfg4} = seed(dir, "019_001_mu_01")
