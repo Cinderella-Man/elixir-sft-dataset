@@ -206,8 +206,12 @@ defmodule GenTask.Work do
   # green (docs/06 §6, docs/09 §1) — FIM would additionally burn LLM repair calls.
   defp missing_fim(%Catalog.Seed{skip?: true}, _cfg), do: 0
 
+  # Delegated to the generator so the registry counts only units the selector can
+  # actually target (parent function pool minus covered/permanently-rejected —
+  # see Fim.missing_units/2). `fim_max - count_fim` overcounts: a one-function
+  # parent caps at one child and would stay "pending" forever.
   defp missing_fim(%Catalog.Seed{} = seed, cfg) do
-    max(cfg.fim_max_per_task - Catalog.count_fim(cfg.tasks_dir, a(seed), b(seed)), 0)
+    GenTask.Fim.missing_units(seed, cfg)
   end
 
   defp missing_write_test(%Catalog.Seed{skip?: true}, _cfg), do: 0
@@ -229,5 +233,4 @@ defmodule GenTask.Work do
   end
 
   defp a(%Catalog.Seed{num: num}), do: Catalog.pad3(num)
-  defp b(%Catalog.Seed{b: b}), do: Catalog.pad3(b)
 end

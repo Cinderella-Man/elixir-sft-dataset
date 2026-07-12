@@ -39,4 +39,13 @@ defmodule GenTask.ConfigTest do
       end
     end
   end
+
+  describe "GEN_EXCLUDE_SEEDS" do
+    test "parses a comma-separated prefix list, tolerating spaces and empties" do
+      assert %Config{exclude_seeds: []} = Config.new([], env(%{}))
+
+      assert %Config{exclude_seeds: ["016_001", "102_001"]} =
+               Config.new([], env(%{"GEN_EXCLUDE_SEEDS" => "016_001, 102_001,"}))
+    end
+  end
 end

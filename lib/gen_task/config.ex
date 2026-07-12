@@ -73,6 +73,7 @@ defmodule GenTask.Config do
             to: nil,
             only_idea: nil,
             retry_failed: false,
+            exclude_seeds: [],
             skip_variations: false,
             skip_fim: false,
             skip_backfill: false,
@@ -115,6 +116,7 @@ defmodule GenTask.Config do
       to: env_int(env_fun, "GEN_TO", nil),
       only_idea: positional_idea(argv),
       retry_failed: env_bool(env_fun, "GEN_RETRY_FAILED"),
+      exclude_seeds: env_prefixes(env_fun, "GEN_EXCLUDE_SEEDS"),
       skip_variations: env_bool(env_fun, "GEN_SKIP_VARIATIONS"),
       skip_fim: env_bool(env_fun, "GEN_SKIP_FIM"),
       skip_backfill: env_bool(env_fun, "GEN_SKIP_BACKFILL"),
@@ -194,6 +196,14 @@ defmodule GenTask.Config do
     case env_fun.(key) do
       nil -> default
       v -> String.downcase(String.trim(v)) not in ["0", "false", "no", "off"]
+    end
+  end
+
+  # A comma-separated list of task-id prefixes (e.g. "016_001,102_001").
+  defp env_prefixes(env_fun, key) do
+    case env_fun.(key) do
+      nil -> []
+      v -> v |> String.split(",", trim: true) |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == ""))
     end
   end
 end

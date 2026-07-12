@@ -203,6 +203,9 @@ defmodule GenTask.Catalog do
     |> all_seeds()
     |> Enum.filter(&(GenTask.Work.pending(&1, cfg) != %{}))
     |> Enum.filter(&in_scope?(&1.num, cfg))
+    # GEN_EXCLUDE_SEEDS: known-systematic failers a run must not burn attempts on
+    # (e.g. the bundle-parent fim seeds pending their triage decision).
+    |> Enum.reject(fn s -> Enum.any?(cfg.exclude_seeds, &String.starts_with?(s.task_id, &1)) end)
     # GEN_LIMIT bounds each work-list: at most N base ideas AND at most N backfill
     # seeds per run (docs/05 #7 — it used to bound only new bases).
     |> maybe_limit(cfg.limit)

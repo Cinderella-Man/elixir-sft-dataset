@@ -22,6 +22,19 @@ defmodule GenTask.WorkTest do
     {s, cfg}
   end
 
+  # A parent solution with `n` distinct stub-able functions (what missing(:fim)
+  # counts since it began delegating to Fim.missing_units/2).
+  defp write_solution(dir, task_id, n) do
+    File.mkdir_p!(Path.join(dir, task_id))
+
+    fns = Enum.map_join(1..n, "\n", fn i -> "  def f#{i}(x), do: x + #{i}\n" end)
+
+    File.write!(
+      Path.join([dir, task_id, "solution.ex"]),
+      "defmodule W#{:erlang.unique_integer([:positive])} do\n#{fns}end\n"
+    )
+  end
+
   # A harness with `n` carvable top-level test blocks (what missing(:test_fim)
   # counts since it began delegating to TestFim.mintable_candidates/2).
   defp write_harness(dir, task_id, n) do
@@ -68,6 +81,7 @@ defmodule GenTask.WorkTest do
     test "a bare base needs everything" do
       dir = tmp_dir()
       write_harness(dir, "010_001_gamma_01", 3)
+      write_solution(dir, "010_001_gamma_01", 3)
       {s, cfg} = seed(dir, "010_001_gamma_01")
 
       assert Work.missing(:variations, s, cfg) == 3
@@ -121,12 +135,52 @@ defmodule GenTask.WorkTest do
                   tfim_011_001_delta_04),
           do: File.mkdir_p!(Path.join(dir, d))
 
+      write_solution(dir, "011_001_delta_01", 3)
       {s, cfg} = seed(dir, "011_001_delta_01")
 
       assert Work.missing(:variations, s, cfg) == 2
       assert Work.missing(:fim, s, cfg) == 2
       assert Work.missing(:write_test, s, cfg) == 0
       assert Work.missing(:test_fim, s, cfg) == 0
+    end
+
+    test "fim counts only viable targets, not empty slots" do
+      dir = tmp_dir()
+
+      # 1-function parent, 3 slots → 1 missing (capped by the target pool),
+      # NOT fim_max: the selector cannot fill those slots and the backfill
+      # must not stay pending forever (the 2026-07-12 stuck-13 case).
+      write_solution(dir, "015_001_iota_01", 1)
+      {s, cfg} = seed(dir, "015_001_iota_01")
+      assert Work.missing(:fim, s, cfg) == 1
+
+      # The one target is already covered by an existing _02 child → 0.
+      write_solution(dir, "016_001_kappa_01", 1)
+      File.mkdir_p!(Path.join(dir, "016_001_kappa_02"))
+
+      File.write!(
+        Path.join([dir, "016_001_kappa_02", "solution.ex"]),
+        "  def f1(x), do: x + 1\n"
+      )
+
+      {s2, cfg2} = seed(dir, "016_001_kappa_01")
+      assert Work.missing(:fim, s2, cfg2) == 0
+
+      # A bundle parent keeps the raw slot count (pool not enumerable; whether
+      # fim applies to bundles is a queued triage decision, not a zero).
+      File.mkdir_p!(Path.join(dir, "018_001_lambda_01"))
+
+      File.write!(
+        Path.join([dir, "018_001_lambda_01", "solution.ex"]),
+        "<file path=\"lib/a.ex\">\ndefmodule A do\n  def go(x), do: x\nend\n</file>\n"
+      )
+
+      {s3, cfg3} = seed(dir, "018_001_lambda_01")
+      assert Work.missing(:fim, s3, cfg3) == 3
+
+      # No solution.ex on disk → 0 (a broken dir must not hold the backfill open).
+      {s4, cfg4} = seed(dir, "019_001_mu_01")
+      assert Work.missing(:fim, s4, cfg4) == 0
     end
 
     test "a variation seed never needs variations" do

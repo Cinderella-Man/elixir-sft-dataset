@@ -71,6 +71,45 @@ defmodule GenTask.Fim do
     end
   end
 
+  @doc """
+  The registry's honest missing-unit count for `:fim` (mirror of
+  `GenTask.TestFim.missing_units/2`): remaining `fim_max_per_task` slots, capped
+  by the parent's viable target pool — functions not already covered by an
+  existing `_0d` child and not permanently rejected on a prior run. A
+  single-function parent can never fill 3 slots; counting those units keeps the
+  Phase 2 exit criterion (0 pending) unreachable and sends every backfill pass
+  into guaranteed-reject selection calls.
+
+  Bundle parents keep the raw slot count: their pool cannot be enumerated
+  (`Mutation.all_functions/1` parses a bundle to `[]`), and whether fim applies
+  to bundles at all is a queued triage decision — capping them to zero would
+  hide the units before it is made. An unreadable solution counts 0 — a broken
+  dir must not hold the backfill open.
+  """
+  @spec missing_units(%{:task_id => String.t(), :dir => String.t(), optional(any()) => any()}, Config.t()) ::
+          non_neg_integer()
+  def missing_units(seed, %Config{} = cfg) do
+    pseudo = %{task_id: seed.task_id}
+    slots = cfg.fim_max_per_task - existing_fim_count(pseudo, cfg)
+
+    with true <- slots > 0,
+         {:ok, parent} <- File.read(Path.join(seed.dir, "solution.ex")) do
+      if EvalTask.Bundle.bundle?(parent) do
+        slots
+      else
+        all =
+          parent
+          |> Mutation.all_functions()
+          |> MapSet.new(fn {_kind, name, arity} -> "#{name}/#{arity}" end)
+
+        viable = MapSet.difference(all, excluded_targets(pseudo, cfg))
+        min(slots, MapSet.size(viable))
+      end
+    else
+      _ -> 0
+    end
+  end
+
   # Targets we must NOT select: functions already turned into a `_0d` subtask, plus
   # targets permanently rejected on a prior run.
   defp excluded_targets(seed, cfg) do

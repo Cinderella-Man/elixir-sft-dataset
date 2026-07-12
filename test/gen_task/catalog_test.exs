@@ -133,14 +133,15 @@ defmodule GenTask.CatalogTest do
       # (the default tfim cap is now 10; completeness is relative to the cap).
       dir = tmp_dir()
 
-      # idea 10: bare base -> needs variations AND fim
-      File.mkdir_p!(Path.join(dir, "010_001_gamma_01"))
+      # idea 10: bare base -> needs variations AND fim (missing(:fim) now counts
+      # viable targets, so the parent needs a solution with stub-able functions)
+      write_fim_solution(dir, "010_001_gamma_01", 3)
 
       # idea 11: base with only 1 of 3 variations and 1 of 3 fim -> STILL needs both
       # (top-up semantics: a partial batch is revisited, not treated as complete).
-      File.mkdir_p!(Path.join(dir, "011_001_delta_01"))
+      write_fim_solution(dir, "011_001_delta_01", 3)
       File.mkdir_p!(Path.join(dir, "011_001_delta_02"))
-      File.mkdir_p!(Path.join(dir, "011_002_epsilon_01"))
+      write_fim_solution(dir, "011_002_epsilon_01", 3)
 
       # idea 12: fully derived -> 3 variations, each _01 with all 3 fim subtasks, one
       # wtest (wt_...) and all 3 tfim subtasks (tfim_..._02/03/04).
@@ -209,6 +210,15 @@ defmodule GenTask.CatalogTest do
       File.mkdir_p!(Path.join(dir, "020_001_zeta_01"))
 
       cfg = %Config{tasks_dir: dir, from: 15}
+      assert Catalog.backfill_seeds(cfg) |> Enum.map(& &1.num) == [20]
+    end
+
+    test "GEN_EXCLUDE_SEEDS drops matching seeds from the backfill list" do
+      dir = tmp_dir()
+      write_fim_solution(dir, "010_001_gamma_01", 3)
+      write_fim_solution(dir, "020_001_zeta_01", 3)
+
+      cfg = %Config{tasks_dir: dir, exclude_seeds: ["010_001"]}
       assert Catalog.backfill_seeds(cfg) |> Enum.map(& &1.num) == [20]
     end
 
@@ -317,6 +327,17 @@ defmodule GenTask.CatalogTest do
       assert Catalog.reconcile_variations!(cfg) == 0
       refute File.read!(md) =~ "Task 60"
     end
+  end
+
+  defp write_fim_solution(dir, task_id, n) do
+    File.mkdir_p!(Path.join(dir, task_id))
+
+    fns = Enum.map_join(1..n, "\n", fn i -> "  def f#{i}(x), do: x + #{i}\n" end)
+
+    File.write!(
+      Path.join([dir, task_id, "solution.ex"]),
+      "defmodule C#{:erlang.unique_integer([:positive])} do\n#{fns}end\n"
+    )
   end
 
   defp tmp_dir do
