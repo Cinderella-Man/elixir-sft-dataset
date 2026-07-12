@@ -113,17 +113,25 @@ tested), so the loop cannot repeat yesterday's rejected-nearly-everything run.
 
 ### Queued decisions for Kamil (updated 2026-07-12)
 
-1. **fim on bundle parents** (12 pending units). Mechanism found: at
-   `gen_task/fim.ex` `deterministic_skeleton/4`, bundle parents skip the
-   deterministic skeleton + integrity check entirely and ship the model's
-   hand-written prompt, which then dies on the fenced-skeleton contract
-   (dominant rejection), compile, or tests. Evidence: 5 of 6 bundle parents
-   have ZERO fim children vs 319/319 single-file parents covered; 021_001's 3
-   children are the lucky exception. Options: (a) teach `build_skeleton` to
-   target one `<file>` block of a bundle (real fix, needs its own gates),
-   (b) declare bundles fim-inapplicable (missing → 0, deletes the 12 units),
-   (c) keep the gap visible. Until decided, `GEN_EXCLUDE_SEEDS` keeps runs off
-   these seeds.
+1. **fim on bundle parents — RESOLVED 2026-07-12: FIXED** (Kamil's criterion:
+   fix if the units would be valuable — they are: multi-file Phoenix/Ecto FIM
+   is scarce, realistic data, and Phase 3 bundles would hit the same wall).
+   The gap was two-sided and both sides are landed + deterministically
+   verified with zero LLM calls:
+   - *Eval:* bundle children were reconstructed into a marker-stripped blob
+     and plain-compiled — no kit, no Repo boot — so tier-B/repo parents failed
+     0/N even on perfect skeletons. `Fim.reconstruct_bundle/3` now maps the
+     skeleton back onto the parent's `<file>` files and grades through the
+     same tier machinery as the parent. Pre-flight on all 4 seeds with gold
+     candidates: 14/14, 31/31, 20/20, 18/18, 0 warnings; a raise-mutant of an
+     exercised target fails 14/14 (gate discriminates), an unexercised target
+     survives (correctly rejected as a fim target).
+   - *Gen:* `deterministic_skeleton` now builds bundle skeletons from the
+     marker-stripped parent and REPLACES-or-INSERTS the fence (a missing fence
+     was the dominant `:contract` rejection). Hallucination filter and pool
+     caps use the same view.
+   The 4 bundle seeds (12 units) rejoin the runnable backfill; a focused run
+   launches when the current 7-seed run finishes.
 2. **defmacro-blind target enumeration** (unlocks 6 fim units on 074_001/2/4).
    `Mutation.all_functions/1` counts only def/defp, so the fim selector drops
    legitimate macro targets as "hallucinated" (`EvalTask.Fim.build_skeleton`

@@ -370,6 +370,19 @@ wired in*, and a few is-it-really-true gaps were found today.
     "a run can win this", or the Phase 2 exit criterion is unreachable and
     runs burn tokens on guaranteed rejections.
 
+11. **(added 2026-07-12, landed)** Bundle-fim support, both sides (Kamil's
+    call: fix if the data is valuable — it is). Eval: `Fim.reconstruct_bundle/3`
+    maps the marker-stripped skeleton back onto the parent's `<file>` files
+    (sequential verbatim scan, exactly one holed file) and grades through the
+    shared tier-A/B/repo machinery (`run_bundle_eval`, refactored out of
+    `do_run_multifile`) with candidate-scoped `:fim` analysis. Gen:
+    `deterministic_skeleton` builds bundle skeletons from the same stripped
+    view (`module_view/1`) and replaces-or-inserts the prompt fence — the
+    missing-fence `:contract` class is gone for all fim, not just bundles.
+    Verified with zero LLM calls: gold candidates for all 4 pending bundle
+    seeds grade perfect through the real eval subprocess; mutants of exercised
+    targets are killed. Bundles are ordinary fim work from here on.
+
 ### 5.2 Worth one LLM call per task (decide before Phase 3)
 
 1. **Accept-time blind screen for new BASES.** Today's base flow is blind on
