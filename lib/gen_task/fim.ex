@@ -223,6 +223,10 @@ defmodule GenTask.Fim do
     )
   end
 
+  @doc false
+  def parse_candidates_for_test(text, max, excluded, module_src),
+    do: parse_candidates(text, max, excluded, module_src)
+
   defp parse_candidates(text, max, excluded, module_src) do
     text
     |> Reply.parse()
@@ -250,7 +254,12 @@ defmodule GenTask.Fim do
 
         {kept, dropped} =
           Enum.split_with(candidates, fn cand ->
-            case Regex.run(~r/(\w+\/\d+)/, cand) do
+            # \w alone cannot match `?`/`!` — `equal?/3` extracted as nil and was
+            # dropped as "hallucinated" although defined; every predicate-named
+            # target (valid?/4, satisfied?/3, put_precondition_met?/3…) was
+            # silently discarded, stranding their seeds as eternal fim stragglers
+            # (found live 2026-07-12, Kamil: "I've seen this over and over").
+            case Regex.run(~r/([\w!?]+\/\d+)/, cand) do
               [_, na] -> MapSet.member?(known, na)
               nil -> false
             end
@@ -446,7 +455,7 @@ defmodule GenTask.Fim do
   end
 
   defp parse_target(target) do
-    case Regex.run(~r/(\w+)\/(\d+)/, target) do
+    case Regex.run(~r/([\w!?]+)\/(\d+)/, target) do
       [_, name, arity] -> {String.to_atom(name), String.to_integer(arity)}
       _ -> {nil, nil}
     end

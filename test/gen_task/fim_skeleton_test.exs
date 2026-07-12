@@ -131,4 +131,32 @@ defmodule GenTask.FimSkeletonTest do
       assert out =~ @skeleton
     end
   end
+
+  describe "fim target selection keeps predicate-named functions (2026-07-12)" do
+    @pred_module """
+    defmodule Recon do
+      def reconcile(a, b, rules), do: {a, b, rules}
+      defp equal?(:exact, l, r), do: l == r
+      defp valid?(x, _y, _z, _w), do: x
+    end
+    """
+
+    defp select_reply(lines) do
+      "<file path=\"candidates.md\">\n" <> Enum.join(lines, "\n") <> "\n</file>"
+    end
+
+    test "equal?/3 and valid?/4 survive the hallucination filter" do
+      text = select_reply(["equal?/3 — comparison helper", "valid?/4 — validation", "reconcile/3 — main"])
+
+      assert Fim.parse_candidates_for_test(text, 3, MapSet.new(), @pred_module) ==
+               ["equal?/3 — comparison helper", "valid?/4 — validation", "reconcile/3 — main"]
+    end
+
+    test "a genuinely undefined predicate is still dropped" do
+      text = select_reply(["phantom?/2 — not real", "reconcile/3 — main"])
+
+      assert Fim.parse_candidates_for_test(text, 3, MapSet.new(), @pred_module) ==
+               ["reconcile/3 — main"]
+    end
+  end
 end
