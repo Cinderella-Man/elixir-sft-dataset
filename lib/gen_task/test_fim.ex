@@ -131,7 +131,11 @@ defmodule GenTask.TestFim do
         gold = block_src(harness, cand)
         skeleton = skeletonize(harness, cand)
         iso_harness = isolate(harness, cand)
-        files = %{"prompt.md" => prompt_md(module_src, skeleton), "solution.ex" => gold}
+
+        files = %{
+          "prompt.md" => prompt_md(module_src, skeleton, kind_of(harness, cand)),
+          "solution.ex" => gold
+        }
 
         # The perfect gate enforces ≤98 columns on the FRAGMENT; a line legal in
         # the parent harness (analysis does not measure harnesses) can overflow
@@ -331,13 +335,22 @@ defmodule GenTask.TestFim do
   """
   @spec carvable_blocks(String.t()) :: [map()]
   def carvable_blocks(harness) do
+    # `property` blocks (StreamData/ExUnitProperties) carve exactly like `test`
+    # blocks: same skeleton stub, same splice, same isolation gate — and teach
+    # property-based testing, which no other unit shape exercises (docs/13).
+    top_props =
+      harness
+      |> block_spans(~r/^  property\s+"/, "  end")
+      |> Enum.reject(&is_nil(&1.name))
+      |> Enum.map(&Map.put(&1, :describe, nil))
+
     nested =
       for d <- describe_blocks(harness),
-          t <- block_spans(harness, ~r/^    test\s+"/, "    end", {d.s + 1, d.e - 1}),
+          t <- block_spans(harness, ~r/^    (test|property)\s+"/, "    end", {d.s + 1, d.e - 1}),
           not is_nil(t.name),
           do: Map.put(t, :describe, Map.take(d, [:name, :s, :e]))
 
-    Enum.sort_by(test_blocks(harness) ++ nested, & &1.s)
+    Enum.sort_by(test_blocks(harness) ++ top_props ++ nested, & &1.s)
   end
 
   @doc """
@@ -353,8 +366,14 @@ defmodule GenTask.TestFim do
   # block across a heredoc boundary (unterminated string → parse error → skip target).
   defp parses?(src), do: match?({:ok, _}, Code.string_to_quoted(src))
 
+  @doc false
+  def kind_of(harness, %{s: s}) do
+    line = harness |> String.split("\n") |> Enum.at(s) |> to_string()
+    if Regex.match?(~r/^\s*property\s+"/, line), do: "property", else: "test"
+  end
+
   defp block_name(line) do
-    case Regex.run(~r/^\s*(?:test|describe)\s+"((?:[^"\\]|\\.)*)"/, line) do
+    case Regex.run(~r/^\s*(?:test|property|describe)\s+"((?:[^"\\]|\\.)*)"/, line) do
       [_, name] -> name
       _ -> nil
     end
@@ -427,15 +446,19 @@ defmodule GenTask.TestFim do
     |> Enum.join("\n")
   end
 
-  @doc "The tfim `prompt.md`: the module fence + the harness skeleton fence (with the TODO)."
-  @spec prompt_md(String.t(), String.t()) :: String.t()
-  def prompt_md(module_src, skeleton) do
+  @doc """
+  The tfim `prompt.md`: the module fence + the harness skeleton fence (with the
+  TODO). `kind` is `"test"` (default — byte-identical to every shipped prompt)
+  or `"property"` for property-block units.
+  """
+  @spec prompt_md(String.t(), String.t(), String.t()) :: String.t()
+  def prompt_md(module_src, skeleton, kind \\ "test") do
     """
-    # Fill in the middle: implement the blanked test
+    # Fill in the middle: implement the blanked #{kind}
 
-    Below is a module and its ExUnit test harness with the body of ONE `test` removed
-    (marked `# TODO`). The test's name states what it must verify. Implement just that one
-    test so the harness passes for a correct implementation of the module.
+    Below is a module and its ExUnit test harness with the body of ONE `#{kind}` removed
+    (marked `# TODO`). The #{kind}'s name states what it must verify. Implement just that one
+    #{kind} so the harness passes for a correct implementation of the module.
 
     ## Module under test
 
@@ -443,7 +466,7 @@ defmodule GenTask.TestFim do
     #{String.trim_trailing(module_src)}
     ```
 
-    ## Test harness — implement the `# TODO` test
+    ## Test harness — implement the `# TODO` #{kind}
 
     ```elixir
     #{String.trim_trailing(skeleton)}

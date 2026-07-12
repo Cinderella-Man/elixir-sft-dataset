@@ -163,6 +163,22 @@ clobbering, named warnings, predicate-name regex; isolation errored-kills).
 5. **Full --fim sweep** — DONE 2026-07-12: ALL FIM TARGETS EXERCISED ✓
    (first sweep since the day's ~40 new fim units; CI runs it weekly).
 
+### Data extension research — docs/13 (2026-07-12 night; Kamil's deep-research brief)
+
+Full catalog in `docs/13-existing-data-improvement-and-extension.md`. Built and
+proven this session: **`:bugfix` work type** (verified bug→fix pairs from
+killed semantic mutants — 976 pending units / 326 seeds, zero LLM, registry-
+live so fresh generation mints it automatically; pilot 6/6 green) and
+**property-block tfim carving** (075_001: 0 → 29 carvable, pilot 10/10
+isolation-killed; zero churn on the 3,203 shipped prompts). Repair-mint
+manifest fix landed (tier-B pairs re-verifiable). Ready-to-build designs with
+measured volumes: adaptation pairs (base gold + variation spec, RED-gate),
+multi-turn repair dialogues (86 chains — PERISHABLE, logs/attempts archived
+2026-07-12), dedoc (blocked on the Dialyzer gate), style-repair pairs (207),
+cap lifts (~1,900 free tfim). **Blocking prerequisite before any training
+use: the export contract + family-keyed split (91.7% within-family text
+overlap — a random split would leak).**
+
 **What still stands before Phase 3** (unchanged owners):
 - **§5.2 decision (Kamil)** — accept-time blind screen for repaired bases;
   101_002 is the confirmed live instance of the gap.

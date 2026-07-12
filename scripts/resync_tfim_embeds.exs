@@ -63,7 +63,12 @@ defmodule ResyncTfimEmbeds do
 
     with {:ok, name} <- gold_name(gold),
          {:ok, block} <- find_block(harness, name, File.read!(Path.join(dir, "prompt.md"))) do
-      new_prompt = TestFim.prompt_md(module_src, TestFim.skeletonize(harness, block))
+      new_prompt =
+        TestFim.prompt_md(
+          module_src,
+          TestFim.skeletonize(harness, block),
+          TestFim.kind_of(harness, block)
+        )
       prompt_path = Path.join(dir, "prompt.md")
 
       cond do

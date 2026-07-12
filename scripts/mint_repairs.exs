@@ -122,6 +122,14 @@ defmodule MintRepairs do
           ensure_nl(final.files["test_harness.exs"])
         )
 
+        # Tier-B/repo families grade only with their manifest beside the triplet
+        # (docs/10 §5.13) — ship the parent's copy so the repair dir is
+        # self-contained for every future validation.
+        case parent_manifest(id) do
+          nil -> :ok
+          m -> File.write!(Path.join(target, "manifest.exs"), m)
+        end
+
         :minted
     end
   end
@@ -139,6 +147,15 @@ defmodule MintRepairs do
       File.write!(Path.join(dir, "test_harness.exs"), final.files["test_harness.exs"])
       File.write!(Path.join(dir, "prompt.md"), "verify")
 
+      # Without the parent manifest a tier-B pair misdetects tier A and BOTH
+      # sides fail to compile -> :unverified. This silently excluded every
+      # tier-B family from repair minting (found 2026-07-12; the third
+      # docs/10 §5.13 site that day).
+      case parent_manifest(broken.meta["id"] || final.meta["id"]) do
+        nil -> :ok
+        m -> File.write!(Path.join(dir, "manifest.exs"), m)
+      end
+
       File.write!(Path.join(dir, "solution.ex"), final.files["solution.ex"])
       fix = grade(dir, "solution.ex")
 
@@ -148,6 +165,23 @@ defmodule MintRepairs do
       green?(fix) and not green?(bad)
     after
       File.rm_rf!(stage)
+    end
+  end
+
+  # tasks/<task_id>/manifest.exs for the family the attempt chain belongs to.
+  # Attempt ids may carry sub-suffixes (fim01, _fix); map onto the on-disk dir
+  # by longest matching task prefix.
+  defp parent_manifest(nil), do: nil
+
+  defp parent_manifest(id) do
+    candidates = [Path.join("tasks", id) | Path.wildcard("tasks/#{String.slice(id, 0, 7)}*_01")]
+
+    candidates
+    |> Enum.map(&Path.join(&1, "manifest.exs"))
+    |> Enum.find(&File.regular?/1)
+    |> case do
+      nil -> nil
+      path -> File.read!(path)
     end
   end
 
