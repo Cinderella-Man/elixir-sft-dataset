@@ -122,14 +122,31 @@ validated, 12 redesigned-parent golds hand-fixed + re-gated, one real lib bug
 fixed en route (`EvalTask.Fim.signature_stub` continuation-`do:` corruption),
 **embed check 1266/0/0, CI gate live**, mix test 254 green.
 
-**Phase 2 is NOT yet complete:** the 21 newly accepted variation seeds (324
-seeds now) brought follow-on derivative units into the registry — at 04:00:
-+8 variation, +31 fim, +326 test-fim. The loop was relaunched with the same
-idempotent command to converge; a monitor re-arms on its PID. Repeat until
-`mix run scripts/work_status.exs --counts` shows 0 pending everywhere (each
-new variation seed spawns its own derivatives, so expect one or two more
-passes). If the loop is dead with pending work, relaunch:
-`GEN_ONLY=backfill scripts/run_detached.sh logs/backfill_phase2.log mix run scripts/generate.exs`
+**Phase 2 status after the 09:12 second pass + the registry-honesty fix
+(2026-07-12 ~09:45):** the second pass accepted 14 units (incl. seed 100_003's
+full wt_ + 10 tfim). Its near-empty yield exposed a real accounting bug:
+work_status claimed **326 pending tfim units that could never be minted** —
+the minter carves only top-level `test` blocks, and describe-grouped
+harnesses (69 seeds) carve to zero. `missing(:test_fim)` now delegates to
+`TestFim.mintable_candidates/2` (commit 58106044; mix test 255 green), and
+test_fim reads **0 pending — those units were phantom, not lost work**.
+
+The REAL Phase 2 remainder: **7 variation units (4 seeds) + 32 fim units
+(19 seeds)**. A third convergence pass is running for them. Of the fim
+seeds, four are systematic hard-fails across both passes and belong on a
+triage list, not in endless retries: 016_001 / 018_001 / 019_001 / 102_001
+(bundle parents; fim candidates repeatedly fail 0/29, compile errors, or
+"prompt.md must contain a fenced skeleton" contract violations). After this
+pass, whatever still fails goes to Kamil as a triage decision (fix the
+parents, lower fim_max for bundles, or accept the gap).
+
+**Queued decision for Kamil (new):** should the tfim minter learn to carve
+describe-nested tests? Today's carver is top-level-only, so describe-grouped
+harnesses yield few/no tfim children — and §5.3.1 explicitly RECOMMENDS
+describe grouping for new harnesses, so the two policies pull in opposite
+directions. Teaching the carver describe-awareness would add real (non-
+phantom) tfim units corpus-wide; it touches skeletonize/isolate and needs
+its own gates run. Decide before Phase 3.
 
 Still waiting on Kamil (unchanged): the nightly-sweep systemd timer install
 (§4.1.10, 4 commands in `scripts/systemd/nightly-sweep.service`) and the
