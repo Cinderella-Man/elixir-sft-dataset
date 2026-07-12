@@ -914,6 +914,9 @@ Build a module `TOTP` that implements RFC 6238 TOTP. `TOTP.generate_secret()` re
 ### Task 100 - V3 - Stateful TOTP Vault GenServer with Replay Protection
 A concurrency-and-state reframing of the TOTP task as a `GenServer` that owns every account's secret and its highest consumed 30-second step. Beyond registering accounts and reporting a read-only `current_code/3`, the server's `consume/4` validates a code within a `±window` and then *spends* it: it records the matched step as the account's new high-water mark and thereafter rejects that step or any earlier one with `{:error, :replayed}` (distinct from `{:error, :invalid}` for a non-matching code and `{:error, :not_found}` for an unknown account). Because the GenServer serializes messages, concurrent submissions of the same valid code resolve to exactly one `:ok` and the rest `:replayed` — the anti-replay invariant enforced under real parallelism.
 
+### Task 100 - V2 - Counter-Based HOTP with Resynchronization Window
+A sibling of the RFC 6238 TOTP task that swaps the time axis for a counter axis, implementing RFC 4226 HMAC-based OTP. `generate_code/2` is keyed on a monotonically increasing integer counter (verified against the canonical Appendix D vectors for counters 0–9) rather than the wall clock, so codes are deterministic per counter with no clock dependence. The distinguishing concern is resynchronization: `valid?/4` takes a stored counter plus a `:look_ahead` option and scans only forward through `counter..counter + look_ahead`, returning `{:ok, next_counter}` (the matched counter plus one, so a used code cannot be replayed) on the first match and `:error` otherwise — never inspecting counters below the stored one. Provisioning URIs use the `otpauth://hotp/` type with a mandatory `counter` parameter, reflecting how HOTP authenticators differ from their time-based counterparts.
+
 
 ## GenServer / Process-Based Tasks (Continued)
 
