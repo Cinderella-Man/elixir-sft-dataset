@@ -49,7 +49,9 @@ What that means in practice:
       **embed check 1266 clean / 0 reflow / 0 drift, gated in CI**). Still
       OPEN: §5.2 decision (accept-time blind screen for repaired bases +
       entailment judge) — needed before Phase 3
-- [ ] Phase 2: derivative top-up run **LAUNCHED 2026-07-10 ~18:45** (detached,
+- [x] **Phase 2 COMPLETE 2026-07-12 ~23:0x** — `work_status --counts`:
+      variations 0/83, fim 0/331, write_test 0/331, test_fim 0/331 pending.
+      Original entry: derivative top-up run **LAUNCHED 2026-07-10 ~18:45** (detached,
       `logs/backfill_phase2.log`; 111 seeds / 710 units). Three passes done by
       2026-07-12 (details in "Where we are right now"). After the two
       registry-honesty fixes (phantom-326 tfim, pool-capped fim) the honest
@@ -59,7 +61,9 @@ What that means in practice:
       closes when the winnable run finishes AND Kamil rules on decisions 1–3
       (each either deletes its parked units from the registry or schedules the
       fix that makes them producible)
-- [ ] **[blocks Phase 3] 2026-07-12 spot-check findings resolved** (random
+- [x] **2026-07-12 spot-check findings RESOLVED** (~18:45: all four content
+      fixes landed, resynced, re-gated; both systemic lints live; post-run
+      pass executed in full — see below). Original entry: (random
       11-dir semantic review, every finding adversarially verified — Kamil:
       "resolved BEFORE we progress to new generation"):
       1. `018_003_..._01` gold carries a deliberately warning-silenced
@@ -120,7 +124,26 @@ What that means in practice:
 - [ ] Phase 3: new generation resumed and first batch validated
 - [ ] The line: catch-up tooling deleted per docs/12 §7.2, this file flipped
 
-### Where we are right now (2026-07-12 ~13:00 — push unblocked, Phase 2 tail triaged, focused relaunch)
+### Where we are right now (2026-07-12 ~23:15 — PHASE 2 EXECUTION COMPLETE)
+
+**`work_status --counts`: 0 pending across every work type** (variations 0/83,
+fim 0/331, write_test 0/331, test_fim 0/331). All four queued decisions were
+resolved as FIXED and proven live; the spot-check blockers are resolved with
+both defect classes contained and gated; five loop-level information/gate gaps
+found and fixed during the runs (bundle prompts, manifest staging, repair
+clobbering, named warnings, predicate-name regex; isolation errored-kills).
+
+**What still stands before Phase 3** (unchanged owners):
+- **§5.2 decision (Kamil)** — accept-time blind screen for repaired bases;
+  101_002 is the confirmed live instance of the gap.
+- docs/12 §4.2 sign-offs (Kamil) and the nightly-sweep systemd timer install
+  (§4.1.10, Kamil).
+Then Phase 3 (490 queued base ideas) and, after its first validated batch,
+"the line" (docs/12 §7.2: delete catch-up tooling, flip this file).
+
+---
+
+### Earlier today (2026-07-12 ~13:00 — push unblocked, Phase 2 tail triaged, focused relaunch)
 
 **The failed `git push` is fixed and explained.** Two separate things looked like
 "hundreds of problems" but were not corpus rot:
