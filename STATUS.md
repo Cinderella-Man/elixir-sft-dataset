@@ -133,6 +133,36 @@ both defect classes contained and gated; five loop-level information/gate gaps
 found and fixed during the runs (bundle prompts, manifest staging, repair
 clobbering, named warnings, predicate-name regex; isolation errored-kills).
 
+### Existing-data quality backlog (2026-07-12 evening — Kamil: "assure the
+### best quality of already existing data"; tools built, runs on his go)
+
+1. **Retroactive blind screen of repaired accepts** — TOOL READY:
+   `mix run scripts/rescreen_repaired.exs` (dry) / `-- --go` (paid) /
+   `-- --report`. Population: 74 of 126 accepted variations were accepted
+   after ≥1 repair (blind property unverified — the §5.2 gap, 101_002 the
+   proven hit). Ledger cross-check shows the REAL remainder: 42 already PASS
+   for their current prompts, 10 FAIL-but-triaged-entailed (solver errors,
+   prompts explicitly sufficient — kept), **22 never screened ≈ 22 solver
+   calls**. Reuses the S6 screen + its ledger; resume-free.
+2. **Semantic-mutant floor remediation** — TOOL READY:
+   `mix run scripts/strengthen_harnesses.exs` (dry) / `-- --go [--limit N]`.
+   30 deduped parent families below 0.5 kill rate (worst: 075_004 at 0.00).
+   Per family: one ADD-ONLY strengthen call + hard gates (existing test
+   blocks byte-verbatim — tfim golds carve them; reference green + zero
+   warnings + lints; whole-mutant killed; semantic re-measure ≥ 0.5 and
+   ≥ old; **blind gate: a prompt-only solve must pass the stronger harness**)
+   then apply + wt_ twin + tfim resync with restore-on-failure. ~2 LLM
+   calls/family. New tests become new carvable tfim units automatically.
+3. **Dialyzer over the golds** (free, unpiloted): would have caught the
+   019_001 @spec lie mechanically. Pilot parked; needs a PLT build + a
+   driver staging each gold with its deps.
+4. **Scaled semantic review** (the expensive one): today's 11-dir
+   review+verify workflow cost ~660k subagent tokens and found 2 defective
+   families. All ~330 roots ≈ 20M tokens; a stratified 60-root batch
+   (≈3.5M) would tighten the defect-rate estimate first.
+5. **Full --fim sweep** — DONE 2026-07-12: ALL FIM TARGETS EXERCISED ✓
+   (first sweep since the day's ~40 new fim units; CI runs it weekly).
+
 **What still stands before Phase 3** (unchanged owners):
 - **§5.2 decision (Kamil)** — accept-time blind screen for repaired bases;
   101_002 is the confirmed live instance of the gap.
