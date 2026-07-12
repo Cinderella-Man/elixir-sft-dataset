@@ -170,6 +170,7 @@ defmodule GenTask.Bugfix do
     mutant_path = Path.join(cfg.staging_dir, id <> "_mutant.ex")
     File.write!(mutant_path, mutated)
     mutant_grade = Evaluator.grade(dir, cfg, mutant_path)
+    ref_grade = Evaluator.grade(dir, cfg)
 
     cond do
       not Evaluator.killed_by_tests?(mutant_grade) ->
@@ -180,7 +181,7 @@ defmodule GenTask.Bugfix do
              "mutant not killed by tests (survives or fails to compile) — not a mintable bug"
          ), false}
 
-      not Evaluator.green?(Evaluator.grade(dir, cfg)) ->
+      not Evaluator.green?(ref_grade) ->
         # The parent gold not green against its own harness would be corpus rot;
         # do NOT ledger the mutant (it is not the mutant's fault) — surface loudly.
         {outcome(id, seed, label, :error,
@@ -190,7 +191,12 @@ defmodule GenTask.Bugfix do
       true ->
         {:ok, report} = failure_report(mutant_grade)
         promote(seed, solution, label, mutated, report, id, cfg)
-        {outcome(id, seed, label, :accepted, reason: nil), true}
+
+        {outcome(id, seed, label, :accepted,
+           reason: nil,
+           stats: Cycle.grade_stats(ref_grade),
+           mutation: "semantic_killed"
+         ), true}
     end
   end
 
@@ -403,12 +409,29 @@ defmodule GenTask.Bugfix do
   end
 
   defp outcome(id, seed, label, status, opts) do
+    stats =
+      Keyword.get(opts, :stats, %{
+        compiled: false,
+        tests_passed: 0,
+        tests_failed: 0,
+        tests_total: 0
+      })
+
     Cycle.outcome(
       id: id,
       kind: :bugfix,
       num: seed.num,
       name: label,
       status: status,
+      attempts: 1,
+      compiled: stats.compiled,
+      tests_passed: stats.tests_passed,
+      tests_failed: stats.tests_failed,
+      tests_total: stats.tests_total,
+      # an accept means the semantic mutant provably FAILED the parent harness
+      # (that is where the prompt's failure report comes from) — docs/12 §5.1.5
+      mutant_failed: Keyword.get(opts, :mutation) == "semantic_killed",
+      mutation: Keyword.get(opts, :mutation),
       reason: opts[:reason]
     )
   end
