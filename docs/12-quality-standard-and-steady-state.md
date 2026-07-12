@@ -337,6 +337,38 @@ wired in*, and a few is-it-really-true gaps were found today.
    `_02`–`_04`: their embedded `Store` carried a phantom `max_bytes/0` that
    never existed in the gold. Extend the staleness check to these two embed
    kinds; the 001_004 fix (§4.1.4) needs the same machinery for its cascade.
+   **DONE 2026-07-12** (checker + resync + CI gate; see STATUS history).
+
+9. **(added 2026-07-12, all landed)** Three hardening fixes from the failed-push
+   investigation:
+   - `EvalTask.Fim.rewrite_skeleton` trims the skeleton's trailing newline —
+     spliced fences are formatter-canonical at the source (218 embeds had to be
+     canonicalized after the resync wrote them with a blank line before the
+     closing fence).
+   - `EvalTask.Runner.quiet_compile` captures ParallelCompiler stderr: mutant
+     compiles are broken BY DESIGN and their unused-alias spill made the
+     pre-push gate output look like corpus rot. Diagnostics are still returned
+     and counted (grading unchanged).
+   - Bare-`elixir` scripts prepend `_build/test` then `_build/dev`, so dev
+     beams (what `mix compile` refreshes) win — a stale test beam had silently
+     shadowed freshly-compiled evaluator code for two days.
+   **Gate-coverage lesson:** hand-fixing a child gold and re-running only the
+   embed gate is NOT enough — 2 of the 12 hand-fixed golds (034_001_03,
+   089_004_04) passed the embed gate while compiling with redundant-clause
+   warnings; only the perfect eval catches that. Any hand edit to a fim
+   child's files must re-run the family's perfect eval, not just the embed
+   check.
+
+10. **Registry honesty rule (pattern, applied twice on 2026-07-12):** a work
+    type's `missing/2` must count only units its executor can actually produce
+    today. `missing(:test_fim)` delegates to the carver
+    (`TestFim.mintable_candidates/2` — the phantom-326), `missing(:fim)`
+    delegates to the target pool (`Fim.missing_units/2` — 13 stuck units on
+    1-2-function parents). Anything the executor *could* produce after a
+    design change (bundle fim, defmacro targets, describe carving) stays out
+    of the count and goes on the decision queue instead — pending must mean
+    "a run can win this", or the Phase 2 exit criterion is unreachable and
+    runs burn tokens on guaranteed rejections.
 
 ### 5.2 Worth one LLM call per task (decide before Phase 3)
 

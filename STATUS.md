@@ -50,107 +50,115 @@ What that means in practice:
       OPEN: §5.2 decision (accept-time blind screen for repaired bases +
       entailment judge) — needed before Phase 3
 - [ ] Phase 2: derivative top-up run **LAUNCHED 2026-07-10 ~18:45** (detached,
-      `logs/backfill_phase2.log`; 111 seeds / 710 units: 29 variation + 57 FIM
-      + 624 test-FIM). First run through the §5.1-hardened loop. Died
-      2026-07-11 14:18 during a usage-limit wait (old session teardown);
-      **relaunched 2026-07-11 17:07** with the same command — the work
-      registry resumed it at 87 seeds still needing top-up (24 seeds finished
-      in the first stretch; ~101 units were pending at relaunch: 6 variation +
-      19 FIM + 3 write-test + 73 test-FIM). Complete when
-      `mix run scripts/work_status.exs --counts` shows 0 pending everywhere
+      `logs/backfill_phase2.log`; 111 seeds / 710 units). Three passes done by
+      2026-07-12 (details in "Where we are right now"). After the two
+      registry-honesty fixes (phantom-326 tfim, pool-capped fim) the honest
+      remainder is: **10 winnable units running now** (7 fim + 3 variation,
+      relaunched 2026-07-12 with GEN_EXCLUDE_SEEDS), **12 bundle-fim units +
+      4 variation units parked behind the queued triage decisions**. Phase 2
+      closes when the winnable run finishes AND Kamil rules on decisions 1–3
+      (each either deletes its parked units from the registry or schedules the
+      fix that makes them producible)
 - [ ] Phase 3: new generation resumed and first batch validated
 - [ ] The line: catch-up tooling deleted per docs/12 §7.2, this file flipped
 
-### Where we are right now (2026-07-11 ~22:30 — allowance is back, working in small committed batches)
+### Where we are right now (2026-07-12 ~13:00 — push unblocked, Phase 2 tail triaged, focused relaunch)
 
-Two things are in flight; both survive interruptions without losing work:
+**The failed `git push` is fixed and explained.** Two separate things looked like
+"hundreds of problems" but were not corpus rot:
 
-**1. Phase 2 top-up keeps running on its own.** The detached loop (PID in
-`logs/backfill_phase2.pid`, log `logs/backfill_phase2.log`) rode out today's
-~4.5-hour usage-limit window with its 15-minute retries and resumed by itself
-at ~22:11 (currently grinding 019_001 FIM units). Do not restart it while a
-`beam.smp` process is alive. If it has actually died (no beam process, log not
-growing), relaunch the exact same command; it is idempotent:
-`GEN_ONLY=backfill scripts/run_detached.sh logs/backfill_phase2.log mix run scripts/generate.exs`.
-Accepted output is now committed in batches as it accumulates (complete dirs
-only — a dir written in the last few minutes is skipped until the next batch).
+1. **The actual push blocker** was the corpus format gate: 218 prompt embeds
+   (216 from the 2026-07-12 resync) carried a trailing blank line inside the
+   fence. Canonicalized corpus-wide, root cause fixed in
+   `EvalTask.Fim.rewrite_skeleton` (trims the skeleton's trailing newline), and
+   `format_corpus --check` now says it is a gate instead of "report only".
+   Both embed gates re-verified after formatting: 1269 clean / 0 reflow /
+   0 drift, tfim resync unchanged.
+2. **The "hundreds of warnings"** were unused-alias noise from the raise-body
+   MUTANTS the `--mutants` gate compiles on purpose (broken by design), spilling
+   to the terminal because ParallelCompiler workers print to stderr no matter
+   what. Reference solutions were already warning-free (the perfect gate
+   enforces zero). The spill is now captured (`EvalTask.Runner.quiet_compile`),
+   verified: a planted unused-alias mutant grades `compile_warnings=1` with
+   0 stderr bytes. Found en route: all five bare-`elixir` scripts let a stale
+   `_build/test` beam shadow freshly-compiled dev code — path order fixed.
 
-**2. docs/12 §5.1 item 8 (embed staleness gate) — DONE 2026-07-11 ~23:15.**
-Full detail in docs/12 §5.1; short version:
+**Full perfect sweep re-run (logs/perfect_sweep_20260712.log): 6 failures → 0
+real ones.** 034_001_03 + 089_004_04 (from the 12 hand-fixed golds — the
+hand-fix left stale skeletons; the embed gate can't catch that, the perfect
+eval can) rebuilt deterministically and re-graded 1.0; three tfim fragments
+carried >98-char carved test heads — test names shortened in parent+child, all
+30 sibling tfim prompts resynced. 017_001 fails only without a Postgres host
+(environmental, expected unattended).
 
-- `scripts/check_embeds.exs` final: conventions a–g plus i–m from the drift
-  classification, two checker bugs fixed (indented example fences swallowing
-  the module fence; wt_ `<file>` wrapper on non-bundle parents). Verified
-  deterministically: planted-phantom self-test green, per-rule expected dirs
-  clear, full-corpus before/after diff has ZERO clean/reflow→drift
-  regressions.
-- Classification complete for all 64 families (55 recovered from the killed
-  workflow's journal + 9 re-run in two small batches). Ledger:
-  `logs/embed_classify/recovered.jsonl`. One LLM claim ("@spec omission is a
-  mint convention", 089_002) was REFUTED by git history and rejected — the
-  refuter-agent pass was replaced by deterministic verification (checker
-  re-run + git archaeology), which was both free and stricter.
-- **Corpus verdicts now: 1068 clean / 46 reflow / 137 real drift** (was
-  933/162/156 this morning; 126 one-line "reflows" turned out to be myers
-  seam artifacts, not stale embeds). The 137 = 122 resync_embed +
-  12 fix_child_gold + 3 one-token wt_ drifts (see ledger for per-dir
-  verdicts).
-- **Remediation is built, tested, and queued to run the moment Phase 2
-  finishes** (Kamil's overnight go, 2026-07-11 ~23:30: "keep on working").
-  `scripts/resync_embeds.exs` (one-shot catch-up tool, delete at the line):
-  module-FIM = deterministic skeleton rebuild via `EvalTask.Fim`
-  (bundle parents marker-stripped; reflow-stale golds rewritten from the
-  parent first); wt_ = full refresh via `GenTask.WriteTest.prompt_md/2` +
-  byte-copies of solution/harness/manifest. Dry-run default; `--apply`
-  REFUSES while a generate.exs BEAM is alive; per-file backups in
-  `logs/embed_resync_backup/`; ledger `logs/embed_resync.jsonl`; idempotent.
-  Self-tested in scratch on all five shapes (fim reflow, wt_ reflow, @spec
-  drift, one-token wt_ drift, gold-rewrap) — all resync → CLEAN, second run
-  no-op; a redesigned-parent dir errors, never auto-writes.
-  Dry run over the 183 flagged dirs: **171 would resync + 12 hand-fix
-  errors, exactly the ledger's fix_child_gold set** (021_001_03,
-  034_001_02/03/04, 038_001_02, 039_001_02/04, 072_001_03, 091_001_03,
-  091_002_03, 091_003_04, 131_003_04).
+**Phase 2 tail triaged deterministically (zero LLM calls).** The registry said
+7 variation + 32 fim units. A viable-target sweep over all pending seeds showed:
 
-### Overnight runbook — EXECUTED 2026-07-12 03:38–05:00 ✅
+- **13 fim units could NEVER be produced** — parents with 1-2 unique functions
+  already covered (063_001, 075_004, 092_001/2/3, 131_002), plus 074_001/2/4
+  whose solutions are 4 defmacros + 1 def while the target enumerator is
+  defmacro-blind. `missing(:fim)` now delegates to `Fim.missing_units/2`
+  (pool-capped, same honesty rule as the tfim fix; 258 tests green).
+- **12 fim units sit on the 4 bundle-parent seeds** (016_001, 018_001, 019_001,
+  102_001) — kept visible as pending; decision below.
+- **7 fim units are winnable** (100_001, 100_003, 623_002, 625_003 ×2,
+  625_004, 626_004) + ~3 winnable variations (098_001 ×2, 100_001).
+  034_001's 3 variations fail distinctness systematically (model converges on
+  the same `reconcile/3` API) and 018_001's variation fails 0/N tests every
+  attempt — both parked with the triage decisions.
 
-The Phase 2 loop's first pass finished cleanly 03:38 (its 87-seed list done;
-`Done.` + auto repair-minting: 10 new repair_ tasks). All remediation steps
-ran to completion while no loop was alive — see the git log
-(`985f6e54`…`2148a14d`): 84 accepted dirs committed, 171 embeds resynced +
-validated, 12 redesigned-parent golds hand-fixed + re-gated, one real lib bug
-fixed en route (`EvalTask.Fim.signature_stub` continuation-`do:` corruption),
-**embed check 1266/0/0, CI gate live**, mix test 254 green.
+**A focused relaunch is running** for the winnable units only, using the new
+`GEN_EXCLUDE_SEEDS=016_001,018_001,019_001,034_001,102_001` filter (added +
+tested), so the loop cannot repeat yesterday's rejected-nearly-everything run.
 
-**Phase 2 status after the 09:12 second pass + the registry-honesty fix
-(2026-07-12 ~09:45):** the second pass accepted 14 units (incl. seed 100_003's
-full wt_ + 10 tfim). Its near-empty yield exposed a real accounting bug:
-work_status claimed **326 pending tfim units that could never be minted** —
-the minter carves only top-level `test` blocks, and describe-grouped
-harnesses (69 seeds) carve to zero. `missing(:test_fim)` now delegates to
-`TestFim.mintable_candidates/2` (commit 58106044; mix test 255 green), and
-test_fim reads **0 pending — those units were phantom, not lost work**.
+### Queued decisions for Kamil (updated 2026-07-12)
 
-The REAL Phase 2 remainder: **7 variation units (4 seeds) + 32 fim units
-(19 seeds)**. A third convergence pass is running for them. Of the fim
-seeds, four are systematic hard-fails across both passes and belong on a
-triage list, not in endless retries: 016_001 / 018_001 / 019_001 / 102_001
-(bundle parents; fim candidates repeatedly fail 0/29, compile errors, or
-"prompt.md must contain a fenced skeleton" contract violations). After this
-pass, whatever still fails goes to Kamil as a triage decision (fix the
-parents, lower fim_max for bundles, or accept the gap).
+1. **fim on bundle parents** (12 pending units). Mechanism found: at
+   `gen_task/fim.ex` `deterministic_skeleton/4`, bundle parents skip the
+   deterministic skeleton + integrity check entirely and ship the model's
+   hand-written prompt, which then dies on the fenced-skeleton contract
+   (dominant rejection), compile, or tests. Evidence: 5 of 6 bundle parents
+   have ZERO fim children vs 319/319 single-file parents covered; 021_001's 3
+   children are the lucky exception. Options: (a) teach `build_skeleton` to
+   target one `<file>` block of a bundle (real fix, needs its own gates),
+   (b) declare bundles fim-inapplicable (missing → 0, deletes the 12 units),
+   (c) keep the gap visible. Until decided, `GEN_EXCLUDE_SEEDS` keeps runs off
+   these seeds.
+2. **defmacro-blind target enumeration** (unlocks 6 fim units on 074_001/2/4).
+   `Mutation.all_functions/1` counts only def/defp, so the fim selector drops
+   legitimate macro targets as "hallucinated" (`EvalTask.Fim.build_skeleton`
+   already handles defmacro). Teaching it defmacro touches the test-FIM
+   isolation gate too (same enumerator) — needs its own verification pass.
+3. **variation distinctness for 034_001** (3 units): generator keeps producing
+   the same public API; wants a prompt-side "APIs already taken" hint, or
+   accept 1/4 variations for that family. 018_001's variation (0/N tests every
+   attempt) rides on decision 1's seed anyway.
+4. **tfim describe-carving** (unchanged from yesterday): §5.3.1 recommends
+   describe grouping, the carver only takes top-level tests — decide before
+   Phase 3.
 
-**Queued decision for Kamil (new):** should the tfim minter learn to carve
-describe-nested tests? Today's carver is top-level-only, so describe-grouped
-harnesses yield few/no tfim children — and §5.3.1 explicitly RECOMMENDS
-describe grouping for new harnesses, so the two policies pull in opposite
-directions. Teaching the carver describe-awareness would add real (non-
-phantom) tfim units corpus-wide; it touches skeletonize/isolate and needs
-its own gates run. Decide before Phase 3.
+Still waiting on Kamil (unchanged): nightly-sweep systemd timer install
+(§4.1.10) and the §4.2 / §5.2 decisions.
 
-Still waiting on Kamil (unchanged): the nightly-sweep systemd timer install
-(§4.1.10, 4 commands in `scripts/systemd/nightly-sweep.service`) and the
-§4.2 / §5.2 decisions.
+### History of this round (compressed — details live in the git log and docs/12)
+
+- **2026-07-10:** Phase 2 top-up launched (111 seeds / 710 units). Stale
+  child-prompt resync, seed self-check fix, format gate re-greened.
+- **2026-07-11:** embed-staleness checker built + all 64 families classified
+  (ledger `logs/embed_classify/recovered.jsonl`); remediation tool
+  `scripts/resync_embeds.exs` built and self-tested (one-shot, delete at the
+  line; ledger `logs/embed_resync.jsonl`).
+- **2026-07-12 overnight:** first pass finished; 84 accepted dirs committed;
+  171 embeds resynced, 12 redesigned-parent golds hand-fixed;
+  `EvalTask.Fim.signature_stub` continuation-`do:` bug fixed; embed CI gate
+  wired. Second pass exposed the phantom-326: `missing(:test_fim)` counted
+  units the carver can never mint (describe-grouped harnesses); now delegates
+  to `TestFim.mintable_candidates/2` — test_fim honestly reads 0 pending.
+- **Loop runbook** (still current): detached loop = PID in
+  `logs/backfill_phase2.pid`, log `logs/backfill_phase2.log`. Never restart
+  while a `beam.smp` is alive; if dead, the relaunch command is idempotent:
+  `GEN_ONLY=backfill scripts/run_detached.sh logs/backfill_phase2.log mix run scripts/generate.exs`
+  (add the current `GEN_EXCLUDE_SEEDS` list from "Where we are right now").
 
 ---
 
