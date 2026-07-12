@@ -255,6 +255,7 @@ defmodule GenTask.Evaluator do
         Enum.filter(identities, fn name ->
           length(Regex.scan(~r/\b#{Regex.escape(to_string(name))}\(/, solution_src)) <= 2
         end)
+
       {:error, _} ->
         []
     end
@@ -525,8 +526,11 @@ defmodule GenTask.Evaluator do
   def repair_report({:warnings, n, details}) do
     named =
       case details do
-        d when is_list(d) and d != [] -> " The warning(s):\n" <> Enum.map_join(d, "\n", &("  - " <> &1))
-        _ -> ""
+        d when is_list(d) and d != [] ->
+          " The warning(s):\n" <> Enum.map_join(d, "\n", &("  - " <> &1))
+
+        _ ->
+          ""
       end
 
     "The files graded green but compile with #{n} warning(s). Silence every warning " <>

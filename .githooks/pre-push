@@ -9,7 +9,10 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
-echo "[pre-push] mix compile --warnings-as-errors && mix test"
+echo "[pre-push] mix format --check-formatted && mix compile --warnings-as-errors && mix test"
+# lib/test formatting: CI's first step; was missing here, so hand-written lib
+# code reached CI unformatted (2026-07-12, 11 files).
+mix format --check-formatted
 mix compile --warnings-as-errors >/dev/null
 mix test >/dev/null
 

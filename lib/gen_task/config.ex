@@ -202,8 +202,11 @@ defmodule GenTask.Config do
   # A comma-separated list of task-id prefixes (e.g. "016_001,102_001").
   defp env_prefixes(env_fun, key) do
     case env_fun.(key) do
-      nil -> []
-      v -> v |> String.split(",", trim: true) |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == ""))
+      nil ->
+        []
+
+      v ->
+        v |> String.split(",", trim: true) |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == ""))
     end
   end
 end

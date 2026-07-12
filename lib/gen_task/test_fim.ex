@@ -84,7 +84,10 @@ defmodule GenTask.TestFim do
   is actually carvable from the seed's CURRENT harness on disk. An unreadable
   harness counts 0 — a broken dir must not hold the backfill open.
   """
-  @spec missing_units(%{:task_id => String.t(), :dir => String.t(), optional(any()) => any()}, Config.t()) ::
+  @spec missing_units(
+          %{:task_id => String.t(), :dir => String.t(), optional(any()) => any()},
+          Config.t()
+        ) ::
           non_neg_integer()
   def missing_units(seed, %Config{} = cfg) do
     pseudo = %{task_id: seed.task_id, files: %{}}

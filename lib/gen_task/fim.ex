@@ -85,7 +85,10 @@ defmodule GenTask.Fim do
   they are ordinary producible fim work. An unreadable solution counts 0 — a
   broken dir must not hold the backfill open.
   """
-  @spec missing_units(%{:task_id => String.t(), :dir => String.t(), optional(any()) => any()}, Config.t()) ::
+  @spec missing_units(
+          %{:task_id => String.t(), :dir => String.t(), optional(any()) => any()},
+          Config.t()
+        ) ::
           non_neg_integer()
   def missing_units(seed, %Config{} = cfg) do
     pseudo = %{task_id: seed.task_id}
@@ -190,7 +193,8 @@ defmodule GenTask.Fim do
 
         case Cycle.opus(cfg, seed.task_id, "fim_select", system, user) do
           {:ok, text, _meta} ->
-            {:targets, parse_candidates(text, limit, excluded, module_view(seed.files["solution.ex"]))}
+            {:targets,
+             parse_candidates(text, limit, excluded, module_view(seed.files["solution.ex"]))}
 
           {:error, reason} ->
             {:error, select_error(sel_id, seed, inspect(reason))}

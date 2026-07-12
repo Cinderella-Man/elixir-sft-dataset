@@ -263,6 +263,7 @@ defmodule EvalTask.FimTest do
       parent_files = Map.new(EvalTask.Bundle.parse(@parent))
 
       assert files["lib/app/view.ex"] == parent_files["lib/app/view.ex"]
+
       assert files["priv/repo/migrations/001_create.exs"] ==
                parent_files["priv/repo/migrations/001_create.exs"]
 

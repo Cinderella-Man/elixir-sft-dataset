@@ -32,7 +32,9 @@ defmodule EvalTask.Bundle do
   @doc "Reassemble `{path, contents}` pairs into `<file>` bundle source (parse's inverse)."
   @spec assemble([file()]) :: String.t()
   def assemble(files) do
-    Enum.map_join(files, "\n\n", fn {path, body} -> ~s(<file path="#{path}">\n#{body}\n</file>) end)
+    Enum.map_join(files, "\n\n", fn {path, body} ->
+      ~s(<file path="#{path}">\n#{body}\n</file>)
+    end)
   end
 
   @doc "Parse a bundle string into `{path, contents}` pairs (in order)."

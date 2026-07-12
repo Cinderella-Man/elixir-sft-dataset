@@ -184,7 +184,14 @@ defmodule GenTask.Prompts do
           [String.t()],
           [String.t()]
         ) :: {String.t(), String.t()}
-  def variations(%{num: num, name: name}, base, tasks_md, count \\ 3, existing \\ [], taken_fn_sets \\ []) do
+  def variations(
+        %{num: num, name: name},
+        base,
+        tasks_md,
+        count \\ 3,
+        existing \\ [],
+        taken_fn_sets \\ []
+      ) do
     already =
       case existing do
         [] ->

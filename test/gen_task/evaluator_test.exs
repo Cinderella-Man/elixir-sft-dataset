@@ -479,7 +479,11 @@ defmodule GenTask.EvaluatorTest do
     end
 
     test "repair_report({:warnings, n, details}) lists each warning" do
-      report = Evaluator.repair_report({:warnings, 2, ["line 3: unused alias Foo", "line 9: unused variable"]})
+      report =
+        Evaluator.repair_report(
+          {:warnings, 2, ["line 3: unused alias Foo", "line 9: unused variable"]}
+        )
+
       assert report =~ "unused alias Foo"
       assert report =~ "line 9"
       # 2-tuple stays supported

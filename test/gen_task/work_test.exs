@@ -104,35 +104,43 @@ defmodule GenTask.WorkTest do
       # same harness that once produced the phantom-326 zero now counts its 2
       # nested tests. Counting stays capped by what the minter can carve — a
       # harness with NO test blocks at all still counts 0 (see below).
-      File.write!(Path.join([dir, "013_001_eta_01", "test_harness.exs"]) |> tap(fn p -> File.mkdir_p!(Path.dirname(p)) end), """
-      defmodule EtaTest do
-        use ExUnit.Case
+      File.write!(
+        Path.join([dir, "013_001_eta_01", "test_harness.exs"])
+        |> tap(fn p -> File.mkdir_p!(Path.dirname(p)) end),
+        """
+        defmodule EtaTest do
+          use ExUnit.Case
 
-        describe "grouped" do
-          test "one" do
-            assert 1 == 1
-          end
+          describe "grouped" do
+            test "one" do
+              assert 1 == 1
+            end
 
-          test "two" do
-            assert 2 == 2
+            test "two" do
+              assert 2 == 2
+            end
           end
         end
-      end
-      """)
+        """
+      )
 
       {s2, cfg2} = seed(dir, "013_001_eta_01")
       assert Work.missing(:test_fim, s2, cfg2) == 2
 
       # A harness with no test blocks (setup/helpers only) → nothing carvable → 0.
-      File.write!(Path.join([dir, "015_001_iota_01", "test_harness.exs"]) |> tap(fn p -> File.mkdir_p!(Path.dirname(p)) end), """
-      defmodule IotaTest do
-        use ExUnit.Case
+      File.write!(
+        Path.join([dir, "015_001_iota_01", "test_harness.exs"])
+        |> tap(fn p -> File.mkdir_p!(Path.dirname(p)) end),
+        """
+        defmodule IotaTest do
+          use ExUnit.Case
 
-        setup do
-          :ok
+          setup do
+            :ok
+          end
         end
-      end
-      """)
+        """
+      )
 
       {s5, cfg5} = seed(dir, "015_001_iota_01")
       assert Work.missing(:test_fim, s5, cfg5) == 0

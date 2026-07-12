@@ -92,6 +92,7 @@ defmodule GenTask.VariationDistinctnessTest do
       assert Variations.taken_public_fn_sets(base, %Config{tasks_dir: tmp}) == []
     end
   end
+
   describe "prompt carries the gate criterion" do
     test "Prompts.variations lists every taken public-API set as a hard constraint" do
       {_system, user} =

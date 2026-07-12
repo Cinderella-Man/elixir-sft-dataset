@@ -95,11 +95,14 @@ defmodule GenTask.FimSkeletonTest do
              )
     end
   end
+
   describe "put_skeleton_fence/2" do
     @skeleton "defmodule A do\n  def go(x) do\n    # TODO\n  end\nend"
 
     test "replaces the model's TODO-bearing fence" do
-      prompt = "Do the thing.\n\n```elixir\ndefmodule A do\n  def go(x) do\n    # TODO wrong stub\n  end\nend\n```\n"
+      prompt =
+        "Do the thing.\n\n```elixir\ndefmodule A do\n  def go(x) do\n    # TODO wrong stub\n  end\nend\n```\n"
+
       out = Fim.put_skeleton_fence(prompt, @skeleton)
 
       assert out =~ @skeleton
@@ -146,7 +149,12 @@ defmodule GenTask.FimSkeletonTest do
     end
 
     test "equal?/3 and valid?/4 survive the hallucination filter" do
-      text = select_reply(["equal?/3 — comparison helper", "valid?/4 — validation", "reconcile/3 — main"])
+      text =
+        select_reply([
+          "equal?/3 — comparison helper",
+          "valid?/4 — validation",
+          "reconcile/3 — main"
+        ])
 
       assert Fim.parse_candidates_for_test(text, 3, MapSet.new(), @pred_module) ==
                ["equal?/3 — comparison helper", "valid?/4 — validation", "reconcile/3 — main"]
