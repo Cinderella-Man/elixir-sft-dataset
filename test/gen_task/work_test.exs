@@ -89,7 +89,13 @@ defmodule GenTask.WorkTest do
       assert Work.missing(:write_test, s, cfg) == 1
       assert Work.missing(:test_fim, s, cfg) == 3
 
-      assert Work.pending(s, cfg) == %{variations: 3, fim: 3, write_test: 1, test_fim: 3}
+      assert Work.pending(s, cfg) == %{
+               variations: 3,
+               fim: 3,
+               write_test: 1,
+               test_fim: 3,
+               bugfix: 3
+             }
     end
 
     test "test_fim counts only carvable blocks, not empty slots" do
@@ -206,6 +212,27 @@ defmodule GenTask.WorkTest do
       # No solution.ex on disk → 0 (a broken dir must not hold the backfill open).
       {s4, cfg4} = seed(dir, "019_001_mu_01")
       assert Work.missing(:fim, s4, cfg4) == 0
+    end
+
+    test "bugfix counts only diverse mintable mutants, zero for bundles" do
+      dir = tmp_dir()
+
+      # 3 functions with mutable literals/comparisons -> a non-empty diverse pool,
+      # capped at the 3-slot maximum.
+      write_solution(dir, "020_001_nu_01", 3)
+      {s, cfg} = seed(dir, "020_001_nu_01")
+      assert Work.missing(:bugfix, s, cfg) in 1..3
+
+      # bundle parent -> 0 in v1 (mint scope is single-module parents)
+      File.mkdir_p!(Path.join(dir, "021_001_xi_01"))
+
+      File.write!(
+        Path.join([dir, "021_001_xi_01", "solution.ex"]),
+        "<file path=\"lib/a.ex\">\ndefmodule A do\n  def go(x), do: x + 1\nend\n</file>\n"
+      )
+
+      {s2, cfg2} = seed(dir, "021_001_xi_01")
+      assert Work.missing(:bugfix, s2, cfg2) == 0
     end
 
     test "a variation seed never needs variations" do

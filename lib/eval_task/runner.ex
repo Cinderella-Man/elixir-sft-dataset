@@ -331,6 +331,28 @@ defmodule EvalTask.Runner do
   end
 
   @doc """
+  Run a `bugfix` task (`bugfix_<a>_<b>_<slug>_NN/`): the solution is a complete
+  corrected module graded against the PARENT `_01` harness (like `:fim`, the dir
+  carries no harness of its own). v1 scope is single-module parents — the miner
+  (`GenTask.Bugfix`) never mints from bundles.
+  """
+  def run_bugfix(task_dir, sol_file) do
+    parent = bugfix_parent_dir(task_dir)
+    harness = Path.join(parent, "test_harness.exs")
+    compile = compile_file(sol_file)
+    analysis = Analysis.analyze(File.read!(sol_file), :full)
+    tests = if compile.compiled, do: run_harness(harness), else: no_tests()
+    finish(compile, analysis, tests, %{shape: :bugfix, parent: Path.basename(parent)})
+  end
+
+  @doc false
+  def bugfix_parent_dir(bugfix_dir) do
+    base = bugfix_dir |> Path.basename() |> String.replace_prefix("bugfix_", "")
+    family = base |> String.split("_") |> Enum.drop(-1) |> Enum.join("_")
+    Path.join(Path.dirname(bugfix_dir), family <> "_01")
+  end
+
+  @doc """
   Run a `wtest` task (`wt_<a>_<b>_<slug>/`): grade the module (`solution.ex`, plain or
   `<file>` bundle) against the reference `test_harness.exs` — i.e. confirm the gold
   harness passes and, for a candidate harness, that it is consistent with the module.

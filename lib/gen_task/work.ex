@@ -87,6 +87,15 @@ defmodule GenTask.Work do
         skip?: & &1.skip_test_fim,
         missing: &missing_test_fim/2,
         runner: {GenTask.TestFim, :run}
+      },
+      %{
+        key: :bugfix,
+        desc: "verified bug→fix repair pairs from killed semantic mutants (bugfix_…_NN)",
+        llm?: false,
+        stage: :derived,
+        skip?: & &1.skip_bugfix,
+        missing: &missing_bugfix/2,
+        runner: {GenTask.Bugfix, :run}
       }
       # Future work types slot in here, e.g.:
       # %{key: :dedoc, desc: "docs-stripped 'add specs and docs' pair per _01",
@@ -230,6 +239,15 @@ defmodule GenTask.Work do
   # "pending" forever, making the Phase 2 exit criterion (0 pending) unreachable.
   defp missing_test_fim(%Catalog.Seed{} = seed, cfg) do
     GenTask.TestFim.missing_units(seed, cfg)
+  end
+
+  defp missing_bugfix(%Catalog.Seed{skip?: true}, _cfg), do: 0
+
+  # Delegated to the miner (docs/12 §5.1.10 honesty rule): counts only mutants
+  # the miner can still legally attempt (diverse pool minus covered minus
+  # ledger-rejected); bundle parents count 0 in v1.
+  defp missing_bugfix(%Catalog.Seed{} = seed, cfg) do
+    GenTask.Bugfix.missing_units(seed, cfg)
   end
 
   defp a(%Catalog.Seed{num: num}), do: Catalog.pad3(num)
