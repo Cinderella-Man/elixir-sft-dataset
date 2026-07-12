@@ -23,13 +23,20 @@ Every node is a plain map with exactly these keys:
 
 ```elixir
 %{
-  id: 1,                   # positive integer, assigned by the server
-  type: :folder,           # :folder or :file
-  name: "reports",         # non-empty string
-  parent_id: nil,          # id of the containing folder, or nil for a root folder
-  content: nil,            # string for files, nil for folders
-  archived_at: nil,        # nil when live, a DateTime when archived
-  archive_origin: nil      # nil when live, :direct or :cascade when archived
+  # positive integer, assigned by the server
+  id: 1,
+  # :folder or :file
+  type: :folder,
+  # non-empty string
+  name: "reports",
+  # id of the containing folder, or nil for a root folder
+  parent_id: nil,
+  # string for files, nil for folders
+  content: nil,
+  # nil when live, a DateTime when archived
+  archived_at: nil,
+  # nil when live, :direct or :cascade when archived
+  archive_origin: nil
 }
 ```
 
@@ -371,9 +378,6 @@ defmodule CascadeCrud.Archive do
 
       {:ok, node} ->
         if live?(node) do
-          {:reply, {:ok, result}, new_state} = {:reply, {:ok, nil}, state} |> ignore()
-          _ = result
-          _ = new_state
           do_archive(state, node)
         else
           {:reply, {:error, :already_archived}, state}
@@ -404,8 +408,6 @@ defmodule CascadeCrud.Archive do
   end
 
   # ── Internal helpers ──────────────────────────────────────────────────────
-
-  defp ignore(reply), do: reply
 
   defp include_archived?(opts) when is_list(opts) do
     Keyword.get(opts, :include_archived, false) == true

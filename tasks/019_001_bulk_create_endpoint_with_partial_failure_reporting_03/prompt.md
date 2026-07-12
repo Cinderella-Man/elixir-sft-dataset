@@ -67,7 +67,9 @@ defmodule MyApp.Catalog do
     * `partial: true` — inserts each valid item individually (each inside its own
       transaction) and skips invalid ones, returning `{:ok, results}`.
   """
-  @spec bulk_create_items([map()], keyword()) :: %{created: [map()], errors: [map()]}
+  @spec bulk_create_items([map()], keyword()) ::
+          {:ok, [{non_neg_integer(), :ok | :error, term()}]}
+          | {:error, [{non_neg_integer(), :ok | :error, term()}]}
   def bulk_create_items(list_of_attrs, opts \\ []) do
     if Keyword.get(opts, :partial, false) do
       partial_create(list_of_attrs)
