@@ -22,8 +22,12 @@ jobs:
           POSTGRES_PASSWORD: postgres
         ports:
           - 5432:5432
+        # -U postgres: a bare pg_isready probes as the exec user (root), and the
+        # server logs `FATAL: role "root" does not exist` once per 5s interval
+        # for the whole run — pg_isready still exits 0 (it checks reachability,
+        # not auth), so the noise never failed anything, it just buried the log.
         options: >-
-          --health-cmd pg_isready --health-interval 5s
+          --health-cmd "pg_isready -U postgres" --health-interval 5s
           --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
