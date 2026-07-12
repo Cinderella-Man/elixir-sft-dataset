@@ -542,7 +542,19 @@ defmodule GenTask.Fim do
 
             case repair_fim(ff, report, log_id, cfg) do
               {:ok, ff2} ->
-                {:cont, ff2}
+                # A fix reply may include a rewritten prompt.md, silently clobbering
+                # the deterministic skeleton (found live: 016_001 attempts 1–3 shipped
+                # the model's fence and diverged at eval). Re-derive it from the parent
+                # after EVERY repair; an un-locatable repaired candidate is a dead end
+                # for bundles and gets rejected here instead of burning more evals.
+                case deterministic_skeleton(ff2, seed, target, log_id) do
+                  {:ok, ff3} ->
+                    {:cont, ff3}
+
+                  {:error, reason} ->
+                    {:halt,
+                     {reject(seed, log_id, target, stats, "repair drifted: " <> reason), false}}
+                end
 
               :error ->
                 {:halt, {reject(seed, log_id, target, stats, "repair call failed"), false}}

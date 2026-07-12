@@ -476,6 +476,10 @@ defmodule GenTask.CLI do
   defp errored?(%Config{logs_dir: logs_dir}, id),
     do: File.exists?(Path.join([logs_dir, "errors", "#{id}.log"]))
 
+  # The triplet plus the tier manifest when the dir has one: tier-B parents
+  # compile only with manifest.exs staged alongside (docs/10 §5.13) — the bare
+  # triplet made every derivative eval of 016_001 misdetect tier A and fail on
+  # missing Phoenix kit modules (found live 2026-07-12, bundle-fim attempt 0).
   defp read_triplet(dir) do
     files =
       for f <- ["prompt.md", "test_harness.exs", "solution.ex"],
@@ -484,7 +488,7 @@ defmodule GenTask.CLI do
           into: %{},
           do: {f, File.read!(path)}
 
-    if map_size(files) == 3, do: files, else: nil
+    if map_size(files) == 3, do: put_manifest(files, dir), else: nil
   end
 
   defp slug_of(task_id) do
