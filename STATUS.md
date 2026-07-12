@@ -163,6 +163,22 @@ clobbering, named warnings, predicate-name regex; isolation errored-kills).
 5. **Full --fim sweep** — DONE 2026-07-12: ALL FIM TARGETS EXERCISED ✓
    (first sweep since the day's ~40 new fim units; CI runs it weekly).
 
+### Bugfix corpus MINTED — 2026-07-13 ~01:00 ✓
+
+**957 byte-surgical bug→fix units across 326 seeds; registry converged to
+bugfix 0 pending** (three passes; final 2 candidates correctly rejected as
+survivors and ledgered). Every unit: task spec + one-line semantic bug with
+comments intact + the real failing ExUnit report; gold byte-equal to the
+parent reference. Kamil's two spot checks shaped the pipeline: the reject
+audit (all verdicts cross-match the independent survivor measurements; ledger
+now keys on solution+harness sha so strengthened harnesses re-open survivors)
+and the accept audit (caught AST-reprint pollution → byte-surgical
+`semantic_mutants_textual/2`; standing tool `scripts/audit_bugfix.exs` —
+**10/10 random real units pass all six properties**). The 28 property-tfim
+units minted in the same run. format_corpus knows the shape (bugfix prompts'
+buggy fences are captured mutant data, never reformatted — the repair_ rule).
+Next per Kamil's overnight brief: `strengthen_harnesses -- --go` (point 2).
+
 ### Data extension research — docs/13 (2026-07-12 night; Kamil's deep-research brief)
 
 Full catalog in `docs/13-existing-data-improvement-and-extension.md`. Built and

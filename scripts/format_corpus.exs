@@ -11,7 +11,8 @@
 #
 # Categories (per file, derived from the dir shape):
 #   harness    tasks/*/test_harness.exs — whole-file format
-#   module     solution.ex of _01 / wt_ / repair_ dirs (full modules)
+#   module     solution.ex of _01 / wt_ / repair_ / bugfix_ dirs (full modules;
+#              a bugfix prompt's buggy fence is captured mutant data — excluded)
 #   bundle     multifile solution.ex (<file path="…"> blocks) — each part formatted
 #              in place; everything outside the block bodies is byte-preserved
 #   fragment   solution.ex of FIM (_0N) and tfim_ dirs — a bare function / test
@@ -111,6 +112,7 @@ defmodule FormatCorpus do
     cond do
       not File.regular?(sol) -> []
       shape in [:fim_child, :tfim] -> [{:fragment, sol}]
+      shape == :bugfix -> [{:module, sol}]
       String.contains?(File.read!(sol), "<file path=") -> [{:bundle, sol}]
       true -> [{:module, sol}]
     end
@@ -119,6 +121,10 @@ defmodule FormatCorpus do
   defp dir_shape(base) do
     cond do
       String.starts_with?(base, "repair_") -> :repair
+      # bugfix solutions are full modules (parent copies); their prompts carry
+      # an INTENTIONALLY buggy fence (captured one-line mutant) that must never
+      # be reformatted — same policy as repair_ broken-code fences.
+      String.starts_with?(base, "bugfix_") -> :bugfix
       String.starts_with?(base, "wt_") -> :wt
       String.starts_with?(base, "tfim_") -> :tfim
       Regex.match?(~r/_01$/, base) -> :parent
