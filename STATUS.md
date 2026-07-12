@@ -76,11 +76,22 @@ What that means in practice:
          counted" (tests 1 ms inside) in 101_002's harness + wt copy — it is
          literally the spec of tfim_101_002_08. Rename in parent + wt,
          resync.
-      5. **Systemic:** (a) deterministic corpus-wide scan for both defect
-         classes (no-op/dead-code patterns; harness-asserted functions absent
-         from the prompt) — findings join this list; (b) a dead-code lint in
-         the accept gate (S9 family) so gate-gaming-by-warning-suppression is
-         rejected at accept time — needed before Phase 3.
+      5. **Systemic — DONE 2026-07-12 evening:** (a) corpus-wide scan with
+         the same detectors over all 4,605 dirs (`logs/spotcheck_scan.jsonl`):
+         both classes fully contained to the two families above — zero other
+         instances; (b) both detectors are HARD accept-gate lints now
+         (`Evaluator.no_op_helpers/1`, `undocumented_api_calls/3`, wired into
+         `quality_shortfall`, 288 tests green), so neither class can recur.
+      **Progress:** items 1–4 hand-edits are committed; family re-gating
+      (perfect + mutants) and embed resyncs run the moment the loop exits
+      (resync refuses while a generate BEAM is alive). **Blind-screen audit
+      answered:** 101_002 has NO screen ledger entry; it was accepted with
+      `variation_blind=True`, and the repair loop defeated blindness — the
+      failure report leaks harness internals (missing-function errors), which
+      the fix reply then satisfies. This is the first confirmed live instance
+      of the open §5.2 gap ("accept-time blind screen for repaired bases"),
+      turning that decision from theoretical to demonstrated. §5.2 stays the
+      remaining pre-Phase-3 design decision.
 - [ ] Phase 3: new generation resumed and first batch validated
 - [ ] The line: catch-up tooling deleted per docs/12 §7.2, this file flipped
 
