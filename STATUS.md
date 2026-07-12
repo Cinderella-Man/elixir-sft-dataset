@@ -84,7 +84,29 @@ What that means in practice:
          `quality_shortfall`, 288 tests green), so neither class can recur.
       **Progress:** items 1–4 hand-edits are committed; family re-gating
       (perfect + mutants) and embed resyncs run the moment the loop exits
-      (resync refuses while a generate BEAM is alive). **Blind-screen audit
+      (resync refuses while a generate BEAM is alive).
+
+      ### POST-RUN PASS — execute when the current loop (PID in
+      ### logs/backfill_phase2.pid) exits; every step is required:
+
+      1. **Purge `074_*` entries from `logs/tfim_rejected.jsonl`** — the
+         running loop's in-memory OLD isolation gate rejected the macro-
+         asserting tfim blocks as "vacuous" (11 on 074_001, 10 on 074_002,
+         likely more on 074_004) and permanently ledgered them. The gate is
+         fixed on disk (errored-kills now count); the verdicts are unsound.
+         Purge by prefix AFTER the loop exits (it appends while running).
+      2. **Embed resyncs for the four hand-edited spot-check families**
+         (018_003, 019_001, 101_002, wt_101_002): `resync_embeds.exs`
+         (module-FIM/wt_ from the edited parents) + `resync_tfim_embeds.exs
+         --apply` (module fences changed), then both dry-runs must converge.
+      3. **Re-gate the four edited families**: validate perfect + mutants
+         (hand edits require the perfect eval, docs/12 §5.1.9).
+      4. Corpus gates: `format_corpus --check`, `check_embeds` (expect 0
+         reflow / 0 drift).
+      5. Batch-commit remaining accepted dirs + push (pre-push validates).
+      6. **Relaunch** `GEN_ONLY=backfill` — picks up: 034_001 variations with
+         named-warning repairs, re-mint of the purged 074 macro tfim blocks
+         through the fixed gate, and any remaining tail. **Blind-screen audit
       answered:** 101_002 has NO screen ledger entry; it was accepted with
       `variation_blind=True`, and the repair loop defeated blindness — the
       failure report leaks harness internals (missing-function errors), which
