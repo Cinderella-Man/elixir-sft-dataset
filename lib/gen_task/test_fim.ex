@@ -130,7 +130,22 @@ defmodule GenTask.TestFim do
         iso_harness = isolate(harness, cand)
         files = %{"prompt.md" => prompt_md(module_src, skeleton), "solution.ex" => gold}
 
-        gate_candidate(seed, module_src, iso_harness, tfim_id, cand, files, cfg)
+        # The perfect gate enforces ≤98 columns on the FRAGMENT; a line legal in
+        # the parent harness (analysis does not measure harnesses) can overflow
+        # once carved — describe-nesting adds 4 columns of indent (072_004's
+        # test head, found by the pre-push sweep 2026-07-12). Deterministic for
+        # this harness content, so the reject is ledgered like the other classes.
+        over_98 = gold |> String.split("\n") |> Enum.count(&(String.length(&1) > 98))
+
+        if over_98 > 0 do
+          record_rejected(seed, cand, cfg)
+
+          {outcome(tfim_id, seed, qual(cand), :rejected,
+             reason: "carved block has #{over_98} line(s) over 98 columns (perfect-gate rule)"
+           ), false}
+        else
+          gate_candidate(seed, module_src, iso_harness, tfim_id, cand, files, cfg)
+        end
       rescue
         e ->
           Logger.error("tfim #{tfim_id} crashed: " <> Exception.format(:error, e, __STACKTRACE__))
