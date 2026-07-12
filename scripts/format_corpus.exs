@@ -224,7 +224,7 @@ defmodule FormatCorpus do
   # Reporting / applying
   # ---------------------------------------------------------------------------
 
-  defp report(results, apply?, check? \\ false) do
+  defp report(results, apply?, check?) do
     by_cat = Enum.group_by(results, fn {cat, _, _} -> cat end)
 
     IO.puts("=== FORMAT STATUS (canonical = Code.format_string! on this toolchain) ===\n")
