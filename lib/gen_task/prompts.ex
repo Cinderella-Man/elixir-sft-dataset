@@ -171,15 +171,20 @@ defmodule GenTask.Prompts do
   Prompts for the 3-in-one variation generator. `base` is the accepted `_01`
   triplet map (`prompt.md`, `test_harness.exs`, `solution.ex`); `tasks_md` is the
   full catalog (freshly read) so the model avoids repeating existing ideas.
+  `taken_fn_sets` renders the public-function sets already used by the base and
+  accepted siblings — the EXACT criterion the distinctness gate rejects on, so
+  the generator is told the rule it will be graded by (models otherwise converge
+  on the base's natural API and every candidate bounces — the 034_001 pattern).
   """
   @spec variations(
           %{num: integer(), name: String.t()},
           %{String.t() => String.t()},
           String.t(),
           pos_integer(),
+          [String.t()],
           [String.t()]
         ) :: {String.t(), String.t()}
-  def variations(%{num: num, name: name}, base, tasks_md, count \\ 3, existing \\ []) do
+  def variations(%{num: num, name: name}, base, tasks_md, count \\ 3, existing \\ [], taken_fn_sets \\ []) do
     already =
       case existing do
         [] ->
@@ -188,6 +193,20 @@ defmodule GenTask.Prompts do
         names ->
           "\n\nThis task ALREADY has these variations — your new ones must be distinct " <>
             "from them too:\n" <> Enum.map_join(names, "\n", &"  - #{&1}")
+      end
+
+    taken_apis =
+      case taken_fn_sets do
+        [] ->
+          ""
+
+        sets ->
+          "\n\nHARD CONSTRAINT — public API distinctness (an automatic gate rejects " <>
+            "violations before grading): each variation's module must expose a public " <>
+            "function set (name/arity) DIFFERENT from every set below. A genuinely " <>
+            "different design has a different surface — different function names, " <>
+            "arities, or decomposition, not the same API with a changed body:\n" <>
+            Enum.map_join(sets, "\n", &"  - {#{&1}}")
       end
 
     user = """
@@ -203,7 +222,7 @@ defmodule GenTask.Prompts do
     process-unique temp paths via `System.pid()` + `System.unique_integer/1`; every
     assertion justified by an explicit statement in that variation's prompt.md — a
     solver reading ONLY the prompt must be able to pass every test, so never assert
-    internal state or undocumented option values).#{already}
+    internal state or undocumented option values).#{already}#{taken_apis}
 
     Also, for each variation, produce a one-line catalog entry in the exact tasks.md
     format — its `idea.md` file must contain a `### Task #{num} - Vn - <Name>` header on

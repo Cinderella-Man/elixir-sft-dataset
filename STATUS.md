@@ -147,10 +147,25 @@ tested), so the loop cannot repeat yesterday's rejected-nearly-everything run.
    non-074 entry stays). Pre-flight with zero LLM calls: gold
    `assert_recent/2` grades 17/17 + 0 warnings, its mutant errored-kills.
    The 6 units on 074_001/2/4 rejoin the runnable backfill.
-3. **variation distinctness for 034_001** (3 units): generator keeps producing
-   the same public API; wants a prompt-side "APIs already taken" hint, or
-   accept 1/4 variations for that family. 018_001's variation (0/N tests every
-   attempt) rides on decision 1's seed anyway.
+3. **variation distinctness for 034_001 — RESOLVED 2026-07-12: FIXED** (same
+   criterion; the fix is generic, not 034-specific — 098_003 and 101_002 hit
+   the same rejection, and Phase 3 has 490 bases × 3 variation slots ahead).
+   Root cause was an information gap, not bad data: the distinctness gate
+   (already pre-cycle, zero grading cost) rejects a candidate whose public
+   function set equals the base's or an accepted sibling's — but the
+   generation prompt only listed existing variation NAMES, never the taken
+   API sets, so the model kept converging on the base's natural surface
+   (`reconcile/3`) under different task names. `Prompts.variations` now
+   states the gate's exact criterion as a HARD CONSTRAINT with every taken
+   set listed; `Variations.run` threads the sets it already computed for the
+   gate into the prompt. No perma-skip ledger for these: distinctness
+   failures are stochastic (LLM-quality), and a permanent verdict is only
+   sound for deterministic gates — repeat offenders after this fix go to a
+   human triage list instead. NOTE: rejected variation candidates were never
+   in the dataset (staging-only; promotion happens on accept), so no
+   accepted data was ever deleted by these rejections. 018_001's variation
+   (0/N tests every attempt) is a different failure mode — watch it on the
+   next pass.
 4. **tfim describe-carving** (unchanged from yesterday): §5.3.1 recommends
    describe grouping, the carver only takes top-level tests — decide before
    Phase 3.

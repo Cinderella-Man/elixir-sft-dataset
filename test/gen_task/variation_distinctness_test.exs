@@ -92,4 +92,33 @@ defmodule GenTask.VariationDistinctnessTest do
       assert Variations.taken_public_fn_sets(base, %Config{tasks_dir: tmp}) == []
     end
   end
+  describe "prompt carries the gate criterion" do
+    test "Prompts.variations lists every taken public-API set as a hard constraint" do
+      {_system, user} =
+        GenTask.Prompts.variations(
+          %{num: 34, name: "data reconciliation engine"},
+          %{"prompt.md" => "p", "solution.ex" => "s", "test_harness.exs" => "h"},
+          "## catalog",
+          3,
+          ["existing variation"],
+          ["reconcile/3", "diff/2, merge/2"]
+        )
+
+      assert user =~ "HARD CONSTRAINT"
+      assert user =~ "{reconcile/3}"
+      assert user =~ "{diff/2, merge/2}"
+      assert user =~ "existing variation"
+    end
+
+    test "no constraint block when nothing is taken" do
+      {_system, user} =
+        GenTask.Prompts.variations(
+          %{num: 34, name: "x"},
+          %{"prompt.md" => "p", "solution.ex" => "s", "test_harness.exs" => "h"},
+          "## catalog"
+        )
+
+      refute user =~ "HARD CONSTRAINT"
+    end
+  end
 end

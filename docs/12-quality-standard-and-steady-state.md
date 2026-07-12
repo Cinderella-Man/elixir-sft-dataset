@@ -394,6 +394,18 @@ wired in*, and a few is-it-really-true gaps were found today.
     nine 074_x rejects predated the errored-kill fix and were purged with this
     change; when a gate is repaired, audit its ledger.
 
+13. **(added 2026-07-12, landed) Prompt–gate alignment rule.** Every automatic
+    gate criterion a generator is graded by must be STATED in its prompt.
+    The variation-distinctness gate rejected on public-function-set equality
+    while the prompt only listed existing variation names — the model
+    converged on the base's natural API every pass (034_001's three slots,
+    also 098_003, 101_002). `Prompts.variations` now lists every taken set as
+    a hard constraint. Corollary on tracking repeat failures: permanent
+    skip-ledgers are reserved for DETERMINISTIC verdicts; stochastic
+    (LLM-quality) failures get their systematic cause fixed, then repeat
+    offenders go to a human triage list — never an automatic permanent skip
+    (see item 12's ledger lesson for why).
+
 ### 5.2 Worth one LLM call per task (decide before Phase 3)
 
 1. **Accept-time blind screen for new BASES.** Today's base flow is blind on

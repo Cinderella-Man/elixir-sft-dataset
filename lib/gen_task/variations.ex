@@ -30,13 +30,14 @@ defmodule GenTask.Variations do
   @spec run(GenTask.Base.seed(), Config.t()) :: [map()]
   def run(base, %Config{} = cfg) do
     {free_slots, existing_names} = variation_gaps(base, cfg)
+    taken0 = taken_public_fn_sets(base, cfg)
 
     case free_slots do
       [] ->
         []
 
       slots ->
-        case gen_variations(base, cfg, length(slots), existing_names) do
+        case gen_variations(base, cfg, length(slots), existing_names, taken0) do
           {:ok, files, valid_ns} ->
             # Salvage: only the reply groups that passed the contract are built; a
             # malformed vN forfeits its slot (topped up on a later run) instead of
@@ -49,7 +50,7 @@ defmodule GenTask.Variations do
               slots
               |> Enum.with_index(1)
               |> Enum.filter(fn {_slot, i} -> i in valid_ns end)
-              |> Enum.map_reduce(taken_public_fn_sets(base, cfg), fn {slot, i}, taken ->
+              |> Enum.map_reduce(taken0, fn {slot, i}, taken ->
                 out = build_variation(i, slot, files, base, cfg, taken)
                 {out, add_taken(taken, out)}
               end)
@@ -157,7 +158,7 @@ defmodule GenTask.Variations do
   # The shared N-in-one generation call (its own log file)
   # ------------------------------------------------------------------
 
-  defp gen_variations(base, cfg, count, existing_names) do
+  defp gen_variations(base, cfg, count, existing_names, taken) do
     gen_id = "#{Catalog.pad3(base.num)}_variations"
     handle = CycleLog.open(cfg, gen_id)
     Logger.info("VARIATIONS gen for #{base.task_id} (#{count} slot(s))")
@@ -172,7 +173,8 @@ defmodule GenTask.Variations do
             base.files,
             tasks_md,
             count,
-            existing_names
+            existing_names,
+            Enum.map(taken, &fn_set_str/1)
           )
 
         case Cycle.opus(cfg, base.task_id, "variations", system, user) do
