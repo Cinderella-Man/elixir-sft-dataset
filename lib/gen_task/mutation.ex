@@ -660,10 +660,18 @@ defmodule GenTask.Mutation do
             "test_harness.exs" => isolated_harness
           })
 
-          # A kill needs positive evidence (the block RAN and failed); an
-          # inconclusive grade (mutant compile failure / timeout) proves nothing,
-          # so keep scanning the remaining functions.
-          if Evaluator.killed_by_tests?(Evaluator.grade(iso_dir, cfg)),
+          # A kill needs positive evidence: the block RAN and failed, OR the
+          # harness ERRORED against a mutant that itself compiled — a gutted
+          # defmacro explodes the harness compile, and the isolated block just
+          # graded green against the reference above, so the error is CAUSED by
+          # the mutation (`errored_against_mutant?`'s documented precondition).
+          # Without the errored-kill rule every macro-asserting test read as
+          # "vacuous" (074_001's 11 assert_changeset_error/assert_recent tests,
+          # 2026-07-12). A mutant that fails to COMPILE (compiled=false) still
+          # proves nothing and the scan continues.
+          grade = Evaluator.grade(iso_dir, cfg)
+
+          if Evaluator.killed_by_tests?(grade) or Evaluator.errored_against_mutant?(grade),
             do: {:halt, true},
             else: {:cont, false}
         end)
