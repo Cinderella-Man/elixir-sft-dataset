@@ -193,6 +193,23 @@ defmodule EvalTask.FimTest do
     assert result =~ "assert Mod.go() == :ok"
   end
 
+  describe "canonical_candidate/2" do
+    @cc_parent "defmodule A do\n  @doc \"x\"\n  def go(x) do\n    x + 1\n  end\n\n  def stop(y), do: y\nend"
+
+    test "returns the parent's own lines for a dedented candidate" do
+      dedented = "def go(x) do\n  x + 1\nend"
+
+      assert Fim.canonical_candidate(@cc_parent, dedented) ==
+               "  def go(x) do\n    x + 1\n  end"
+    end
+
+    test "raises when the candidate is not in the parent" do
+      assert_raise RuntimeError, ~r/not found/, fn ->
+        Fim.canonical_candidate(@cc_parent, "def go(x) do\n  x * 999\nend")
+      end
+    end
+  end
+
   describe "reconstruct_bundle/3" do
     # A 3-file bundle: the hole lives in the middle file. The prompt fence is the
     # marker-stripped bundle with `call/2` stubbed — exactly what the gen loop's

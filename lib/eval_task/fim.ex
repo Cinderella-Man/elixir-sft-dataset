@@ -333,6 +333,20 @@ defmodule EvalTask.Fim do
     sig ++ ["#{indent}  # TODO", "#{indent}end"]
   end
 
+  @doc """
+  Locate `candidate` in `parent_src` (trim-tolerant, like `build_skeleton/2`) and
+  return the parent's own lines for that span — the canonical, correctly-indented
+  form of the candidate. Raises when not locatable. Lets the gen loop ship a
+  parent-verbatim gold even when the model returned the function dedented.
+  """
+  @spec canonical_candidate(String.t(), String.t()) :: String.t()
+  def canonical_candidate(parent_src, candidate) do
+    pl = String.split(parent_src, "\n")
+    cl = candidate |> extract_candidate() |> String.split("\n")
+    {s, e} = find_candidate_block(pl, cl)
+    pl |> Enum.slice(s..e) |> Enum.join("\n")
+  end
+
   # Locate the candidate as a contiguous run in the parent, comparing only non-blank,
   # trimmed lines (indentation- and blank-line-agnostic). Returns the inclusive span.
   defp find_candidate_block(parent_lines, cand_lines) do

@@ -176,9 +176,13 @@ defmodule GenTask.Fim do
 
     result =
       try do
+        # module_view: the model must see the same marker-stripped source the
+        # skeleton/eval pipeline uses — shown the raw <file> bundle it copies the
+        # markers into its candidate (found live: 016_001 fim01's solution ended
+        # in `</file>`, which can never verbatim-locate in the stripped parent).
         {system, user} =
           Prompts.fim_select(
-            seed.files["solution.ex"],
+            module_view(seed.files["solution.ex"]),
             seed.files["prompt.md"],
             limit,
             MapSet.to_list(excluded)
@@ -287,7 +291,11 @@ defmodule GenTask.Fim do
     {outcome, promoted?} =
       try do
         {system, user} =
-          Prompts.fim_candidate(seed.files["solution.ex"], seed.files["prompt.md"], target)
+          Prompts.fim_candidate(
+            module_view(seed.files["solution.ex"]),
+            seed.files["prompt.md"],
+            target
+          )
 
         case gen_fim(cfg, log_id, system, user) do
           {:ok, ff} ->
@@ -342,8 +350,14 @@ defmodule GenTask.Fim do
   # false (docs/10 §1.7). The fallback used to ship silently and unchecked.
   defp deterministic_skeleton(ff, seed, target, log_id) do
     parent = module_view(seed.files["solution.ex"])
-    skeleton = EvalTask.Fim.build_skeleton(parent, ff["solution.ex"])
-    {:ok, Map.update!(ff, "prompt.md", &put_skeleton_fence(&1, skeleton))}
+    ff = sanitize_candidate(ff, seed.files["solution.ex"])
+    # Ship the PARENT's own lines as gold: a locatable-but-dedented candidate would
+    # otherwise promote with wrong indentation (mis-indented gold + embed-gate flag).
+    gold = EvalTask.Fim.canonical_candidate(parent, ff["solution.ex"])
+    skeleton = EvalTask.Fim.build_skeleton(parent, gold)
+
+    {:ok,
+     %{ff | "solution.ex" => gold, "prompt.md" => put_skeleton_fence(ff["prompt.md"], skeleton)}}
   rescue
     e ->
       Logger.warning(
@@ -351,13 +365,42 @@ defmodule GenTask.Fim do
           "checking the model's hand-written skeleton against the parent"
       )
 
-      if skeleton_matches_parent?(ff["prompt.md"], module_view(seed.files["solution.ex"]), target) do
-        {:ok, ff}
-      else
-        {:error,
-         "model skeleton rewrites code outside the hole (functions differ from the " <>
-           "parent) — the FIM prompt would falsely claim every other function is intact"}
+      cond do
+        # A bundle child's eval reconstruction (reconstruct_bundle/3) matches parent
+        # files BYTE-verbatim — an AST-equal hand-written fallback is a guaranteed
+        # downstream reject, so fail fast and let the retry produce a locatable
+        # candidate instead (found live: 016_001 fim01–03, 2026-07-12).
+        EvalTask.Bundle.bundle?(seed.files["solution.ex"]) ->
+          {:error,
+           "bundle FIM needs the deterministic skeleton (candidate not verbatim-locatable " <>
+             "in the parent) — return the target function EXACTLY as it appears in the module"}
+
+        skeleton_matches_parent?(ff["prompt.md"], module_view(seed.files["solution.ex"]), target) ->
+          {:ok, ff}
+
+        true ->
+          {:error,
+           "model skeleton rewrites code outside the hole (functions differ from the " <>
+             "parent) — the FIM prompt would falsely claim every other function is intact"}
       end
+  end
+
+  # Bundle-parent candidates sometimes arrive wrapped in the `<file>` markers the model
+  # saw in older prompts — junk lines that can never verbatim-locate in the stripped
+  # parent and would ship as corrupt gold. Marker lines are dropped; anything else is
+  # left for build_skeleton's trim-tolerant locate to judge.
+  defp sanitize_candidate(ff, raw_parent) do
+    if EvalTask.Bundle.bundle?(raw_parent) do
+      cleaned =
+        ff["solution.ex"]
+        |> String.split("\n")
+        |> Enum.reject(&String.match?(String.trim(&1), ~r{^(<file path="[^"]*">|</file>)$}))
+        |> Enum.join("\n")
+
+      %{ff | "solution.ex" => cleaned}
+    else
+      ff
+    end
   end
 
   # The parent as the prompt-embed convention displays it: bundles marker-stripped
