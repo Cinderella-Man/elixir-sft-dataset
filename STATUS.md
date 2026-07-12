@@ -86,8 +86,11 @@ What that means in practice:
       (perfect + mutants) and embed resyncs run the moment the loop exits
       (resync refuses while a generate BEAM is alive).
 
-      ### POST-RUN PASS — execute when the current loop (PID in
-      ### logs/backfill_phase2.pid) exits; every step is required:
+      ### POST-RUN PASS — EXECUTED 2026-07-12 ~18:20-18:45 ✓ (all six steps;
+      ### one extra find en route: tfim_072_004_03's carved test head at 100
+      ### columns — renamed + the mint gate now enforces ≤98 on carved
+      ### fragments at accept time. Remainder loop relaunched: 3 variations +
+      ### 5 fim + 13 macro tfim.) Original checklist:
 
       1. **Purge `074_*` entries from `logs/tfim_rejected.jsonl`** — the
          running loop's in-memory OLD isolation gate rejected the macro-
