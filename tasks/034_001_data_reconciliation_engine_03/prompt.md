@@ -167,8 +167,11 @@ defmodule Reconciler do
   # Determines which fields to compare for a matched pair.
   # If compare_fields is explicitly provided, use it directly.
   # Otherwise, derive it as: (all keys in left ∪ right) minus key_fields.
-  @spec resolve_compare_fields(record_t(), record_t(), [atom()], [atom()] | nil) :: [atom()]
-  defp resolve_compare_fields(left, right, key_fields, compare_fields) do
+  defp resolve_compare_fields(_left, _right, _key_fields, compare_fields)
+       when is_list(compare_fields),
+       do: compare_fields
+
+  defp resolve_compare_fields(left, right, key_fields, nil) do
     # TODO
   end
 
@@ -188,4 +191,5 @@ defmodule Reconciler do
     end)
   end
 end
+
 ```

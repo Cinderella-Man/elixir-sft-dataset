@@ -25,11 +25,14 @@ Branch on the version string (for example with a `case`) inside the function bod
 
 ```elixir
 defmodule VersionedApi.Views.UserView do
-  def render(version, user) do
+  @moduledoc "Renders a user map per API version: v1 is a flat name, v2 is structured."
+
+  @doc ~s|Renders `u` for API `version` ("v1" or "v2") as a plain map.|
+  @spec render(String.t(), map()) :: map()
+  def render("v1", u) do
     # TODO
   end
 end
-
 defmodule VersionedApi.Plugs.ApiVersion do
   import Plug.Conn
   def init(opts), do: opts
@@ -54,7 +57,6 @@ defmodule VersionedApi.Plugs.ApiVersion do
     end
   end
 end
-
 defmodule VersionedApi.Router do
   use Plug.Router
 
@@ -82,7 +84,8 @@ defmodule VersionedApi.Router do
         send_json(conn, 404, %{error: "not found"})
 
       user ->
-        send_json(conn, 200, VersionedApi.Views.UserView.render(conn.assigns.api_version, user))
+        rendered = VersionedApi.Views.UserView.render(conn.assigns.api_version, user)
+        send_json(conn, 200, rendered)
     end
   end
 
@@ -94,4 +97,5 @@ defmodule VersionedApi.Router do
     conn |> put_resp_content_type("application/json") |> send_resp(status, Jason.encode!(body))
   end
 end
+
 ```

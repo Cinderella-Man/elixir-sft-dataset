@@ -156,11 +156,9 @@ defmodule Reconciler do
     Enum.reject(all_fields, &MapSet.member?(key_set, &1))
   end
 
-  # Compares `left` and `right` on the given fields using `==`.
-  # Missing fields are treated as nil.
-  @spec diff(record_t(), record_t(), [atom()]) :: diff_map()
   defp diff(left, right, fields) do
     # TODO
   end
 end
+
 ```

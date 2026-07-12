@@ -90,8 +90,9 @@ defmodule ParallelJsonStreamer do
   end
 
   @spec throughput(non_neg_integer(), number()) :: float()
-  defp throughput(processed, elapsed_ms) do
+  defp throughput(_processed, +0.0) do
     # TODO
   end
 end
+
 ```

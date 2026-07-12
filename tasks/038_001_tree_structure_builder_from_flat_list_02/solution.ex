@@ -27,14 +27,20 @@
             # Identify root nodes: parent_id is nil, OR parent_id is unknown
             # (orphan handling) — depending on strategy.
             root_ids =
-              Enum.filter(ordered_ids, fn id ->
+              ordered_ids
+              |> Enum.filter(fn id ->
                 node = Map.fetch!(id_to_node, id)
                 pid = node.parent_id
 
                 cond do
-                  is_nil(pid) -> true
-                  not MapSet.member?(known_ids, pid) -> orphan_strategy == :raise_to_root
-                  true -> false
+                  is_nil(pid) ->
+                    true
+
+                  not MapSet.member?(known_ids, pid) ->
+                    orphan_strategy == :raise_to_root
+
+                  true ->
+                    false
                 end
               end)
 

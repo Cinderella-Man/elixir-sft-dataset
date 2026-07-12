@@ -1,4 +1,4 @@
-  @spec diff([record()], [record()], keyword()) :: diff_result()
+  @spec diff([record_t()], [record_t()], keyword()) :: diff_result()
   def diff(old_list, new_list, opts \\ []) do
     key = Keyword.get(opts, :key, :id)
 

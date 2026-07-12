@@ -132,7 +132,6 @@ defmodule Reconciler do
     end)
   end
 
-  @spec composite_key(record_t(), [atom()]) :: tuple()
   defp composite_key(record, key_fields) do
     # TODO
   end
@@ -170,4 +169,5 @@ defmodule Reconciler do
     end)
   end
 end
+
 ```

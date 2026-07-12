@@ -46,13 +46,13 @@ defmodule Clock do
   @doc """
   Dispatches `now/0` to the correct implementation.
 
-  - If `clock` is an atom that exports `now/0` (e.g. `Clock.Real`), it calls
+  - If `clock` is the atom `Clock.Real` (or any other module atom), it calls
     `clock.now()` directly.
-  - Otherwise (a registered-name atom, a PID, or any other term) it is
-    forwarded to `Clock.Fake.now/1`, which sends a GenServer call.
+  - If `clock` is a PID or any other term, it is forwarded to
+    `Clock.Fake.now/1`, which sends a GenServer call.
   """
   @spec now(module() | GenServer.server()) :: DateTime.t()
-  def now(clock) do
+  def now(clock) when is_atom(clock) do
     # TODO
   end
 end
@@ -199,4 +199,5 @@ defmodule Clock.Fake do
     |> apply_duration(rest)
   end
 end
+
 ```

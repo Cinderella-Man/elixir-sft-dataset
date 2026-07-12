@@ -120,8 +120,9 @@ defmodule Workflow do
 
   # Guards: return true when the transition is permitted.
 
-  defp guard(event, record) do
+  defp guard(:submit, %{items: items}) when is_list(items) and items != [] do
     # TODO
   end
 end
+
 ```

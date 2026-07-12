@@ -75,7 +75,6 @@ defmodule RecordDiff do
   Fields that appear in only one version of a record are still reported as
   changes, using the atom `:missing` as a placeholder for the absent value.
   """
-  @spec diff([record_t()], [record_t()], keyword()) :: diff_result()
   def diff(old_list, new_list, opts \\ []) do
     # TODO
   end
@@ -145,4 +144,5 @@ defmodule RecordDiff do
     end)
   end
 end
+
 ```

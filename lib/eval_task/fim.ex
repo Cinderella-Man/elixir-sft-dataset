@@ -213,28 +213,43 @@ defmodule EvalTask.Fim do
     end)
   end
 
-  # First clause's signature turned into a `<sig> do\n  # TODO\nend` block. Handles both
-  # one-liner (`def f(x), do: y`) and block (`def f(x) do … end`) clause forms, and
-  # multi-line signatures. Replaces the WHOLE target with ONE stub so a multi-clause
-  # candidate doesn't leave a clause complete that the candidate also re-provides.
+  # First clause's signature turned into a `<sig> do\n  # TODO\nend` block. Handles
+  # one-liner (`def f(x), do: y`), block (`def f(x) do … end`), and
+  # continuation-one-liner clause forms — a multi-line head whose `do:` sits alone
+  # on the next line (`def f(x)\n  when g(x),\n  do: y`): the head's trailing comma
+  # becomes ` do`, exactly as the same-line conversion does. Without that case the
+  # scan runs PAST the whole clause group and swallows the following function into
+  # the stub (found live on 091_003_04's normalize/1: the stub captured `def states`,
+  # whose intact clauses then shadowed the spliced mutant — a silently corrupt
+  # skeleton instead of a raise). Replaces the WHOLE target with ONE stub so a
+  # multi-clause candidate doesn't leave a clause complete that the candidate also
+  # re-provides.
   defp signature_stub(lines, def_i, indent) do
-    {sig_end, oneliner?} =
+    {sig_end, form} =
       Enum.reduce_while(def_i..(def_i + 30), nil, fn i, _ ->
         line = Enum.at(lines, i) || ""
 
         cond do
-          Regex.match?(~r/,\s*do:/, line) -> {:halt, {i, true}}
-          Regex.match?(~r/\bdo\s*$/, line) -> {:halt, {i, false}}
+          Regex.match?(~r/^\s*do:/, line) -> {:halt, {i, :cont_oneliner}}
+          Regex.match?(~r/,\s*do:/, line) -> {:halt, {i, :oneliner}}
+          Regex.match?(~r/\bdo\s*$/, line) -> {:halt, {i, :block}}
           true -> {:cont, nil}
         end
       end) || raise "no do/`, do:` after def"
 
     sig =
-      if oneliner? do
-        last = Enum.at(lines, sig_end) |> String.replace(~r/,\s*do:.*$/, " do")
-        Enum.slice(lines, def_i, sig_end - def_i) ++ [last]
-      else
-        Enum.slice(lines, def_i, sig_end - def_i + 1)
+      case form do
+        :oneliner ->
+          last = Enum.at(lines, sig_end) |> String.replace(~r/,\s*do:.*$/, " do")
+          Enum.slice(lines, def_i, sig_end - def_i) ++ [last]
+
+        :cont_oneliner ->
+          head = Enum.slice(lines, def_i, sig_end - def_i)
+          last = head |> List.last() |> String.replace(~r/,\s*$/, " do")
+          Enum.drop(head, -1) ++ [last]
+
+        :block ->
+          Enum.slice(lines, def_i, sig_end - def_i + 1)
       end
 
     sig ++ ["#{indent}  # TODO", "#{indent}end"]

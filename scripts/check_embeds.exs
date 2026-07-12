@@ -680,9 +680,19 @@ defmodule CheckEmbeds do
       t == "end" -> true
       String.starts_with?(t, "#") -> stub_scaffold_comment?(j, ctx)
       oneliner_stub_head?(t, ctx.gold_trimmed) -> true
+      cont_stub_line?(t, ctx.gold_trimmed) -> true
       stub_head_variant?(t, ctx.gold_fn_names) -> true
       true -> false
     end
+  end
+
+  # Rule b, continuation-one-liner spelling: EvalTask.Fim.signature_stub converts a
+  # multi-line head whose `do:` sits alone on the next line by turning the head's
+  # trailing comma into ` do` — so the stub carries a line that equals a gold line
+  # with `,` → ` do` (e.g. `when is_atom(event) and is_atom(from) do`).
+  defp cont_stub_line?(t, gold_trimmed) do
+    String.ends_with?(t, " do") and
+      String.replace_suffix(t, " do", ",") in gold_trimmed
   end
 
   # Rule (j): a `#` comment is stub scaffold when its contiguous comment block

@@ -47,6 +47,7 @@ defmodule Workflow do
     cancel: {:in_progress, :cancelled}
   }
 
+  @doc "Builds a new reversible order workflow from `attrs`. Returns the workflow map."
   @spec new(map()) :: map()
   def new(attrs \\ %{}) when is_map(attrs) do
     attrs
@@ -100,6 +101,9 @@ defmodule Workflow do
   end
 
   # Guards: true when permitted.
-  # TODO
+  defp guard(:submit, %{items: items}) when is_list(items) and items != [] do
+    # TODO
+  end
 end
+
 ```

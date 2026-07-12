@@ -1,4 +1,4 @@
-  @spec resolve_compare_fields(record(), record(), [atom()], [atom()] | nil) :: [atom()]
+  @spec resolve_compare_fields(record_t(), record_t(), [atom()], [atom()] | nil) :: [atom()]
   defp resolve_compare_fields(_left, _right, _key_fields, compare_fields)
        when is_list(compare_fields),
        do: compare_fields

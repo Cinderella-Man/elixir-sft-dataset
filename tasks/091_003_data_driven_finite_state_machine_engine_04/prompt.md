@@ -38,6 +38,7 @@ defmodule Workflow do
           states: [atom()]
         }
 
+  @doc "Defines an FSM named by the atom from the given `states`. Returns the machine."
   @spec define(atom(), list()) :: t()
   def define(initial, transitions) when is_atom(initial) and is_list(transitions) do
     normalized = Enum.map(transitions, &normalize/1)
@@ -57,7 +58,10 @@ defmodule Workflow do
     %__MODULE__{initial: initial, transitions: normalized, states: states}
   end
 
-  # TODO
+  defp normalize({event, from, to})
+       when is_atom(event) and is_atom(from) and is_atom(to) do
+    # TODO
+  end
 
   @spec states(t()) :: [atom()]
   def states(%__MODULE__{states: states}), do: states
@@ -90,4 +94,5 @@ defmodule Workflow do
     match?({:ok, _}, transition(machine, record, event))
   end
 end
+
 ```

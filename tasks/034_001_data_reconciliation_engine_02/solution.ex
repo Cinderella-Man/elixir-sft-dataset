@@ -1,6 +1,6 @@
   # Compares `left` and `right` on the given fields using `==`.
   # Missing fields are treated as nil.
-  @spec diff(record(), record(), [atom()]) :: diff_map()
+  @spec diff(record_t(), record_t(), [atom()]) :: diff_map()
   defp diff(left, right, fields) do
     Enum.reduce(fields, %{}, fn field, acc ->
       lv = Map.get(left, field)

@@ -52,6 +52,14 @@ jobs:
           out=$(mix run scripts/resync_tfim_embeds.exs)
           echo "$out"
           echo "$out" | grep -q "would_resync\|error" && exit 1 || true
+      # module-FIM + wt_ embeds must match their parents (docs/12 §5.1 item 8):
+      # zero reflow and zero drift since the 2026-07-12 remediation. The
+      # planted-phantom self-test proves the checker is not vacuous.
+      - run: elixir scripts/check_embeds.exs --self-test
+      - run: |
+          out=$(elixir scripts/check_embeds.exs)
+          echo "$out"
+          echo "$out" | grep -q "^embed check: .*, 0 reflow, 0 drift, " || exit 1
       # Full perfect-score sweep: weekly + manual only (too slow per push).
       - if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: elixir scripts/validate.exs
