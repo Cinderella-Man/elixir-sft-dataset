@@ -515,7 +515,8 @@ defmodule GenTask.Fim do
             {Evaluator.repair_report({:failed, grade}), Cycle.reason_for(grade)}
 
           warns > 0 ->
-            {Evaluator.repair_report({:warnings, warns}), "compiles with #{warns} warning(s)"}
+            {Evaluator.repair_report({:warnings, warns, Evaluator.warning_details(grade)}),
+             "compiles with #{warns} warning(s)"}
 
           true ->
             nil

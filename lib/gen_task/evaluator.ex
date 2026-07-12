@@ -202,7 +202,7 @@ defmodule GenTask.Evaluator do
     prompt = files["prompt.md"] || ""
 
     []
-    |> add_if(warnings > 0, "#{warnings} compile warning(s) — silence them")
+    |> add_if(warnings > 0, warnings_shortfall(warnings, json["warning_details"]))
     |> add_if(a["has_moduledoc"] != true, "no @moduledoc")
     |> add_if(a["has_typespecs"] != true, "no @spec on any public function")
     |> add_if(a["has_doc_on_public_fns"] != true, "no @doc on any public function")
@@ -332,6 +332,15 @@ defmodule GenTask.Evaluator do
   defp add_if(list, true, msg), do: [msg | list]
   defp add_if(list, false, _msg), do: list
 
+  # "N compile warning(s) — silence them" alone sends the fixer hunting for an
+  # invisible problem (034_001's variations burned every retry that way,
+  # 2026-07-12) — name the warnings when the grade carries them.
+  defp warnings_shortfall(n, details) when is_list(details) and details != [] do
+    "#{n} compile warning(s) — silence them (#{Enum.join(details, " | ")})"
+  end
+
+  defp warnings_shortfall(n, _), do: "#{n} compile warning(s) — silence them"
+
   @doc """
   Number of compile warnings in a `grade` (0 for a timeout/crash). Used by the
   derivative accept sites (fim/wt_/tfim) to gate zero-warnings without reusing the full
@@ -342,6 +351,12 @@ defmodule GenTask.Evaluator do
   def compile_warnings(:timeout_or_crash), do: 0
   def compile_warnings({:ok, json}), do: compile_warnings(json)
   def compile_warnings(%{} = json), do: json["compile_warnings"] || 0
+
+  @doc "The `warning_details` lines of a grade ([] when absent) — for repair reports."
+  @spec warning_details(grade() | map()) :: [String.t()]
+  def warning_details(:timeout_or_crash), do: []
+  def warning_details({:ok, json}), do: warning_details(json)
+  def warning_details(%{} = json), do: json["warning_details"] || []
 
   # ── S9 harness anti-pattern detectors (ported from scripts/lint_harnesses.exs) ──
 
@@ -505,10 +520,18 @@ defmodule GenTask.Evaluator do
       "check observable behavior; do not remove coverage."
   end
 
-  def repair_report({:warnings, n}) do
+  def repair_report({:warnings, n}), do: repair_report({:warnings, n, []})
+
+  def repair_report({:warnings, n, details}) do
+    named =
+      case details do
+        d when is_list(d) and d != [] -> " The warning(s):\n" <> Enum.map_join(d, "\n", &("  - " <> &1))
+        _ -> ""
+      end
+
     "The files graded green but compile with #{n} warning(s). Silence every warning " <>
       "(prefix unused variables with `_`, match float zero as `+0.0`/`-0.0`, drop " <>
-      "unreachable clauses) without changing behavior or weakening test_harness.exs."
+      "unreachable clauses) without changing behavior or weakening test_harness.exs." <> named
   end
 
   def repair_report({:flaky, seed}) do

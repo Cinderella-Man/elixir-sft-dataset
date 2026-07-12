@@ -133,6 +133,7 @@ defmodule EvalTask.Runner do
     {%{
        compiled: true,
        compile_warnings: length(diag.compile_warnings),
+       warning_details: warning_details(diag.compile_warnings),
        compile_errors: [],
        tier: "B"
      }, %{tier: "B"}, cleanup}
@@ -171,6 +172,7 @@ defmodule EvalTask.Runner do
     {%{
        compiled: true,
        compile_warnings: length(diag.compile_warnings),
+       warning_details: warning_details(diag.compile_warnings),
        compile_errors: [],
        tier: "B"
      }, %{tier: "B"}, cleanup}
@@ -434,15 +436,22 @@ defmodule EvalTask.Runner do
       end)
 
     warnings = Enum.filter(diagnostics, &(&1.severity == :warning))
+    details = warning_details(warnings)
 
     case result do
       :ok ->
-        %{compiled: true, compile_warnings: length(warnings), compile_errors: []}
+        %{
+          compiled: true,
+          compile_warnings: length(warnings),
+          warning_details: details,
+          compile_errors: []
+        }
 
       {:error, %{__struct__: type} = e} ->
         %{
           compiled: false,
           compile_warnings: length(warnings),
+          warning_details: details,
           compile_errors: [%{type: inspect(type), message: Exception.message(e)}]
         }
 
@@ -450,9 +459,39 @@ defmodule EvalTask.Runner do
         %{
           compiled: false,
           compile_warnings: length(warnings),
+          warning_details: details,
           compile_errors: [%{type: "#{inspect(kind)}", message: inspect(reason)}]
         }
     end
+  end
+
+  # Human-readable "file:line: message" lines for the first few warning
+  # diagnostics. Repair prompts used to say only "N compile warning(s) —
+  # silence them", sending the fixer hunting blind for an invisible problem
+  # (034_001's variations burned every retry this way, 2026-07-12).
+  defp warning_details(diags) do
+    diags
+    |> Enum.take(5)
+    |> Enum.map(fn d ->
+      line =
+        case Map.get(d, :position) do
+          {l, _c} -> l
+          l when is_integer(l) -> l
+          _ -> nil
+        end
+
+      file =
+        case Map.get(d, :file) do
+          f when is_binary(f) -> Path.basename(f)
+          _ -> nil
+        end
+
+      msg = d.message |> to_string() |> String.replace(~r/\s+/, " ") |> String.slice(0, 200)
+
+      [file, line && "line #{line}", msg]
+      |> Enum.reject(&(&1 == nil))
+      |> Enum.join(": ")
+    end)
   end
 
   # ParallelCompiler workers print warnings straight to :standard_error no matter
@@ -479,7 +518,12 @@ defmodule EvalTask.Runner do
     # inspect of the match failure.
     case quiet_compile(sources) do
       {:ok, _mods, diag} ->
-        %{compiled: true, compile_warnings: length(diag.compile_warnings), compile_errors: []}
+        %{
+          compiled: true,
+          compile_warnings: length(diag.compile_warnings),
+          warning_details: warning_details(diag.compile_warnings),
+          compile_errors: []
+        }
 
       {:error, errors, _diag} ->
         %{compiled: false, compile_warnings: 0, compile_errors: diagnostics_to_errors(errors)}
@@ -556,7 +600,9 @@ defmodule EvalTask.Runner do
         end
       end)
 
-    harness_warnings = Enum.count(diagnostics, &(&1.severity == :warning))
+    harness_warning_diags = Enum.filter(diagnostics, &(&1.severity == :warning))
+    harness_warnings = length(harness_warning_diags)
+    harness_details = warning_details(harness_warning_diags)
 
     case compile_result do
       {:error, message} ->
@@ -568,6 +614,7 @@ defmodule EvalTask.Runner do
             ]
         }
         |> Map.put(:harness_warnings, harness_warnings)
+        |> Map.put(:harness_warning_details, harness_details)
 
       :ok ->
         # `skipped` (@tag :skip) must be subtracted like `excluded` — a skipped test
@@ -585,7 +632,8 @@ defmodule EvalTask.Runner do
           tests_skipped: skipped,
           tests_total: total,
           test_failures: EvalTask.FailureCollector.get_failures(),
-          harness_warnings: harness_warnings
+          harness_warnings: harness_warnings,
+          harness_warning_details: harness_details
         }
     end
   rescue
@@ -634,8 +682,14 @@ defmodule EvalTask.Runner do
     # warnings from the solution: fold them into compile_warnings so the
     # scorer's warnings-as-errors gate sees the full picture.
     harness_warnings = Map.get(tests, :harness_warnings, 0)
-    compile = %{compile | compile_warnings: compile.compile_warnings + harness_warnings}
-    tests = Map.delete(tests, :harness_warnings)
+    harness_details = Map.get(tests, :harness_warning_details, [])
+
+    compile =
+      compile
+      |> Map.put(:compile_warnings, compile.compile_warnings + harness_warnings)
+      |> Map.update(:warning_details, harness_details, &(&1 ++ harness_details))
+
+    tests = tests |> Map.delete(:harness_warnings) |> Map.delete(:harness_warning_details)
 
     score = Analysis.score(compile, analysis, tests)
 

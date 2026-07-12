@@ -455,4 +455,41 @@ defmodule GenTask.EvaluatorTest do
       assert report =~ "A.hidden_probe"
     end
   end
+
+  describe "warning details reach the fixer (2026-07-12: 034_001 blind-retry loop)" do
+    test "warnings_shortfall names the warnings when the grade carries them" do
+      json = %{
+        "compile_warnings" => 1,
+        "warning_details" => ["solution.ex: line 7: variable \"x\" is unused"],
+        "tests_total" => 5,
+        "analysis" => %{
+          "has_moduledoc" => true,
+          "has_typespecs" => true,
+          "has_doc_on_public_fns" => true,
+          "todo_count" => 0,
+          "lines_over_98" => 0,
+          "sql_injection_risk" => false,
+          "public_fn_count" => 2
+        }
+      }
+
+      report = Evaluator.quality_shortfall(json)
+      assert report =~ "1 compile warning(s)"
+      assert report =~ "variable \"x\" is unused"
+    end
+
+    test "repair_report({:warnings, n, details}) lists each warning" do
+      report = Evaluator.repair_report({:warnings, 2, ["line 3: unused alias Foo", "line 9: unused variable"]})
+      assert report =~ "unused alias Foo"
+      assert report =~ "line 9"
+      # 2-tuple stays supported
+      assert Evaluator.repair_report({:warnings, 2}) =~ "2 warning(s)"
+    end
+
+    test "warning_details/1 accessor" do
+      assert Evaluator.warning_details({:ok, %{"warning_details" => ["w"]}}) == ["w"]
+      assert Evaluator.warning_details({:ok, %{}}) == []
+      assert Evaluator.warning_details(:timeout_or_crash) == []
+    end
+  end
 end
