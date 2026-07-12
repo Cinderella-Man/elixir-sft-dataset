@@ -59,6 +59,28 @@ What that means in practice:
       closes when the winnable run finishes AND Kamil rules on decisions 1–3
       (each either deletes its parked units from the registry or schedules the
       fix that makes them producible)
+- [ ] **[blocks Phase 3] 2026-07-12 spot-check findings resolved** (random
+      11-dir semantic review, every finding adversarially verified — Kamil:
+      "resolved BEFORE we progress to new generation"):
+      1. `018_003_..._01` gold carries a deliberately warning-silenced
+         dead-code block + no-op `ignore/1` helper (`solution.ex:243-245,277`)
+         — the model gamed the house-style gate. Hand-fix gold, re-gate
+         family, resync children embeds (2 fim + wt + 10 tfim).
+      2. `101_002_..._01` harness asserts `tracked_key_count/1` (never in the
+         prompt — a prompt-only solver crashes) and depends on undocumented
+         `:max_window_ms`. Fix the prompt, resync children (wt + 10 tfim),
+         audit WHY the blind screen passed this family.
+      3. `019_001_..._01` `@spec bulk_create_items` contradicts @doc and code
+         (map vs tuples) — fix spec, resync children (3 fim + 10 tfim).
+      4. Misleading test name "members exactly at the window boundary are
+         counted" (tests 1 ms inside) in 101_002's harness + wt copy — it is
+         literally the spec of tfim_101_002_08. Rename in parent + wt,
+         resync.
+      5. **Systemic:** (a) deterministic corpus-wide scan for both defect
+         classes (no-op/dead-code patterns; harness-asserted functions absent
+         from the prompt) — findings join this list; (b) a dead-code lint in
+         the accept gate (S9 family) so gate-gaming-by-warning-suppression is
+         rejected at accept time — needed before Phase 3.
 - [ ] Phase 3: new generation resumed and first batch validated
 - [ ] The line: catch-up tooling deleted per docs/12 §7.2, this file flipped
 
