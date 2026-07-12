@@ -251,6 +251,30 @@ defmodule GenTask.MutationTest do
     test "[] on a parse error" do
       assert Mutation.all_functions("defmodule Broken do def") == []
     end
+
+    test "lists macros — a defmacro-heavy module is not an empty pool" do
+      src = """
+      defmodule Helpers do
+        defmacro __using__(_opts) do
+          quote do: import(Helpers)
+        end
+
+        defmacro assert_close(a, b) do
+          quote do: assert(abs(unquote(a) - unquote(b)) < 0.001)
+        end
+
+        defmacrop internal(x), do: x
+
+        def __poll__(f), do: f.()
+      end
+      """
+
+      fns = Mutation.all_functions(src)
+      assert {:defmacro, :__using__, 1} in fns
+      assert {:defmacro, :assert_close, 2} in fns
+      assert {:defmacrop, :internal, 1} in fns
+      assert {:def, :__poll__, 1} in fns
+    end
   end
 
   describe "plug_module?/1" do

@@ -375,17 +375,23 @@ defmodule GenTask.Mutation do
   end
 
   @doc """
-  The `{kind, name, arity}` of every function (`def` **and** `defp`) defined in
-  `solution_src`, de-duplicated across clauses. `[]` on a parse error. Used by the
-  test-FIM isolation gate, where a single test may exercise private helpers only.
+  The `{kind, name, arity}` of every function AND macro (`def`/`defp`/
+  `defmacro`/`defmacrop`) defined in `solution_src`, de-duplicated across
+  clauses. `[]` on a parse error. Used by the test-FIM isolation gate (a single
+  test may exercise private helpers or macros only) and by the fim selector's
+  target pool — macros are legitimate fim targets: `EvalTask.Fim` stubs and
+  splices them, `Fim.mutate` guts them, and a gutted macro blowing up harness
+  compilation is an errored-kill (`Evaluator.errored_against_mutant?/1`).
+  def/defp-blindness here made the 074 assertion-helper family unmintable.
   """
-  @spec all_functions(String.t()) :: [{:def | :defp, atom(), non_neg_integer()}]
+  @spec all_functions(String.t()) ::
+          [{:def | :defp | :defmacro | :defmacrop, atom(), non_neg_integer()}]
   def all_functions(solution_src) do
     {_ast, acc} =
       solution_src
       |> Code.string_to_quoted!()
       |> Macro.prewalk([], fn
-        {kind, _m, [head | _]} = node, acc when kind in [:def, :defp] ->
+        {kind, _m, [head | _]} = node, acc when kind in [:def, :defp, :defmacro, :defmacrop] ->
           case head_name_arity(head) do
             {n, a} -> {node, [{kind, n, a} | acc]}
             nil -> {node, acc}

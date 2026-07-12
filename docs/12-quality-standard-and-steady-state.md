@@ -383,6 +383,17 @@ wired in*, and a few is-it-really-true gaps were found today.
     seeds grade perfect through the real eval subprocess; mutants of exercised
     targets are killed. Bundles are ordinary fim work from here on.
 
+12. **(added 2026-07-12, landed)** Macro targets for fim (Kamil's call, same
+    criterion). The stub/splice/mutate/kill chain was already macro-ready —
+    `errored_against_mutant?` exists precisely for a gutted defmacro blowing
+    up harness compilation — but both enumerators (`Mutation.all_functions/1`,
+    the gen covered-targets parser) counted only def/defp, so macro targets
+    were dropped as "hallucinated" and macro-heavy parents (074_x) read as
+    empty pools. Both now count defmacro/defmacrop. **Ledger lesson:** a
+    permanent-reject ledger is only as sound as the gate that wrote it — the
+    nine 074_x rejects predated the errored-kill fix and were purged with this
+    change; when a gate is repaired, audit its ledger.
+
 ### 5.2 Worth one LLM call per task (decide before Phase 3)
 
 1. **Accept-time blind screen for new BASES.** Today's base flow is blind on

@@ -132,11 +132,21 @@ tested), so the loop cannot repeat yesterday's rejected-nearly-everything run.
      caps use the same view.
    The 4 bundle seeds (12 units) rejoin the runnable backfill; a focused run
    launches when the current 7-seed run finishes.
-2. **defmacro-blind target enumeration** (unlocks 6 fim units on 074_001/2/4).
-   `Mutation.all_functions/1` counts only def/defp, so the fim selector drops
-   legitimate macro targets as "hallucinated" (`EvalTask.Fim.build_skeleton`
-   already handles defmacro). Teaching it defmacro touches the test-FIM
-   isolation gate too (same enumerator) — needs its own verification pass.
+2. **defmacro-blind target enumeration — RESOLVED 2026-07-12: FIXED** (same
+   criterion: macro FIM — quote/unquote bodies, `__using__`, assertion
+   helpers — is scarce, distinctive metaprogramming data). Audit found the
+   pipeline was ALREADY macro-ready end to end: `build_skeleton`/`splice`
+   handle defmacro, `Fim.mutate` guts them, and a gutted macro blowing up
+   harness compilation is an errored-kill (`errored_against_mutant?`, wired
+   2026-07-10). Only the enumerators were blind: `Mutation.all_functions/1`
+   (selector pool + isolation gate — safe there, inconclusive grades just keep
+   scanning) and the gen-side covered-targets parser now count
+   defmacro/defmacrop. Nine 074_x macro targets perma-rejected on 07-04/07-07
+   — BEFORE the errored-kill fix existed, i.e. under tooling that could not
+   see a macro kill — were purged from `logs/fim_rejected.jsonl` (the one
+   non-074 entry stays). Pre-flight with zero LLM calls: gold
+   `assert_recent/2` grades 17/17 + 0 warnings, its mutant errored-kills.
+   The 6 units on 074_001/2/4 rejoin the runnable backfill.
 3. **variation distinctness for 034_001** (3 units): generator keeps producing
    the same public API; wants a prompt-side "APIs already taken" hint, or
    accept 1/4 variations for that family. 018_001's variation (0/N tests every

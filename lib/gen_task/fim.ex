@@ -137,13 +137,14 @@ defmodule GenTask.Fim do
     end
   end
 
-  # Parse a (single-function) solution.ex into `["name/arity", ...]`.
+  # Parse a (single-function) solution.ex into `["name/arity", ...]`. Macro
+  # children must register as covered or their target gets re-selected forever.
   defp fn_targets(path) do
     with {:ok, src} <- File.read(path),
          {:ok, ast} <- Code.string_to_quoted(src) do
       {_ast, acc} =
         Macro.prewalk(ast, [], fn
-          {op, _m, [head | _]} = node, acc when op in [:def, :defp] ->
+          {op, _m, [head | _]} = node, acc when op in [:def, :defp, :defmacro, :defmacrop] ->
             case na(head) do
               {n, a} -> {node, ["#{n}/#{a}" | acc]}
               nil -> {node, acc}
