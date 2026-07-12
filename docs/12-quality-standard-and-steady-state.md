@@ -290,10 +290,22 @@ wired in*, and a few is-it-really-true gaps were found today.
 > artifacts, not stale embeds — removed from the resync queue). The 137 drift
 > dirs = 122 resync_embed + 12 fix_child_gold (parent redesigned at the
 > target, incl. 131_003_04) + 3 wt_ one-token drifts (`^size` pins etc.)
-> per-verdict in the ledger. REMEDIATION (resync + gold fixes) runs AFTER
-> Phase 2 finishes — it rewrites prompt.md files under what is currently a
-> live loop; wiring the checker into CI as a gate happens with that
-> remediation, once drift is 0.
+> per-verdict in the ledger.
+> **REMEDIATION DONE 2026-07-12 (overnight):** `scripts/resync_embeds.exs`
+> (one-shot; delete at the line per §7.2) resynced 171 dirs — 114 fim embeds
+> rebuilt via `EvalTask.Fim.build_skeleton`, 57 wt_ dirs fully refreshed
+> (prompt via `WriteTest.prompt_md/2`, solution/harness byte-copies); all
+> validated (57 wt_ perfect, 114 FIM reconstruct+mutant green). The 12
+> redesigned-parent golds hand-fixed (5 `record()`→`record_t()` @spec
+> renames, 5 re-extracted current-parent functions, 2 stale whole-module
+> snapshots reshaped to their actual blanked function). Fixed along the way:
+> `EvalTask.Fim.signature_stub` silently swallowed the NEXT function into
+> the stub when a clause head's `do:` sits on a continuation line (caught
+> live on 091_003_04 — the corrupt stub's intact clauses shadowed the raise
+> mutant); mix test 254 green.
+> **Final: embed check 1266 clean / 0 reflow / 0 drift, and CI now gates it**
+> (self-test + `0 reflow, 0 drift` in validate.yml, beside the S5 tfim gate).
+> S5 now effectively covers ALL derivative prompt embeds.
 
 
 1. **Raw perfect invariants for fim/wt_/tfim_ accepts** — today the warnings

@@ -44,11 +44,11 @@ What that means in practice:
       launch on Kamil's go (paid run).**
 - [x] docs/12 §4.2.1 — 099_002/3/4 screened GREEN; S6 holds for all 303 seeds (2026-07-10)
 - [ ] docs/12 §4.2 decisions signed off (spot-review scope, prompt-monotony scope, semantic floor — tail confirmed at 20 families <0.5 by re-measure)
-- [ ] docs/12 §5 loop hardening — §5.1 items 1–8 DONE (items 1–7 2026-07-10;
-      item 8 embed gate + drift classification DONE 2026-07-11, see docs/12
-      §5.1 — corpus verdicts 1068 clean / 46 reflow / 137 real drift, all
-      remediation queued behind Phase 2); OPEN: §5.2 decision
-      (accept-time blind screen for repaired bases + entailment judge)
+- [x] docs/12 §5 loop hardening §5.1 — ALL DONE (items 1–7 2026-07-10; item 8
+      gate + classification 2026-07-11; remediation + CI wiring 2026-07-12:
+      **embed check 1266 clean / 0 reflow / 0 drift, gated in CI**). Still
+      OPEN: §5.2 decision (accept-time blind screen for repaired bases +
+      entailment judge) — needed before Phase 3
 - [ ] Phase 2: derivative top-up run **LAUNCHED 2026-07-10 ~18:45** (detached,
       `logs/backfill_phase2.log`; 111 seeds / 710 units: 29 variation + 57 FIM
       + 624 test-FIM). First run through the §5.1-hardened loop. Died
@@ -112,29 +112,24 @@ Full detail in docs/12 §5.1; short version:
   034_001_02/03/04, 038_001_02, 039_001_02/04, 072_001_03, 091_001_03,
   091_002_03, 091_003_04, 131_003_04).
 
-### Overnight runbook (2026-07-11 → 12 night; also the recovery script if this session dies)
+### Overnight runbook — EXECUTED 2026-07-12 03:38–05:00 ✅
 
-Autopilot sequence once the Phase 2 loop exits (a monitor watches the PID):
+The Phase 2 loop's first pass finished cleanly 03:38 (its 87-seed list done;
+`Done.` + auto repair-minting: 10 new repair_ tasks). All remediation steps
+ran to completion while no loop was alive — see the git log
+(`985f6e54`…`2148a14d`): 84 accepted dirs committed, 171 embeds resynced +
+validated, 12 redesigned-parent golds hand-fixed + re-gated, one real lib bug
+fixed en route (`EvalTask.Fim.signature_stub` continuation-`do:` corruption),
+**embed check 1266/0/0, CI gate live**, mix test 254 green.
 
-1. If the loop DIED with pending work (`mix run scripts/work_status.exs
-   --counts` shows pending, no beam alive): relaunch
-   `GEN_ONLY=backfill scripts/run_detached.sh logs/backfill_phase2.log mix run scripts/generate.exs`
-   and go back to waiting. If it FINISHED (0 pending everywhere): tick the
-   Phase 2 checkbox above and continue.
-2. Commit the remaining accepted task dirs (complete dirs only) + tasks.md.
-3. `elixir scripts/check_embeds.exs > /tmp/embed_report.txt` then
-   `grep -E '^(REFLOW|DRIFT)' /tmp/embed_report.txt | awk '{print $2}' > /tmp/embed_dirs.txt`
-   then `mix run scripts/resync_embeds.exs -- --dirs-file /tmp/embed_dirs.txt --apply`
-   (expect ~171 resynced, 12 errors = the hand-fix list).
-4. Re-run the checker: expect 0 reflow and drift == the 12 hand-fix dirs.
-   Re-validate the touched families (`validate.exs --only`, perfect + FIM
-   mutation gates) — resync changed prompt embeds and some golds/harnesses.
-5. Hand-fix the 12 redesigned-parent dirs one at a time (extract the current
-   parent's function as the new gold, rebuild the embed, re-gate the family,
-   check prose still entails). Commit per small batch.
-6. Checker to 0 drift → wire `check_embeds.exs` into CI next to the S5 tfim
-   gate (grep its summary line for `0 drift`). Commit.
-7. Update this file + docs/12 §5.1.8 at every step; commit everything; no push.
+**Phase 2 is NOT yet complete:** the 21 newly accepted variation seeds (324
+seeds now) brought follow-on derivative units into the registry — at 04:00:
++8 variation, +31 fim, +326 test-fim. The loop was relaunched with the same
+idempotent command to converge; a monitor re-arms on its PID. Repeat until
+`mix run scripts/work_status.exs --counts` shows 0 pending everywhere (each
+new variation seed spawns its own derivatives, so expect one or two more
+passes). If the loop is dead with pending work, relaunch:
+`GEN_ONLY=backfill scripts/run_detached.sh logs/backfill_phase2.log mix run scripts/generate.exs`
 
 Still waiting on Kamil (unchanged): the nightly-sweep systemd timer install
 (§4.1.10, 4 commands in `scripts/systemd/nightly-sweep.service`) and the
