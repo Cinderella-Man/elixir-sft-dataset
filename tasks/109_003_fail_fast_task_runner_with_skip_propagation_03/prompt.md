@@ -181,5 +181,4 @@ defmodule ResilientRunner do
     end
   end
 end
-
 ```

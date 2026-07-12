@@ -415,5 +415,4 @@ defmodule VersionedObjectStorage do
     :ok
   end
 end
-
 ```

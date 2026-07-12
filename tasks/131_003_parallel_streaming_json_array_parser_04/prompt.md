@@ -94,5 +94,4 @@ defmodule ParallelJsonStreamer do
     # TODO
   end
 end
-
 ```

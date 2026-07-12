@@ -151,5 +151,4 @@ defmodule BoundedBiMap do
     {Map.delete(f, lru_key), Map.delete(r, value), Map.delete(a, lru_key)}
   end
 end
-
 ```

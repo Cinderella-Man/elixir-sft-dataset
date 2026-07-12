@@ -357,5 +357,4 @@ defmodule ShardedTSDB.Shard do
   defp apply_agg(:avg, vals), do: Enum.sum(vals) / length(vals)
   defp apply_agg(:max, vals), do: Enum.max(vals)
 end
-
 ```

@@ -228,5 +228,4 @@ defmodule PriorityEventBus do
     end
   end
 end
-
 ```

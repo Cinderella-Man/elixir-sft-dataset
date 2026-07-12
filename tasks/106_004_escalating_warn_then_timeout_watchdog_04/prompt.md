@@ -176,5 +176,4 @@ defmodule EscalatingWatchdog do
     # TODO
   end
 end
-
 ```

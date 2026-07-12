@@ -335,5 +335,4 @@ defmodule FuzzyIndex do
     Enum.reverse(reversed)
   end
 end
-
 ```

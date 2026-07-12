@@ -181,5 +181,4 @@ defmodule TOTP do
 
   defp secure_equal?(_, _), do: false
 end
-
 ```

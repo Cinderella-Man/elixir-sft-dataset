@@ -94,5 +94,4 @@ defmodule Workflow do
     match?({:ok, _}, transition(machine, record, event))
   end
 end
-
 ```

@@ -318,5 +318,4 @@ defmodule ObjectStore do
     # TODO
   end
 end
-
 ```

@@ -153,5 +153,4 @@ defmodule IdempotentPayments do
     Process.send_after(self(), :cleanup, interval)
   end
 end
-
 ```

@@ -242,5 +242,4 @@ defmodule RefreshAheadCache do
     Process.send_after(self(), :sweep, ms)
   end
 end
-
 ```

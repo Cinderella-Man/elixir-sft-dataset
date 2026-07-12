@@ -185,5 +185,4 @@ defmodule EscalatingWatchdog do
     _, _ -> :ok
   end
 end
-
 ```

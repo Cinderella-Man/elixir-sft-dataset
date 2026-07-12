@@ -196,5 +196,4 @@ defmodule SlidingAlerter do
     %{state | keys: keys}
   end
 end
-
 ```

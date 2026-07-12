@@ -222,5 +222,4 @@ defmodule ObjectStore do
     String.replace_prefix(str, prefix, "")
   end
 end
-
 ```

@@ -182,5 +182,4 @@ defmodule SlidingUniqueCounter do
     %{state | keys: keys}
   end
 end
-
 ```

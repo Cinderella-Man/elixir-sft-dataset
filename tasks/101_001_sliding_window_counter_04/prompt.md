@@ -240,5 +240,4 @@ defmodule SlidingCounter do
     :ok
   end
 end
-
 ```

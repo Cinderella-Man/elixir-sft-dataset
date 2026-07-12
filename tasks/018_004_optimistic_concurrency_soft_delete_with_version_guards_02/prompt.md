@@ -279,5 +279,4 @@ defmodule SoftCrud.Documents do
     end
   end
 end
-
 ```

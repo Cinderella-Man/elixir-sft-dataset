@@ -15,6 +15,7 @@ defmodule VersionedApi.Views.UserView do
     %{first_name: u.first_name, last_name: u.last_name, email: u.email, created_at: u.created_at}
   end
 end
+
 defmodule VersionedApi.Plugs.ApiVersion do
   import Plug.Conn
   def init(opts), do: opts
@@ -39,6 +40,7 @@ defmodule VersionedApi.Plugs.ApiVersion do
     end
   end
 end
+
 defmodule VersionedApi.Router do
   use Plug.Router
 
@@ -79,5 +81,4 @@ defmodule VersionedApi.Router do
     # TODO
   end
 end
-
 ```

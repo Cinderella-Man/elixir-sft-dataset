@@ -154,5 +154,4 @@ defmodule HOTP do
     # TODO
   end
 end
-
 ```

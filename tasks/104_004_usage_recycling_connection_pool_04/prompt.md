@@ -253,5 +253,4 @@ defmodule RecyclingPool do
     end
   end
 end
-
 ```

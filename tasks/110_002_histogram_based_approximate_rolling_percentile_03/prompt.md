@@ -187,5 +187,4 @@ defmodule HistogramPercentile do
     raise ArgumentError, "#{inspect(name)} must be a positive integer, got: #{inspect(other)}"
   end
 end
-
 ```

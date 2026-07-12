@@ -286,5 +286,4 @@ defmodule ORSet do
     %{entries: merged_entries, tombstones: merged_tombstones, clock: merged_clock}
   end
 end
-
 ```

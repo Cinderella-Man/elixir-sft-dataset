@@ -192,5 +192,4 @@ defmodule ConfigMerger do
     Map.get(per_key, key_path, global)
   end
 end
-
 ```

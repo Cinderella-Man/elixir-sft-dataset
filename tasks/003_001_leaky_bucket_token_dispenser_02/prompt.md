@@ -139,5 +139,4 @@ defmodule LeakyBucket do
     {gen_opts, rest}
   end
 end
-
 ```

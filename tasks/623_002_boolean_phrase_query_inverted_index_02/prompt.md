@@ -321,5 +321,4 @@ defmodule InvertedIndex do
     Enum.reduce(rest, first, fn set, acc -> MapSet.intersection(acc, set) end)
   end
 end
-
 ```

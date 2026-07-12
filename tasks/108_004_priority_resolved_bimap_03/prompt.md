@@ -137,5 +137,4 @@ defmodule PriorityBiMap do
     # TODO
   end
 end
-
 ```

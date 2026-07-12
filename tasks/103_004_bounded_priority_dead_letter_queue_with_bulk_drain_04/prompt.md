@@ -179,5 +179,4 @@ defmodule PriorityDLQ do
     Map.take(e, [:id, :message, :error_reason, :metadata, :priority, :retry_count])
   end
 end
-
 ```

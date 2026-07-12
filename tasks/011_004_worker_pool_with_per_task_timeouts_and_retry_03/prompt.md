@@ -316,5 +316,4 @@ defmodule RetryPool do
     end
   end
 end
-
 ```

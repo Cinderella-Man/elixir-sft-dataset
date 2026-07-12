@@ -251,5 +251,4 @@ defmodule MultiSchemaIngestion do
     Map.get(target, schema, :nothing)
   end
 end
-
 ```

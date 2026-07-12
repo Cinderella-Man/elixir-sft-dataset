@@ -129,5 +129,4 @@ defmodule PriorityBiMap do
     }
   end
 end
-
 ```

@@ -249,5 +249,4 @@ defmodule Pool do
     end
   end
 end
-
 ```

@@ -128,5 +128,4 @@ defmodule BiMap do
     end
   end
 end
-
 ```

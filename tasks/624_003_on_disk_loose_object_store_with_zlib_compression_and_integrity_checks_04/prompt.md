@@ -230,5 +230,4 @@ defmodule ObjectStore do
     end
   end
 end
-
 ```

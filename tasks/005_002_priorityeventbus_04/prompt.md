@@ -228,5 +228,4 @@ defmodule PriorityEventBus do
     # TODO
   end
 end
-
 ```

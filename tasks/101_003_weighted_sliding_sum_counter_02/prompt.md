@@ -177,5 +177,4 @@ defmodule SlidingSum do
     state
   end
 end
-
 ```

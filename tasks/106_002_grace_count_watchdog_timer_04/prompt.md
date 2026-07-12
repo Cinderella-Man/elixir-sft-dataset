@@ -140,5 +140,4 @@ defmodule GraceWatchdog do
     _, _ -> :ok
   end
 end
-
 ```

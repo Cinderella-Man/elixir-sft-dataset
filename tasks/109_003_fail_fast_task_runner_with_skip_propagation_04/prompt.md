@@ -186,5 +186,4 @@ defmodule ResilientRunner do
     # TODO
   end
 end
-
 ```

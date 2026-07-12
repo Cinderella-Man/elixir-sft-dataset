@@ -290,5 +290,4 @@ defmodule SoftCrud.Documents do
     # TODO
   end
 end
-
 ```

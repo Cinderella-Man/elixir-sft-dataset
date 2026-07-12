@@ -180,5 +180,4 @@ defmodule SlidingAlerter do
     # TODO
   end
 end
-
 ```

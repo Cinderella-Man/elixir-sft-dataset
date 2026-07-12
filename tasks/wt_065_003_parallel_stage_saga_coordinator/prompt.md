@@ -32,12 +32,12 @@ dependencies. Give me the complete module in a single file.
 ```elixir
 ParallelSaga.new()
 |> ParallelSaga.stage([
-     {:reserve, &reserve/1, &cancel/1},
-     {:notify,  &notify/1,  &unnotify/1}
-   ])
+  {:reserve, &reserve/1, &cancel/1},
+  {:notify, &notify/1, &unnotify/1}
+])
 |> ParallelSaga.stage([
-     {:charge, &charge/1, &refund/1}
-   ])
+  {:charge, &charge/1, &refund/1}
+])
 |> ParallelSaga.execute(%{order_id: 42})
 ```
 

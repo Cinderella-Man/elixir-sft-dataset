@@ -193,5 +193,4 @@ defmodule SlidingSum do
     # TODO
   end
 end
-
 ```

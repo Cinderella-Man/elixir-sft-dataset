@@ -285,5 +285,4 @@ defmodule Pool do
     # TODO
   end
 end
-
 ```

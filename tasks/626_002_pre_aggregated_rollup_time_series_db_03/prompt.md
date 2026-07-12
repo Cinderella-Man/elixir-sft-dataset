@@ -297,5 +297,4 @@ defmodule RollupTSDB do
     :ok
   end
 end
-
 ```

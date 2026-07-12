@@ -243,5 +243,4 @@ defmodule ValidatingPool do
     end
   end
 end
-
 ```

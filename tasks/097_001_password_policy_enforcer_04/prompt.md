@@ -235,5 +235,4 @@ defmodule PasswordPolicy do
     |> elem(n)
   end
 end
-
 ```

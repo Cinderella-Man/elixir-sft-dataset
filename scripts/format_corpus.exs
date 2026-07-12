@@ -67,7 +67,7 @@ defmodule FormatCorpus do
       )
       |> Enum.map(fn {:ok, r} -> r end)
 
-    deviating = report(results, apply?)
+    deviating = report(results, apply?, check?)
     if check? and deviating > 0, do: System.halt(1)
   end
 
@@ -224,7 +224,7 @@ defmodule FormatCorpus do
   # Reporting / applying
   # ---------------------------------------------------------------------------
 
-  defp report(results, apply?) do
+  defp report(results, apply?, check? \\ false) do
     by_cat = Enum.group_by(results, fn {cat, _, _} -> cat end)
 
     IO.puts("=== FORMAT STATUS (canonical = Code.format_string! on this toolchain) ===\n")
@@ -258,10 +258,14 @@ defmodule FormatCorpus do
 
     errors = Enum.count(results, &match?({_, _, {:error, _}}, &1))
 
-    IO.puts(
-      "\ntotal: #{total_dev} deviating, #{errors} errors" <>
-        if(apply?, do: " — APPLIED (deviating files rewritten)", else: " (report only; --apply to rewrite)")
-    )
+    suffix =
+      cond do
+        apply? -> " — APPLIED (deviating files rewritten)"
+        check? -> " — GATE (--check: exits 1 when anything deviates; --apply to rewrite)"
+        true -> " (report only; --apply to rewrite)"
+      end
+
+    IO.puts("\ntotal: #{total_dev} deviating, #{errors} errors" <> suffix)
 
     if errors > 0, do: System.halt(1)
     total_dev

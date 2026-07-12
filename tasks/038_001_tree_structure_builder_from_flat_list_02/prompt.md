@@ -259,5 +259,4 @@ defmodule TreeBuilder do
     end)
   end
 end
-
 ```

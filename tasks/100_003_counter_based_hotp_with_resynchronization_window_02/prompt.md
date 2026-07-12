@@ -171,5 +171,4 @@ defmodule HOTP do
     bytes
   end
 end
-
 ```

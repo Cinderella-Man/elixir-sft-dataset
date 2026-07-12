@@ -233,5 +233,4 @@ defmodule PasswordPolicy do
     # TODO
   end
 end
-
 ```

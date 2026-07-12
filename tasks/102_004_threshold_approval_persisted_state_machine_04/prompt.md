@@ -330,5 +330,4 @@ defmodule StateMachine do
     end)
   end
 end
-
 ```

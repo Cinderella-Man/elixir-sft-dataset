@@ -21,6 +21,7 @@ defmodule VersionedApi.Views.UserView do
     %{first_name: u.first_name, last_name: u.last_name, email: u.email, created_at: u.created_at}
   end
 end
+
 defmodule VersionedApi.Plugs.ApiVersion do
   import Plug.Conn
   def init(opts), do: opts
@@ -29,6 +30,7 @@ defmodule VersionedApi.Plugs.ApiVersion do
     # TODO
   end
 end
+
 defmodule VersionedApi.Router do
   use Plug.Router
 
@@ -69,5 +71,4 @@ defmodule VersionedApi.Router do
     conn |> put_resp_content_type("application/json") |> send_resp(status, Jason.encode!(body))
   end
 end
-
 ```

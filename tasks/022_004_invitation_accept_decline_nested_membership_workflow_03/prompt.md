@@ -555,5 +555,4 @@ defmodule TeamRouter do
     |> send_resp(status, Jason.encode!(payload))
   end
 end
-
 ```

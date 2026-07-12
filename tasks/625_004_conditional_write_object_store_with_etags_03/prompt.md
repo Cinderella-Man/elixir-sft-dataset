@@ -336,5 +336,4 @@ defmodule ConditionalObjectStorage do
 
   defp valid_bucket_name?(_name), do: false
 end
-
 ```

@@ -300,5 +300,4 @@ defmodule InvertedIndex do
     end
   end
 end
-
 ```

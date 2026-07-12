@@ -105,5 +105,4 @@ defmodule MaxWaitDebouncer do
 
   defp mono_ms, do: System.monotonic_time(:millisecond)
 end
-
 ```

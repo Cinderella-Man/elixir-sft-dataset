@@ -199,5 +199,4 @@ defmodule Clock.Fake do
     |> apply_duration(rest)
   end
 end
-
 ```

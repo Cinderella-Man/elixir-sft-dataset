@@ -152,5 +152,4 @@ defmodule SealedToken do
     end
   end
 end
-
 ```

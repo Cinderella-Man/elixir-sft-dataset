@@ -188,5 +188,4 @@ defmodule SlidingUniqueCounter do
     # TODO
   end
 end
-
 ```

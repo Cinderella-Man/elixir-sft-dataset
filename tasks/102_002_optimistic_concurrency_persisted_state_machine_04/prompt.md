@@ -309,5 +309,4 @@ defmodule StateMachine do
     # TODO
   end
 end
-
 ```

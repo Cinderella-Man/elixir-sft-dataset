@@ -208,6 +208,10 @@ defmodule EvalTask.Fim do
   @doc "Replace the `# TODO`-bearing ```` ```elixir ```` fence in `prompt_md` with `skeleton`."
   @spec rewrite_skeleton(String.t(), String.t()) :: String.t()
   def rewrite_skeleton(prompt_md, skeleton) do
+    # A skeleton built from a parent with a trailing newline would leave a blank
+    # line before the closing fence — non-canonical per the corpus format gate.
+    skeleton = String.trim_trailing(skeleton, "\n")
+
     Regex.replace(~r/```elixir\n(.*?)\n```/s, prompt_md, fn whole, body ->
       if String.match?(body, @todo), do: "```elixir\n#{skeleton}\n```", else: whole
     end)

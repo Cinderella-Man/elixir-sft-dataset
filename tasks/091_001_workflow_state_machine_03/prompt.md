@@ -124,5 +124,4 @@ defmodule Workflow do
     # TODO
   end
 end
-
 ```

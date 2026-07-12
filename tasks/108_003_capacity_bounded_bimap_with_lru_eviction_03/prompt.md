@@ -156,5 +156,4 @@ defmodule BoundedBiMap do
     # TODO
   end
 end
-
 ```

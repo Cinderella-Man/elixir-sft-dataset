@@ -276,5 +276,4 @@ defmodule CancellablePool do
     end
   end
 end
-
 ```

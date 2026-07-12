@@ -216,5 +216,4 @@ defmodule IntervalScheduler do
     Process.send_after(self(), :tick, ms)
   end
 end
-
 ```
