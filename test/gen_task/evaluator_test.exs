@@ -333,4 +333,126 @@ defmodule GenTask.EvaluatorTest do
       assert report =~ "did not pass"
     end
   end
+
+  describe "no_op_helpers/1 (dead-code lint, 2026-07-12 spot check)" do
+    test "flags an identity defp used once (the 018_003 ignore/1 pattern)" do
+      src = """
+      defmodule A do
+        def go(state) do
+          {:reply, {:ok, result}, new_state} = {:reply, {:ok, nil}, state} |> ignore()
+          _ = result
+          _ = new_state
+          state
+        end
+
+        defp ignore(reply), do: reply
+      end
+      """
+
+      assert Evaluator.no_op_helpers(src) == [:ignore]
+    end
+
+    test "does not flag a real helper or a widely-used identity" do
+      src = """
+      defmodule A do
+        def a(x), do: wrap(x)
+        def b(x), do: wrap(x)
+        def c(x), do: wrap(x)
+        defp wrap(v), do: v
+        defp double(v), do: v * 2
+        def d(x), do: double(x)
+      end
+      """
+
+      assert Evaluator.no_op_helpers(src) == []
+    end
+
+    test "[] on unparsable source" do
+      assert Evaluator.no_op_helpers("defmodule Broken do def") == []
+    end
+  end
+
+  describe "undocumented_api_calls/3 (blind-solve rule, 2026-07-12 spot check)" do
+    @lint_solution """
+    defmodule SlidingUniqueCounter do
+      def start_link(opts), do: opts
+      def add(pid, m), do: {pid, m}
+      def distinct_count(pid, w), do: {pid, w}
+      def tracked_key_count(pid), do: pid
+    end
+    """
+
+    @lint_harness """
+    defmodule T do
+      test "counts" do
+        assert SlidingUniqueCounter.distinct_count(pid, 1000) == 1
+      end
+
+      test "cleanup" do
+        assert SlidingUniqueCounter.tracked_key_count(pid) == 0
+      end
+    end
+    """
+
+    test "flags a harness-called function the prompt never mentions" do
+      prompt = "Implement add/2 and distinct_count/2 for a sliding window counter."
+
+      assert Evaluator.undocumented_api_calls(@lint_harness, prompt, @lint_solution) ==
+               ["SlidingUniqueCounter.tracked_key_count"]
+    end
+
+    test "silent when the prompt documents every asserted call" do
+      prompt = "Implement add/2, distinct_count/2 and tracked_key_count/1."
+      assert Evaluator.undocumented_api_calls(@lint_harness, prompt, @lint_solution) == []
+    end
+
+    test "OTP-conventional names are implicitly documented" do
+      harness = "SlidingUniqueCounter.start_link([])"
+      assert Evaluator.undocumented_api_calls(harness, "a GenServer", @lint_solution) == []
+    end
+
+    test "functions ending in ? match prompt mentions like `member?(set, x)`" do
+      sol = "defmodule BloomFilter do\n  def member?(f, x), do: {f, x}\nend"
+      harness = "assert BloomFilter.member?(f, 1)"
+
+      assert Evaluator.undocumented_api_calls(harness, "Implement `member?(filter, x)`.", sol) ==
+               []
+
+      assert Evaluator.undocumented_api_calls(harness, "Implement insert only.", sol) ==
+               ["BloomFilter.member?"]
+    end
+  end
+
+  describe "quality_shortfall wiring for the two new lints" do
+    test "dead-code and coverage shortfalls appear in the joined report" do
+      json = %{
+        "compile_warnings" => 0,
+        "tests_total" => 5,
+        "analysis" => %{
+          "has_moduledoc" => true,
+          "has_typespecs" => true,
+          "has_doc_on_public_fns" => true,
+          "todo_count" => 0,
+          "lines_over_98" => 0,
+          "sql_injection_risk" => false,
+          "public_fn_count" => 2
+        }
+      }
+
+      files = %{
+        "solution.ex" => """
+        defmodule A do
+          def go(x), do: keep(x)
+          defp keep(v), do: v
+        end
+        """,
+        "test_harness.exs" => "assert A.hidden_probe(1) == 1",
+        "prompt.md" => "Implement go/1."
+      }
+
+      report = Evaluator.quality_shortfall(json, files)
+      assert report =~ "no-op identity helper(s) keep"
+      assert report =~ "A.hidden_probe"
+    end
+  end
 end
