@@ -21,8 +21,12 @@ mix test >/dev/null
 range="@{upstream}..HEAD"
 git rev-parse --abbrev-ref '@{upstream}' >/dev/null 2>&1 || range="HEAD~10..HEAD"
 
-families=$(git diff --name-only "$range" -- tasks/ 2>/dev/null |
-  sed -E 's#^tasks/(wt_|tfim_)?([0-9]+_[0-9]+).*#\2#' | sort -u | head -20)
+# head must NOT sit inside the pipeline: with a large diff (e.g. the 957-dir
+# bugfix mint) it closes the pipe early, sort dies of SIGPIPE, and pipefail
+# kills the whole hook with no output (found live 2026-07-13).
+all_families=$(git diff --name-only "$range" -- tasks/ 2>/dev/null |
+  sed -E 's#^tasks/(wt_|tfim_|bugfix_|repair_)?([0-9]+_[0-9]+).*#\2#' | sort -u)
+families=$(printf '%s\n' "$all_families" | head -20)
 
 if [ -n "$families" ]; then
   globs=$(echo "$families" | sed 's/.*/*&*/' | paste -sd, -)
