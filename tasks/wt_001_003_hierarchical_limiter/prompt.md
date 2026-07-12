@@ -72,7 +72,8 @@ defmodule HierarchicalLimiter do
 
       iex> {:ok, pid} = HierarchicalLimiter.start_link([])
       iex> tiers = [{:per_second, 10, 1_000}, {:per_minute, 100, 60_000}]
-      iex> {:ok, %{per_second: 9, per_minute: 99}} = HierarchicalLimiter.check(pid, "user:1", tiers)
+      iex> {:ok, %{per_second: 9, per_minute: 99}} =
+      ...>   HierarchicalLimiter.check(pid, "user:1", tiers)
 
   """
 

@@ -41,10 +41,10 @@ I need the following pieces:
 **Router:** Mount the route as `post "/api/items/bulk", BulkItemController, :create` inside an `/api` scope with the `:api` pipeline.
 
 Give me the complete modules in separate files. Use only Phoenix, Ecto, and standard library — no external dependencies. Assume a Postgres repo at `MyApp.Repo` already exists and is configured.
-
 ## Additional interface contract
 
-- Module names: router `MyAppWeb.Router`, schema `MyApp.Catalog.Item`, repo `MyApp.Repo` (provided, already configured and started, by the test environment). The tests dispatch requests straight to `MyAppWeb.Router` with `Plug.Test` and parse the JSON request body with `Plug.Parsers` (no endpoint in front).
+- Use exactly these module names: router `MyAppWeb.Router`, schema `MyApp.Catalog.Item`, repo `MyApp.Repo`. The repo itself is provided (already configured and started) by the test environment — do NOT define the repo module or a Phoenix endpoint. Your migration file will be run against it before the tests.
+- The tests dispatch requests straight to `MyAppWeb.Router` with `Plug.Test` and parse the JSON request body with `Plug.Parsers` (no endpoint in front), so the route must be servable by the router pipeline alone.
 
 ## Module under test
 
@@ -55,14 +55,17 @@ defmodule MyApp.Catalog.Item do
   import Ecto.Changeset
 
   schema "items" do
-    field :name, :string
-    field :price, :integer
-    field :description, :string
+    field(:name, :string)
+    field(:price, :integer)
+    field(:description, :string)
 
     timestamps()
   end
 
-  @doc "Validates a catalog item: name 1-255 chars, price integer > 0, optional description <= 1000 chars."
+  @doc """
+  Validates a catalog item: name 1-255 chars, price integer > 0, optional
+  description <= 1000 chars.
+  """
   def changeset(item, attrs) do
     item
     |> cast(attrs, [:name, :price, :description])
@@ -97,6 +100,7 @@ defmodule MyApp.Catalog do
     * `partial: true` — inserts each valid item individually (each inside its own
       transaction) and skips invalid ones, returning `{:ok, results}`.
   """
+  @spec bulk_create_items([map()], keyword()) :: %{created: [map()], errors: [map()]}
   def bulk_create_items(list_of_attrs, opts \\ []) do
     if Keyword.get(opts, :partial, false) do
       partial_create(list_of_attrs)
@@ -238,13 +242,13 @@ defmodule MyAppWeb.Router do
   use MyAppWeb, :router
 
   pipeline :api do
-    plug :accepts, ["json"]
+    plug(:accepts, ["json"])
   end
 
   scope "/api", MyAppWeb do
-    pipe_through :api
+    pipe_through(:api)
 
-    post "/items/bulk", BulkItemController, :create
+    post("/items/bulk", BulkItemController, :create)
   end
 end
 </file>
@@ -255,9 +259,9 @@ defmodule MyApp.Repo.Migrations.CreateItems do
 
   def change do
     create table(:items) do
-      add :name, :string, null: false
-      add :price, :integer, null: false
-      add :description, :text
+      add(:name, :string, null: false)
+      add(:price, :integer, null: false)
+      add(:description, :text)
 
       timestamps()
     end

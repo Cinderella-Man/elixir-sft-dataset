@@ -64,6 +64,7 @@ defmodule HistogramPercentile do
     GenServer.start_link(__MODULE__, opts, name: name)
   end
 
+  @doc "Records `value` into the rolling histogram for `name`. Returns `:ok`."
   @spec record(term, number) :: :ok
   def record(name, value) when is_number(value) do
     GenServer.call(@default_name, {:record, name, value})
@@ -178,7 +179,7 @@ defmodule HistogramPercentile do
 
   defp validate_edges(other) do
     raise ArgumentError,
-          ":edges must be a strictly increasing list of at least two numbers, got: #{inspect(other)}"
+          ":edges must be a strictly increasing list of >= 2 numbers, got: #{inspect(other)}"
   end
 
   defp validate_positive(n, _name) when is_integer(n) and n > 0, do: n
@@ -187,4 +188,5 @@ defmodule HistogramPercentile do
     raise ArgumentError, "#{inspect(name)} must be a positive integer, got: #{inspect(other)}"
   end
 end
+
 ```

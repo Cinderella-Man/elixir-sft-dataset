@@ -65,19 +65,19 @@ defmodule Reconciler do
       #=> }
   """
 
-  @type record :: map()
+  @type record_t :: map()
   @type diff_map :: %{optional(atom()) => %{left: term(), right: term()}}
 
   @type matched_entry :: %{
-          left: record(),
-          right: record(),
+          left: record_t(),
+          right: record_t(),
           differences: diff_map()
         }
 
   @type result :: %{
           matched: [matched_entry()],
-          only_in_left: [record()],
-          only_in_right: [record()]
+          only_in_left: [record_t()],
+          only_in_right: [record_t()]
         }
 
   @doc """
@@ -99,7 +99,7 @@ defmodule Reconciler do
     * `:only_in_left`  — records found only in `left`.
     * `:only_in_right` — records found only in `right`.
   """
-  @spec reconcile([record()], [record()], keyword()) :: result()
+  @spec reconcile([record_t()], [record_t()], keyword()) :: result()
   def reconcile(left, right, opts) when is_list(left) and is_list(right) and is_list(opts) do
     key_fields = fetch_key_fields!(opts)
     compare_fields_opt = Keyword.get(opts, :compare_fields, nil)
@@ -157,14 +157,14 @@ defmodule Reconciler do
   # The composite key is a tuple of the values at the key fields in order,
   # e.g. {org_id_val, user_id_val}.  A single-field key uses a 1-tuple so
   # the representation is uniform and avoids collisions with plain values.
-  @spec index_by([record()], [atom()]) :: %{tuple() => record()}
+  @spec index_by([record_t()], [atom()]) :: %{tuple() => record_t()}
   defp index_by(records, key_fields) do
     Map.new(records, fn record ->
       {composite_key(record, key_fields), record}
     end)
   end
 
-  @spec composite_key(record(), [atom()]) :: tuple()
+  @spec composite_key(record_t(), [atom()]) :: tuple()
   defp composite_key(record, key_fields) do
     key_fields
     |> Enum.map(&Map.get(record, &1))
@@ -174,7 +174,7 @@ defmodule Reconciler do
   # Determines which fields to compare for a matched pair.
   # If compare_fields is explicitly provided, use it directly.
   # Otherwise, derive it as: (all keys in left ∪ right) minus key_fields.
-  @spec resolve_compare_fields(record(), record(), [atom()], [atom()] | nil) :: [atom()]
+  @spec resolve_compare_fields(record_t(), record_t(), [atom()], [atom()] | nil) :: [atom()]
   defp resolve_compare_fields(_left, _right, _key_fields, compare_fields)
        when is_list(compare_fields),
        do: compare_fields
@@ -190,7 +190,7 @@ defmodule Reconciler do
 
   # Compares `left` and `right` on the given fields using `==`.
   # Missing fields are treated as nil.
-  @spec diff(record(), record(), [atom()]) :: diff_map()
+  @spec diff(record_t(), record_t(), [atom()]) :: diff_map()
   defp diff(left, right, fields) do
     Enum.reduce(fields, %{}, fn field, acc ->
       lv = Map.get(left, field)

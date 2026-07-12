@@ -113,10 +113,7 @@ defmodule MultiSchemaIngestion do
         {:ok, contents}
 
       {:error, reason} ->
-        Logger.error(
-          "[MultiSchemaIngestion] Could not read file #{inspect(path)}: #{inspect(reason)}"
-        )
-
+        Logger.error("[Ingestion] cannot read #{inspect(path)}: #{inspect(reason)}")
         {:error, :file_not_found}
     end
   end
@@ -153,10 +150,7 @@ defmodule MultiSchemaIngestion do
       Enum.reduce(records, {%{}, 0, 0}, fn record, {groups, unr, miss} ->
         case Map.fetch(record, type_field) do
           :error ->
-            Logger.warning(
-              "[MultiSchemaIngestion] Record missing '#{type_field}' field, skipping"
-            )
-
+            Logger.warning("[Ingestion] record missing '#{type_field}', skipping")
             {groups, unr, miss + 1}
 
           {:ok, type_value} ->
@@ -265,7 +259,6 @@ defmodule MultiSchemaIngestion do
     |> MapSet.new()
   end
 
-  @spec prepare_row(map(), MapSet.t(String.t()), String.t(), NaiveDateTime.t()) :: map()
   defp prepare_row(row, schema_keys, type_field, now) do
     # TODO
   end
@@ -290,4 +283,5 @@ defmodule MultiSchemaIngestion do
     Map.get(target, schema, :nothing)
   end
 end
+
 ```

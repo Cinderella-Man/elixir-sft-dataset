@@ -121,7 +121,7 @@ defmodule TwoPhaseSet do
 
       {:error, :not_a_member} ->
         raise ArgumentError,
-              "cannot remove element #{inspect(element)}: it is not a current member of the 2P-Set"
+              "cannot remove element #{inspect(element)}: not a current member"
     end
   end
 
@@ -247,4 +247,5 @@ defmodule TwoPhaseSet do
     }
   end
 end
+
 ```

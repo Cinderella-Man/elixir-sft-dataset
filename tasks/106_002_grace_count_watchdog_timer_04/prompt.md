@@ -60,7 +60,17 @@ defmodule GraceWatchdog do
     GenServer.start_link(__MODULE__, %{}, name: name)
   end
 
-  @spec register(term(), pid(), non_neg_integer(), pos_integer(), (term(), pos_integer() -> any())) ::
+  @doc """
+  Registers a watchdog for `name`/`pid` that fires `on_timeout_fn` after `max_misses`
+  consecutive missed heartbeats spaced `interval_ms` apart. Returns `:ok`.
+  """
+  @spec register(
+          term(),
+          pid(),
+          non_neg_integer(),
+          pos_integer(),
+          (term(), pos_integer() -> any())
+        ) ::
           :ok
   def register(name, pid, interval_ms, max_misses, on_timeout_fn)
       when is_integer(interval_ms) and interval_ms >= 0 and is_integer(max_misses) and
@@ -130,4 +140,5 @@ defmodule GraceWatchdog do
     _, _ -> :ok
   end
 end
+
 ```

@@ -25,10 +25,10 @@ defmodule LRUCache do
 
   Two tables are created and owned by the GenServer process:
 
-  | Table            | Type         | Key → Value                    | Purpose                     |
-  |------------------|--------------|--------------------------------|-----------------------------|
-  | `<name>_data`    | `:set`       | `key → {value, timestamp}`     | O(1) key lookup             |
-  | `<name>_order`   | `:ordered_set` | `timestamp → key`            | O(log n) LRU eviction       |
+  | Table          | Type           | Key → Value                | Purpose               |
+  |----------------|----------------|----------------------------|-----------------------|
+  | `<name>_data`  | `:set`         | `key → {value, timestamp}` | O(1) key lookup       |
+  | `<name>_order` | `:ordered_set` | `timestamp → key`          | O(log n) LRU eviction |
 
   The *timestamp* is a monotonically increasing integer counter kept in the
   GenServer state – never a wall-clock value – so the cache is fully
@@ -240,8 +240,6 @@ defmodule LRUCache do
     {c + 1, %{state | counter: c + 1}}
   end
 
-  # Evict the LRU entry when the cache is at max capacity.
-  @spec maybe_evict(state()) :: state()
   defp maybe_evict(state) do
     # TODO
   end
@@ -253,4 +251,5 @@ defmodule LRUCache do
   @spec order_table_name(name()) :: atom()
   defp order_table_name(name), do: :"#{name}_order"
 end
+
 ```

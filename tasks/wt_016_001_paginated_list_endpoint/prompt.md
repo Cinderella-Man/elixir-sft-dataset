@@ -43,10 +43,11 @@ I need the following pieces:
 `total_pages` must be computed as `ceil(total_count / page_size)`. When there are zero items, `total_pages` should be 0. When the requested page is beyond `total_pages`, return an empty `data` list but still include correct metadata.
 
 Use only standard Phoenix/Ecto — no external pagination libraries. Give me all the modules in separate files.
-
 ## Additional interface contract
 
-- Module names: router `PaginatedListWeb.Router`, schema `PaginatedList.Item`, repo `PaginatedList.Repo` (provided, already configured and started, by the test environment). The tests dispatch requests straight to `PaginatedListWeb.Router` with `Plug.Test` (no endpoint in front); fixtures are bulk-inserted with `Repo.insert_all(Item, entries, returning: true)`.
+- Use exactly these module names: router `PaginatedListWeb.Router`, schema `PaginatedList.Item`, repo `PaginatedList.Repo`. The repo itself is provided (already configured and started) by the test environment — do NOT define the repo module or a Phoenix endpoint. Your migration file will be run against it before the tests.
+- The schema must also have an `:updated_at` field (utc_datetime_usec): test fixtures are bulk-inserted with `Repo.insert_all(Item, entries, returning: true)` where each entry sets `:name`, `:inserted_at`, and `:updated_at`.
+- The tests dispatch requests straight to `PaginatedListWeb.Router` with `Plug.Test` (no endpoint in front), so `GET /api/items` must be servable by the router pipeline alone.
 
 ## Module under test
 
@@ -57,7 +58,7 @@ defmodule PaginatedList.Item do
   import Ecto.Changeset
 
   schema "items" do
-    field :name, :string
+    field(:name, :string)
 
     timestamps(type: :utc_datetime_usec)
   end
@@ -77,12 +78,12 @@ defmodule PaginatedList.Repo.Migrations.CreateItems do
 
   def change do
     create table(:items) do
-      add :name, :string, null: false
+      add(:name, :string, null: false)
 
       timestamps(type: :utc_datetime_usec)
     end
 
-    create index(:items, [:inserted_at, :id])
+    create(index(:items, [:inserted_at, :id]))
   end
 end
 </file>
@@ -98,9 +99,9 @@ defmodule PaginatedList.Items do
   alias PaginatedList.Item
   alias PaginatedList.Repo
 
-  @default_page      1
+  @default_page 1
   @default_page_size 20
-  @max_page_size     100
+  @max_page_size 100
 
   @spec list_items(map()) :: %{
           data: [Item.t()],
@@ -112,9 +113,9 @@ defmodule PaginatedList.Items do
           }
         }
   def list_items(params \\ %{}) do
-    page      = parse_page(params)
+    page = parse_page(params)
     page_size = parse_page_size(params)
-    offset    = (page - 1) * page_size
+    offset = (page - 1) * page_size
 
     base_query = from(i in Item, order_by: [asc: i.inserted_at, asc: i.id])
 
@@ -131,9 +132,9 @@ defmodule PaginatedList.Items do
       data: items,
       meta: %{
         current_page: page,
-        page_size:    page_size,
-        total_count:  total_count,
-        total_pages:  total_pages
+        page_size: page_size,
+        total_count: total_count,
+        total_pages: total_pages
       }
     }
   end
@@ -141,17 +142,19 @@ defmodule PaginatedList.Items do
   defp parse_page(%{"page" => raw}) do
     case Integer.parse(to_string(raw)) do
       {n, _} when n >= 1 -> n
-      _                  -> @default_page
+      _ -> @default_page
     end
   end
+
   defp parse_page(_params), do: @default_page
 
   defp parse_page_size(%{"page_size" => raw}) do
     case Integer.parse(to_string(raw)) do
       {n, _} when n >= 1 -> min(n, @max_page_size)
-      _                  -> @default_page_size
+      _ -> @default_page_size
     end
   end
+
   defp parse_page_size(_params), do: @default_page_size
 
   defp compute_total_pages(0, _page_size), do: 0
@@ -172,17 +175,17 @@ defmodule PaginatedListWeb.ItemController do
       data: Enum.map(items, &serialize_item/1),
       meta: %{
         current_page: meta.current_page,
-        page_size:    meta.page_size,
-        total_count:  meta.total_count,
-        total_pages:  meta.total_pages
+        page_size: meta.page_size,
+        total_count: meta.total_count,
+        total_pages: meta.total_pages
       }
     })
   end
 
   defp serialize_item(item) do
     %{
-      id:          item.id,
-      name:        item.name,
+      id: item.id,
+      name: item.name,
       inserted_at: DateTime.to_iso8601(item.inserted_at)
     }
   end
@@ -194,13 +197,13 @@ defmodule PaginatedListWeb.Router do
   use PaginatedListWeb, :router
 
   pipeline :api do
-    plug :accepts, ["json"]
+    plug(:accepts, ["json"])
   end
 
   scope "/api", PaginatedListWeb do
-    pipe_through :api
+    pipe_through(:api)
 
-    get "/items", ItemController, :index
+    get("/items", ItemController, :index)
   end
 end
 </file>

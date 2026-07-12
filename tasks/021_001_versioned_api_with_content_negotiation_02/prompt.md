@@ -11,17 +11,16 @@ encoded with `Jason`, and `halt/1` the connection.
 
 ```elixir
 defmodule VersionedApi.Views.UserView do
+  @moduledoc "Renders a user map per API version: v1 is a flat name, v2 is structured."
+
+  @doc ~s|Renders `u` for API `version` ("v1" or "v2") as a plain map.|
+  @spec render(String.t(), map()) :: map()
   def render("v1", u), do: %{name: u.first_name <> " " <> u.last_name, email: u.email}
 
-  def render("v2", u),
-    do: %{
-      first_name: u.first_name,
-      last_name: u.last_name,
-      email: u.email,
-      created_at: u.created_at
-    }
+  def render("v2", u) do
+    %{first_name: u.first_name, last_name: u.last_name, email: u.email, created_at: u.created_at}
+  end
 end
-
 defmodule VersionedApi.Plugs.ApiVersion do
   import Plug.Conn
   def init(opts), do: opts
@@ -30,7 +29,6 @@ defmodule VersionedApi.Plugs.ApiVersion do
     # TODO
   end
 end
-
 defmodule VersionedApi.Router do
   use Plug.Router
 
@@ -58,7 +56,8 @@ defmodule VersionedApi.Router do
         send_json(conn, 404, %{error: "not found"})
 
       user ->
-        send_json(conn, 200, VersionedApi.Views.UserView.render(conn.assigns.api_version, user))
+        rendered = VersionedApi.Views.UserView.render(conn.assigns.api_version, user)
+        send_json(conn, 200, rendered)
     end
   end
 
@@ -70,4 +69,5 @@ defmodule VersionedApi.Router do
     conn |> put_resp_content_type("application/json") |> send_resp(status, Jason.encode!(body))
   end
 end
+
 ```

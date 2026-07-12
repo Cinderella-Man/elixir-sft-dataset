@@ -80,6 +80,7 @@ defmodule PromoCodes do
   Returns `{:ok, code}` on success or `{:error, reason}` where `reason` is one
   of `:invalid_type` or `:already_exists`.
   """
+  @spec create(map()) :: {:ok, map()} | {:error, atom()}
   def create(attrs) when is_map(attrs) do
     GenServer.call(server(), {:create, attrs})
   end
@@ -92,6 +93,8 @@ defmodule PromoCodes do
 
   `opts` may contain `:user_id` for per-user usage limits.
   """
+  @spec apply(String.t(), non_neg_integer(), keyword()) ::
+          {:ok, non_neg_integer()} | {:error, atom()}
   def apply(code_string, order_total, opts \\ [])
       when is_binary(code_string) and is_integer(order_total) and order_total >= 0 do
     GenServer.call(server(), {:apply, code_string, order_total, opts})
@@ -273,4 +276,5 @@ defmodule PromoCodes do
     # TODO
   end
 end
+
 ```

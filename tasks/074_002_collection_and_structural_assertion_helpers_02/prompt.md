@@ -136,7 +136,7 @@ defmodule AssertHelpers do
   Returns the first out-of-order adjacent pair in `list` according to `key_fun`.
 
   Yields `:ok` when the list is sorted (non-strict ascending), or
-  {:unsorted, index, a, b} for the first pair where `key_fun.(a) > key_fun.(b)`.
+  `{:unsorted, index, a, b}` for the first pair where `key_fun.(a) > key_fun.(b)`.
   Intended for internal use by `assert_sorted_by/2`.
   """
   @spec __first_unsorted__([term()], (term() -> term())) ::
@@ -145,4 +145,5 @@ defmodule AssertHelpers do
     # TODO
   end
 end
+
 ```

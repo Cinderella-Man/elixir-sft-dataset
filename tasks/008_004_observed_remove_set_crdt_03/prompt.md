@@ -118,7 +118,7 @@ defmodule ORSet do
 
       {:error, :not_a_member} ->
         raise ArgumentError,
-              "cannot remove element #{inspect(element)}: it is not a current member of the OR-Set"
+              "cannot remove element #{inspect(element)}: not a current member"
     end
   end
 
@@ -156,7 +156,7 @@ defmodule ORSet do
 
   def merge(_server, invalid) do
     raise ArgumentError,
-          "remote_state must have :entries, :tombstones, and :clock keys, got: #{inspect(invalid)}"
+          "remote_state must have :entries, :tombstones, :clock keys, got: #{inspect(invalid)}"
   end
 
   @doc """
@@ -250,7 +250,6 @@ defmodule ORSet do
     end
   end
 
-  @spec compute_members(or_state()) :: MapSet.t()
   defp compute_members(%{entries: entries}) do
     # TODO
   end
@@ -289,4 +288,5 @@ defmodule ORSet do
     %{entries: merged_entries, tombstones: merged_tombstones, clock: merged_clock}
   end
 end
+
 ```

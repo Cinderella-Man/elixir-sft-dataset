@@ -210,8 +210,6 @@ defmodule FilteredEventBus do
     Enum.all?(filter, &valid_clause?/1)
   end
 
-  defp valid_filter?(_), do: false
-
   defp valid_clause?({op, path, _val})
        when op in [:eq, :neq, :gt, :lt, :gte, :lte] and is_list(path) do
     valid_path?(path)

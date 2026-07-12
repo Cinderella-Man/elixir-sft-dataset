@@ -84,10 +84,10 @@ Use the app name `soft_crud` with module prefix `SoftCrud`. Organize the code as
 - `priv/repo/migrations/..._create_documents.exs` — migration
 
 Use only standard Phoenix/Ecto dependencies. Give me all the files needed for a working application.
-
 ## Additional interface contract
 
-- Use exactly these module names: router `SoftCrudWeb.Router`, context `SoftCrud.Documents` (with `create_document/1` and `soft_delete_document/1` returning `{:ok, doc}`), repo `SoftCrud.Repo`. The repo itself is provided (already configured and started) by the test environment. The tests dispatch requests straight to `SoftCrudWeb.Router` with `Plug.Test` (no endpoint in front).
+- Use exactly these module names: router `SoftCrudWeb.Router`, context `SoftCrud.Documents` (with `create_document/1` and `soft_delete_document/1` returning `{:ok, doc}`), repo `SoftCrud.Repo`. The repo itself is provided (already configured and started) by the test environment — do NOT define the repo module or a Phoenix endpoint. Your migration file will be run against it before the tests.
+- The tests dispatch requests straight to `SoftCrudWeb.Router` with `Plug.Test` (no endpoint in front), so every route must be servable by the router pipeline alone.
 - Successful creation returns **201** with the document JSON.
 
 ## Module under test
@@ -99,14 +99,15 @@ defmodule SoftCrud.Documents.Document do
   import Ecto.Changeset
 
   schema "documents" do
-    field :title, :string
-    field :content, :string
-    field :deleted_at, :utc_datetime
+    field(:title, :string)
+    field(:content, :string)
+    field(:deleted_at, :utc_datetime)
 
     timestamps(type: :utc_datetime)
   end
 
   @doc "Changeset for creating and updating title/content."
+  @spec changeset(struct(), map()) :: Ecto.Changeset.t()
   def changeset(document, attrs) do
     document
     |> cast(attrs, [:title, :content])
@@ -197,14 +198,14 @@ defmodule SoftCrudWeb.Router do
   use SoftCrudWeb, :router
 
   pipeline :api do
-    plug :accepts, ["json"]
+    plug(:accepts, ["json"])
   end
 
   scope "/api", SoftCrudWeb do
-    pipe_through :api
+    pipe_through(:api)
 
-    resources "/documents", DocumentController, only: [:index, :create, :show, :update, :delete]
-    post "/documents/:id/restore", DocumentController, :restore
+    resources("/documents", DocumentController, only: [:index, :create, :show, :update, :delete])
+    post("/documents/:id/restore", DocumentController, :restore)
   end
 end
 </file>
@@ -236,7 +237,7 @@ defmodule SoftCrudWeb.DocumentController do
   alias SoftCrud.Documents
   alias SoftCrud.Documents.Document
 
-  action_fallback SoftCrudWeb.FallbackController
+  action_fallback(SoftCrudWeb.FallbackController)
 
   def index(conn, params) do
     opts = parse_include_deleted(params)
@@ -340,14 +341,14 @@ defmodule SoftCrud.Repo.Migrations.CreateDocuments do
 
   def change do
     create table(:documents) do
-      add :title, :string, null: false
-      add :content, :text, null: false
-      add :deleted_at, :utc_datetime, null: true
+      add(:title, :string, null: false)
+      add(:content, :text, null: false)
+      add(:deleted_at, :utc_datetime, null: true)
 
       timestamps(type: :utc_datetime)
     end
 
-    create index(:documents, [:deleted_at])
+    create(index(:documents, [:deleted_at]))
   end
 end
 </file>

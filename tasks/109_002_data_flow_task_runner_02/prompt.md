@@ -60,6 +60,8 @@ defmodule DataFlowRunner do
     GenServer.start_link(__MODULE__, %{}, name: name)
   end
 
+  @spec submit(GenServer.server(), term(), keyword()) :: :ok | {:error, atom()}
+  @doc "Submits `task_id` with its dependencies/opts to runner `name`. Returns `:ok`."
   def submit(name, task_id, opts) do
     depends_on = Keyword.get(opts, :depends_on, [])
 
@@ -157,4 +159,5 @@ defmodule DataFlowRunner do
     end)
   end
 end
+
 ```

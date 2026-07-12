@@ -39,7 +39,8 @@ defmodule IntervalScheduler do
   ## Examples
 
       iex> {:ok, pid} = IntervalScheduler.start_link([])
-      iex> :ok = IntervalScheduler.register(pid, "heartbeat", {:every, 30, :seconds}, {IO, :puts, ["tick"]})
+      iex> mfa = {IO, :puts, ["tick"]}
+      iex> :ok = IntervalScheduler.register(pid, "heartbeat", {:every, 30, :seconds}, mfa)
 
   """
 
@@ -59,6 +60,10 @@ defmodule IntervalScheduler do
 
   @spec register(GenServer.server(), term(), tuple(), {module(), atom(), list()}) ::
           :ok | {:error, :invalid_interval | :already_exists}
+  @doc """
+  Registers a recurring `job_name` that runs `mfa` on `interval_spec`. Returns `:ok`,
+  or `{:error, :invalid_interval | :already_exists}`.
+  """
   def register(server, job_name, interval_spec, {mod, fun, args} = mfa)
       when is_atom(mod) and is_atom(fun) and is_list(args) do
     GenServer.call(server, {:register, job_name, interval_spec, mfa})
@@ -191,7 +196,9 @@ defmodule IntervalScheduler do
   # Parsing and execution helpers
   # ---------------------------------------------------------------------------
 
-  # TODO defp parse_interval  
+  defp parse_interval({:every, n, :seconds}) when is_integer(n) and n > 0 do
+    # TODO
+  end
 
   # Guard the scheduler against job crashes.  We ignore the return value —
   # interval jobs fire regardless of outcome.
@@ -211,4 +218,5 @@ defmodule IntervalScheduler do
     Process.send_after(self(), :tick, ms)
   end
 end
+
 ```

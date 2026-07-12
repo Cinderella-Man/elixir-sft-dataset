@@ -131,10 +131,7 @@ defmodule MultiSchemaIngestion do
         {:ok, contents}
 
       {:error, reason} ->
-        Logger.error(
-          "[MultiSchemaIngestion] Could not read file #{inspect(path)}: #{inspect(reason)}"
-        )
-
+        Logger.error("[Ingestion] cannot read #{inspect(path)}: #{inspect(reason)}")
         {:error, :file_not_found}
     end
   end
@@ -161,7 +158,6 @@ defmodule MultiSchemaIngestion do
   # Record classification and grouping
   # ---------------------------------------------------------------------------
 
-  @spec process_records(repo(), routing(), [map()], map()) :: stats()
   defp process_records(repo, routing, records, cfg) do
     # TODO
   end
@@ -267,4 +263,5 @@ defmodule MultiSchemaIngestion do
     Map.get(target, schema, :nothing)
   end
 end
+
 ```

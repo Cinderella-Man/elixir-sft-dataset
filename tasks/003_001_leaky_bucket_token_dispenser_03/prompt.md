@@ -20,7 +20,7 @@ defmodule LeakyBucket do
 
   use GenServer
 
-  # ── Public API ──────────────────────────────────────────────────────────
+  # ── Public API ──────────────────────────────────────────────────────────────────────────────
 
   @doc """
   Starts the LeakyBucket GenServer.
@@ -53,7 +53,7 @@ defmodule LeakyBucket do
     GenServer.call(server, {:acquire, bucket_name, capacity, refill_rate, tokens})
   end
 
-  # ── GenServer callbacks ────────────────────────────────────────────────
+  # ── GenServer callbacks ─────────────────────────────────────────────────────────────────────
 
   defmodule State do
     @moduledoc false
@@ -85,7 +85,11 @@ defmodule LeakyBucket do
   end
 
   @impl true
-  def handle_call({:acquire, bucket_name, capacity, refill_rate, tokens}, _from, %State{} = state) do
+  def handle_call(
+        {:acquire, bucket_name, capacity, refill_rate, tokens},
+        _from,
+        %State{} = state
+      ) do
     now = state.clock.()
 
     bucket =
@@ -117,7 +121,6 @@ defmodule LeakyBucket do
     end
   end
 
-  @impl true
   def handle_info(:cleanup, %State{} = state) do
     # TODO
   end
@@ -125,7 +128,7 @@ defmodule LeakyBucket do
   # Catch-all so unexpected messages don't crash the process.
   def handle_info(_msg, state), do: {:noreply, state}
 
-  # ── Private helpers ────────────────────────────────────────────────────
+  # ── Private helpers ─────────────────────────────────────────────────────────────────────────
 
   defp refill(%Bucket{} = bucket, now, capacity, refill_rate) do
     elapsed_ms = max(now - bucket.last_access, 0)
@@ -151,4 +154,5 @@ defmodule LeakyBucket do
     {gen_opts, rest}
   end
 end
+
 ```

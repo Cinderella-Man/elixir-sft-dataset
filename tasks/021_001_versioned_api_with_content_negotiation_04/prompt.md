@@ -4,50 +4,41 @@ Implement the private `send_json/3` helper function. It takes a `conn`, an HTTP
 encoded to JSON via `Jason.encode!/1`. Return the resulting `conn`.
 
 ```elixir
+defmodule VersionedApi.Views.UserView do
+  @moduledoc "Renders a user map per API version: v1 is a flat name, v2 is structured."
+
+  @doc ~s|Renders `u` for API `version` ("v1" or "v2") as a plain map.|
+  @spec render(String.t(), map()) :: map()
+  def render("v1", u), do: %{name: u.first_name <> " " <> u.last_name, email: u.email}
+
+  def render("v2", u) do
+    %{first_name: u.first_name, last_name: u.last_name, email: u.email, created_at: u.created_at}
+  end
+end
 defmodule VersionedApi.Plugs.ApiVersion do
   import Plug.Conn
-
   def init(opts), do: opts
 
   def call(conn, opts) do
-    supported = Keyword.fetch!(opts, :supported)
-    default = Keyword.fetch!(opts, :default)
+    supported = Keyword.get(opts, :supported, ["v1", "v2"])
+    default = Keyword.get(opts, :default, "v2")
 
-    case get_req_header(conn, "accept-version") do
-      [] ->
-        assign(conn, :api_version, default)
+    version =
+      case get_req_header(conn, "accept-version") do
+        [v | _] -> v
+        [] -> default
+      end
 
-      [v | _] ->
-        if v in supported do
-          assign(conn, :api_version, v)
-        else
-          conn
-          |> put_resp_content_type("application/json")
-          |> send_resp(
-            406,
-            Jason.encode!(%{error: "unsupported version", supported: supported})
-          )
-          |> halt()
-        end
+    if version in supported do
+      assign(conn, :api_version, version)
+    else
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(406, Jason.encode!(%{error: "unsupported version", supported: supported}))
+      |> halt()
     end
   end
 end
-
-defmodule VersionedApi.Views.UserView do
-  def render("v1", user) do
-    %{name: "#{user.first_name} #{user.last_name}", email: user.email}
-  end
-
-  def render("v2", user) do
-    %{
-      first_name: user.first_name,
-      last_name: user.last_name,
-      email: user.email,
-      created_at: user.created_at
-    }
-  end
-end
-
 defmodule VersionedApi.Router do
   use Plug.Router
 
@@ -88,4 +79,5 @@ defmodule VersionedApi.Router do
     # TODO
   end
 end
+
 ```

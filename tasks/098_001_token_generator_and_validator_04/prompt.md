@@ -113,6 +113,7 @@ defmodule SecureToken do
   wrong-secret token that also happens to be past its expiry returns
   `:invalid_signature`, never `:expired`.
   """
+  @spec verify(token(), binary(), opts()) :: {:ok, term()} | {:error, reason()}
   def verify(token, secret, opts \\ [])
 
   def verify(token, secret, opts) when is_binary(token) and is_binary(secret) do

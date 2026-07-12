@@ -176,10 +176,10 @@ defmodule PasswordPolicy do
     if password in list, do: {:violation, :reused_password}, else: :ok
   end
 
-  defp check_username_similarity(password, %{
-         username: username,
-         max_username_similarity: threshold
-       }) do
+  defp check_username_similarity(
+         password,
+         %{username: username, max_username_similarity: threshold}
+       ) do
     dist = levenshtein(String.downcase(password), String.downcase(username))
     if dist > threshold, do: :ok, else: {:violation, :too_similar_to_username}
   end
@@ -189,8 +189,6 @@ defmodule PasswordPolicy do
   # O(min(m,n)) space.
   # ---------------------------------------------------------------------------
 
-  @doc false
-  @spec levenshtein(String.t(), String.t()) :: non_neg_integer()
   def levenshtein(a, b) when is_binary(a) and is_binary(b) do
     # TODO
   end
@@ -237,4 +235,5 @@ defmodule PasswordPolicy do
     |> elem(n)
   end
 end
+
 ```

@@ -19,12 +19,14 @@ defmodule TeamStore do
   # Public API
   # ---------------------------------------------------------------------------
 
+  @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
   end
 
   def create_user(server, id, token), do: GenServer.call(server, {:create_user, id, token})
 
+  @doc "Creates a team `team_id`. Returns `:ok` or `{:error, reason}`."
   def create_team(server, team_id), do: GenServer.call(server, {:create_team, team_id})
 
   def add_member(server, team_id, user_id),
@@ -220,4 +222,5 @@ defmodule TeamRouter do
     |> send_resp(status, Jason.encode!(data))
   end
 end
+
 ```

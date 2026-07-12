@@ -26,6 +26,7 @@ defmodule WebhookReceiver.Signature do
   Computes HMAC-SHA256 of `payload` with `secret` and compares it, in
   constant time, against the hex-encoded `signature`. Returns `:ok` or `:error`.
   """
+  @spec verify(binary(), binary(), binary()) :: :ok | :error
   def verify(payload, signature, secret)
       when is_binary(payload) and is_binary(signature) and is_binary(secret) do
     expected =
@@ -162,4 +163,5 @@ defmodule WebhookReceiver.Router do
     |> send_resp(status, Jason.encode!(data))
   end
 end
+
 ```

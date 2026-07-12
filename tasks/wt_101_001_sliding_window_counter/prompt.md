@@ -110,13 +110,13 @@ defmodule SlidingCounter do
 
   ## Options
 
-  | key                   | type / default              | description                                       |
-  |-----------------------|-----------------------------|---------------------------------------------------|
-  | `:clock`              | `(-> integer)` / monotonic  | Zero-arity function returning current time in ms  |
-  | `:bucket_ms`          | `pos_integer` / `1_000`     | Width of each internal sub-bucket                 |
-  | `:max_window_ms`      | `pos_integer` / `bucket_ms * 60` | Oldest data to retain; drives cleanup cutoff |
-  | `:cleanup_interval_ms`| `pos_integer / :infinity` / `60_000` | How often the background cleanup fires   |
-  | `:name`               | atom / `nil`                | Optional registration name                        |
+  | key                    | type / default                   | description                    |
+  |------------------------|----------------------------------|--------------------------------|
+  | `:clock`               | `(-> integer)` / monotonic       | Current time in ms (0-arity)   |
+  | `:bucket_ms`           | `pos_integer` / `1_000`          | Width of each sub-bucket       |
+  | `:max_window_ms`       | `pos_integer` / `bucket_ms * 60` | Oldest data retained; cutoff   |
+  | `:cleanup_interval_ms` | `pos_integer`/`:infinity`/`60_000` | Background cleanup interval   |
+  | `:name`                | atom / `nil`                     | Optional registration name     |
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do

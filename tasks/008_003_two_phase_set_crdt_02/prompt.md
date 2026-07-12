@@ -101,7 +101,7 @@ defmodule TwoPhaseSet do
 
       {:error, :tombstoned} ->
         raise ArgumentError,
-              "cannot re-add element #{inspect(element)}: it has been permanently removed from the 2P-Set"
+              "cannot re-add element #{inspect(element)}: it was permanently removed"
     end
   end
 
@@ -121,7 +121,7 @@ defmodule TwoPhaseSet do
 
       {:error, :not_a_member} ->
         raise ArgumentError,
-              "cannot remove element #{inspect(element)}: it is not a current member of the 2P-Set"
+              "cannot remove element #{inspect(element)}: not a current member"
     end
   end
 
@@ -239,9 +239,9 @@ defmodule TwoPhaseSet do
     MapSet.difference(added, removed)
   end
 
-  @spec merge_states(tp_state(), tp_state()) :: tp_state()
   defp merge_states(%{added: la, removed: lr}, %{added: ra, removed: rr}) do
     # TODO
   end
 end
+
 ```

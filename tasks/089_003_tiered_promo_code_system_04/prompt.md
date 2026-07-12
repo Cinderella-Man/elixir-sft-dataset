@@ -49,8 +49,12 @@ defmodule TieredPromoCodes do
 
   # --- public API ---
 
+  @doc "Creates a tiered promo code from `attrs`. Returns `{:ok, code}` or `{:error, reason}`."
+  @spec create(map()) :: {:ok, map()} | {:error, atom()}
   def create(attrs) when is_map(attrs), do: GenServer.call(__MODULE__, {:create, attrs})
 
+  @doc "Previews the discount for `code_string` on `order_total` (cents) without recording a use."
+  @spec preview(String.t(), non_neg_integer()) :: {:ok, map()} | {:error, atom()}
   def preview(code_string, order_total)
       when is_binary(code_string) and is_integer(order_total) and order_total >= 0 do
     GenServer.call(__MODULE__, {:preview, code_string, order_total})
@@ -136,7 +140,8 @@ defmodule TieredPromoCodes do
 
   defp valid_tiers?(_), do: false
 
-  defp valid_tier?(tier) do
+  defp valid_tier?(%{threshold: t, type: type, value: v})
+       when is_integer(t) and t >= 0 and is_number(v) and type in @tier_types do
     # TODO
   end
 
@@ -231,4 +236,5 @@ defmodule TieredPromoCodes do
     end
   end
 end
+
 ```

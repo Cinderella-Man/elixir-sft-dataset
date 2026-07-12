@@ -96,8 +96,16 @@ defmodule StackablePromoCodes do
 
   # --- public API ---
 
+  @doc "Creates a promo code from `attrs`. Returns `{:ok, code}` or `{:error, reason}`."
+  @spec create(map()) :: {:ok, map()} | {:error, atom()}
   def create(attrs) when is_map(attrs), do: GenServer.call(__MODULE__, {:create, attrs})
 
+  @doc """
+  Applies a list of stackable promo `codes` to `order_total` (in cents), returning
+  `{:ok, result}` with the applied/rejected breakdown, or `{:error, :no_codes}`.
+  """
+  @spec apply_codes([String.t()], non_neg_integer(), keyword()) ::
+          {:ok, map()} | {:error, atom()}
   def apply_codes(codes, order_total, opts \\ [])
       when is_list(codes) and is_integer(order_total) and order_total >= 0 do
     GenServer.call(__MODULE__, {:apply, codes, order_total, opts})
@@ -232,4 +240,5 @@ defmodule StackablePromoCodes do
     end
   end
 end
+
 ```

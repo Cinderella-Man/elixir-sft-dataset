@@ -31,6 +31,10 @@ defmodule EscalatingWatchdog do
     GenServer.start_link(__MODULE__, %{}, name: name)
   end
 
+  @doc """
+  Registers an escalating watchdog for `name`/`pid`: runs `on_warn_fn` after `warn_ms`
+  of silence, then `on_timeout_fn` after `timeout_ms`. Returns `:ok`.
+  """
   @spec register(
           term(),
           pid(),
@@ -67,7 +71,11 @@ defmodule EscalatingWatchdog do
   def init(_arg), do: {:ok, %{}}
 
   @impl true
-  def handle_call({:register, name, pid, warn_ms, timeout_ms, warn_fn, timeout_fn}, _from, state) do
+  def handle_call(
+        {:register, name, pid, warn_ms, timeout_ms, warn_fn, timeout_fn},
+        _from,
+        state
+      ) do
     state = cancel_entry(state, name)
 
     entry =
@@ -168,4 +176,5 @@ defmodule EscalatingWatchdog do
     # TODO
   end
 end
+
 ```

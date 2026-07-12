@@ -49,7 +49,7 @@ defmodule RecordDiff do
       }
   """
 
-  @type record :: map()
+  @type record_t :: map()
   @type key_value :: term()
   @type field_diff :: {old_value :: term(), new_value :: term()}
 
@@ -59,8 +59,8 @@ defmodule RecordDiff do
         }
 
   @type diff_result :: %{
-          added: [record()],
-          removed: [record()],
+          added: [record_t()],
+          removed: [record_t()],
           changed: [change_entry()]
         }
 
@@ -86,7 +86,7 @@ defmodule RecordDiff do
   Fields that appear in only one version of a record are still reported as
   changes, using the atom `:missing` as a placeholder for the absent value.
   """
-  @spec diff([record()], [record()], keyword()) :: diff_result()
+  @spec diff([record_t()], [record_t()], keyword()) :: diff_result()
   def diff(old_list, new_list, opts \\ []) do
     key = Keyword.get(opts, :key, :id)
 
@@ -100,7 +100,9 @@ defmodule RecordDiff do
     removed = old_keys |> MapSet.difference(new_keys) |> map_set_to_records(old_index)
 
     changed =
-      old_keys |> MapSet.intersection(new_keys) |> changed_entries(old_index, new_index, key)
+      old_keys
+      |> MapSet.intersection(new_keys)
+      |> changed_entries(old_index, new_index, key)
 
     %{added: added, removed: removed, changed: changed}
   end
@@ -110,14 +112,14 @@ defmodule RecordDiff do
   # ---------------------------------------------------------------------------
 
   # Build a %{key_value => record} lookup map from a list of records.
-  @spec index_by([record()], atom()) :: %{term() => record()}
+  @spec index_by([record_t()], atom()) :: %{term() => record_t()}
   defp index_by(records, key) do
     Map.new(records, fn record -> {Map.fetch!(record, key), record} end)
   end
 
   # Convert a MapSet of key values to the corresponding list of records,
   # preserving insertion order by sorting keys for determinism.
-  @spec map_set_to_records(MapSet.t(), %{term() => record()}) :: [record()]
+  @spec map_set_to_records(MapSet.t(), %{term() => record_t()}) :: [record_t()]
   defp map_set_to_records(key_set, index) do
     key_set
     |> MapSet.to_list()
@@ -152,7 +154,7 @@ defmodule RecordDiff do
   # Compare two versions of the same record field by field.
   # Returns %{field => {old_value, new_value}} for every differing field.
   # Fields present in only one version use :missing as the absent-side value.
-  @spec diff_records(record(), record()) :: %{atom() => field_diff()}
+  @spec diff_records(record_t(), record_t()) :: %{atom() => field_diff()}
   defp diff_records(old_record, new_record) do
     all_fields =
       (Map.keys(old_record) ++ Map.keys(new_record))

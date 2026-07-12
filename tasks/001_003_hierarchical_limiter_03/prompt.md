@@ -37,7 +37,8 @@ defmodule HierarchicalLimiter do
 
       iex> {:ok, pid} = HierarchicalLimiter.start_link([])
       iex> tiers = [{:per_second, 10, 1_000}, {:per_minute, 100, 60_000}]
-      iex> {:ok, %{per_second: 9, per_minute: 99}} = HierarchicalLimiter.check(pid, "user:1", tiers)
+      iex> {:ok, %{per_second: 9, per_minute: 99}} =
+      ...>   HierarchicalLimiter.check(pid, "user:1", tiers)
 
   """
 
@@ -147,7 +148,6 @@ defmodule HierarchicalLimiter do
     end
   end
 
-  @impl true
   def handle_info(:cleanup, state) do
     # TODO
   end
@@ -209,4 +209,5 @@ defmodule HierarchicalLimiter do
     Process.send_after(self(), :cleanup, interval_ms)
   end
 end
+
 ```

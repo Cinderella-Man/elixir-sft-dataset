@@ -32,8 +32,8 @@ The module must support this fluent, pipe-friendly interface:
 ```elixir
 Saga.new()
 |> Saga.step(:reserve, &reserve/1, &cancel_reservation/1)
-|> Saga.step(:charge, &charge/1, &refund/1)
-|> Saga.step(:ship, &ship/1, &unship/1)
+|> Saga.step(:charge,  &charge/1,  &refund/1)
+|> Saga.step(:ship,    &ship/1,    &unship/1)
 |> Saga.execute(%{order_id: 42})
 ```
 
@@ -104,19 +104,18 @@ saga =
   |> Saga.step(:b, fn ctx -> {:ok, ctx.a + 5} end, fn _ctx -> {:ok, :undo_b} end)
 
 Saga.execute(saga, %{})
-# => {:ok, %{a: 10, b: 15}}
+#=> {:ok, %{a: 10, b: 15}}
 ```
 
 If step `:b` had instead returned `{:error, :nope}`, the result would be:
 
 ```elixir
-{:error,
- %{
-   step: :b,
-   error: :nope,
-   compensated: [:a],
-   compensations: %{a: {:ok, :undo_a}}
- }}
+{:error, %{
+  step: :b,
+  error: :nope,
+  compensated: [:a],
+  compensations: %{a: {:ok, :undo_a}}
+}}
 ```
 
 ## Module under test
@@ -182,7 +181,12 @@ defmodule Saga do
     * `compensation` — a 1-arity function receiving the current context that
       undoes the step's effect. Its return value is recorded.
   """
-  @spec step(t(), term(), (context() -> {:ok, term()} | {:error, term()}), (context() -> term())) ::
+  @spec step(
+          t(),
+          term(),
+          (context() -> {:ok, term()} | {:error, term()}),
+          (context() -> term())
+        ) ::
           t()
   def step(%__MODULE__{steps: steps} = saga, name, action, compensation)
       when is_function(action, 1) and is_function(compensation, 1) do

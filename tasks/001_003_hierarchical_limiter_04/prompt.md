@@ -39,7 +39,8 @@ defmodule HierarchicalLimiter do
 
       iex> {:ok, pid} = HierarchicalLimiter.start_link([])
       iex> tiers = [{:per_second, 10, 1_000}, {:per_minute, 100, 60_000}]
-      iex> {:ok, %{per_second: 9, per_minute: 99}} = HierarchicalLimiter.check(pid, "user:1", tiers)
+      iex> {:ok, %{per_second: 9, per_minute: 99}} =
+      ...>   HierarchicalLimiter.check(pid, "user:1", tiers)
 
   """
 
@@ -177,9 +178,6 @@ defmodule HierarchicalLimiter do
   # Tier evaluation
   # ---------------------------------------------------------------------------
 
-  # For each tier: count the in-window timestamps.  If any tier is at its
-  # limit, collect its retry_after and pick the tightest (longest wait).
-  # Otherwise, build the remaining_by_tier map.
   defp evaluate_tiers(tiers, active, now) do
     # TODO
   end
@@ -194,4 +192,5 @@ defmodule HierarchicalLimiter do
     Process.send_after(self(), :cleanup, interval_ms)
   end
 end
+
 ```

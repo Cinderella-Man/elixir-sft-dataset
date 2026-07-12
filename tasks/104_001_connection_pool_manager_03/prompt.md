@@ -91,6 +91,7 @@ defmodule Pool do
     * `:create`   — zero-arity fun returning a new, distinct connection
       (default `fn -> make_ref() end`).
   """
+  @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
     {name, opts} = Keyword.pop(opts, :name)
 
@@ -248,4 +249,5 @@ defmodule Pool do
     end
   end
 end
+
 ```
