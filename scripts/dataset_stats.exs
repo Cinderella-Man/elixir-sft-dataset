@@ -10,7 +10,9 @@
 # your model's own ratio. Shapes come from EvalTask.Discovery (same as run_all/validate).
 
 # Belt-and-suspenders for a bare `elixir` launch; a no-op under `mix run`.
-for pattern <- ["_build/dev/lib/*/ebin", "_build/test/lib/*/ebin"],
+# test paths first, dev last: prepend_path puts each entry at the FRONT, so the
+# dev beams (what `mix compile` refreshes) must shadow possibly-stale test beams.
+for pattern <- ["_build/test/lib/*/ebin", "_build/dev/lib/*/ebin"],
     path <- Path.wildcard(pattern),
     do: Code.prepend_path(path)
 

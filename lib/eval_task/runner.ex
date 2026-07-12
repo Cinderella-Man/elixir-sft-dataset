@@ -393,11 +393,29 @@ defmodule EvalTask.Runner do
     end
   end
 
+  # ParallelCompiler workers print warnings straight to :standard_error no matter
+  # what — `Code.with_diagnostics` is per-process and cannot intercept them. The
+  # returned diagnostics already carry everything grading needs, so capture the
+  # stderr spill: without this every raise-body mutant eval floods the caller's
+  # terminal with "unused alias" noise from code that is broken BY DESIGN.
+  defp quiet_compile(paths) do
+    # CaptureIO needs ExUnit's CaptureServer, and compiles run before
+    # run_harness calls ExUnit.start — ensure the app (not the runner) is up.
+    {:ok, _} = Application.ensure_all_started(:ex_unit)
+
+    {result, _spilled} =
+      ExUnit.CaptureIO.with_io(:stderr, fn ->
+        Kernel.ParallelCompiler.compile(paths, return_diagnostics: true)
+      end)
+
+    result
+  end
+
   defp compile_bundle(sources) do
     # `compile/2` returns `{:error, errors, _}` on a compile failure — a bare `{:ok, …}`
     # match would raise MatchError and bury the real compiler diagnostics in a truncated
     # inspect of the match failure.
-    case Kernel.ParallelCompiler.compile(sources, return_diagnostics: true) do
+    case quiet_compile(sources) do
       {:ok, _mods, diag} ->
         %{compiled: true, compile_warnings: length(diag.compile_warnings), compile_errors: []}
 
@@ -418,7 +436,7 @@ defmodule EvalTask.Runner do
   # Compile `paths`, returning `%{modules, compile_warnings}`; raises with the real
   # compiler diagnostics on failure (callers inside a rescue report compiled:false).
   defp compile_or_raise!(paths, what) do
-    case Kernel.ParallelCompiler.compile(paths, return_diagnostics: true) do
+    case quiet_compile(paths) do
       {:ok, mods, diag} ->
         %{modules: mods, compile_warnings: diag.compile_warnings}
 
