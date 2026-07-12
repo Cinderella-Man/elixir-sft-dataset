@@ -70,6 +70,80 @@ defmodule EvalTask.Fim do
     end
   end
 
+  @doc """
+  Reconstruct a bundle-parent FIM task back into `<file>` bundle source.
+
+  A bundle child's prompt fence is the parent bundle **marker-stripped** with one
+  function stubbed to `# TODO` (see `EvalTask.Bundle.strip_markers/1`), and its
+  candidate is that one function — but the tier-B/repo eval machinery needs real
+  `{path, contents}` files (migrations must stay identifiable). So instead of
+  compiling the reconstructed blob, rebuild the bundle:
+
+  1. every file whose contents appear VERBATIM in the skeleton is intact;
+  2. exactly ONE file must not match — the one carrying the hole; its skeleton
+     span is what sits between its neighbours' matches;
+  3. `splice/2` the candidate into that span and reassemble the marked bundle.
+
+  Raises when zero or more than one file fails the verbatim match (a stale or
+  hand-mangled prompt — the embed gate's territory, not something to guess at).
+  """
+  @spec reconstruct_bundle(String.t(), String.t(), String.t()) :: String.t()
+  def reconstruct_bundle(parent_bundle_src, prompt_md, candidate_raw) do
+    files = EvalTask.Bundle.parse(parent_bundle_src)
+    skeleton = extract_skeleton(prompt_md)
+    candidate = extract_candidate(candidate_raw)
+
+    # Sequential scan (files appear in bundle order in the skeleton): match each
+    # file's body at-or-after the previous match's end, so repeated content in a
+    # later file can never anchor an earlier one.
+    {matches, _cursor} =
+      Enum.map_reduce(files, 0, fn {path, body}, cursor ->
+        case :binary.match(skeleton, body, scope: {cursor, byte_size(skeleton) - cursor}) do
+          {start, len} -> {{path, {start, len}}, start + len}
+          :nomatch -> {{path, :holed}, cursor}
+        end
+      end)
+
+    case Enum.filter(matches, &match?({_, :holed}, &1)) do
+      [{holed_path, :holed}] ->
+        holed_idx = Enum.find_index(matches, fn {p, _} -> p == holed_path end)
+
+        span_start =
+          case holed_idx do
+            0 -> 0
+            i -> matches |> Enum.at(i - 1) |> elem(1) |> then(fn {s, l} -> s + l end)
+          end
+
+        span_end =
+          if holed_idx == length(files) - 1,
+            do: byte_size(skeleton),
+            else: matches |> Enum.at(holed_idx + 1) |> elem(1) |> elem(0)
+
+        holed_skeleton =
+          skeleton
+          |> binary_part(span_start, span_end - span_start)
+          |> String.trim("\n")
+
+        # Same convention as reconstruct/3: a candidate that is already a whole
+        # module is the holed file's full contents, not a splice fragment.
+        reconstructed =
+          if String.contains?(candidate, "defmodule"),
+            do: candidate,
+            else: splice(holed_skeleton, candidate)
+
+        files
+        |> Enum.map(fn {p, b} -> if p == holed_path, do: {p, reconstructed}, else: {p, b} end)
+        |> EvalTask.Bundle.assemble()
+
+      [] ->
+        raise "bundle FIM skeleton matches every parent file verbatim — no hole found"
+
+      holed ->
+        raise "bundle FIM skeleton diverges from #{length(holed)} parent files " <>
+                "(#{Enum.map_join(holed, ", ", &elem(&1, 0))}) — prompt is stale, expected exactly 1 hole"
+    end
+  end
+
   @doc "Strip a wrapping ```` ```elixir ```` fence from a model response, if present."
   @spec extract_candidate(String.t()) :: String.t()
   def extract_candidate(raw) do

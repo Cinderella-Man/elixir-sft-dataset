@@ -15,6 +15,26 @@ defmodule EvalTask.Bundle do
   @spec bundle?(String.t()) :: boolean()
   def bundle?(source), do: String.contains?(source, "<file path=")
 
+  @doc """
+  Drop the `<file path=…>` / `</file>` marker lines, leaving the file contents
+  concatenated in bundle order — the convention shipped in the ```` ```elixir ````
+  fences of bundle-parent FIM prompts (and what `strip_marker_lines` in the
+  embed-resync tool produces).
+  """
+  @spec strip_markers(String.t()) :: String.t()
+  def strip_markers(source) do
+    source
+    |> String.split("\n")
+    |> Enum.reject(&String.match?(String.trim(&1), ~r{^(<file path="[^"]+">|</file>)$}))
+    |> Enum.join("\n")
+  end
+
+  @doc "Reassemble `{path, contents}` pairs into `<file>` bundle source (parse's inverse)."
+  @spec assemble([file()]) :: String.t()
+  def assemble(files) do
+    Enum.map_join(files, "\n\n", fn {path, body} -> ~s(<file path="#{path}">\n#{body}\n</file>) end)
+  end
+
   @doc "Parse a bundle string into `{path, contents}` pairs (in order)."
   @spec parse(String.t()) :: [file()]
   def parse(source) do

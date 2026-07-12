@@ -44,9 +44,17 @@ defmodule EvalTask.Runner do
   end
 
   defp do_run_multifile(files, harness, cfg) do
+    analysis = Analysis.analyze_all(Bundle.lib_sources(files), :full)
+    run_bundle_eval(files, harness, cfg, analysis, %{})
+  end
+
+  # Shared bundle eval: materialize, tier-dispatch the compile (A / B / repo),
+  # run `harness`, clean up. `analysis` and `extra0` differ by caller — the
+  # multifile gold analyzes the whole bundle, a bundle-FIM child analyzes just
+  # its candidate (`:fim` mode) and tags the parent.
+  defp run_bundle_eval(files, harness, cfg, analysis, extra0) do
     tmp = mktemp()
     {sources, migrations} = Bundle.materialize(files, tmp)
-    analysis = Analysis.analyze_all(Bundle.lib_sources(files), :full)
 
     {compile, extra, cleanup} =
       try do
@@ -77,7 +85,9 @@ defmodule EvalTask.Runner do
       compile,
       analysis,
       tests,
-      Map.merge(extra, %{archetype: cfg.archetype, bundle_files: length(files)})
+      extra0
+      |> Map.merge(extra)
+      |> Map.merge(%{archetype: cfg.archetype, bundle_files: length(files)})
     )
   end
 
@@ -228,9 +238,61 @@ defmodule EvalTask.Runner do
     end
   end
 
-  @doc "Run a FIM task: reconstruct from the prompt skeleton + candidate, run the parent harness."
+  @doc """
+  Run a FIM task: reconstruct from the prompt skeleton + candidate, run the parent harness.
+
+  A child of a BUNDLE parent is reconstructed back into `<file>` files
+  (`Fim.reconstruct_bundle/3`) and graded through the same tier-A/B/repo
+  machinery as the parent — a marker-stripped blob cannot boot a kit or keep
+  its migrations identifiable, which is why bundle fim used to fail 0/N on
+  tier-B/repo parents even with a perfect skeleton.
+  """
   def run_fim(task_dir, sol_file) do
     parent = Fim.parent_dir(task_dir)
+    parent_sol = File.read!(Path.join(parent, "solution.ex"))
+
+    if Bundle.bundle?(parent_sol) do
+      run_fim_bundle(task_dir, sol_file, parent, parent_sol)
+    else
+      run_fim_single(task_dir, sol_file, parent)
+    end
+  end
+
+  defp run_fim_bundle(task_dir, sol_file, parent, parent_sol) do
+    harness = Path.join(parent, "test_harness.exs")
+    prompt = File.read!(Path.join(task_dir, "prompt.md"))
+    raw = File.read!(sol_file)
+    analysis = Analysis.analyze(Fim.extract_candidate(raw), :fim)
+    extra = %{parent: Path.basename(parent)}
+
+    recon =
+      try do
+        {:ok, Fim.reconstruct_bundle(parent_sol, prompt, raw)}
+      rescue
+        e -> {:error, Exception.message(e)}
+      end
+
+    case recon do
+      {:error, reason} ->
+        finish(
+          %{
+            compiled: false,
+            compile_warnings: 0,
+            compile_errors: [%{type: "FimReconstruct", message: reason}]
+          },
+          analysis,
+          no_tests(),
+          extra
+        )
+
+      {:ok, bundle_src} ->
+        files = Bundle.parse(bundle_src)
+        cfg = Manifest.resolve(parent, File.read!(harness))
+        run_bundle_eval(files, harness, cfg, analysis, extra)
+    end
+  end
+
+  defp run_fim_single(task_dir, sol_file, parent) do
     harness = Path.join(parent, "test_harness.exs")
     prompt = File.read!(Path.join(task_dir, "prompt.md"))
     candidate = Fim.extract_candidate(File.read!(sol_file))

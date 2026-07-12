@@ -192,4 +192,92 @@ defmodule EvalTask.FimTest do
     refute result =~ "def go, do: :ok"
     assert result =~ "assert Mod.go() == :ok"
   end
+
+  describe "reconstruct_bundle/3" do
+    # A 3-file bundle: the hole lives in the middle file. The prompt fence is the
+    # marker-stripped bundle with `call/2` stubbed — exactly what the gen loop's
+    # deterministic skeleton and the embed-resync tool produce.
+    @parent """
+    <file path="lib/app/view.ex">
+    defmodule App.View do
+      def render(u), do: %{name: u.name}
+    end
+    </file>
+
+    <file path="lib/app/plug.ex">
+    defmodule App.Plug do
+      def init(opts), do: opts
+
+      def call(conn, opts) do
+        {conn, opts}
+      end
+    end
+    </file>
+
+    <file path="priv/repo/migrations/001_create.exs">
+    defmodule App.Repo.Migrations.Create do
+      use Ecto.Migration
+
+      def change do
+        create table(:things)
+      end
+    end
+    </file>
+    """
+
+    defp bundle_prompt do
+      stripped = EvalTask.Bundle.strip_markers(String.trim_trailing(@parent, "\n"))
+      gold = "  def call(conn, opts) do\n    {conn, opts}\n  end"
+      skeleton = Fim.build_skeleton(stripped, gold)
+      "Implement `call/2`.\n\n```elixir\n" <> skeleton <> "\n```\n"
+    end
+
+    test "gold candidate round-trips to the exact parent bundle" do
+      gold = "  def call(conn, opts) do\n    {conn, opts}\n  end"
+      out = Fim.reconstruct_bundle(@parent, bundle_prompt(), gold)
+
+      assert EvalTask.Bundle.parse(out) == EvalTask.Bundle.parse(@parent)
+    end
+
+    test "a different candidate lands in the holed file only" do
+      cand = "  def call(conn, _opts) do\n    conn\n  end"
+      out = Fim.reconstruct_bundle(@parent, bundle_prompt(), cand)
+      files = Map.new(EvalTask.Bundle.parse(out))
+      parent_files = Map.new(EvalTask.Bundle.parse(@parent))
+
+      assert files["lib/app/view.ex"] == parent_files["lib/app/view.ex"]
+      assert files["priv/repo/migrations/001_create.exs"] ==
+               parent_files["priv/repo/migrations/001_create.exs"]
+
+      assert files["lib/app/plug.ex"] =~ "def call(conn, _opts)"
+      refute files["lib/app/plug.ex"] =~ "# TODO"
+      assert Code.string_to_quoted!(files["lib/app/plug.ex"])
+    end
+
+    test "a whole-module candidate replaces the holed file verbatim" do
+      whole = "defmodule App.Plug do\n  def init(o), do: o\n  def call(c, _), do: c\nend"
+      out = Fim.reconstruct_bundle(@parent, bundle_prompt(), whole)
+      files = Map.new(EvalTask.Bundle.parse(out))
+
+      assert files["lib/app/plug.ex"] == whole
+    end
+
+    test "raises when the skeleton diverges from more than one file (stale prompt)" do
+      stale =
+        bundle_prompt()
+        |> String.replace("def render(u), do: %{name: u.name}", "def render(u), do: u")
+
+      assert_raise RuntimeError, ~r/diverges from 2 parent files/, fn ->
+        Fim.reconstruct_bundle(@parent, stale, "  def call(c, o), do: {c, o}")
+      end
+    end
+
+    test "raises when no file is holed" do
+      prompt = "```elixir\n# TODO\n" <> EvalTask.Bundle.strip_markers(@parent) <> "\n```"
+
+      assert_raise RuntimeError, ~r/no hole found/, fn ->
+        Fim.reconstruct_bundle(@parent, prompt, "  def call(c, o), do: {c, o}")
+      end
+    end
+  end
 end
