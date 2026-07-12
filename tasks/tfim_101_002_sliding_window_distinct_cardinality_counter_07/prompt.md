@@ -280,7 +280,7 @@ defmodule SlidingUniqueCounterTest do
     # TODO
   end
 
-  test "members exactly at the window boundary are counted", %{sc: sc} do
+  test "members just inside the window boundary are counted", %{sc: sc} do
     SlidingUniqueCounter.add(sc, "k", "u1")
 
     # Advance to just inside the window

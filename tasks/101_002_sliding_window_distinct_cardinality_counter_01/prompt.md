@@ -15,12 +15,18 @@ I need these functions in the public API:
   - `:name` — optional process registration name.
   - `:cleanup_interval_ms` — how often to run the periodic cleanup.
     Defaults to `60_000`. Pass `:infinity` to disable.
+  - `:max_window_ms` — the retention horizon used by cleanup: buckets whose
+    start time is older than `now - max_window_ms` are removed. Defaults to
+    `3_600_000` (1 hour).
 - `SlidingUniqueCounter.add(server, key, member)` — records that `member` was
   observed for the given `key` at the current clock time. Returns `:ok`.
 - `SlidingUniqueCounter.distinct_count(server, key, window_ms)` — returns the
   number of **distinct** members observed for `key` that fall within the last
   `window_ms` milliseconds relative to the current clock time. Members observed
   only outside that window must not be counted.
+- `SlidingUniqueCounter.tracked_key_count(server)` — returns how many keys
+  currently hold any tracked data at all (0 once cleanup has removed
+  everything).
 
 Counting semantics:
 - Adding the same member more than once (whether in the same instant or spread
@@ -37,15 +43,16 @@ Internal design requirements:
 - When answering `distinct_count/3`, only include buckets whose start time is at
   or after `now - window_ms`. A bucket at index `b` starts at `b * bucket_ms`.
   Discard (do not count) any bucket whose start time falls before
-  `now - window_ms`. Concretely, a member observed at time `T` is inside the
-  window when `T >= now - window_ms`.
+  `now - window_ms`. Concretely, a member counts when the START of its bucket
+  (`b * bucket_ms`) satisfies `b * bucket_ms >= now - window_ms` — bucket
+  granularity, not per-observation timestamps, decides inclusion.
 - Different keys must be tracked independently — adding to "page:home" must not
   affect "page:about".
 - Memory must not leak: run a periodic cleanup (via `Process.send_after`) that
-  removes all buckets — and whole keys — that have fallen outside a reasonable
-  maximum window. Also handle a `:cleanup` message sent directly to the process
-  so tests can trigger cleanup synchronously. After cleanup, `state.keys` must be
-  an empty map when all data has expired.
+  removes all buckets — and whole keys — that have fallen outside the
+  `:max_window_ms` retention horizon. Also handle a `:cleanup` message sent
+  directly to the process so tests can trigger cleanup synchronously. After
+  cleanup, `tracked_key_count/1` must report `0` when all data has expired.
 
 Give me the complete module in a single file. Use only the OTP standard library,
 no external dependencies.

@@ -240,9 +240,6 @@ defmodule CascadeCrud.Archive do
 
       {:ok, node} ->
         if live?(node) do
-          {:reply, {:ok, result}, new_state} = {:reply, {:ok, nil}, state} |> ignore()
-          _ = result
-          _ = new_state
           do_archive(state, node)
         else
           {:reply, {:error, :already_archived}, state}
@@ -273,8 +270,6 @@ defmodule CascadeCrud.Archive do
   end
 
   # ── Internal helpers ──────────────────────────────────────────────────────
-
-  defp ignore(reply), do: reply
 
   defp include_archived?(opts) when is_list(opts) do
     Keyword.get(opts, :include_archived, false) == true
