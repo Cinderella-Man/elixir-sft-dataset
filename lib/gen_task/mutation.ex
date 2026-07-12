@@ -183,6 +183,83 @@ defmodule GenTask.Mutation do
     _ -> []
   end
 
+  @doc """
+  Byte-surgical semantic mutants: the SAME mutation sites as
+  `semantic_mutants/2`, applied textually to the ORIGINAL source line — the
+  mutant differs from the input by exactly one line, comments and layout
+  intact. Built for training artifacts (`GenTask.Bugfix`): the AST-reprint
+  variant strips comments and reflows the whole module, polluting the
+  bug-localization signal (found by the 2026-07-12 accept audit).
+
+  A site is skipped when its line cannot be determined or the FROM token does
+  not occur exactly once on that line (ambiguous application) — correctness is
+  still guaranteed downstream by the parse check here and the harness
+  kill-gate at mint time.
+  """
+  @spec semantic_mutants_textual(String.t(), pos_integer()) :: [{String.t(), String.t()}]
+  def semantic_mutants_textual(module_src, limit \\ @semantic_cap) do
+    ast = Code.string_to_quoted!(module_src)
+    lines = String.split(module_src, "\n")
+
+    ast
+    |> enumerate_sites()
+    |> spread(limit)
+    |> Enum.flat_map(fn {ix, spec, line} ->
+      case textual_apply(lines, line, spec) do
+        nil ->
+          []
+
+        mutated_lines ->
+          src = Enum.join(mutated_lines, "\n")
+
+          if src != module_src and match?({:ok, _}, Code.string_to_quoted(src)),
+            do: [{site_label(ix, spec, line), src}],
+            else: []
+      end
+    end)
+    |> Enum.uniq_by(fn {_label, src} -> src end)
+  rescue
+    _ -> []
+  end
+
+  # Replace the spec's FROM token on the 1-indexed `line` — exactly one
+  # occurrence or nothing (nil = ambiguous/unlocatable, caller skips the site).
+  defp textual_apply(_lines, nil, _spec), do: nil
+
+  defp textual_apply(lines, line, spec) do
+    case {Enum.at(lines, line - 1), spec_pattern(spec)} do
+      {nil, _} ->
+        nil
+
+      {_, nil} ->
+        nil
+
+      {text, {re, replacement}} ->
+        case Regex.scan(re, text) do
+          [_only] ->
+            List.replace_at(lines, line - 1, Regex.replace(re, text, replacement, global: false))
+
+          _ ->
+            nil
+        end
+    end
+  end
+
+  # {regex, replacement} per spec. Lookarounds keep `<` from matching `<=`/`<-`/
+  # `<<`/`<>`, `>` from `->`/`>=`/`|>`, etc. An imperfect match is harmless:
+  # the one-occurrence rule, the parse check, and the kill-gate all sit behind it.
+  defp spec_pattern({:cmp, :<}), do: {~r/(?<![<>=~|\-])<(?![<>=~%\-])/, "<="}
+  defp spec_pattern({:cmp, :>}), do: {~r/(?<![<>=~|\-])>(?![<>=~%])/, ">="}
+  defp spec_pattern({:cmp, :<=}), do: {~r/(?<![<])<=(?![>=])/, "<"}
+  defp spec_pattern({:cmp, :>=}), do: {~r/(?<![>])>=(?![>=])/, ">"}
+  defp spec_pattern({:int, n, d}), do: {~r/(?<![\d._\w])#{n}(?![\d._\w])/, to_string(n + d)}
+  defp spec_pattern({:bool, b}), do: {~r/\b#{b}\b/, to_string(not b)}
+  defp spec_pattern({:pair, a}), do: {~r/:#{a}\b/, ":#{flip_ok(a)}"}
+  defp spec_pattern({:tuple, a}), do: {~r/:#{a}\b/, ":#{flip_ok(a)}"}
+  defp spec_pattern({:ret, a}), do: {~r/:#{a}\b/, ":#{flip_ok(a)}"}
+  defp spec_pattern({:blockret, a}), do: {~r/:#{a}\b/, ":#{flip_ok(a)}"}
+  defp spec_pattern(_), do: nil
+
   # One mutant = one mutated lib file re-embedded into the otherwise-unchanged
   # bundle. Module sources are parse-checked before embedding (the bundle itself
   # is not valid Elixir, so the check must happen at the module level).
@@ -212,34 +289,40 @@ defmodule GenTask.Mutation do
   # (no mutations at all inside); `attr` tracks module-attribute values (boolean
   # flips only are suppressed there — `@impl true` etc. are not behavior).
   defp enumerate_sites(ast) do
-    {_ast, {_ix, _skip, _attr, sites}} =
-      Macro.traverse(ast, {0, 0, 0, []}, &enum_pre/2, &enum_post/2)
+    {_ast, {_ix, _skip, _attr, _line, sites}} =
+      Macro.traverse(ast, {0, 0, 0, nil, []}, &enum_pre/2, &enum_post/2)
 
     Enum.reverse(sites)
   end
 
-  defp enum_pre(node, {ix, skip, attr, sites}) do
+  defp enum_pre(node, {ix, skip, attr, cur_line, sites}) do
+    # Literal nodes (bare integers/booleans/atom pairs) carry no meta — take
+    # the first meta line INSIDE the node (a {:ok, expr} pair's children carry
+    # it), falling back to the nearest enclosing line, so the textual mutant
+    # applier can target the exact source line (docs/13 §1.1).
+    cur_line = node_line(node) || deep_line(node) || cur_line
+
     cond do
       skip_all?(node) ->
-        {node, {ix + 1, skip + 1, attr, sites}}
+        {node, {ix + 1, skip + 1, attr, cur_line, sites}}
 
       attr?(node) ->
-        {node, {ix + 1, skip, attr + 1, sites}}
+        {node, {ix + 1, skip, attr + 1, cur_line, sites}}
 
       skip > 0 ->
-        {node, {ix + 1, skip, attr, sites}}
+        {node, {ix + 1, skip, attr, cur_line, sites}}
 
       true ->
-        found = for spec <- node_mutations(node, attr > 0), do: {ix, spec, node_line(node)}
-        {node, {ix + 1, skip, attr, Enum.reverse(found, sites)}}
+        found = for spec <- node_mutations(node, attr > 0), do: {ix, spec, cur_line}
+        {node, {ix + 1, skip, attr, cur_line, Enum.reverse(found, sites)}}
     end
   end
 
-  defp enum_post(node, {ix, skip, attr, sites}) do
+  defp enum_post(node, {ix, skip, attr, cur_line, sites}) do
     cond do
-      skip_all?(node) -> {node, {ix, skip - 1, attr, sites}}
-      attr?(node) -> {node, {ix, skip, attr - 1, sites}}
-      true -> {node, {ix, skip, attr, sites}}
+      skip_all?(node) -> {node, {ix, skip - 1, attr, cur_line, sites}}
+      attr?(node) -> {node, {ix, skip, attr - 1, cur_line, sites}}
+      true -> {node, {ix, skip, attr, cur_line, sites}}
     end
   end
 
@@ -321,6 +404,18 @@ defmodule GenTask.Mutation do
 
   defp node_line({_, meta, _}) when is_list(meta), do: meta[:line]
   defp node_line(_), do: nil
+
+  # First meta line anywhere inside `node` (prewalk order) — the line of a
+  # container literal is carried by its children.
+  defp deep_line(node) do
+    {_ast, line} =
+      Macro.prewalk(node, nil, fn
+        n, nil -> {n, node_line(n)}
+        n, acc -> {n, acc}
+      end)
+
+    line
+  end
 
   defp site_label(ix, spec, line) do
     at = if line, do: "L#{line} s#{ix}", else: "s#{ix}"

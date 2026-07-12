@@ -111,7 +111,7 @@ defmodule GenTask.Bugfix do
     rejected = rejected_labels(cfg, prefix(seed), reject_key(seed))
 
     solution
-    |> Mutation.semantic_mutants()
+    |> Mutation.semantic_mutants_textual()
     |> Enum.reject(fn {label, _} ->
       MapSet.member?(covered, label) or MapSet.member?(rejected, label)
     end)
@@ -193,6 +193,13 @@ defmodule GenTask.Bugfix do
            reason: "reference NOT green against its own staged harness — investigate the parent"
          ), false}
 
+      not one_line_diff?(solution, mutated) ->
+        # construction guarantees this (byte-surgical mutants); if it ever
+        # fires, the applier regressed — surface loudly, never ship.
+        {outcome(id, seed, label, :error,
+           reason: "buggy module does not differ from the gold by exactly one line"
+         ), false}
+
       true ->
         {:ok, report} = failure_report(mutant_grade)
         promote(seed, solution, label, mutated, report, id, cfg)
@@ -246,6 +253,13 @@ defmodule GenTask.Bugfix do
     #{String.trim_trailing(report)}
     ```
     """
+  end
+
+  defp one_line_diff?(a, b) do
+    la = String.split(a, "\n")
+    lb = String.split(b, "\n")
+
+    length(la) == length(lb) and Enum.count(Enum.zip(la, lb), fn {x, y} -> x != y end) == 1
   end
 
   # The real ExUnit failure text from the mutant grade — the prompt's bug signal.
@@ -343,7 +357,7 @@ defmodule GenTask.Bugfix do
     solution = seed.files["solution.ex"]
 
     solution
-    |> Mutation.semantic_mutants()
+    |> Mutation.semantic_mutants_textual()
     |> Enum.filter(fn {_label, mutated} ->
       MapSet.member?(shipped, CycleLog.content_sha(String.trim_trailing(mutated)))
     end)

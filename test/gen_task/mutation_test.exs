@@ -333,4 +333,43 @@ defmodule GenTask.MutationTest do
       assert Mutation.base_mode(plug, @per_fn_cfg) == :whole
     end
   end
+
+  describe "semantic_mutants_textual/2 (byte-surgical, docs/13 §1.1)" do
+    @commented """
+    defmodule Calc do
+      @moduledoc "demo"
+
+      # the tolerance guard — comments must survive mutation
+      @doc "adds"
+      @spec add(number(), number()) :: number()
+      def add(a, b) do
+        if a > 100 do
+          {:ok, a + b}
+        else
+          {:error, :too_small}
+        end
+      end
+    end
+    """
+
+    test "every mutant differs from the source by EXACTLY one line, comments intact" do
+      mutants = Mutation.semantic_mutants_textual(@commented)
+      assert mutants != []
+
+      for {label, src} <- mutants do
+        la = String.split(@commented, "\n")
+        lb = String.split(src, "\n")
+        assert length(la) == length(lb), label
+        assert Enum.count(Enum.zip(la, lb), fn {x, y} -> x != y end) == 1, label
+        assert src =~ "# the tolerance guard", label
+        assert match?({:ok, _}, Code.string_to_quoted(src)), label
+      end
+    end
+
+    test "covers the comparison and atom classes on this module" do
+      labels = @commented |> Mutation.semantic_mutants_textual() |> Enum.map(&elem(&1, 0))
+      assert Enum.any?(labels, &String.contains?(&1, "> -> >="))
+      assert Enum.any?(labels, &String.contains?(&1, ":ok"))
+    end
+  end
 end
