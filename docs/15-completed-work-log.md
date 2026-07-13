@@ -9,6 +9,17 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-14 — T2.7 passes 1–2 (partial): 097_004 0.40→0.97 (+8 tests,
+  cascaded, perfect).** Retry outcomes drove three tool improvements landed
+  en route: the strengthen prompt now states the chatter rule its own lint
+  enforces (037_001 was rejected by the day-old F5 lint IN PRODUCTION — a
+  '# Prompt:' citation comment); the blind-gate added-test rejection message
+  no longer asserts "undocumented" (101_003's failing default is documented
+  verbatim — solver error is the other hypothesis and must be checked first);
+  and per-family diagnoses for the 5 remaining families are recorded in the
+  register (hand-strengthening named as the next step — the 013_001/101_001
+  pattern).
+
 - **2026-07-13 — T1.5 closed: semantic-mutant operator set extended.**
   New operators (AST + textual twins in step): min↔max, +↔-, *→+, div↔rem;
   ranges covered by the existing ±1 (endpoints are literal children); clause

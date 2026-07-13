@@ -13,9 +13,7 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-| what | pid | log | expected result |
-|---|---|---|---|
-| T2.7 RETRY pass (4 rejected families; pass-1 result: 097_004 applied 0.40→0.97, committed): `strengthen_harnesses -- --go --only "037_001*,100_004*,003_004*,101_003_weighted*,013_003*"` | 4006844 (`logs/strengthen_t27_r2.pid`) | `logs/strengthen_t27_r2.log` | one ledger row per family in `logs/strengthen_harnesses.jsonl` (applied / rejected-with-reason); applied families cascade wt_/tfim automatically and stay freshness-green via their strengthen success rows. Blind-gate rejections = prompt too terse → enrich next (the §5.3 recipe). Relaunch: same command (success rows skip by harness sha). |
+**Nothing.** (T2.7 passes 1–2 finished 2026-07-14 ~00:1x; results in the register below.)
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order)
@@ -137,19 +135,30 @@ start before steady state). [BIG: 2,396 tfim + 302 wt_ + 80/332 seed openers;
 own tool + ledger + blind re-screen budget]** — docs/12 §7.4;
 frozen-template overfitting is a documented SFT failure mode.
 
-**T2.7 — New-operator semantic tail: 6 real-gap families (the T1.5 yield).
-[~2 calls/family via the strengthen pipeline]**
-- WHY: the extended operator set (min/max, arithmetic, div/rem) dropped six
-  previously-clear families below the 0.5 floor, every survivor observable
-  (heuristic): 097_004 0.40 (18 obs), 037_001 0.42 (21), 100_004 0.43 (23),
-  003_004 0.45 (22), 101_003 0.46 (14), 013_003 0.48 (15). The at-ceiling set
-  RE-CONFIRMED under the new operators: 023_002 (ceiling 0.52), 041_001
-  (0.85), 077_001 (fuzz-proven 18/18 IDENTICAL, incl. the 3 new survivors).
-- WHAT/HOW: the docs/14 §5.3 recipe per family — strengthen with the blind
-  gate as arbiter (these are GenServer families; per-family fuzz drivers are
-  impractical, the blind gate is the honest observable-behavior check);
-  enrich the prompt first wherever the blind gate rejects. Expect some to be
-  partial ceilings like 013_001/101_001 — record honest per-family ceilings.
+**T2.7 — New-operator semantic tail: 1 of 6 applied; 5 remain with per-family
+diagnoses (passes 1–2 run 2026-07-13/14; ~22 calls spent).**
+- DONE: 097_004 0.40→0.97 (+8, committed — docs/15).
+- REMAINING, with the evidence-backed next step per family (the 013_001/
+  101_001 lesson: persistent blind rejections need HAND-written tests through
+  documented observation channels, not more model volleys):
+  - **101_003 (0.46)** — TWO independent blind solvers failed the SAME added
+    test on a VERBATIM-DOCUMENTED default ("bucket width defaults to
+    1_000 ms"). Hand-investigate: read the added test + prompt together; the
+    default's statement may be misleading in context, or the test couples it
+    to something else. Do NOT enrich on this evidence.
+  - **003_004 (0.45)** — S9 reach-in rejection TWICE despite the do-not-
+    imitate prompt. Hand-write observable-channel tests (pool checkout/return
+    counters through the public API), the 101_001 recipe.
+  - **013_003 (0.48)** — pass 1 INCONCLUSIVE (solver failed originals), pass
+    2 failed added tests. Decorrelated-jitter family: same shape as sibling
+    013_001 — observe through the injected random/clock hooks, zero timing.
+    Hand-write.
+  - **037_001 (0.42→0.44)** — strengthening ADDED tests but stayed below
+    floor. Run classify + read survivors: possibly a partial ceiling
+    (anonymizer masking internals) — set the honest per-family target first.
+  - **100_004 (0.42)** — two solver defects in a row (unpinned-size warning,
+    then non-compiling solve); pure noise so far. One more retry rides along
+    with the next strengthen batch.
 
 ### Tier 3 — protect the TRAINING side
 
