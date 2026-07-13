@@ -13,7 +13,14 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**Nothing.** (T2.7 passes 1–2 finished 2026-07-14 ~00:1x; results in the register below.)
+| what | pid | log | expected result |
+|---|---|---|---|
+| `scripts/quality_chain3.sh` (overnight, launched 2026-07-14 ~00:3x on Kamil's go: "continue with all the tasks you can think of") | **4051032** | `logs/quality_chain3_20260714.log` | stage 1: 100_004 strengthen retry #3 (~2 calls); stage 2: T2.3 — fresh blind solve for each of the 14 FAIL-triaged-entailed keeps (~14 calls, sha-stamped rows; GREEN upgrades a keep to PASS). Idempotent relaunch: `scripts/run_detached.sh logs/quality_chain3_20260714.log scripts/quality_chain3.sh`. |
+
+**Also this overnight session (in the main loop):** hand-strengthening the
+four diagnosed T2.7 families in order — 101_003, 013_003, 003_004, 037_001 —
+one commit each; then the freshness re-screen batch for hand-edited
+harnesses; then T2.5 (randomized-seed sweep, free) if CPU allows.
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order)
