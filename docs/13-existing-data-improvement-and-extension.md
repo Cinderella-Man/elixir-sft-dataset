@@ -144,6 +144,17 @@ undocumented requirements into the corpus, which is exactly what the blind
 gate exists to prevent. Rejected families carry no permanent ledger entry —
 only successes skip — so they re-attempt for free after a prompt fix.
 
+**Positive control for the diagnosis:** 097_002 (the biggest win, 0.47 → 0.84)
+has a DETAILED prompt that spells out its weighted-score rules — its added
+tests pinned documented behavior and sailed through the blind gate. Prompt
+specificity, not harness effort, predicts strengthenability. That is the work
+item for the 12 blind-gate families: **enrich the prompt → blind re-screen →
+re-strengthen** (all three tools exist; rejected families re-attempt for
+free). Two further rejections were the S9 lint catching the model reaching
+into GenServer internals (`:sys.get_state`) to kill mutants without testing
+observable behavior — the accept-gate lint protecting a different tool from a
+different failure mode.
+
 ### 1.5 Earlier same-day quality tools (see STATUS backlog)
 
 `scripts/rescreen_repaired.exs` (retro blind screen; 22 calls outstanding) and
