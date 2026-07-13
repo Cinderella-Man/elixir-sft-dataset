@@ -249,6 +249,52 @@ private-state layout), the family is AT its ceiling and the correct action is to
 record that, not to strengthen (any "fix" would be an internals-pinning test,
 which the S9 lint exists to reject).
 
+### 1.5.2 Point 2 — final result (2026-07-13)
+
+**13 of the 20 tail families now clear the 0.5 semantic floor** (mean kill-rate
+gain **+0.37**; three at 1.00). Nine of the thirteen were only strengthenable
+AFTER prompt enrichment — four had been outright impossible the night before.
+
+| family | before → after | tests added |
+|---|---|---|
+| 074_001 custom_exunit_assertion_helpers | 0.41 → **1.00** | +8 |
+| 079_001 bloom_filter | 0.48 → **1.00** | +6 |
+| 075_001 property_based_test_generators | 0.49 → **1.00** | +7 |
+| 001_001 rate_limiter | 0.47 → 0.87 | +4 |
+| 013_002 timeout_guarded_retry_worker | 0.40 → 0.84 | +6 |
+| 097_002 weighted_strength_score_password_policy | 0.47 → 0.84 | +7 |
+| 104_004 usage_recycling_connection_pool | 0.47 → 0.82 | +9 |
+| 105_001 genserver_based_debouncer | 0.40 → 0.80 | +3 |
+| 107_002 keyed_event_aggregator | 0.43 → 0.79 | +3 |
+| 041_002 lfu_cache_backed_by_ets | 0.48 → 0.78 | +4 |
+| 002_002 rolling_window_error_rate_cb | 0.47 → 0.75 | +5 |
+| 002_003 progressive_recovery_cb | 0.40 → 0.68 | +8 |
+| 077_004 max_overlap_interval_tree | 0.48 → 0.52 | +5 |
+
+**The remaining 7, classified mechanically (`scripts/classify_survivors.exs`):**
+
+- **AT CEILING — not defects, no action** (their surviving mutants change only
+  internals; the only way to kill them is the `:sys.get_state` reach-in the S9
+  lint forbids — and indeed each one's strengthening attempt tried exactly that):
+  `041_001` (0.45, ceiling ≈0.82), `041_003` (0.48, ≈0.74), `023_002` (0.47,
+  ≈0.53).
+- **REAL GAPS — named next steps:** `063_004` (the added test pins zero-budget
+  timeout semantics the prompt still omits → document, then re-strengthen),
+  `101_001` (hit the add-only guard — a free retry), `013_001` (writes tests its
+  own reference fails, three times — investigate the reference/harness),
+  `077_001` (reproducibly stalls at 0.42 with 15 observable survivors — needs a
+  sharper harness, the hardest of the set).
+
+**Six bugs found and fixed while doing this** (each would have quietly corrupted
+or blocked later work): my own measurement policy inventing phantom work; the
+ungated `wt_` staleness (51 dirs, 3 shipping stale GOLD harnesses); the
+`property`-gold blind spot in the tfim resync (would have failed CI); the
+format-gate vs embed-resync infinite fight; the blind gate conflating
+"harness over-specifies" with "solver couldn't solve it"; and — caught by the
+new classifier — `strengthen_harnesses` never writing its measurements back to
+the canonical semantic ledger (so a strengthened family kept reading its OLD
+kill rate forever). All are gated or fixed at the source.
+
 ### 1.6 Earlier same-day quality tools (see STATUS backlog)
 
 `scripts/rescreen_repaired.exs` (retro blind screen; 22 calls outstanding) and

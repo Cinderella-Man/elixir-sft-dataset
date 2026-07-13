@@ -163,6 +163,31 @@ clobbering, named warnings, predicate-name regex; isolation errored-kills).
 5. **Full --fim sweep** — DONE 2026-07-12: ALL FIM TARGETS EXERCISED ✓
    (first sweep since the day's ~40 new fim units; CI runs it weekly).
 
+### Semantic floor — POINT 2 COMPLETE (2026-07-13, docs/13 §1.4–§1.5.2)
+
+**13 of the 20 tail families now clear the floor** (mean +0.37; 074_001/079_001/
+075_001 at 1.00). The recipe that worked, and is now the documented remediation
+order: **enrich the prompt → canonical blind re-screen → re-strengthen the
+harness** (`enrich_prompts.exs` → `screen_blind_solve.exs` →
+`strengthen_harnesses.exs`, all ledgered/resumable). Nine families were only
+strengthenable after enrichment; four had been impossible before it. Clinching
+evidence: 001_001's prompt FAILED the blind screen in July; enriched (22→109
+lines) it passes, and its harness went 0.47 → 0.87.
+
+**The 7 that remain are classified, not hand-waved** (`classify_survivors.exs`):
+3 are AT THEIR OBSERVABLE CEILING (041_001, 041_003, 023_002 — surviving mutants
+change only internals; killing them would need the `:sys.get_state` reach-in the
+S9 lint forbids, which is exactly what each attempt tried) and 4 are real gaps
+with named next steps (063_004 zero-budget semantics; 101_001 free retry;
+013_001 tests its own reference fails; 077_001 hardest, 0.42).
+
+**Conceptual result for §4.2/S8:** a flat 0.5 floor is NOT universally reachable.
+The honest metric is the kill rate among OBSERVABLE mutants, with the rest a
+documented ceiling. Classify survivors before calling a family "work".
+
+**Six bugs fixed en route** (see docs/13 §1.5.2), incl. 51 stale `wt_` dirs —
+3 shipping a stale GOLD harness — now gated in CI + pre-push.
+
 ### Bugfix corpus MINTED — 2026-07-13 ~01:00 ✓
 
 **957 byte-surgical bug→fix units across 326 seeds; registry converged to
