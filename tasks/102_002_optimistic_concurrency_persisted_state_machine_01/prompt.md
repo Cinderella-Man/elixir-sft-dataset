@@ -108,4 +108,6 @@ as the external dependency — no additional libraries.
   your GenServer via the `repo:` option — do NOT define a repo module or any repo configuration.
   Your migration file must be at a `priv/repo/migrations/<name>.exs` path: it is executed against
   that repo before the tests run, so the schema/migration must be valid for SQLite (plain
-  `Ecto.Migration`, no database-specific SQL).
+  `Ecto.Migration`, no database-specific SQL). The migration module must be named exactly
+  `Repo.Migrations.CreateEntityTransitions` and written as a `change/0` migration — the test
+  suite loads and runs it by that exact name.

@@ -48,7 +48,7 @@ Write me an Elixir module called `ShardedTSDB` that implements a time-series sto
 
 ## Cleanup
 
-In addition to the `cleanup/1` function, the coordinator schedules cleanup periodically with `Process.send_after` based on `:cleanup_interval_ms` and applies the same rule across all shards.
+In addition to the `cleanup/1` function, the coordinator schedules cleanup periodically with `Process.send_after` based on `:cleanup_interval_ms` and applies the same rule across all shards. The timer message is the bare atom `:cleanup_tick`, handled by the coordinator in `handle_info/2`: it runs one cleanup pass across all shards and schedules the next tick. Sending `:cleanup_tick` to the coordinator directly must therefore trigger exactly one cleanup pass (a tick that finds nothing expired deletes nothing and must not crash the coordinator).
 
 ## Constraints
 
