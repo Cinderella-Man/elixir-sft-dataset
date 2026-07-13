@@ -215,7 +215,7 @@ end
 
 ```elixir
 defmodule AssertHelpersTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
   use AssertHelpers
 
   # ── Fake Ecto-style changeset ──────────────────────────────────────────────
@@ -403,6 +403,105 @@ defmodule AssertHelpersTest do
         end
 
       assert message =~ "150" or message =~ "ms"
+    end
+  end
+
+  # ── Added: pinning documented defaults and boundaries ──────────────────────
+
+  describe "assert_recent/2 default tolerance" do
+    test "default tolerance is exactly 5 seconds: 5s old passes" do
+      five_seconds_ago = apply(DateTime, :add, [DateTime.utc_now(), -5, :second])
+      assert_recent(five_seconds_ago)
+    end
+
+    test "default tolerance is exactly 5 seconds: 6s old fails" do
+      six_seconds_ago = apply(DateTime, :add, [DateTime.utc_now(), -6, :second])
+
+      result =
+        try do
+          assert_recent(six_seconds_ago)
+          :no_failure
+        rescue
+          ExUnit.AssertionError -> :failed
+        end
+
+      assert result == :failed
+    end
+  end
+
+  describe "assert_recent/2 inclusive comparison" do
+    test "a difference exactly equal to the tolerance passes" do
+      three_seconds_ago = apply(DateTime, :add, [DateTime.utc_now(), -3, :second])
+      assert_recent(three_seconds_ago, 3)
+    end
+
+    test "a tolerance of 0 passes for the current second" do
+      assert_recent(apply(DateTime, :utc_now, []), 0)
+    end
+  end
+
+  describe "assert_eventually/3 defaults" do
+    test "timeout defaults to 1000ms and interval to 50ms, both reported" do
+      message =
+        try do
+          assert_eventually(fn -> false end)
+          ""
+        rescue
+          e in ExUnit.AssertionError -> e.message
+        end
+
+      assert message =~ ~r/timeout\D*1000ms/
+      assert message =~ ~r/interval\D*50ms/
+    end
+  end
+
+  describe "assert_eventually/3 success value" do
+    test "evaluates to :ok when the condition is satisfied" do
+      assert assert_eventually(fn -> 42 end) == :ok
+    end
+  end
+
+  describe "assert_eventually/3 deadline is checked after each call" do
+    test "with a 0ms timeout the function runs exactly once before failing" do
+      counter = :counters.new(1, [])
+
+      Enum.each(1..20, fn _ ->
+        try do
+          assert_eventually(
+            fn ->
+              :counters.add(counter, 1, 1)
+              false
+            end,
+            0,
+            1
+          )
+        rescue
+          ExUnit.AssertionError -> :ok
+        end
+      end)
+
+      assert :counters.get(counter, 1) == 20
+    end
+
+    test "reported elapsed is non-negative and may be 0ms" do
+      elapsed_values =
+        Enum.map(1..20, fn _ ->
+          message =
+            try do
+              assert_eventually(fn -> false end, 0, 0)
+              ""
+            rescue
+              e in ExUnit.AssertionError -> e.message
+            end
+
+          case Regex.run(~r/elapsed\D*(\d+)ms/, message) do
+            [_, digits] -> String.to_integer(digits)
+            _ -> -1
+          end
+        end)
+
+      assert Enum.all?(elapsed_values, &(&1 >= 0))
+      assert Enum.any?(elapsed_values, &(&1 == 0))
     end
   end
 end

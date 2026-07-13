@@ -190,7 +190,7 @@ defmodule StrengthenHarnesses do
 
     base = %{family: id, harness_sha_before: CycleLog.content_sha(harness0), ts: now()}
 
-    {rate0, survivors} = measure(cfg, id, prompt, solution, harness0, manifest)
+    {rate0, survivors, _k0, _t0} = measure(cfg, id, prompt, solution, harness0, manifest)
 
     cond do
       rate0 >= @floor ->
@@ -237,10 +237,13 @@ defmodule StrengthenHarnesses do
          {:ok, json} <- grade_green(cfg, id, prompt, solution, harness1, manifest),
          :ok <- lints(json, prompt, solution, harness1),
          :ok <- whole_mutant_killed(cfg, id, prompt, solution, harness1, manifest),
-         {rate1, _} = measure(cfg, id, prompt, solution, harness1, manifest),
+         {rate1, surv1, k1, t1} = measure(cfg, id, prompt, solution, harness1, manifest),
          :ok <- floor_reached(rate0, rate1),
          :ok <- blind_gate(cfg, id, prompt, harness0, harness1, manifest) do
       apply_result = apply!(dir, harness0, harness1)
+
+      if apply_result in [:applied, :applied_wt_divergent],
+        do: record_measurement(dir, id, k1, t1, surv1)
 
       Map.merge(base, %{
         verdict: apply_result,
@@ -524,7 +527,27 @@ defmodule StrengthenHarnesses do
       end)
 
     total = killed + length(survivors)
-    {if(total > 0, do: killed / total, else: 1.0), Enum.reverse(survivors)}
+    {if(total > 0, do: killed / total, else: 1.0), Enum.reverse(survivors), killed, total}
+  end
+
+  # Write the post-strengthening measurement back to the CANONICAL semantic
+  # ledger. Without this, logs/semantic_mutants.jsonl keeps the pre-strengthening
+  # number forever and every consumer (the work list, classify_survivors) reads a
+  # rotten row — the exact staleness disease this campaign cured everywhere else
+  # (docs/13 §1.4). Content-keyed, so it self-invalidates on the next edit.
+  defp record_measurement(dir, id, killed, total, survivors) do
+    row = %{
+      task: id,
+      killed: killed,
+      total: total,
+      survivors: survivors,
+      dropped: 0,
+      solution_sha: file_sha(dir, "solution.ex"),
+      harness_sha: file_sha(dir, "test_harness.exs"),
+      ts: now()
+    }
+
+    File.write!(@measured, JSON.encode!(row) <> "\n", [:append])
   end
 
   defp grade(cfg, id, prompt, solution, harness, manifest, _sol_name) do

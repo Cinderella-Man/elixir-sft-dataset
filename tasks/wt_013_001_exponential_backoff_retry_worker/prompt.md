@@ -31,6 +31,50 @@ The function passed to execute will be called inside the GenServer process. Each
 
 Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
 
+## Behavior I need pinned down
+
+Please make the module behave exactly as described below — these are the details I care about and will rely on.
+
+### `start_link/1`
+
+- `opts` defaults to `[]`, so `RetryWorker.start_link()` must work and start a process with the default clock and default random function.
+- Returns whatever `GenServer.start_link/3` returns: `{:ok, pid}` on success, `{:error, {:already_started, pid}}` if the `:name` is already taken.
+- When `:name` is absent (or `nil`), the process starts unregistered; when present, it is registered under that name and may be addressed by name in `execute/3`.
+- The `:clock` and `:random` functions are resolved once at startup and held for the lifetime of the process; they apply to every subsequent `execute/3` call on that server. Note that `:clock` is only a hook I want available in the process state — the delay itself is realized by the timer, not by reading the clock, so an injected clock has no observable effect on wait times.
+- Any other keys in `opts` are ignored (no validation, no crash).
+
+### `execute/3`
+
+- `opts` defaults to `[]`, so `RetryWorker.execute(server, func)` must work and use all default retry options.
+- The call must not time out on its own: a slow retry sequence (a long backoff chain) must never produce a caller timeout exit. The caller blocks for as long as the retry schedule takes.
+- The result is exactly one of:
+  - `{:ok, result}` — some attempt returned `{:ok, result}`; `result` is passed through unchanged.
+  - `{:error, :max_retries_exceeded, reason}` — every allowed attempt returned `{:error, reason}`; `reason` is the reason from the **last** failing attempt (earlier reasons are discarded, and reasons may differ between attempts).
+- Attempt counting: the initial invocation is attempt 0, the first retry is attempt 1, and so on. With `max_retries: N` the function is invoked at most `N + 1` times (1 initial + N retries).
+  - `max_retries: 0` ⇒ the function is invoked exactly once; if it fails, the caller immediately gets `{:error, :max_retries_exceeded, reason}` with no delay and no timer.
+  - A negative `max_retries` behaves the same as `0`: the function is still invoked once, and a failure returns the error tuple immediately.
+  - Success on the initial attempt means no retry is ever scheduled and no jitter/random call is made.
+- `func` is expected to return `{:ok, result}` or `{:error, reason}`. Any other return value is unsupported: the server does not try to interpret it, and the resulting failure inside the GenServer takes the process down and the calling `execute/3` exits. Same for a `func` that raises or throws — it is not rescued. Only the two documented shapes are handled.
+- `func` is invoked with zero arity inside the GenServer process, both on the initial attempt and on every retry (a fresh call each time — nothing is memoized).
+- Repeated `execute/3` calls on the same server are independent: the retry options are read per call from that call's `opts`, and one call's failures/state never affect another's.
+
+### Backoff and jitter contract
+
+For the retry with attempt number `k` (so `k = 1` for the first retry), let `n = k - 1`:
+
+- `delay = min(base_delay_ms * 2^n, max_delay_ms)` — i.e. the first retry waits about `base_delay_ms`, the second about `2 * base_delay_ms`, and so on, clamped at `max_delay_ms`.
+- Guard the exponent so a very long retry chain cannot blow up into an enormous number: the doubling exponent must saturate (cap the shift at 50). Past that point the delay stays at the clamped `max_delay_ms`. A large `max_retries` must not produce an astronomically large integer or a crash.
+- `jitter = random.(delay)` when `delay > 0`. When `delay == 0` (e.g. `base_delay_ms: 0`, or `max_delay_ms: 0`), the random function is **not called at all** and jitter is `0`, so the retry is scheduled with a wait of `0`.
+- The scheduled wait is `delay + jitter`. Because the jitter is added *after* clamping, the actual wait can exceed `max_delay_ms` — for a random function honoring `0..delay-1` the wait lies in `delay..(2 * delay - 1)`.
+- The injected `:random` function receives the clamped `delay` as its single argument, once per scheduled retry. Its return value is added verbatim to the delay (no bounds checking), which makes the wait fully deterministic under an injected random function such as `fn _ -> 0 end`.
+
+### Concurrency and ordering
+
+- While one execution is waiting out its backoff, the GenServer must remain responsive: other `execute/3` calls are accepted and run their own attempts immediately. Waiting must never be done by sleeping in the server.
+- Everything needed to resume an execution (the function, the attempt number, that call's options, and the caller to reply to) travels with the scheduled retry, so the server keeps no growing per-execution bookkeeping and executions cannot be confused with one another.
+- Replies are delivered in completion order, not call order: a caller whose function succeeds immediately gets its reply even if an earlier caller is still retrying.
+- Because attempts run inside the server process, individual `func` invocations are serialized — two attempts never run at the same instant — but the backoff waits themselves overlap freely.
+
 ## Module under test
 
 ```elixir
