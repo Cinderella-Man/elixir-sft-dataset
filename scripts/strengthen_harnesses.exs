@@ -239,7 +239,7 @@ defmodule StrengthenHarnesses do
          :ok <- whole_mutant_killed(cfg, id, prompt, solution, harness1, manifest),
          {rate1, _} = measure(cfg, id, prompt, solution, harness1, manifest),
          :ok <- floor_reached(rate0, rate1),
-         :ok <- blind_gate(cfg, id, prompt, harness1, manifest) do
+         :ok <- blind_gate(cfg, id, prompt, harness0, harness1, manifest) do
       apply_result = apply!(dir, harness0, harness1)
 
       Map.merge(base, %{
@@ -389,31 +389,71 @@ defmodule StrengthenHarnesses do
     end
   end
 
-  defp blind_gate(cfg, id, prompt, harness, manifest) do
+  # The blind gate can fail for TWO different reasons and they demand opposite
+  # conclusions (found 2026-07-13 on 063_004, whose blind solve failed the
+  # harness's ORIGINAL tests — the added tests were innocent):
+  #
+  #   * failures land on ADDED tests  -> the harness over-specifies: it pins
+  #     behavior the prompt does not state. Rejecting is right, and the fix is
+  #     the PROMPT (scripts/enrich_prompts.exs).
+  #   * failures land on PRE-EXISTING tests -> the blind solver simply could not
+  #     solve the task this attempt (hard concurrency/timing families). That says
+  #     nothing about the added tests. Still reject (we cannot prove the added
+  #     tests are blind-passable), but label it honestly so nobody "fixes" a
+  #     prompt that is not broken.
+  defp blind_gate(cfg, id, prompt, harness0, harness1, manifest) do
     case Variations.blind_solution("strengthen_blind_#{id}", prompt, cfg) do
       {:ok, blind} ->
-        json = grade(cfg, id, prompt, blind, harness, manifest, "solution.ex")
+        json = grade(cfg, id, prompt, blind, harness1, manifest, "solution.ex")
 
         if Evaluator.green?({:ok, json}) do
           :ok
         else
-          # Name the failing tests: a bare 'blind solver fails' verdict leaves
-          # the morning triage nothing to act on — and the failing test names
-          # ARE the diagnosis (each names the undocumented behavior an added
-          # test pinned). Same information-gap rule as docs/12 §5.1.14.
-          failures =
-            (json["test_failures"] || [])
-            |> Enum.take(4)
-            |> Enum.map_join("; ", & &1["test"])
+          original = MapSet.new(test_names(harness0))
 
-          {:error,
-           "blind solver fails the strengthened harness — added test(s) demand behavior " <>
-             "the prompt does not state. Failing: " <> failures}
+          failing =
+            (json["test_failures"] || [])
+            |> Enum.map(&normalize_test_name(&1["test"]))
+            |> Enum.reject(&(&1 == ""))
+
+          {pre_existing, added} = Enum.split_with(failing, &MapSet.member?(original, &1))
+
+          cond do
+            not (json["compiled"] == true) ->
+              {:error,
+               "blind solve did not COMPILE (solver defect, not a prompt or harness " <>
+                 "finding) — retry the family"}
+
+            added == [] and pre_existing != [] ->
+              {:error,
+               "INCONCLUSIVE: the blind solver failed the harness's ORIGINAL tests " <>
+                 "(#{Enum.join(Enum.take(pre_existing, 3), "; ")}) — the solver could not " <>
+                 "solve this task, which says nothing about the added tests. Do NOT enrich " <>
+                 "the prompt on this evidence; retry the family."}
+
+            true ->
+              {:error,
+               "blind solver fails ADDED test(s) — the harness pins behavior the prompt " <>
+                 "does not state. Failing: " <> Enum.join(Enum.take(added, 4), "; ")}
+          end
         end
 
       {:error, reason} ->
         {:error, "blind solve call failed: #{inspect(reason)}"}
     end
+  end
+
+  defp test_names(harness) do
+    ~r/^\s*(?:test|property)\s+"((?:[^"\\]|\\.)*)"/m
+    |> Regex.scan(harness, capture: :all_but_first)
+    |> Enum.map(fn [n] -> n end)
+  end
+
+  # ExUnit reports "test <name>" (and "test <describe> <name>" for nested blocks).
+  defp normalize_test_name(nil), do: ""
+
+  defp normalize_test_name(t) do
+    t |> to_string() |> String.replace_prefix("test ", "") |> String.trim()
   end
 
   # ── apply + propagate (restore on any failure) ──────────────────────────────
