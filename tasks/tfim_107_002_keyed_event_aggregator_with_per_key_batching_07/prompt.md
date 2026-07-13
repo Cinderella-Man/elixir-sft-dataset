@@ -278,5 +278,57 @@ defmodule KeyedAggregatorTest do
     # reset by :a's flush.
     assert_receive {:flushed, :b, [100]}, 300
   end
+
+  # ---------------------------------------------------------------
+  # Documented defaults
+  # ---------------------------------------------------------------
+
+  test "defaults :batch_size to exactly 100 events per key" do
+    # No :batch_size given, so the documented default of 100 applies; the
+    # interval is pushed far out so only the size trigger can fire.
+    agg = start_agg(interval_ms: 5_000)
+
+    Enum.each(1..99, fn n -> KeyedAggregator.push(agg, :a, n) end)
+
+    # 99 buffered events must NOT reach the default batch size.
+    refute_receive {:flushed, :a, _}, 200
+
+    KeyedAggregator.push(agg, :a, 100)
+
+    # The 100th event completes the batch: exactly 100 events, in push order.
+    assert_receive {:flushed, :a, batch}, 1_000
+    assert batch == Enum.to_list(1..100)
+  end
+
+  test "defaults :interval_ms to exactly 1_000 ms for a key's time-triggered flush" do
+    # No :interval_ms given, so the documented default of 1_000 ms applies; the
+    # batch size is large enough that only the time trigger can fire.
+    agg = start_agg(batch_size: 50)
+
+    before_push = System.monotonic_time(:microsecond)
+    KeyedAggregator.push(agg, :a, :only)
+    assert_receive {:flushed, :a, [:only]}, 3_000
+    elapsed_us = System.monotonic_time(:microsecond) - before_push
+
+    # The key's timer is armed at (or after) the push, so a correct 1_000 ms
+    # interval can never deliver the flush sooner than 1_000 ms after the push,
+    # and must not wait a full extra millisecond beyond it.
+    assert elapsed_us >= 1_000_000
+    assert elapsed_us < 1_001_000
+  end
+
+  test "defaults :on_flush to a no-op two-arity callback that keeps the server alive" do
+    # Started with no :on_flush at all: the default callback must accept the
+    # (key, batch) pair and simply do nothing, so a flush cannot crash the
+    # aggregator.
+    agg = start_supervised!({KeyedAggregator, [batch_size: 1, interval_ms: 100]})
+    ref = Process.monitor(agg)
+
+    KeyedAggregator.push(agg, :a, 1)
+    KeyedAggregator.push(agg, {:tuple, "key"}, %{payload: :two})
+
+    refute_receive {:DOWN, ^ref, :process, _pid, _reason}, 400
+    assert Process.alive?(agg)
+  end
 end
 ```

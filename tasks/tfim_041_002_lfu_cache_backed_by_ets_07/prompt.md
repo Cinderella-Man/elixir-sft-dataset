@@ -336,5 +336,88 @@ defmodule LFUCacheTest do
     assert {:ok, :from_c1} = LFUCache.get(c1, :a)
     assert {:ok, :from_c2} = LFUCache.get(c2, :a)
   end
+
+  # -------------------------------------------------------
+  # :max_size validation (init raises ArgumentError)
+  # -------------------------------------------------------
+
+  test "start_link fails with ArgumentError unless :max_size is a positive integer" do
+    Process.flag(:trap_exit, true)
+
+    for bad <- [0, -1, 1.5, :many] do
+      name = :"lfu_bad_#{System.pid()}_#{System.unique_integer([:positive])}"
+
+      assert {:error, {%ArgumentError{}, _stack}} =
+               LFUCache.start_link(name: name, max_size: bad)
+    end
+  end
+
+  # -------------------------------------------------------
+  # Frequency arithmetic: each access is worth exactly +1
+  # -------------------------------------------------------
+
+  test "a get bumps frequency by exactly one, so a twice-read key outranks a once-read key" do
+    c = start_cache(2)
+
+    # :a reaches frequency 3 (insert + two gets)
+    LFUCache.put(c, :a, 1)
+    assert {:ok, 1} = LFUCache.get(c, :a)
+    assert {:ok, 1} = LFUCache.get(c, :a)
+
+    # :b reaches frequency 2 (insert + one get) and is the most recently used
+    LFUCache.put(c, :b, 2)
+    assert {:ok, 2} = LFUCache.get(c, :b)
+
+    # cache is full: the lowest frequency loses — :b (freq 2) not :a (freq 3)
+    LFUCache.put(c, :c, 3)
+
+    assert {:ok, 1} = LFUCache.get(c, :a)
+    assert :miss = LFUCache.get(c, :b)
+    assert {:ok, 3} = LFUCache.get(c, :c)
+  end
+
+  test "a put-update bumps frequency by exactly one, so extra writes outrank fewer writes" do
+    c = start_cache(2)
+
+    # :a reaches frequency 3 (insert + two updates)
+    LFUCache.put(c, :a, 1)
+    LFUCache.put(c, :a, 2)
+    LFUCache.put(c, :a, 3)
+
+    # :b reaches frequency 2 (insert + one update) and is the most recently used
+    LFUCache.put(c, :b, 1)
+    LFUCache.put(c, :b, 2)
+
+    # cache is full: the lowest frequency loses — :b (freq 2) not :a (freq 3)
+    LFUCache.put(c, :c, 9)
+
+    assert {:ok, 3} = LFUCache.get(c, :a)
+    assert :miss = LFUCache.get(c, :b)
+    assert {:ok, 9} = LFUCache.get(c, :c)
+  end
+
+  # -------------------------------------------------------
+  # Entry count: updates never evict, new keys evict exactly one
+  # -------------------------------------------------------
+
+  test "entry count stays at max_size: updates evict nothing, a new key evicts exactly one" do
+    c = start_cache(2)
+    data = :"#{c}_data"
+
+    LFUCache.put(c, :a, 1)
+    LFUCache.put(c, :b, 2)
+    assert :ets.info(data, :size) == 2
+
+    # updating an existing key while exactly at max_size must not evict anything
+    LFUCache.put(c, :a, 11)
+    assert :ets.info(data, :size) == 2
+    assert {:ok, 11} = LFUCache.get(c, :a)
+    assert {:ok, 2} = LFUCache.get(c, :b)
+
+    # a new key while at max_size evicts exactly one entry before inserting
+    LFUCache.put(c, :c, 3)
+    assert :ets.info(data, :size) == 2
+    assert {:ok, 3} = LFUCache.get(c, :c)
+  end
 end
 ```

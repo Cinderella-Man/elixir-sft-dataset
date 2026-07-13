@@ -251,5 +251,58 @@ defmodule DebouncerTest do
     assert_receive :tuple_key, 400
     assert_receive :atom_key_ran, 400
   end
+
+  # -------------------------------------------------------
+  # delay_ms = 0 is legal, and the func is never run inline
+  # -------------------------------------------------------
+
+  test "delay_ms of 0 is accepted and runs the func asynchronously, not in the caller" do
+    test = self()
+
+    # 0 is a legal, non-negative delay: "fire on the next scheduler pass".
+    assert :ok = Debouncer.call("zero", 0, fn -> send(test, {:zero_ran, self()}) end)
+
+    assert_receive {:zero_ran, runner}, 400
+
+    # The func must never run inline in the calling process.
+    refute runner == test
+  end
+
+  # -------------------------------------------------------
+  # Argument validation (exception TYPE only)
+  # -------------------------------------------------------
+
+  test "call/3 raises FunctionClauseError for a bad delay or a non-zero-arity func" do
+    # Negative delay: below the non-negative-integer contract.
+    assert_raise FunctionClauseError, fn -> Debouncer.call("k", -1, fn -> :noop end) end
+
+    # Non-integer delay.
+    assert_raise FunctionClauseError, fn -> Debouncer.call("k", 100.0, fn -> :noop end) end
+
+    # Func of the wrong arity.
+    assert_raise FunctionClauseError, fn -> Debouncer.call("k", 100, fn _x -> :noop end) end
+
+    # None of the rejected calls may have been sent to the server: a valid call
+    # on the same key still starts a brand-new debounce cycle and fires once.
+    Debouncer.call("k", 50, notify(:valid))
+    assert_receive :valid, 400
+    refute_receive :valid, 200
+  end
+
+  # -------------------------------------------------------
+  # Independent schedules: a later, shorter delay fires first
+  # -------------------------------------------------------
+
+  test "a short-delay key fires before a long-delay key that was scheduled earlier" do
+    Debouncer.call("long", 250, notify(:long))
+    Debouncer.call("short", 50, notify(:short))
+
+    # The short key fires on its own schedule, well before the long one...
+    assert_receive :short, 200
+    refute_received :long
+
+    # ...and the pending long key is unaffected, firing after its own delay.
+    assert_receive :long, 500
+  end
 end
 ```

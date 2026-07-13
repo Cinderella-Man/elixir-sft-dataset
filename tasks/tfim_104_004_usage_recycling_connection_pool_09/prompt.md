@@ -416,5 +416,155 @@ defmodule RecyclingPoolTest do
   test "a blocked checkout is served when a connection is returned" do
     # TODO
   end
+
+  # --- defaults & option validation ----------------------------------------
+
+  test "defaults are max_size 10, min_size 0, max_uses :infinity and an empty pool" do
+    start_supervised!({RecyclingPool, name: :rp_defaults})
+
+    s = RecyclingPool.stats(:rp_defaults)
+    assert s.max == 10
+    assert s.min == 0
+    assert s.max_uses == :infinity
+    assert s.total == 0
+    assert s.available == 0
+    assert s.in_use == 0
+  end
+
+  test "min_size equal to max_size is accepted and pre-fills the pool" do
+    start_supervised!({RecyclingPool, name: :rp_min_eq_max, min_size: 2, max_size: 2})
+
+    s = RecyclingPool.stats(:rp_min_eq_max)
+    assert s.min == 2
+    assert s.max == 2
+    assert s.total == 2
+    assert s.available == 2
+    assert s.in_use == 0
+  end
+
+  test "min_size greater than max_size and a non-positive max_uses are rejected" do
+    Process.flag(:trap_exit, true)
+
+    assert {:error, _} = RecyclingPool.start_link(min_size: 3, max_size: 2)
+    assert {:error, _} = RecyclingPool.start_link(max_uses: 0)
+  end
+
+  # --- timeout semantics ---------------------------------------------------
+
+  test "timeout 0 is accepted: it serves when possible and errors when exhausted" do
+    start_supervised!({RecyclingPool, name: :rp_zero, max_size: 1})
+
+    # A zero timeout still creates/serves a connection when one can be had.
+    assert {:ok, c} = RecyclingPool.checkout(:rp_zero, 0)
+    # At max_size with nothing available, a zero timeout errors immediately.
+    assert {:error, :timeout} = RecyclingPool.checkout(:rp_zero, 0)
+
+    assert :ok = RecyclingPool.checkin(:rp_zero, c)
+    assert {:ok, ^c} = RecyclingPool.checkout(:rp_zero, 0)
+  end
+
+  test "a blocked checkout times out server-side and leaves the pool usable" do
+    start_supervised!({RecyclingPool, name: :rp_block_timeout, max_size: 1})
+
+    assert {:ok, c} = RecyclingPool.checkout(:rp_block_timeout, 2_000)
+    assert {:error, :timeout} = RecyclingPool.checkout(:rp_block_timeout, 100)
+
+    s = RecyclingPool.stats(:rp_block_timeout)
+    assert s.total == 1
+    assert s.in_use == 1
+    assert s.available == 0
+
+    # The timed-out waiter is gone: a returned connection becomes available again.
+    assert :ok = RecyclingPool.checkin(:rp_block_timeout, c)
+    assert %{available: 1, in_use: 0} = RecyclingPool.stats(:rp_block_timeout)
+    assert {:ok, ^c} = RecyclingPool.checkout(:rp_block_timeout, 0)
+  end
+
+  test "a waiter that dies while blocked is not handed a connection" do
+    start_supervised!({RecyclingPool, name: :rp_dead_waiter, max_size: 1})
+
+    assert {:ok, c} = RecyclingPool.checkout(:rp_dead_waiter, 2_000)
+
+    waiter = spawn(fn -> RecyclingPool.checkout(:rp_dead_waiter, 5_000) end)
+    Process.sleep(50)
+    Process.exit(waiter, :kill)
+    Process.sleep(50)
+
+    assert :ok = RecyclingPool.checkin(:rp_dead_waiter, c)
+
+    s = RecyclingPool.stats(:rp_dead_waiter)
+    assert s.available == 1
+    assert s.in_use == 0
+    assert s.total == 1
+
+    assert {:ok, ^c} = RecyclingPool.checkout(:rp_dead_waiter, 0)
+  end
+
+  # --- use accounting ------------------------------------------------------
+
+  test "an eagerly created connection starts at zero uses" do
+    {destroy, destroyed} = destroy_tracker()
+
+    start_supervised!(
+      {RecyclingPool,
+       name: :rp_eager_uses, min_size: 1, max_size: 1, max_uses: 2, destroy: destroy}
+    )
+
+    assert {:ok, c} = RecyclingPool.checkout(:rp_eager_uses, 2_000)
+    assert :ok = RecyclingPool.checkin(:rp_eager_uses, c)
+    # Only one use so far: not retired, and reused.
+    assert destroyed.() == []
+    assert {:ok, ^c} = RecyclingPool.checkout(:rp_eager_uses, 2_000)
+    assert :ok = RecyclingPool.checkin(:rp_eager_uses, c)
+    # Second use reaches max_uses: retired now.
+    assert destroyed.() == [c]
+  end
+
+  test "a lazily created connection starts at zero uses" do
+    {destroy, destroyed} = destroy_tracker()
+
+    start_supervised!(
+      {RecyclingPool, name: :rp_lazy_uses, max_size: 1, max_uses: 2, destroy: destroy}
+    )
+
+    assert {:ok, c} = RecyclingPool.checkout(:rp_lazy_uses, 2_000)
+    assert :ok = RecyclingPool.checkin(:rp_lazy_uses, c)
+    assert destroyed.() == []
+    assert {:ok, ^c} = RecyclingPool.checkout(:rp_lazy_uses, 2_000)
+    assert :ok = RecyclingPool.checkin(:rp_lazy_uses, c)
+    assert destroyed.() == [c]
+  end
+
+  test "replacing a retired connection for a waiter keeps total at max_size" do
+    {_counter, create} = counting_create()
+
+    start_supervised!(
+      {RecyclingPool, name: :rp_repl_total, max_size: 1, max_uses: 1, create: create}
+    )
+
+    assert {:ok, c0} = RecyclingPool.checkout(:rp_repl_total, 2_000)
+    parent = self()
+
+    holder =
+      spawn(fn ->
+        send(parent, {:result, RecyclingPool.checkout(:rp_repl_total, 5_000)})
+
+        receive do
+          :release -> :ok
+        end
+      end)
+
+    Process.sleep(50)
+    assert :ok = RecyclingPool.checkin(:rp_repl_total, c0)
+    assert_receive {:result, {:ok, cnew}}, 5_000
+    assert cnew != c0
+
+    s = RecyclingPool.stats(:rp_repl_total)
+    assert s.total == 1
+    assert s.in_use == 1
+    assert s.available == 0
+
+    send(holder, :release)
+  end
 end
 ```

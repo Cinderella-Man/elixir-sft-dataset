@@ -350,5 +350,120 @@ defmodule BloomFilterTest do
     assert f1.bits == f2.bits
     assert BloomFilter.member?(f2, "dup")
   end
+
+  # -------------------------------------------------------
+  # Guard boundaries on new/2 (documented: exclusive ranges)
+  # -------------------------------------------------------
+
+  test "new/2 rejects sizes <= 0 and rates outside (0.0, 1.0) with FunctionClauseError" do
+    assert_raise FunctionClauseError, fn -> BloomFilter.new(0, 0.01) end
+    assert_raise FunctionClauseError, fn -> BloomFilter.new(-5, 0.01) end
+    assert_raise FunctionClauseError, fn -> BloomFilter.new(100, 0.0) end
+    assert_raise FunctionClauseError, fn -> BloomFilter.new(100, 1.0) end
+    assert_raise FunctionClauseError, fn -> BloomFilter.new(100, 1) end
+  end
+
+  test "new/2 accepts the smallest positive expected size (n = 1)" do
+    filter = BloomFilter.new(1, 0.5)
+
+    assert %BloomFilter{} = filter
+    assert filter.m >= 1
+    assert filter.k >= 1
+    assert BloomFilter.member?(BloomFilter.add(filter, :only), :only)
+  end
+
+  # -------------------------------------------------------
+  # Documented parameter derivation and bit-array shape
+  # -------------------------------------------------------
+
+  test "new/2 derives the documented m, k, word count and all-zero words" do
+    filter = BloomFilter.new(1_000, 0.01)
+
+    assert filter.m == 9586
+    assert filter.k == 7
+    # ceil(m / 64) 64-bit words
+    assert tuple_size(filter.bits) == 150
+    assert Enum.all?(Tuple.to_list(filter.bits), &(&1 == 0))
+  end
+
+  test "new/2 floors k at 1 for a very loose false-positive rate" do
+    filter = BloomFilter.new(1_000, 0.9)
+
+    assert filter.m == 220
+    assert filter.k == 1
+    assert Enum.all?(Tuple.to_list(filter.bits), &(&1 == 0))
+    refute BloomFilter.member?(filter, "ghost")
+  end
+
+  # -------------------------------------------------------
+  # Exact hashing / bit layout
+  # -------------------------------------------------------
+
+  test "add/2 sets exactly the bits phash2({i, item}, m) for i in 0..k-1" do
+    filter = BloomFilter.new(1_000, 0.01)
+
+    for item <- ["probe-a", :probe_b, 12_345, {:probe, "c"}, [1, 2, 3]] do
+      added = BloomFilter.add(filter, item)
+      expected = MapSet.new(hash_indices(filter, item))
+
+      assert set_bit_indices(added.bits) == expected
+      assert tuple_size(added.bits) == tuple_size(filter.bits)
+      assert added.m == filter.m
+      assert added.k == filter.k
+    end
+  end
+
+  test "member?/2 needs every one of the k bits, first and last seed included" do
+    filter = BloomFilter.new(1_000, 0.01)
+
+    # Pick a probe whose k bit indices are all distinct, so that dropping any
+    # single one of them really leaves that bit unset.
+    item =
+      Enum.find(Enum.map(0..99, &"seed-probe-#{&1}"), fn candidate ->
+        indices = hash_indices(filter, candidate)
+        length(Enum.uniq(indices)) == filter.k
+      end)
+
+    assert item
+    indices = hash_indices(filter, item)
+
+    full = %BloomFilter{filter | bits: bits_from_indices(indices, filter.m)}
+    assert BloomFilter.member?(full, item)
+
+    for dropped <- [List.first(indices), List.last(indices)] do
+      remaining = indices -- [dropped]
+      partial = %BloomFilter{filter | bits: bits_from_indices(remaining, filter.m)}
+
+      refute BloomFilter.member?(partial, item)
+    end
+  end
+
+  # -------------------------------------------------------
+  # Helpers (mirror the documented hashing and bit layout)
+  # -------------------------------------------------------
+
+  defp hash_indices(%BloomFilter{k: k, m: m}, item) do
+    for i <- 0..(k - 1), do: :erlang.phash2({i, item}, m)
+  end
+
+  defp bits_from_indices(indices, m) do
+    empty = Tuple.duplicate(0, ceil(m / 64))
+
+    Enum.reduce(indices, empty, fn index, acc ->
+      wi = div(index, 64)
+      word = Bitwise.bor(elem(acc, wi), Bitwise.bsl(1, rem(index, 64)))
+      put_elem(acc, wi, word)
+    end)
+  end
+
+  defp set_bit_indices(bits) do
+    bits
+    |> Tuple.to_list()
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {word, wi} ->
+      for bo <- 0..63, Bitwise.band(Bitwise.bsr(word, bo), 1) == 1, do: wi * 64 + bo
+    end)
+    |> MapSet.new()
+  end
 end
 ```

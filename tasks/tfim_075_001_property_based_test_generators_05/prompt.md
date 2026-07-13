@@ -542,5 +542,104 @@ defmodule GeneratorsTest do
       end
     end
   end
+
+  # -------------------------------------------------------
+  # Added: boundary + alphabet reachability
+  #
+  # These pin the exact documented bounds (18..120, 1..50 name chars,
+  # 1..20 email-segment chars, 1..20 list length, amount low bound 0)
+  # and the exact documented character sets (a-z / A-Z for names,
+  # a-z / 0-9 for emails). Every assertion below restates a bound or a
+  # character-set endpoint that the task prompt explicitly calls reachable.
+  # -------------------------------------------------------
+
+  defp sample(generator, count), do: Enum.take(generator, count)
+
+  defp email_segments(email) do
+    [local, rest] = String.split(email, "@")
+    [domain, tld] = String.split(rest, ".")
+    [local, domain, tld]
+  end
+
+  describe "documented boundaries are exactly reachable" do
+    test ":age hits both 18 and 120 and never falls outside 18..120" do
+      ages = Generators.user() |> sample(2_000) |> Enum.map(& &1.age)
+
+      # 18 reachable, 120 reachable, and nothing below 18 or above 120.
+      assert Enum.min(ages) == 18
+      assert Enum.max(ages) == 120
+    end
+
+    test ":name hits both the 1-character and 50-character length bounds" do
+      lengths =
+        Generators.user()
+        |> sample(1_000)
+        |> Enum.map(&String.length(&1.name))
+
+      assert Enum.min(lengths) == 1
+      assert Enum.max(lengths) == 50
+    end
+
+    test ":name draws from the full a-z and A-Z alphabet" do
+      chars =
+        Generators.user()
+        |> sample(500)
+        |> Enum.flat_map(&String.to_charlist(&1.name))
+        |> MapSet.new()
+
+      for c <- [?a, ?z, ?A, ?Z] do
+        assert c in chars, "Expected letter #{<<c>>} to appear in generated names"
+      end
+    end
+
+    test ":email segments hit both the 1-character and 20-character length bounds" do
+      lengths =
+        Generators.user()
+        |> sample(1_000)
+        |> Enum.flat_map(&email_segments(&1.email))
+        |> Enum.map(&String.length/1)
+
+      assert Enum.min(lengths) == 1
+      assert Enum.max(lengths) == 20
+    end
+
+    test ":email draws from the full a-z and 0-9 alphabet" do
+      chars =
+        Generators.user()
+        |> sample(500)
+        |> Enum.flat_map(fn user ->
+          user.email |> email_segments() |> Enum.join() |> String.to_charlist()
+        end)
+        |> MapSet.new()
+
+      for c <- [?a, ?z, ?0, ?9] do
+        assert c in chars, "Expected character #{<<c>>} to appear in generated emails"
+      end
+    end
+
+    test ":amount is reachable at its documented lower bound of 0" do
+      # 0 is far too rare to sample out of 0..10_000_000, but it is the
+      # minimum of the documented range, so shrinking must land on it.
+      amounts = StreamData.map(Generators.money(), & &1.amount)
+
+      options = [initial_seed: {1, 2, 3}, max_runs: 20, max_shrinking_steps: 10_000]
+
+      {:error, %{shrunk_failure: shrunk}} =
+        StreamData.check_all(amounts, options, fn amount -> {:error, amount} end)
+
+      assert shrunk == 0
+    end
+
+    test "non_empty_list/1 hits both the length-1 and length-20 bounds" do
+      lengths =
+        StreamData.integer()
+        |> Generators.non_empty_list()
+        |> sample(500)
+        |> Enum.map(&length/1)
+
+      assert Enum.min(lengths) == 1
+      assert Enum.max(lengths) == 20
+    end
+  end
 end
 ```

@@ -344,5 +344,78 @@ defmodule RateLimiterTest do
     assert {:ok, 0} = RateLimiter.check(rl, "key:100", 1, 100)
     assert Process.alive?(rl)
   end
+
+  # -------------------------------------------------------
+  # Window boundary is exclusive: ts is active iff ts > now - window_ms
+  # -------------------------------------------------------
+
+  test "an entry exactly window_ms old is no longer active", %{rl: rl} do
+    # Three calls at time 0 exhaust the limit.
+    assert {:ok, 2} = RateLimiter.check(rl, "k", 3, 1_000)
+    assert {:ok, 1} = RateLimiter.check(rl, "k", 3, 1_000)
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 3, 1_000)
+    assert {:error, :rate_limited, 1_000} = RateLimiter.check(rl, "k", 3, 1_000)
+
+    # At exactly time 1000 the time-0 entries have fallen out of the window
+    # (0 > 1000 - 1000 is false), so the window is empty again.
+    Clock.advance(1_000)
+    assert {:ok, 2} = RateLimiter.check(rl, "k", 3, 1_000)
+  end
+
+  # -------------------------------------------------------
+  # retry_after is exact, and waiting exactly that long works
+  # -------------------------------------------------------
+
+  test "retry_after is the exact wait until the oldest entry expires", %{rl: rl} do
+    # Single request at time 0 under a limit of 1 per 1000ms.
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 1_000)
+
+    # At time 999 the entry expires in exactly 1ms: max(0 + 1000 - 999, 1) == 1.
+    Clock.advance(999)
+    assert {:error, :rate_limited, 1} = RateLimiter.check(rl, "k", 1, 1_000)
+
+    # Waiting exactly retry_after_ms must succeed (no calls in between; a denied
+    # call records no timestamp, so the window did not move forward).
+    Clock.advance(1)
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 1_000)
+  end
+
+  # -------------------------------------------------------
+  # Argument guards on check/4
+  # -------------------------------------------------------
+
+  test "check/4 guards reject non-positive limits but accept 1", %{rl: rl} do
+    assert_raise FunctionClauseError, fn ->
+      RateLimiter.check(rl, "k", 0, 1_000)
+    end
+
+    assert_raise FunctionClauseError, fn ->
+      RateLimiter.check(rl, "k", 1, 0)
+    end
+
+    # 1 is a positive integer and must be inside the contract for both args.
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 1)
+    assert Process.alive?(rl)
+  end
+
+  # -------------------------------------------------------
+  # Cleanup drops keys at the same exclusive boundary check/4 uses
+  # -------------------------------------------------------
+
+  test "cleanup removes a key whose entries are exactly window_ms old", %{rl: rl} do
+    # Entry recorded at time 0 with a 1000ms window.
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 1_000)
+
+    # At exactly time 1000 the entry is not active (0 > 1000 - 1000 is false),
+    # so the key's active list is empty and the key is removed entirely.
+    Clock.advance(1_000)
+    send(rl, :cleanup)
+
+    # A removed key behaves exactly like a never-seen key: checked here with a
+    # wider window that would still have covered the time-0 entry had it been
+    # retained, the first call must be allowed with remaining = max - 1.
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 2_000)
+    assert Process.alive?(rl)
+  end
 end
 ```
