@@ -37,6 +37,20 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 An item leaves this list only when done (→ docs/15) or when Kamil kills it.
 "FREE" = CPU/engineering only, no API calls.
 
+**HARD RULE (CONTEXT.md rule 7): every finding is TWO-TIER — Tier A fixes the
+existing data, Tier B gates the generation script so the class can never
+recur. A finding without its Tier B is not done.** Compliance table for the
+open finding classes:
+
+| finding class | Tier A (existing data) | Tier B (generation gate) |
+|---|---|---|
+| prompt↔harness gaps in repaired accepts (6 found) | fixed + re-screened GREEN (docs/15) | **T1.1 — pending Kamil's sign-off** |
+| blind evidence staled by harness edits | 54-root sweep RUNNING (+ RED triage) | sha-stamping done; **CI wiring pending (immediate queue)** |
+| unsound permanent-reject rows (gate repaired, ledger not audited) | purged + 9 units minted (docs/15) | **T1.7 (NEW) — gate-sha-keyed reject rows** + T3.2 weekly reverify sample |
+| tools imitate grandfathered anti-patterns | 101_001 fixed; corpus debt = T2.1 | prompts hardened (docs/15) |
+| generation-process chatter comments in shipped files | `# Prompt:` occurrences rewritten (docs/15) | **T1.8 (NEW) — chatter lint extension** |
+| LLM-judge hallucinated verdicts | 101_003 overridden by hand (docs/15) | T2.4 two-judge agreement; rule-10 convention (docs/14) |
+
 ### Tier 1 — make every FUTURE generated unit better (loop + gates)
 
 **T1.1 — Wire the §5.2 blind re-screen into the generation loop.
@@ -98,6 +112,41 @@ change; then FREE (PLT build + weekly CI)]**
   free units) — wrong specs must never become training targets.
 - WHAT/HOW: add `dialyxir`, one-time PLT, driver staging each gold with its
   deps, weekly CI gate. Pilot on 5 families first. Design: docs/13 §2.6.
+
+**T1.7 — Gate-sha keying for permanent reject ledgers. [FREE] (Tier B of the
+unsound-reject finding)**
+- WHY: 15 unsound `102_001` tfim reject rows sat for 2 days because verdicts
+  written by a broken gate survived the gate's repair — the 074_x class,
+  RECURRED. The repo's own rule 1 ("a ledger without a content key rots
+  silently") was applied to the data but never to the GATE'S OWN CODE.
+- WHAT: every permanent-reject row also records `gate_sha` — the content sha
+  of the module(s) that produced the verdict (`test_fim.ex`, `bugfix.ex`,
+  `mutation.ex` as appropriate). Readers treat a row whose `gate_sha` no
+  longer matches the compiled module as RE-OPENABLE (exactly how a changed
+  harness sha already re-opens bugfix rejects). A gate repair then
+  auto-invalidates its old verdicts instead of relying on someone remembering
+  to audit.
+- HOW: the `record_rejected` sites + `rejected_labels`-style readers in
+  `lib/gen_task/{test_fim,bugfix}.ex` (+ fim's ledger); legacy rows without
+  `gate_sha` stay valid until the next `reverify_rejects.exs` pass clears
+  them; T3.2's weekly reverify sample is the backstop. Tests + registry
+  counts must stay honest (`missing/2` sees re-opened units).
+
+**T1.8 — Extend the chatter lint to generation-process meta-comments. [FREE]
+(Tier B of the `# Prompt:` finding)**
+- WHY: the strengthener shipped `# Prompt: "…"` citation comments into 11
+  files — S10-class process chatter in a register no hand-written harness
+  uses. Caught by Kamil's eye, not by any gate. The S10 sweep's markers
+  (emoji, `# FIX`, "Wait,") never covered citation-style comments.
+- WHAT: the accept-gate chatter lint also flags comments that cite the
+  generation process rather than describe behavior: `# Prompt:`,
+  `# The prompt says`, `# --- added:`-style banners. Tier A: sweep the 13
+  previously-strengthened families for the `--- added:` banner class and
+  reword (deterministic edits + tfim/wt resyncs — comments live outside
+  carved test blocks).
+- HOW: extend the detectors in the Evaluator lint set (`quality_shortfall`)
+  + `--self-test` with a planted comment; corpus grep proves 0 instances
+  after the Tier A sweep.
 
 ### Tier 2 — raise EXISTING corpus quality (evidence says more is there)
 

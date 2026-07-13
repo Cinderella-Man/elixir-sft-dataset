@@ -492,6 +492,14 @@ spec, family-keyed splits, a round-trip validator, and dedup/sampling weights.
     calls (or hand effort) on a below-floor family, fuzz its survivors through
     the public API; extend the classifier's vocabulary when it misfires.
 
+12. **Every finding is a TWO-TIER work item (CONTEXT.md hard rule 7): fix the
+    existing data AND gate the generation script so the class cannot recur.**
+    A finding without its forward gate is not done — fixing existing data
+    while generating the same defect again never converges on quality. The
+    compliance table for open finding classes lives at the top of STATUS.md's
+    quality register; the round-level version of this rule is docs/12 §7.3
+    step 3 ("wire the new check into the loop + CI FIRST").
+
 ---
 
 ## 7. Runbooks

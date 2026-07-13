@@ -92,6 +92,21 @@ A STATUS full of victory laps hides the actual work.
 unrelated commits). Assume the session dies without warning: the files alone
 must let the next session pick up.
 
+**7. Every finding is a TWO-TIER work item — always.**
+Whatever you find broken, it goes on the STATUS list as BOTH:
+  - **Tier A — fix the existing data** (retro: a ledgered, resumable tool or a
+    verified hand edit with its full cascade), AND
+  - **Tier B — update the generation script / add a gate** (accept-time lint,
+    loop check, CI gate) so the same class can NEVER be generated again.
+A finding without its Tier B is NOT done. The end goal of this project is the
+highest-quality dataset possible — we do not get there by fixing existing
+data, generating crap, and fixing it again. Every time we learn something, we
+fix it AND apply a gate (if possible) to the generation script. Corollaries:
+when a GATE is repaired, audit every ledger it ever wrote (docs/12 §5.1.12);
+and key permanent ledger rows to the gate's own code so a repaired gate
+auto-invalidates its old verdicts. (This generalizes docs/12 §7.3 step 3 —
+"wire the new check into the loop + CI first" — from rounds to every finding.)
+
 ---
 
 ## 1. What this project is
