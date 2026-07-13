@@ -21,6 +21,13 @@ I need these functions in the public API:
   - `{:error, :global_empty, retry_after_ms}` if the per-key bucket would have admitted but the global pool is insufficient (retry_after reflects the global shortage).
   - If both levels are short, return the **per-key** error first (a caller whose own tier is depleted shouldn't be given the false impression that the global pool is their blocker). This ordering matters — it's explicit in the semantics.
 
+  `acquire/5` and `key_level/4` must validate their arguments with function
+  guards: a non-positive `key_capacity`, non-positive `key_refill_rate`, or
+  non-positive `tokens` matches no clause and raises `FunctionClauseError` —
+  an invalid call must never drain tokens or create a bucket. A `retry_after_ms`
+  is always at least 1 (a sub-millisecond shortage still reports 1 ms) and is
+  rounded UP from the exact `deficit * 1000 / refill_rate` computation.
+
 - `SharedPoolBucket.global_level(server)` — returns `{:ok, integer_remaining}` with the floor of the current global pool balance after applying the lazy refill.
 
 - `SharedPoolBucket.key_level(server, bucket_name, key_capacity, key_refill_rate)` — returns `{:ok, integer_remaining}` for the specified per-key bucket (refilled lazily) or `{:ok, key_capacity}` if the bucket has never been seen. The capacity/refill arguments are needed because they're not stored at bucket-creation time — the bucket is defined per-acquire.

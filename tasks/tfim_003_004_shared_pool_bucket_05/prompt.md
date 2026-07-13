@@ -485,5 +485,80 @@ defmodule SharedPoolBucketTest do
     # Global pool is still present — and should have refilled to capacity
     assert {:ok, 10} = SharedPoolBucket.global_level(sp)
   end
+
+  # -------------------------------------------------------
+  # Documented math, pinned exactly through the public API
+  # (injected clock; no reach-ins)
+  # -------------------------------------------------------
+
+  test "retry_after for :key_empty is ceil(deficit * 1000 / rate), exactly", %{sp: sp} do
+    # cap 2, rate 2.0: drain 1 -> free 1; asking for 2 leaves deficit 1.
+    assert {:ok, _, _} = SharedPoolBucket.acquire(sp, "ra1", 2, 2.0, 1)
+    assert {:error, :key_empty, 500} = SharedPoolBucket.acquire(sp, "ra1", 2, 2.0, 2)
+
+    # Non-integer quotient rounds UP: deficit 1 at 3.0 tokens/s -> 334 ms.
+    assert {:ok, _, _} = SharedPoolBucket.acquire(sp, "ra2", 1, 3.0, 1)
+    assert {:error, :key_empty, 334} = SharedPoolBucket.acquire(sp, "ra2", 1, 3.0, 1)
+  end
+
+  test "retry_after for :global_empty reflects the global shortage, exactly", %{sp: sp} do
+    # Per-key never blocks (cap 100); global 10 - 8 = 2 free, deficit 3 at
+    # 1.0 tokens/s -> exactly 3000 ms.
+    assert {:ok, _, _} = SharedPoolBucket.acquire(sp, "g1", 100, 100.0, 8)
+    assert {:error, :global_empty, 3000} = SharedPoolBucket.acquire(sp, "g2", 100, 100.0, 5)
+  end
+
+  test "global refill follows elapsed * rate / 1000 with the documented floor", %{sp: sp} do
+    assert {:ok, _, _} = SharedPoolBucket.acquire(sp, "gr", 100, 100.0, 6)
+
+    # 4 free + 1998 ms * 1.0/s = 5.998 -> floor 5 (a /1000 or arithmetic slip
+    # lands on 6 or refills to capacity).
+    Clock.advance(1_998)
+    assert {:ok, 5} = SharedPoolBucket.global_level(sp)
+  end
+
+  test "per-key refill follows elapsed * rate / 1000 with the documented floor", %{sp: sp} do
+    # Fresh bucket starts exactly full: cap 2 - 2 = 0 remaining.
+    assert {:ok, 0, _} = SharedPoolBucket.acquire(sp, "kr0", 2, 1.0, 2)
+
+    # cap 5: free 2 after draining 3; +1998 ms at 1.0/s = 3.998 -> floor 3.
+    assert {:ok, _, _} = SharedPoolBucket.acquire(sp, "kr", 5, 1.0, 3)
+    Clock.advance(1_998)
+    assert {:ok, 3} = SharedPoolBucket.key_level(sp, "kr", 5, 1.0)
+  end
+
+  test "non-positive capacity, rate or tokens match no clause; capacity 1 is legal", %{sp: sp} do
+    assert {:ok, 0, _} = SharedPoolBucket.acquire(sp, "v1", 1, 1.0, 1)
+    assert {:ok, _} = SharedPoolBucket.key_level(sp, "v1", 1, 1.0)
+
+    assert_raise FunctionClauseError, fn -> SharedPoolBucket.acquire(sp, "v2", 0, 1.0, 1) end
+    assert_raise FunctionClauseError, fn -> SharedPoolBucket.acquire(sp, "v2", 1, 0.0, 1) end
+    assert_raise FunctionClauseError, fn -> SharedPoolBucket.acquire(sp, "v2", 1, 1.0, 0) end
+    assert_raise FunctionClauseError, fn -> SharedPoolBucket.key_level(sp, "v2", 0, 1.0) end
+  end
+
+  test "cleanup keeps a not-yet-full bucket with its projected balance intact", %{sp: sp} do
+    # cap 4: free 2 after draining 2; +1998 ms at 1.0/s projects 3.998 < 4,
+    # so the sweep must KEEP the bucket (a projection slip refills it to
+    # capacity and drops it, making key_level report a fresh 4).
+    assert {:ok, _, _} = SharedPoolBucket.acquire(sp, "cl", 4, 1.0, 2)
+    Clock.advance(1_998)
+    send(sp, :cleanup)
+
+    assert {:ok, 3} = SharedPoolBucket.key_level(sp, "cl", 4, 1.0)
+  end
+
+  test "cleanup projects from the bucket's own last update at its own rate", %{sp: sp} do
+    # Bucket born at t=500 with rate 3.0 — a projection using the wrong
+    # elapsed origin refills it past capacity and drops it (fresh 9), and one
+    # using the wrong rate arithmetic lands on floor 4 instead of 6.
+    Clock.advance(500)
+    assert {:ok, _, _} = SharedPoolBucket.acquire(sp, "cl3", 9, 3.0, 5)
+
+    # +700 ms at 3.0/s: 4 + 2.1 = 6.1 < 9 -> kept; key_level floors to 6.
+    Clock.advance(700)
+    send(sp, :cleanup)
+    assert {:ok, 6} = SharedPoolBucket.key_level(sp, "cl3", 9, 3.0)
+  end
 end
 ```
