@@ -62,31 +62,45 @@ defmodule StrengthenHarnesses do
   # (wt_X's gold harness is a byte-copy of X_01's — strengthening the parent
   # covers both; the measurement lists them separately).
 
-  # Ledger rows are only meaningful for the (solution, harness) they were
-  # measured on. Rows predating the sha keys (everything before 2026-07-13) are
-  # treated as STALE-UNKNOWN: they still seed the work list (a stale row is a
-  # hint, not a verdict), but the loop re-measures live before acting, and the
-  # dry list labels them so nobody quotes a rotten number again (the 07-08 rows
-  # survived the 07-09 R10 harness campaign and misled the §4.2 floor debate for
-  # four days).
+  # Measurement policy (fixed 2026-07-13 after Kamil's investigation):
+  #
+  #   * LATEST row per task wins — NOT the max. Max hides regressions and, worse,
+  #     it resurrects families that were already fixed: the R10 campaign
+  #     (2026-07-09) tightened 11 harnesses and the parents were re-measured
+  #     (075_004: 0.00 -> 1.00), but the `wt_` copies were never re-measured, so
+  #     their 07-08 rows still read 0.00.
+  #   * `wt_` rows are IGNORED. A wt_ dir is a byte-copy of its parent's module +
+  #     harness (the embed gates enforce that), so its kill rate is the parent's
+  #     by construction — a separate row can only ever be a stale duplicate. It
+  #     was exactly such a row that dragged 10 healthy families into last night's
+  #     work list.
+  #   * A row whose content keys are missing (pre-2026-07-13) or no longer match
+  #     the files on disk is STALE-UNKNOWN: it still seeds the work list (a hint,
+  #     not a verdict), the loop re-measures live before acting, and the dry list
+  #     says so.
   defp weak_parents do
-    {best, staleness} =
+    latest =
       @measured
       |> File.stream!()
-      |> Enum.reduce({%{}, %{}}, fn line, {best, stale} ->
-        case JSON.decode(line) do
-          {:ok, %{"task" => t, "killed" => k, "total" => tot} = row} when tot > 0 ->
-            {Map.update(best, t, k / tot, &max(&1, k / tot)),
-             Map.put(stale, t, row_stale?(t, row))}
+      |> Enum.reduce(%{}, fn line, acc ->
+        with {:ok, %{"task" => t, "total" => tot} = row} <- JSON.decode(line),
+             true <- tot > 0,
+             false <- String.starts_with?(t, "wt_") do
+          prev = acc[t]
 
-          _ ->
-            {best, stale}
+          if prev && prev["ts"] >= row["ts"],
+            do: acc,
+            else: Map.put(acc, t, row)
+        else
+          _ -> acc
         end
       end)
 
-    best
-    |> Enum.filter(fn {_t, rate} -> rate < @floor end)
-    |> Enum.map(fn {t, rate} -> {parent_dir(t), rate, Map.get(staleness, t, true)} end)
+    latest
+    |> Enum.filter(fn {_t, row} -> row["killed"] / row["total"] < @floor end)
+    |> Enum.map(fn {t, row} ->
+      {parent_dir(t), row["killed"] / row["total"], row_stale?(t, row)}
+    end)
     |> Enum.filter(fn {dir, _, _} -> dir && File.dir?(dir) end)
     |> Enum.reduce(%{}, fn {dir, rate, stale}, acc ->
       Map.update(acc, dir, {rate, stale}, fn {r, s} -> {min(r, rate), s and stale} end)

@@ -115,12 +115,33 @@ the behavior/compile subsets re-verify on the next mint run.
 `strengthen_harnesses --go` over the 30-family weak tail produced three
 classes, and the classification is the deliverable:
 
-- **10 `already_ok`** — the live re-measure beats the floor: the July-8 tail
-  was substantially a MEASUREMENT ARTIFACT. Ledger analysis confirms it: of
-  the 49 sub-floor rows, 29 were `wt_` rows and 10 of those have parents that
-  measure fine; the catastrophic 0.00–0.35 band was all artifact. Zero LLM
-  calls spent on them. **This closes most of the docs/12 §4.2 "semantic floor"
-  question with evidence rather than opinion.**
+- **10 `already_ok` — phantom work items, and the diagnosis took three passes
+  (recorded because the wrong turns are the lesson).** Attempt 1: "a `wt_`-vs-
+  parent artifact". Attempt 2: "the R10 harness campaign invalidated the
+  ledger, so docs/12 §4.2 is quoting rotten numbers". **Both were wrong in
+  part; here is the verified truth, row by row:**
+    1. The `R10` campaign (commit `5f74d18a`, 2026-07-09) tightened 11 weak
+       harnesses. The PARENTS were re-measured the same day and jumped above
+       the floor: 075_004 `0.00 → 1.00`, 073_001 `0.17 → 0.92`, 005_003
+       `0.33 → 0.67`, 037_002 `0.35 → 0.65`.
+    2. The `wt_` copies were NOT re-measured (the 07-10 sweep deliberately
+       dropped `wt_` rows), so their 07-08 numbers still sit in the ledger.
+    3. **My tool was the broken one.** `weak_parents` took the MAX row per task
+       and mapped `wt_` rows onto their parents — so a stale `wt_` 0.00 dragged
+       a healthy 1.00 family back into the work list. All 10 `already_ok`
+       families are exactly that. **docs/12 §4.2's "20 families < 0.5" was
+       CORRECT** (parent rows, `wt_` dropped); my 30-family list was not.
+  **Fixes (all landed):** measurement policy is now LATEST-row (max hides
+  regressions), `wt_` rows are ignored entirely (a `wt_` dir is a byte-copy of
+  its parent's module+harness — the embed gates enforce that, so a separate row
+  can only ever be a stale duplicate), and `validate.exs` stamps every semantic
+  row with `solution_sha` + `harness_sha` so consumers can tell a measurement
+  from a memory. Rows without keys, or whose keys no longer match disk, are
+  labelled STALE-UNKNOWN: they still seed the work list (a hint, not a verdict)
+  and the loop re-measures live before acting. The honest tail is **20
+  families**, of which last night attempted all 20: 3 applied, 17 rejected.
+  **Generalized rule: a measurement ledger without a content key rots silently,
+  and "take the best row" is not a policy — it is a way to hide regressions.**
 - **1 `applied`** — 002_003 (0.40 → 0.68, +8 tests) through every gate
   (add-only, green, lints, whole-mutant, re-measure, blind gate), wt_ twin +
   tfim embeds propagated, family re-gated perfect+mutants.

@@ -183,6 +183,13 @@ everything else can run in parallel with it (Kamil's call, as agreed in docs/11)
    re-measure moved nothing in or out: the 7 rewrites reproduced identical
    kill-rates, and the 4 new families all landed ≥0.5. The <0.5 tier is
    therefore real weakness, not stale-measurement noise — input to §4.2.3.
+   **Confirmed 2026-07-13** (docs/13 §1.4): this 20-family figure is the
+   correct one. The `strengthen_harnesses` run attempted all 20 — 3 strengthened
+   past the floor, 17 rejected (12 of them by the blind gate: their PROMPTS are
+   too terse to justify any tightening test). Note the `wt_` rows in
+   `logs/semantic_mutants.jsonl` are stale by design (this sweep dropped them);
+   they are byte-copies of their parents and must never be measured separately —
+   a tool that trusted them invented 10 phantom work items.
 9. ✅ DONE 2026-07-10: benchmark decontamination check.
    `scripts/fetch_benchmarks.exs` normalizes 786 rows (MultiPL-E
    humaneval-elixir 161 + mbpp-elixir 397, McEval Elixir 50, Exercism Elixir
