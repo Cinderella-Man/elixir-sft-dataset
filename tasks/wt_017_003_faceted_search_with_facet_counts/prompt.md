@@ -22,13 +22,7 @@ Write me a self-contained Elixir context module `Catalog.Faceted` that implement
 To keep the module dependency-free and autotestable it operates over an **in-memory list of product maps**. Each product is:
 
 ```elixir
-%{
-  id: 3,
-  name: "Wireless Mouse",
-  category: "electronics",
-  price_cents: 2999,
-  tags: ["wireless", "office"]
-}
+%{id: 3, name: "Wireless Mouse", category: "electronics", price_cents: 2999, tags: ["wireless", "office"]}
 ```
 
 Prices are stored as **integer cents** (no floats, no Decimal).

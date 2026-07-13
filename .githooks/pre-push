@@ -44,6 +44,15 @@ if [ -n "$families" ]; then
     exit 1
   fi
 
+  echo "[pre-push] wt_ spec/harness staleness check (all wt_ dirs)"
+  wt_out=$(mix run scripts/resync_embeds.exs -- --wt-all)
+  echo "$wt_out" | tail -1
+  if echo "$wt_out" | grep -q "would_resync\|error"; then
+    echo "[pre-push] FAIL: wt_ dirs drifted from their parents —" \
+      "run: mix run scripts/resync_embeds.exs -- --wt-all --apply"
+    exit 1
+  fi
+
   echo "[pre-push] tfim embed staleness check on touched families"
   resync_out=$(mix run scripts/resync_tfim_embeds.exs -- --only "$globs")
   echo "$resync_out" | tail -1

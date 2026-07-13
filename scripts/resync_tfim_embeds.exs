@@ -51,7 +51,10 @@ defmodule ResyncTfimEmbeds do
     results = Enum.map(dirs, &resync(&1, apply?))
     freq = Enum.frequencies(results)
 
-    IO.puts("tfim embeds: #{inspect(freq)}" <> if(apply?, do: " — APPLIED", else: " (report only)"))
+    IO.puts(
+      "tfim embeds: #{inspect(freq)}" <> if(apply?, do: " — APPLIED", else: " (report only)")
+    )
+
     if freq[:error], do: System.halt(1)
   end
 
@@ -69,6 +72,7 @@ defmodule ResyncTfimEmbeds do
           TestFim.skeletonize(harness, block),
           TestFim.kind_of(harness, block)
         )
+
       prompt_path = Path.join(dir, "prompt.md")
 
       cond do
@@ -90,10 +94,13 @@ defmodule ResyncTfimEmbeds do
     end
   end
 
+  # `property "…"` blocks carve exactly like `test` blocks (docs/13 §1.2) — the
+  # gold-name regex must know both, or every property unit errors here (it did:
+  # 28 of them, minted 2026-07-13, caught by the full-corpus dry run).
   defp gold_name(gold) do
-    case Regex.run(~r/^\s*test\s+"((?:[^"\\]|\\.)*)"/m, gold) do
+    case Regex.run(~r/^\s*(?:test|property)\s+"((?:[^"\\]|\\.)*)"/m, gold) do
       [_, name] -> {:ok, name}
-      _ -> {:error, "no test \"…\" opener in solution.ex"}
+      _ -> {:error, "no test/property \"…\" opener in solution.ex"}
     end
   end
 

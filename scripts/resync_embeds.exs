@@ -58,13 +58,26 @@ defmodule ResyncEmbeds do
 
     {opts, _, _} =
       OptionParser.parse(argv,
-        strict: [dirs_file: :string, apply: :boolean, self_test: :string]
+        strict: [dirs_file: :string, apply: :boolean, self_test: :string, wt_all: :boolean]
       )
 
     cond do
-      opts[:self_test] -> self_test(opts[:self_test])
-      opts[:dirs_file] -> run(opts[:dirs_file], opts[:apply] || false)
-      true -> IO.puts("need --dirs-file <file> or --self-test <dir>") && System.halt(1)
+      opts[:self_test] ->
+        self_test(opts[:self_test])
+
+      # Standing gate: a wt_ prompt embeds the parent's SPEC (the task prompt) as
+      # well as its module — and until 2026-07-13 nothing checked the spec half,
+      # so editing a parent prompt silently rotted its wt_ child. Dry by default:
+      # 0 would_resync / 0 error is the CI + pre-push contract.
+      opts[:wt_all] ->
+        dirs = "tasks/wt_*" |> Path.wildcard() |> Enum.filter(&File.dir?/1) |> Enum.sort()
+        run_dirs(dirs, opts[:apply] || false)
+
+      opts[:dirs_file] ->
+        run(opts[:dirs_file], opts[:apply] || false)
+
+      true ->
+        IO.puts("need --dirs-file <file>, --wt-all, or --self-test <dir>") && System.halt(1)
     end
   end
 
@@ -81,6 +94,19 @@ defmodule ResyncEmbeds do
       |> Enum.map(&String.trim/1)
       |> Enum.reject(&(&1 == ""))
 
+    do_run(dirs, apply?)
+  end
+
+  defp run_dirs(dirs, apply?) do
+    if apply? and generate_loop_alive?() do
+      IO.puts("REFUSING --apply: a generation loop (mix run scripts/generate.exs) is alive.")
+      System.halt(1)
+    end
+
+    do_run(dirs, apply?)
+  end
+
+  defp do_run(dirs, apply?) do
     results = Enum.map(dirs, fn dir -> {dir, resync(dir, "tasks", apply?)} end)
     freq = results |> Enum.map(&elem(&1, 1)) |> Enum.frequencies()
 
@@ -120,7 +146,11 @@ defmodule ResyncEmbeds do
             :resynced
 
           true ->
-            IO.puts("  would resync #{dir}: #{Enum.map_join(changed, ",", &elem(&1, 0))}" <> notes_str(notes))
+            IO.puts(
+              "  would resync #{dir}: #{Enum.map_join(changed, ",", &elem(&1, 0))}" <>
+                notes_str(notes)
+            )
+
             :would_resync
         end
     end
@@ -321,7 +351,8 @@ defmodule ResyncEmbeds do
         do: {name, content}
   end
 
-  defp sha(bin), do: :crypto.hash(:sha256, bin) |> Base.encode16(case: :lower) |> binary_part(0, 12)
+  defp sha(bin),
+    do: :crypto.hash(:sha256, bin) |> Base.encode16(case: :lower) |> binary_part(0, 12)
 
   defp notes_str([]), do: ""
   defp notes_str(notes), do: " [#{Enum.join(notes, ",")}]"
@@ -346,7 +377,9 @@ defmodule ResyncEmbeds do
   # ---------------- self-test: scratch copy, apply, verify CLEAN ----------------
 
   defp self_test(flagged_dir) do
-    scratch = Path.join(System.tmp_dir!(), "resync_embeds_selftest_#{System.os_time(:millisecond)}")
+    scratch =
+      Path.join(System.tmp_dir!(), "resync_embeds_selftest_#{System.os_time(:millisecond)}")
+
     File.mkdir_p!(scratch)
     base = Path.basename(flagged_dir)
     kind = if String.starts_with?(base, "wt_"), do: :wt, else: :fim
@@ -371,7 +404,10 @@ defmodule ResyncEmbeds do
             other -> IO.puts("self-test: FAIL (second run #{inspect(other)})") && System.halt(1)
           end
         else
-          IO.puts("self-test: FAIL — verdict after resync: #{verdict_line || "(dir not in report)"}")
+          IO.puts(
+            "self-test: FAIL — verdict after resync: #{verdict_line || "(dir not in report)"}"
+          )
+
           IO.puts(out)
           System.halt(1)
         end

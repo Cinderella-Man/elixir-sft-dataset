@@ -98,6 +98,7 @@ defmodule AsyncMonitor do
     GenServer.start_link(__MODULE__, opts, gen_opts ++ name_opt)
   end
 
+  @doc "Registers `service_name` with an async `check_func`. Returns `:ok`."
   @spec register(
           GenServer.server(),
           service_name(),

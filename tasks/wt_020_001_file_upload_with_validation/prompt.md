@@ -55,7 +55,6 @@ Use `Jason` for JSON encoding/decoding. Use only standard OTP plus `Plug` and `J
 ## Module under test
 
 ```elixir
-<file path="lib/file_upload.ex">
 defmodule FileUpload.Store do
   @moduledoc """
   A `GenServer` that stores uploaded-file metadata in memory, keyed by a
@@ -255,5 +254,4 @@ defmodule FileUpload.Router do
     |> send_resp(status, Jason.encode!(data))
   end
 end
-</file>
 ```

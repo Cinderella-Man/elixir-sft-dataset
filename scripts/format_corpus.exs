@@ -19,7 +19,7 @@
 #              block, possibly indented: dedent → format → re-indent, preserving
 #              the original base indentation and trailing-newline convention
 #   manifest   tasks/*/manifest.exs
-#   embeds     ```elixir fences inside prompt.md of fim/tfim/wt_ dirs; a fence that
+#   embeds     ```elixir fences inside prompt.md of fim/tfim dirs; a fence that
 #              does not parse (iex> transcripts, pseudo-code) is left untouched.
 #              _01 prompts are EXCLUDED on purpose: the blind-screen ledger
 #              (logs/screen_blind.jsonl) is keyed by sha256(prompt.md) — cosmetic
@@ -101,7 +101,13 @@ defmodule FormatCorpus do
       if(File.regular?(harness), do: [{:harness, harness}], else: []),
       if(File.regular?(manifest), do: [{:manifest, manifest}], else: []),
       solution_entry(shape, sol),
-      if(shape in [:fim_child, :tfim, :wt] and File.regular?(prompt),
+      # wt_ prompts are EXCLUDED (2026-07-13): every fence in one is derived —
+      # the module fence is a byte-copy of the parent's (already canonical)
+      # solution.ex, and the spec section reproduces the parent prompt.md
+      # VERBATIM, which is itself deliberately unformatted (its sha keys the
+      # blind-screen ledger). Formatting them here made the format gate and the
+      # embed resync fight over 13 prompts forever, each rewriting the other.
+      if(shape in [:fim_child, :tfim] and File.regular?(prompt),
         do: [{:embeds, prompt}],
         else: []
       )

@@ -32,7 +32,7 @@ complete module in a single file.
 ```elixir
 RetrySaga.new()
 |> RetrySaga.step(:reserve, &reserve/1, &cancel/1, max_attempts: 3)
-|> RetrySaga.step(:charge, &charge/1, &refund/1)
+|> RetrySaga.step(:charge,  &charge/1,  &refund/1)
 |> RetrySaga.execute(%{order_id: 42})
 ```
 
@@ -94,7 +94,7 @@ saga =
   |> RetrySaga.step(:b, always_fails, fn _ -> {:ok, :undo_b} end, max_attempts: 2)
 
 RetrySaga.execute(saga, %{})
-# => {:error, %{
+#=> {:error, %{
 #     step: :b, error: :nope, attempts: 2,
 #     compensated: [:a], compensations: %{a: {:ok, :undo_a}}
 #   }}

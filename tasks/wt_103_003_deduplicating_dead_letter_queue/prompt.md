@@ -64,6 +64,7 @@ defmodule DedupDLQ do
     GenServer.start_link(__MODULE__, opts, gen_opts)
   end
 
+  @doc "Pushes a failed `message`, deduplicating by fingerprint. Returns `{:ok, id}`."
   @spec push(GenServer.server(), term(), term(), term(), term(), map()) ::
           {:ok, :new | :duplicate, term()}
   def push(server, queue_name, dedup_key, message, error_reason, metadata)

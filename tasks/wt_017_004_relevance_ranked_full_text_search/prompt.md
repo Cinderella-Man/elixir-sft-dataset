@@ -22,13 +22,8 @@ Write me a self-contained Elixir context module `Catalog.Ranked` that searches a
 To keep the module dependency-free and autotestable it operates over an **in-memory list of product maps**. Each product is:
 
 ```elixir
-%{
-  id: 1,
-  name: "Running Shoes",
-  description: "Lightweight shoes for running and trail",
-  category: "footwear",
-  price_cents: 8999
-}
+%{id: 1, name: "Running Shoes", description: "Lightweight shoes for running and trail",
+  category: "footwear", price_cents: 8999}
 ```
 
 Prices are stored as **integer cents** (no floats, no Decimal).

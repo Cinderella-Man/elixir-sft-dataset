@@ -63,6 +63,14 @@ jobs:
           out=$(mix run scripts/resync_bugfix_embeds.exs)
           echo "$out"
           echo "$out" | grep -q "would_resync\|error" && exit 1 || true
+      # wt_ dirs are byte-copies of their parent (module + harness) plus a prompt
+      # that embeds the parent SPEC. check_embeds only sees the module fence, so
+      # until 2026-07-13 a parent-prompt or harness edit rotted wt_ silently (it
+      # had: 51 stale dirs, incl. 3 stale gold harnesses).
+      - run: |
+          out=$(mix run scripts/resync_embeds.exs -- --wt-all)
+          echo "$out"
+          echo "$out" | grep -q "would_resync\|error" && exit 1 || true
       # module-FIM + wt_ embeds must match their parents (docs/12 §5.1 item 8):
       # zero reflow and zero drift since the 2026-07-12 remediation. The
       # planted-phantom self-test proves the checker is not vacuous.
