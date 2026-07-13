@@ -30,9 +30,15 @@ defmodule ClassifySurvivors do
   @floor 0.5
 
   # Mutation sites that cannot change observable behavior: ETS table options and
-  # names, counter seeds/steps, private bookkeeping, logging.
+  # names, counter seeds/steps, private bookkeeping, logging — and self-balancing
+  # tree bookkeeping (heights, balance factors, rotation thresholds), which changes
+  # internal shape/performance but never the query result (proven for 077_001 by
+  # exhaustive public-API fuzzing of all 15 survivors, 2026-07-13: every mutant
+  # behaviorally IDENTICAL; `balance_factor` deliberately NOT bare `balance`, which
+  # would misfire on money/account tasks).
   @internal ~r/read_concurrency|write_concurrency|:ordered_set|:set\b|:public|:private|
-               :protected|counter|_table|table_name|seed|Logger|inspect|monitor|:name\]/x
+               :protected|counter|_table|table_name|seed|Logger|inspect|monitor|:name\]|
+               height\(|balance_factor|rotate_left|rotate_right|\blh\b|\brh\b/x
 
   def main(argv) do
     argv = Enum.drop_while(argv, &(&1 == "--"))

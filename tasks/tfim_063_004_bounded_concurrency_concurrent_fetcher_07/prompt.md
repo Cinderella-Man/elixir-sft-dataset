@@ -268,5 +268,108 @@ defmodule PooledFetcherTest do
     assert MapSet.size(new_pids) == 0,
            "expected no leftover processes, found #{inspect(MapSet.to_list(new_pids))}"
   end
+
+  # -------------------------------------------------------
+  # A spent budget (timeout_ms: 0)
+  # -------------------------------------------------------
+
+  # A zero budget is already spent: the deadline check precedes any collection,
+  # so every source reports {:error, :timeout} — even ones whose fetch_fn would
+  # have returned instantly.
+  test "timeout_ms 0 times out every source, even instantly-returning ones" do
+    sources = for i <- 1..8, do: {i, fn -> {:ok, i} end}
+
+    result = PooledFetcher.fetch_all(sources, 8, 0)
+
+    assert map_size(result) == 8
+
+    for i <- 1..8 do
+      assert result[i] == {:error, :timeout},
+             "source #{i} was collected despite an already-spent budget: #{inspect(result[i])}"
+    end
+  end
+
+  # A source becomes {:error, :timeout} only when the deadline expires while it
+  # is still running or queued; one that returned {:ok, value} in time keeps its
+  # real result — a live budget must not be treated as already spent. Retried a
+  # number of times because a 1ms budget is inherently tight: an implementation
+  # that never collects an instant result inside a live budget fails every time.
+  test "a live budget is not treated as spent: an instant fetch still gets collected" do
+    outcomes =
+      for _ <- 1..50 do
+        PooledFetcher.fetch_all([{:fast, fn -> {:ok, :now} end}], 1, 1)[:fast]
+      end
+
+    assert Enum.any?(outcomes, &(&1 == {:ok, :now})),
+           "an instant fetch was never collected within a live 1ms budget"
+  end
+
+  # -------------------------------------------------------
+  # Failure normalisation
+  # -------------------------------------------------------
+
+  # Failure normalisation: throws become {:error, {:throw, value}}, exits become
+  # {:error, {:exit, reason}}, and anything that is not an {:ok, _} / {:error, _}
+  # tuple becomes {:error, {:unexpected_return, term}}.
+  test "throws, exits and unexpected returns are normalised to tagged error tuples" do
+    sources = [
+      {:thrown, fn -> throw(:nope) end},
+      {:exited, fn -> exit(:bye) end},
+      {:bare_ok, fn -> :ok end},
+      {:number, fn -> 42 end}
+    ]
+
+    result = PooledFetcher.fetch_all(sources, 4, 1_000)
+
+    assert result[:thrown] == {:error, {:throw, :nope}}
+    assert result[:exited] == {:error, {:exit, :bye}}
+    assert result[:bare_ok] == {:error, {:unexpected_return, :ok}}
+    assert result[:number] == {:error, {:unexpected_return, 42}}
+  end
+
+  # A fetch process that dies without delivering a result (e.g. killed from
+  # outside the module) reports {:error, reason} with that process's exit
+  # reason. The caller traps exits so the brutal kill of a linked fetch process
+  # cannot take the test process down with it.
+  test "a fetch process killed without delivering a result reports its exit reason" do
+    trapping? = Process.flag(:trap_exit, true)
+
+    try do
+      sources = [
+        {:killed, fn -> Process.exit(self(), :kill) end},
+        {:healthy, fn -> {:ok, :done} end}
+      ]
+
+      result = PooledFetcher.fetch_all(sources, 2, 1_000)
+
+      assert result[:killed] == {:error, :killed}
+      assert result[:healthy] == {:ok, :done}
+    after
+      Process.flag(:trap_exit, trapping?)
+    end
+  end
+
+  # -------------------------------------------------------
+  # Guarded contract
+  # -------------------------------------------------------
+
+  # A max_concurrency that is not a positive integer, or a timeout_ms that is
+  # not a non-negative integer, is outside the supported contract and must be
+  # rejected by a guard rather than silently doing something surprising.
+  test "a non-positive max_concurrency or negative timeout_ms is rejected by a guard" do
+    sources = [{:a, fn -> {:ok, 1} end}]
+
+    assert_raise FunctionClauseError, fn ->
+      PooledFetcher.fetch_all(sources, 0, 100)
+    end
+
+    assert_raise FunctionClauseError, fn ->
+      PooledFetcher.fetch_all(sources, -1, 100)
+    end
+
+    assert_raise FunctionClauseError, fn ->
+      PooledFetcher.fetch_all(sources, 2, -1)
+    end
+  end
 end
 ```

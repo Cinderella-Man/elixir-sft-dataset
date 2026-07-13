@@ -488,5 +488,70 @@ defmodule RetryWorkerTest do
     func = fn -> {:ok, :defaults_work} end
     assert {:ok, :defaults_work} = RetryWorker.execute(rw, func, [])
   end
+
+  # -------------------------------------------------------
+  # The backoff schedule observed through the injected random
+  # (it receives the clamped delay as its argument — no timing)
+  # -------------------------------------------------------
+
+  # Helper: a server whose injected random RECORDS every delay it is
+  # handed (via DelayRecorder) and contributes zero jitter.
+  defp recording_server do
+    start_supervised!({DelayRecorder, []})
+
+    recording = fn max ->
+      DelayRecorder.record(max)
+      0
+    end
+
+    {:ok, pid} = RetryWorker.start_link(clock: &Clock.now/0, random: recording)
+    pid
+  end
+
+  test "default max_retries is 3: exactly 4 invocations, then the error", %{rw: rw} do
+    start_supervised!({Counter, 0})
+
+    func = fn ->
+      Counter.increment_and_get()
+      {:error, :always}
+    end
+
+    assert {:error, :max_retries_exceeded, :always} =
+             RetryWorker.execute(rw, func, base_delay_ms: 0)
+
+    assert Counter.get() == 4
+  end
+
+  test "the injected random receives the default clamped delay of 100", %{rw: _rw} do
+    rw2 = recording_server()
+    func = fail_then_succeed(1, :done)
+
+    assert {:ok, :done} = RetryWorker.execute(rw2, func, max_retries: 1)
+    assert DelayRecorder.delays() == [100]
+  end
+
+  test "the recorded backoff sequence doubles from base_delay_ms", %{rw: _rw} do
+    rw2 = recording_server()
+    func = fail_then_succeed(3, :done)
+
+    assert {:ok, :done} = RetryWorker.execute(rw2, func, max_retries: 3, base_delay_ms: 4)
+    assert DelayRecorder.delays() == [4, 8, 16]
+  end
+
+  test "random is never called when the clamped delay is zero", %{rw: _rw} do
+    rw2 = recording_server()
+    func = fail_then_succeed(2, :done)
+
+    assert {:ok, :done} = RetryWorker.execute(rw2, func, max_retries: 2, base_delay_ms: 0)
+    assert DelayRecorder.delays() == []
+  end
+
+  test "random is called with the clamped delay when it is exactly 1", %{rw: _rw} do
+    rw2 = recording_server()
+    func = fail_then_succeed(1, :done)
+
+    assert {:ok, :done} = RetryWorker.execute(rw2, func, max_retries: 1, base_delay_ms: 1)
+    assert DelayRecorder.delays() == [1]
+  end
 end
 ```
