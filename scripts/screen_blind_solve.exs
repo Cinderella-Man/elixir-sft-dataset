@@ -69,6 +69,11 @@ defmodule ScreenBlind do
     tasks =
       EvalTask.Discovery.all()
       |> Enum.filter(&(&1.shape in [:single, :multifile] and &1.found))
+      # repair_ prompts are frozen captured evidence (docs/13 §1.5): they embed
+      # a failed attempt + its report, so "blind-solvable from the prompt" is
+      # not a property they can have. Excluding them here keeps a bare
+      # `screen_blind_solve` run from burning calls on unscreenable dirs.
+      |> Enum.reject(&String.starts_with?(&1.name, "repair_"))
       |> Enum.filter(&match_only?(&1.name, opts[:only]))
 
     {todo, cached} =
@@ -144,6 +149,10 @@ defmodule ScreenBlind do
       Map.merge(entry, %{
         task: task.name,
         sha: CycleLog.content_sha(prompt),
+        # The blind property belongs to the (prompt, harness) PAIR: a later
+        # harness edit invalidates this verdict. check_screen_freshness.exs
+        # compares this sha against the harness on disk (STATUS T1.2).
+        harness_sha: harness_sha(task),
         model: cfg.model,
         ts: DateTime.utc_now() |> DateTime.to_iso8601()
       })
@@ -231,6 +240,11 @@ defmodule ScreenBlind do
   # ── ledger ──────────────────────────────────────────────────────────────────
 
   defp ledger_path(cfg), do: Path.join(cfg.logs_dir, @ledger)
+
+  defp harness_sha(task) do
+    path = Path.join(task.dir, "test_harness.exs")
+    if File.regular?(path), do: CycleLog.content_sha(File.read!(path))
+  end
 
   defp append_ledger(cfg, entry) do
     File.mkdir_p!(cfg.logs_dir)

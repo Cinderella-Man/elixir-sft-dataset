@@ -229,7 +229,12 @@ defmodule GenTask.Prompts do
     process-unique temp paths via `System.pid()` + `System.unique_integer/1`; every
     assertion justified by an explicit statement in that variation's prompt.md — a
     solver reading ONLY the prompt must be able to pass every test, so never assert
-    internal state or undocumented option values).#{already}#{taken_apis}
+    internal state via `:sys.get_state`/`:sys.replace_state`, never
+    `assert inspect(...)`, never send undocumented internal messages, never pass
+    undocumented `:infinity` sentinels — observe behavior only through the public
+    API and documented injected hooks. The BASE harness below may itself violate
+    these rules (grandfathered debt): do NOT imitate it — your harnesses are held
+    to the rules above).#{already}#{taken_apis}
 
     Also, for each variation, produce a one-line catalog entry in the exact tasks.md
     format — its `idea.md` file must contain a `### Task #{num} - Vn - <Name>` header on

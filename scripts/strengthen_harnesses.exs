@@ -296,6 +296,17 @@ defmodule StrengthenHarnesses do
     - Every new assertion must be justified by an explicit statement in the
       task prompt below — never assert undocumented behavior, internal state,
       or exact error message text (assert the exception TYPE only).
+    - A hard lint REJECTS the whole harness if any NEW test uses
+      `:sys.get_state`/`:sys.replace_state`, `assert inspect(...)`, sends a
+      process an internal message the prompt does not document, or passes an
+      undocumented `:infinity`. Observe behavior only through the public API
+      (injected hooks like clocks/random functions count as public: they are
+      documented). If a surviving mutant cannot be killed that way, SKIP it —
+      an unkillable-through-the-API mutant is a documented ceiling, not a
+      license to reach into internals.
+    - The EXISTING tests below may themselves violate these rules — that is
+      grandfathered debt, kept only because their blocks are frozen. Do NOT
+      imitate them; your new tests are held to the rules above.
     - Same conventions as the existing harness (`use ExUnit.Case, async: false`,
       no `ExUnit.start()`, self-contained, ZERO compile warnings, lines ≤ 98
       columns, process-unique temp paths via `System.pid()` +

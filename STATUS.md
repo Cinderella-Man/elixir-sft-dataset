@@ -9,8 +9,184 @@ on a quality improvement? Update it whenever the answer changes; everything else
 
 ## ▶️ RUNNING RIGHT NOW
 
-**Nothing.** (Verified: pgrep clean, all detached chains exited, everything
-committed and pushed.)
+| what | pid | log | expected result |
+|---|---|---|---|
+| T1.2 freshness re-screen sweep: `screen_blind_solve --only <54 roots> --rescreen` (launched 2026-07-13 ~18:5x) | **2345136** | `logs/rescreen_freshness_20260713.log` | 54 sha-stamped rows appended to `logs/screen_blind.jsonl` (47 roots whose blind verdicts predate their current harness — mostly the 07-09 R10 harness campaign — plus 7 S6 coverage holes incl. 018_003, hand-fixed 07-12 and never re-screened). Any RED → triage queue (potential new 101_002-class finds). When done: `mix run scripts/check_screen_freshness.exs` must print `stale=0` → then wire it into CI + pre-push (the LAST step of T1.2). Idempotent relaunch: same command — the ledger skips finished rows only with `--rescreen` removed, so on relaunch DROP `--rescreen` (screened-current rows are then cached). |
+
+Poll with `while kill -0 2345136 2>/dev/null; do sleep 30; done` — never
+`pgrep -f` (docs/14 rule 9).
+
+---
+
+## 📋 QUALITY TODO REGISTER (written 2026-07-13 on Kamil's order: "CLEAR state
+## with all of the things listed as todo — why, what and how")
+
+Everything known that would raise data quality, ranked by leverage. An item
+leaves this list only when done (move to the session log below) or when Kamil
+kills it. Costs are honest estimates. "FREE" = CPU/engineering only, no API calls.
+
+### Tier 1 — make every FUTURE generated unit better (loop + gates)
+
+**T1.1 — Wire the §5.2 blind re-screen into the generation loop.
+[NEEDS KAMIL'S SIGN-OFF on the policy; build is ~half a day; runtime cost
+~1 solver call per repaired accept]**
+- WHY: a base/variation accepted after ≥1 repair was fixed by a model that SAW
+  the harness failure report, so acceptance proves nothing about the prompt
+  alone. This is not theoretical: 6 of the 22 retro-screened repaired accepts
+  (101_002, 102_002, 102_003, 102_004, 626_004, 101_003) had shipped harnesses
+  asserting things their prompts never said.
+- WHAT: in the loop, any base/variation accepted with `attempts > 1` gets one
+  independent blind re-solve (prompt only) before promotion; RED → quarantine
+  for triage, never silent promotion. Plus docs/12 §5.2.2: an entailment judge
+  over the harness DIFF made during repair.
+- HOW: post-accept hook in the accept path, reusing the `screen_blind_solve`
+  mechanism and its ledger (one mechanism, one ledger); behind a config flag
+  (`GEN_BLIND_RESCREEN=1`) so Kamil flips it on; CI later refuses accepts
+  lacking the evidence row. Design sketch: docs/12 §5.2.1.
+
+**T1.2 — S6 freshness gate: blind evidence must match the CURRENT harness.
+[BUILT + SELF-TESTED 2026-07-13 evening; backlog sweep RUNNING (54 roots, see
+RUNNING RIGHT NOW); the LAST step — wiring into CI + pre-push — happens the
+moment the sweep leaves the gate green (`stale=0`)]**
+- FOUND ON FIRST RUN: 47 roots carried blind verdicts for an OLDER harness
+  (mostly the 07-09 R10 harness campaign — tightened harnesses whose blind
+  property was never re-proven) + 7 S6 coverage holes (prompts edited, never
+  re-screened — incl. 018_003, hand-fixed 07-12). Also caught: `repair_` dirs
+  leaked into the screenable population of the PAID screen tool (fixed: they
+  are frozen evidence, now excluded in both tools).
+- WHY: `logs/screen_blind.jsonl` is keyed by PROMPT sha only, but the blind
+  property is a property of the (prompt, harness) PAIR. Editing a harness
+  silently invalidates the ledger row. Hit live: after hand-strengthening
+  013_001 the ledger still said "screened" — only session knowledge triggered
+  the manual re-screen. Nothing systematic forces that.
+- WHAT: every new screen row records `harness_sha`; a checker flags any root
+  whose current (prompt, harness) pair lacks fresh blind evidence — a screen
+  row for this exact harness, or a `strengthen_harnesses` SUCCESS row whose
+  `harness_sha_after` matches (its blind gate ran against exactly that harness).
+- HOW: `scripts/check_screen_freshness.exs` (dry gate, `--self-test`), wired
+  into CI + pre-push; `screen_blind_solve.exs` stamps `harness_sha`; legacy
+  rows fall back to git last-commit-time comparison.
+
+**T1.3 — State the S9 bans inside the tools' own prompts.
+[DONE 2026-07-13 evening: `gen_stronger` (strengthen tool) now names every S9
+ban + "existing tests may violate these (grandfathered) — do NOT imitate
+them" + "an unkillable-through-the-API mutant is a documented ceiling, not a
+license to reach into internals"; the variations template (which pastes the
+BASE harness as reference) got the same named bans + do-not-imitate line; the
+base template already had the named bans. 296 tests green.]**
+- WHY: the strengthener burned 3 attempts (~6 calls) on 101_001 because the
+  model IMITATED the `:sys.get_state` calls already present in that April-era
+  harness — grandfathered debt teaches our own tools to cheat. This violates
+  the prompt–gate alignment rule (docs/12 §5.1.14: every gate criterion a
+  generator is graded by must be STATED in its prompt).
+- WHAT: the harness-writing prompts (strengthen tool + generation templates)
+  state the S9 bans explicitly and add: "existing tests in this file may
+  violate these rules (grandfathered debt) — do NOT imitate them."
+- HOW: `gen_stronger` prompt in `scripts/strengthen_harnesses.exs`; audit
+  `lib/gen_task/prompts.ex` harness templates for the same statement.
+
+**T1.4 — Phase 3 template upgrades (docs/12 §5.3 — designed, never landed).
+[FREE, forward-only; land WITH Phase 3, not before]**
+- WHY: measured monoculture — 76% of seed prompts open "Write me", one frozen
+  few-shot exemplar (root cause of the GenServer monoculture), ZERO doctests
+  corpus-wide (26 golds carry `iex>` examples that never execute), harness
+  checklists designed in docs/10 §3.4 but never landed.
+- WHAT: (a) shared harness-rule constant (≥1 negative/error-path test per
+  public function, boundary tests, `describe` grouping, OTP conventions) used
+  by base/variation/write-test templates — they are triplicated today and have
+  drifted once already; (b) request doctests + one property test where apt;
+  (c) rotate 3–5 few-shot exemplars of different shapes; (d) record each
+  seed's blind-screen outcome as free difficulty metadata.
+- HOW: all in `lib/gen_task/prompts.ex`; list + rationale in docs/12 §5.3.
+
+**T1.5 — Extend the semantic-mutant operator set. [FREE, CPU sweep after]**
+- WHY: the S8 floor is only as sharp as its operators. Today: comparison swap,
+  ±1 on literals, :ok↔:error, bool flip. Sharper operators = better tightness
+  measurement AND more `bugfix_` units minted automatically (bugfix mints from
+  killed mutants; its reject ledger re-opens on harness change).
+- WHAT: add guard-boundary swaps (`min`↔`max`), range endpoints (`a..b`),
+  clause reordering, arithmetic swaps (`+`↔`-`, `*`↔`div`).
+- HOW: `lib/gen_task/mutation.ex` (`semantic_mutants_textual/2` + the AST
+  measurement twin must stay in step), tests, then a corpus re-measure sweep.
+  Expect new below-floor families — classify + fuzz survivors BEFORE calling
+  them work (docs/14 rules 7 and 11).
+
+**T1.6 — Dialyzer gate over the golds. [NEEDS KAMIL: one mix.exs/lockfile
+change; then FREE (PLT build + weekly CI)]**
+- WHY: 019_001 shipped a `@spec` contradicting its own code; specs must be
+  machine-checked. Also the hard prerequisite for the dedoc shape (docs/13
+  §2.3, ~331 free units) — wrong specs must never become training targets.
+- WHAT/HOW: add `dialyxir`, one-time PLT, driver staging each gold with its
+  deps, weekly CI gate. Pilot on 5 families first. Design: docs/13 §2.6.
+
+### Tier 2 — raise EXISTING corpus quality (evidence says more is there)
+
+**T2.1 — Clear the S9 grandfathered debt: 52 harnesses with `:sys.get_state`
+reach-ins (11 April-era families), 142 with `Process.sleep`. [~2 calls/family
+where LLM-assisted; some hand work]**
+- WHY: was "evidence-deprioritized debt" (docs/12 §4.2.5) — no longer: today
+  proved it actively corrupts future work (T1.3's why). Reach-in tests are
+  also weaker tests.
+- WHAT: a ledgered rewrite tool in the strengthen mold: replace each reach-in
+  test with an observable-behavior equivalent; blind gate; restore-on-failure.
+- HOW: CAUTION — modifying existing test blocks orphans their carved tfim
+  golds (the add-only rule exists for this); the tool needs the re-carve path
+  (docs/14 §5.0b caveat: re-carve by hand, check ≤98 cols). Start with the 11
+  reach-in families; sleeps only on flake-ledger evidence (docs/12 §4.2.6).
+
+**T2.2 — Scaled semantic review. [PAID: ~3.5M tokens for a stratified 60-root
+batch; full ~330 roots ≈ 20M]**
+- WHY: the 11-dir pilot found 2 real gold defects (018_003 gamed the style
+  gate; 101_002's harness gap). The corpus-wide defect rate is unknown.
+- HOW: stratified by era (April/July), adversarially verified findings only,
+  small-batch ledger protocol; then decide whether the full pass pays.
+
+**T2.3 — Second-source the 15 "FAIL, triaged entailed" keeps. [~15 calls]**
+- WHY: each rests on a single triage verdict, and today an LLM-judge verdict
+  was proven WRONG (101_003 — docs/14 rule 10). One more independent blind
+  solve per keep either flips it GREEN (stronger: prompt proven sufficient) or
+  confirms the solver-weak reading with two sources.
+- HOW: `screen_blind_solve --only <the 15> --rescreen`; triage any new signal.
+
+**T2.4 — Rubric LLM-judge pass over PASSING tasks (sampled). [PAID; round-#2
+candidate]** — WHY: our judge only ever sees failures; OpenCodeInstruct's
+ablation shows judge filtering adds quality beyond execution filtering
+(docs/12 §6.4). HOW: 3-axis rubric on a stratified sample, agreement-logged
+second judge family (PoLL) to guard single-judge bias — which rule 10 just
+showed is real.
+
+**T2.5 — Randomized ExUnit seed sweep. [FREE]** — WHY: eval seed pinned to 0;
+order-dependence bugs are invisible (docs/12 §5.4). HOW: occasional sweep
+variant re-grading with random seeds; low expected yield, cheap.
+
+**T2.6 — Prompt-register monotony rewrite (improvement round #2 — do NOT start
+before steady state). [BIG: 2,396 tfim + 302 wt_ + 80/332 seed openers; own
+tool + ledger + blind re-screen budget]** — docs/12 §7.4; frozen-template
+overfitting is a documented SFT failure mode.
+
+### Tier 3 — protect the TRAINING side
+
+**T3.1 — Export contract + family-keyed split + round-trip validator.
+[MANDATORY before any training run; FREE to build]** — WHY: 91.7%
+within-family text overlap BY CONSTRUCTION — a naive random split leaks
+train→val and invalidates every eval. HOW: docs/13 §3.1 (per-shape spec,
+FIM-as-chat decision, family-keyed splits, dedup/sampling weights, CI-gated
+round-trip validation).
+
+**T3.2 — Make the scrutiny tools standing: wire `spot_verify.sh` (sampled
+accept-side re-verification) + a `reverify_rejects.exs` sample into weekly CI.
+[FREE]** — WHY: today they found 15 unsound reject rows and re-confirmed 204
+accepted dirs; as one-shots they rot — as CI they keep catching gate
+regressions the day they happen.
+
+**T3.3 — Small tools with real quality effect. [FREE]** — (a) promote the
+077_001 public-API survivor fuzz into `scripts/fuzz_survivors.exs` (the
+verification layer behind every at-ceiling claim — docs/14 rule 11); (b) the
+screen's `first_failure` should unwrap `{:invalid, %ExUnit.TestModule{}}`
+setup_all errors (102_003's diagnosis needed a local re-grade because the
+ledger row truncated the real error).
+
+---
 
 ### 2026-07-13 scrutiny session — COMPLETE (Kamil: "do all of these, scrutinize
 ### everything, random verifies of approved and rejected data")
