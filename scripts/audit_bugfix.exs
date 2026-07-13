@@ -84,3 +84,7 @@ bad = Enum.filter(results, fn {_, f} -> f != [] end)
 IO.puts(
   "\n#{length(results) - length(bad)}/#{length(results)} accepted units verified on every property"
 )
+
+# Gate semantics for CI (STATUS T3.2): any failed property is a real defect in
+# shipped data — fail loudly, never exit 0 with a FAIL in the text.
+if bad != [], do: System.halt(1)

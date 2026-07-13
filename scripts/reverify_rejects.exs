@@ -343,6 +343,34 @@ defmodule ReverifyRejects do
       IO.puts("\n  fim_rejected.jsonl (kept deliberately, not re-run):")
       Enum.each(fim, &IO.puts("    #{&1["prefix"]}  #{&1["target"]}"))
     end
+
+    # Gate semantics for CI (STATUS T3.2): fail only on findings that are LIVE —
+    # an UNSOUND verdict whose reject row still sits in the current ledger
+    # (i.e. it is blocking mintable data right now; purged historical finds
+    # stay in this audit ledger as records and must not re-fail), or corpus
+    # rot (parent_not_green).
+    still_ledgered =
+      MapSet.union(
+        rows(@tfim_ledger)
+        |> Enum.map(&{"tfim", &1["prefix"], &1["name"], &1["harness_sha"]})
+        |> MapSet.new(),
+        rows(@bugfix_ledger)
+        |> Enum.map(&{"bugfix", &1["prefix"], &1["label"], &1["sha"]})
+        |> MapSet.new()
+      )
+
+    live_unsound =
+      Enum.count(verified, fn r ->
+        r["verdict"] == "REJECT_UNSOUND" and
+          MapSet.member?(still_ledgered, {r["kind"], r["prefix"], r["name"], r["key"]})
+      end)
+
+    rot = Enum.count(verified, &(&1["verdict"] == "parent_not_green"))
+
+    if live_unsound > 0 or rot > 0 do
+      IO.puts("\nGATE: #{live_unsound} live unsound reject(s) + #{rot} parent-rot row(s)")
+      System.halt(1)
+    end
   end
 end
 

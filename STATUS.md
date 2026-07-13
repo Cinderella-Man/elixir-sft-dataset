@@ -20,10 +20,12 @@ evening — docs/15.)
 
 ## ⏭️ IMMEDIATE QUEUE (in order)
 
-1. **T3.2 / T3.3** — weekly-CI wiring for spot_verify + reverify sample;
-   fuzz_survivors standing tool; (T3.3b landed with F7).
-2. Then the register order: T1.5 operators, T2.3 second-sourcing, T1.4 with
-   Phase 3 — and the Kamil-gated items (T1.1, T1.6, §4.2, timer) as unblocked.
+1. Register order: **T1.5** mutation operators (free), **T2.3**
+   second-sourcing the 15 entailed keeps (~15 calls), **T2.1** S9 debt
+   (design the re-carve path first), **T1.4** with Phase 3 — and the
+   Kamil-gated items (T1.1, T1.6, §4.2 sign-offs, systemd timer) as unblocked.
+2. Bigger builds when Tier 1 is drained: TD.1 adapt pairs, T3.1 export
+   contract (mandatory pre-training), T2.2 scaled review.
 
 ## 📋 QUALITY TODO REGISTER (2026-07-13 — why / what / how / cost per item)
 
@@ -154,17 +156,7 @@ train→val and invalidates every eval. HOW: docs/13 §3.1 (per-shape spec,
 FIM-as-chat decision, family-keyed splits, dedup/sampling weights, CI-gated
 round-trip validation).
 
-**T3.2 — Make the scrutiny tools standing: wire `spot_verify.sh` (sampled
-accept-side re-verification) + a `reverify_rejects.exs` sample into weekly
-CI. [FREE]** — WHY: they found 15 unsound reject rows and re-confirmed 204
-accepted dirs on 2026-07-13; as one-shots they rot — as CI they catch gate
-regressions the day they happen.
 
-**T3.3 — Small tools with real quality effect. [FREE]** — (a) promote the
-077_001 public-API survivor fuzz into `scripts/fuzz_survivors.exs` (the
-verification layer behind every at-ceiling claim — docs/14 rule 11); (b) the
-screen's `first_failure` should unwrap `{:invalid, %ExUnit.TestModule{}}`
-setup_all errors (102_003's diagnosis needed a local re-grade).
 
 ### Data extension (docs/13 §2 — build order after Tier 1)
 

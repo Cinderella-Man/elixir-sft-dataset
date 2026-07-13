@@ -9,6 +9,20 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-13 — T3.2 + T3.3 closed: the scrutiny tools are standing.**
+  T3.2: weekly CI now spot-checks BOTH sides (CONTEXT rule 8) — the
+  six-property bugfix audit on a random 15-sample (accepted side; properties
+  the perfect sweep cannot see) and a full reject-ledger reverify (rejected
+  side; fresh checkout = nothing skipped). Both scripts got real gate exit
+  codes; reverify fails only on LIVE unsound rows (purged historical finds
+  stay as records). The three reject ledgers are now git-tracked (a fresh
+  clone previously lost the negative cache AND made CI reverify vacuous).
+  `spot_verify.sh` stays a local/manual tool — its perfect/mutant batches
+  duplicate the weekly full sweeps. T3.3: (a) `scripts/fuzz_survivors.exs` —
+  the at-ceiling verification layer (docs/14 rule 11) as a standing tool with
+  an honest per-family driver registry (077_001 driver included, reproduces
+  15/15 IDENTICAL; a driverless family exits 1 with instructions, never a
+  vacuous pass); (b) environmental-failure unwrapping landed with F7.
 - **2026-07-13 — F3 / T1.7 closed (both tiers): gate-sha-keyed reject ledgers.**
   Finding: verdicts written by a broken gate survived the gate's repair (the
   074_x class recurred as 15 unsound 102_001 tfim rows blocking 7 mintable

@@ -95,6 +95,17 @@ jobs:
         run: elixir scripts/validate.exs
       - if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: elixir scripts/validate.exs --fim
+      # Weekly rot detectors (STATUS T3.2; CONTEXT rule 8 — spot-check BOTH
+      # sides). Accepted side: the six-property bugfix audit on a random
+      # sample (properties the perfect sweep cannot see: bug reproduces,
+      # report matches, gold ≡ parent, one-line diff). Rejected side: every
+      # current reject row re-derived through the real gates — a fresh
+      # checkout has no audit ledger, so nothing is skipped; fails on LIVE
+      # unsound rows (a ledger blocking mintable data) or parent rot.
+      - if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: mix run scripts/audit_bugfix.exs $(ls -d tasks/bugfix_* | shuf -n 15 | sed 's|tasks/||')
+      - if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: mix run scripts/reverify_rejects.exs -- --bugfix-sample 25
       - name: Upload gate evidence
         if: always()
         uses: actions/upload-artifact@v4
