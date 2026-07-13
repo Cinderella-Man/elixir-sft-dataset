@@ -439,5 +439,68 @@ defmodule SlidingCounterTest do
     assert 1 = SlidingCounter.count(sc, "x", 1_000)
     assert 2 = SlidingCounter.count(sc, "y", 1_000)
   end
+
+  # -------------------------------------------------------
+  # Documented defaults, observed through the public API
+  # (clock injection + the :cleanup message contract; a
+  # synchronous count/3 after send/2 is the mailbox barrier)
+  # -------------------------------------------------------
+
+  test "default bucket_ms is 1000: an event at t=1000 starts a new bucket", %{sc: _sc} do
+    {:ok, pid} =
+      SlidingCounter.start_link(clock: &Clock.now/0, cleanup_interval_ms: :infinity)
+
+    Clock.set(1_000)
+    SlidingCounter.increment(pid, "k")
+
+    # Bucket 1 starts exactly at 1000, so even a 1 ms window still sees it:
+    # the cutoff quantizes to bucket starts and the old side is inclusive.
+    assert 1 = SlidingCounter.count(pid, "k", 1)
+  end
+
+  test "default bucket_ms is 1000: an event at t=999 belongs to the bucket at 0", %{sc: _sc} do
+    {:ok, pid} =
+      SlidingCounter.start_link(clock: &Clock.now/0, cleanup_interval_ms: :infinity)
+
+    Clock.set(999)
+    SlidingCounter.increment(pid, "k")
+    Clock.set(1_999)
+
+    # Bucket 0 (starting at time 0) now lies entirely outside a 1000 ms window.
+    assert 0 = SlidingCounter.count(pid, "k", 1_000)
+  end
+
+  test "default retention is exactly 60 buckets of history", %{sc: sc} do
+    SlidingCounter.increment(sc, "old")
+
+    # 59.5 bucket-widths later, the event's bucket is still inside bucket_ms * 60.
+    Clock.set(5_950)
+    send(sc, :cleanup)
+    assert 1 = SlidingCounter.count(sc, "old", 100_000)
+
+    # 60.5 bucket-widths later it has aged past the default horizon; cleanup drops it.
+    Clock.set(6_050)
+    send(sc, :cleanup)
+    assert 0 = SlidingCounter.count(sc, "old", 100_000)
+  end
+
+  test "cleanup keeps the bucket sitting exactly on the retention boundary", %{sc: _sc} do
+    {:ok, pid} =
+      SlidingCounter.start_link(
+        clock: &Clock.now/0,
+        bucket_ms: 100,
+        max_window_ms: 500,
+        cleanup_interval_ms: :infinity
+      )
+
+    SlidingCounter.increment(pid, "edge")
+
+    # At now = 500 the bucket starting at 0 sits exactly on the horizon. A count
+    # over the full 500 ms window still sees it, and cleanup must never delete
+    # data a legal count could still return — so it must survive the pass.
+    Clock.set(500)
+    send(pid, :cleanup)
+    assert 1 = SlidingCounter.count(pid, "edge", 500)
+  end
 end
 ```

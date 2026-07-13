@@ -100,10 +100,11 @@ the external dependency — no additional libraries.
 
 ## Additional interface contract
 
-- The test environment provides a real, already-configured SQLite Ecto repo and injects it into
-  your GenServer via the `repo:` option — do NOT define a repo module or any repo configuration.
-  Your migration file must be at a `priv/repo/migrations/<name>.exs` path: it is executed against
-  that repo before the tests run, so the schema/migration must be valid for SQLite (plain
-  `Ecto.Migration`, no database-specific SQL). The migration module must be named exactly
-  `Repo.Migrations.CreateEntityTransitions` and written as a `change/0` migration — the test
-  suite loads and runs it by that exact name.
+- Define the repo module yourself, named exactly `StateMachine.Repo`, as a bare
+  `use Ecto.Repo, otp_app: :state_machine, adapter: Ecto.Adapters.SQLite3` — but do NOT
+  configure or start it: the test environment supplies its configuration (SQLite database
+  path, sandbox pool) and starts it before your GenServer runs, injecting it via the
+  `repo:` option. The tests run the migration themselves by module name, so no
+  `priv/repo/migrations/` file is needed — but the migration module must be named exactly
+  `Repo.Migrations.CreateEntityTransitions` and written as a `change/0` migration valid for
+  SQLite (plain `Ecto.Migration`, no database-specific SQL).

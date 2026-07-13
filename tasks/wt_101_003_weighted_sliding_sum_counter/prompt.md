@@ -38,6 +38,10 @@ I need these functions in the public API:
 - `SlidingSum.sum(server, key, window_ms)` — returns the total of all amounts
   recorded for `key` that fall within the last `window_ms` milliseconds relative
   to the current clock time. Amounts outside that window must not be included.
+- `SlidingSum.keys(server)` — returns the list of keys currently tracked (those
+  that still have at least one stored bucket), in no particular order. A server
+  with no data returns `[]`, and once cleanup has removed every bucket of a key,
+  that key no longer appears.
 
 Semantics and internal design requirements:
 - A key that has had no amounts added returns a sum of `0`.
