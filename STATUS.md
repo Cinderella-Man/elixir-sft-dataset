@@ -15,7 +15,7 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 | what | pid | log | expected result |
 |---|---|---|---|
-| T2.7 strengthen run over the 6 new-tail families: `strengthen_harnesses -- --go --only "097_004*,037_001*,100_004*,003_004*,101_003_weighted*,013_003*"` | see `logs/strengthen_t27.pid` | `logs/strengthen_t27.log` | one ledger row per family in `logs/strengthen_harnesses.jsonl` (applied / rejected-with-reason); applied families cascade wt_/tfim automatically and stay freshness-green via their strengthen success rows. Blind-gate rejections = prompt too terse → enrich next (the §5.3 recipe). Relaunch: same command (success rows skip by harness sha). |
+| T2.7 RETRY pass (4 rejected families; pass-1 result: 097_004 applied 0.40→0.97, committed): `strengthen_harnesses -- --go --only "037_001*,100_004*,003_004*,101_003_weighted*,013_003*"` | 4006844 (`logs/strengthen_t27_r2.pid`) | `logs/strengthen_t27_r2.log` | one ledger row per family in `logs/strengthen_harnesses.jsonl` (applied / rejected-with-reason); applied families cascade wt_/tfim automatically and stay freshness-green via their strengthen success rows. Blind-gate rejections = prompt too terse → enrich next (the §5.3 recipe). Relaunch: same command (success rows skip by harness sha). |
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order)
