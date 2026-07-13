@@ -222,5 +222,82 @@ defmodule PasswordPolicyV1Test do
   test "raises when the context is missing the username" do
     assert_raise ArgumentError, fn -> PasswordPolicy.evaluate("whatever", %{min_score: 10}) end
   end
+
+  # --- added: pin the numeric boundaries and the Levenshtein implementation -------------
+
+  test "default min_length of 8 accepts an 8-character password but rejects a 7-character one" do
+    # "Ab3#efgh": len 8 -> 16, all 4 classes -> 40, score 56. Length 8 is NOT below the
+    # default hard minimum of 8, so :too_short must be absent (only the score fails).
+    assert PasswordPolicy.evaluate("Ab3#efgh", %{username: "operator"}) ==
+             {:rejected, 56, [:insufficient_strength]}
+
+    # "Ab3#efg": len 7 -> 14, all 4 classes -> 40, score 54. Length 7 IS below 8 -> :too_short.
+    assert PasswordPolicy.evaluate("Ab3#efg", %{username: "operator"}) ==
+             {:rejected, 54, [:too_short, :insufficient_strength]}
+  end
+
+  test "accepts a password whose score exactly meets the default min_score of 60" do
+    # "Xk7#mQpLwT": len 10 -> 20, all 4 classes -> 40, no bonus -> score 60.
+    # 60 is not strictly below the default minimum of 60, so it must be accepted.
+    assert PasswordPolicy.evaluate("Xk7#mQpLwT", %{username: "operator"}) == {:accepted, 60}
+  end
+
+  test "the +20 length bonus requires at least 16 characters, not 15" do
+    # "Zx9#mQpLwT7$vBn": len 15 -> 30, all 4 classes -> 40, NO bonus -> score 70.
+    assert PasswordPolicy.evaluate("Zx9#mQpLwT7$vBn", %{username: "operator"}) ==
+             {:accepted, 70}
+  end
+
+  test "length points count at most 20 characters" do
+    # 21 lowercase letters: length points capped at min(21, 20) * 2 = 40, lowercase class
+    # only -> 10, len >= 16 -> +20. Score 70 exactly (not 68, not 72).
+    assert PasswordPolicy.evaluate("abcdefghijklmnopqrstu", %{username: "operator"}) ==
+             {:accepted, 70}
+  end
+
+  test "rejects when the username distance exactly equals max_username_similarity" do
+    # Password and username differ in their last 3 characters -> Levenshtein distance 3,
+    # which is <= the default max_username_similarity of 3 -> rejection.
+    # len 16 -> 32, all 4 classes -> 40, +20 bonus -> score 92.
+    assert PasswordPolicy.evaluate("Zx9#mQpLwT7$vXYZ", %{username: "Zx9#mQpLwT7$vBn2"}) ==
+             {:rejected, 92, [:too_similar_to_username]}
+  end
+
+  test "Levenshtein distance is exact for multi-edit pairs" do
+    # "kitten" -> "sitting" costs exactly 3 edits: not <= 2, but <= 3.
+    refute too_similar?("sitting", "kitten", 2)
+    assert too_similar?("sitting", "kitten", 3)
+
+    # One extra leading character is exactly one deletion: not <= 0, but <= 1.
+    refute too_similar?("xabc", "abc", 0)
+    assert too_similar?("xabc", "abc", 1)
+  end
+
+  test "Levenshtein distance is exact for equal and single-character operands" do
+    # Identical (case-insensitively equal) strings are distance 0.
+    assert too_similar?("a", "a", 0)
+    assert too_similar?("Zx9#mQpLwT7$vBn2", "zx9#mqplwt7$vbn2", 0)
+
+    # "abc" vs "a" is exactly two deletions: not <= 1, but <= 2.
+    refute too_similar?("abc", "a", 1)
+    assert too_similar?("abc", "a", 2)
+  end
+
+  # Isolates the username-similarity rule: the hard length rule and the score rule are
+  # configured so they can never fire, leaving :too_similar_to_username as the only
+  # possible rejection reason.
+  defp too_similar?(password, username, threshold) do
+    context = %{
+      username: username,
+      max_username_similarity: threshold,
+      min_length: 1,
+      min_score: 0
+    }
+
+    case PasswordPolicy.evaluate(password, context) do
+      {:accepted, _score} -> false
+      {:rejected, _score, reasons} -> :too_similar_to_username in reasons
+    end
+  end
 end
 ```
