@@ -13,8 +13,9 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**Nothing.** (F2's sweep, its triage, and the CI wiring completed 2026-07-13
-evening — docs/15.)
+| what | pid | log | expected result |
+|---|---|---|---|
+| T1.5 full corpus semantic re-measure: `validate.exs --semantic-mutants` (launch noted below) | see below | `logs/semantic_remeasure_20260713.log` | fresh gate-sha-stamped rows for every root in `logs/semantic_mutants.jsonl` under the EXTENDED operator set (min/max, + -, * , div/rem). Old rows become hints (gate_sha mismatch → STALE-UNKNOWN in the strengthen work list). When done: histogram + new tail → classify + fuzz before treating anything as work. Relaunch: same command (appends fresh rows; latest-per-task wins). |
 
 ---
 
@@ -83,7 +84,14 @@ call per repaired accept]**
   outcome as free difficulty metadata.
 - HOW: all in `lib/gen_task/prompts.ex`; rationale in docs/12 §5.3.
 
-**T1.5 — Extend the semantic-mutant operator set. [FREE, CPU sweep after]**
+**T1.5 — Extend the semantic-mutant operator set. [IN PROGRESS 2026-07-13
+evening: operators + tests + gate-sha row stamping LANDED (pilot reviewed in
+detail: 101_001 0.82 all-new-killed; 077_001's 3 new survivors fuzz-proven
+unobservable). RUNNING: full corpus re-measure (see RUNNING RIGHT NOW).
+REMAINING: tail analysis of the new measurement — classify + fuzz any new
+below-floor families BEFORE calling them work (rules 7/11), then check the
+bugfix registry for newly mintable units (new killed mutants = new bugfix
+candidates) and mint via backfill.]**
 - WHY: the S8 floor is only as sharp as its operators (today: comparison swap,
   ±1 on literals, :ok↔:error, bool flip). Sharper operators = better
   tightness measurement AND more `bugfix_` units minted automatically.

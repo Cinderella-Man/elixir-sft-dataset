@@ -116,9 +116,14 @@ defmodule StrengthenHarnesses do
   defp row_stale?(task, row) do
     dir = Path.join("tasks", task)
 
+    current_gate = CycleLog.gate_sha([Mutation, Evaluator])
+
     cond do
       not File.dir?(dir) -> true
       is_nil(row["harness_sha"]) or is_nil(row["solution_sha"]) -> true
+      # A rate measured under a different OPERATOR SET is a hint, not a verdict
+      # (T1.5): re-measure live before spending calls on it.
+      is_binary(row["gate_sha"]) and row["gate_sha"] != current_gate -> true
       true -> row["harness_sha"] != file_sha(dir, "test_harness.exs")
     end
   end
@@ -575,6 +580,7 @@ defmodule StrengthenHarnesses do
       dropped: 0,
       solution_sha: file_sha(dir, "solution.ex"),
       harness_sha: file_sha(dir, "test_harness.exs"),
+      gate_sha: CycleLog.gate_sha([Mutation, Evaluator]),
       ts: now()
     }
 

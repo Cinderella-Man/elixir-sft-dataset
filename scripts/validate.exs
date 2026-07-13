@@ -642,6 +642,10 @@ defmodule Validate do
           dropped: dropped,
           solution_sha: sha256(source),
           harness_sha: if(File.regular?(harness_path), do: sha256(File.read!(harness_path))),
+          # The kill rate is only comparable within one OPERATOR SET (T1.5 /
+          # T1.7 lesson): a row from a different Mutation version is a hint,
+          # not a measurement — consumers must re-measure before acting.
+          gate_sha: GenTask.CycleLog.gate_sha([GenTask.Mutation, GenTask.Evaluator]),
           ts: DateTime.utc_now() |> DateTime.to_iso8601()
         }
 

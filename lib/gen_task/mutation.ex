@@ -137,9 +137,15 @@ defmodule GenTask.Mutation do
     * comparison swap — `<` ↔ `<=`, `>` ↔ `>=`
     * integer literal ±1 — only literals `0..1000` (larger ones are config-scale
       noise); `+1` at every site, `-1` additionally for literals `> 0`
+      (this also covers `a..b` range endpoints — they are literal children)
     * `:ok` ↔ `:error` — as the first element of a tuple literal, or as a bare
       return atom (clause body, `do:`/`else:` value, or last expression of a block)
     * boolean flip — `true` ↔ `false`, skipped inside module attributes
+    * `min(a, b)` ↔ `max(a, b)` — guard-boundary swap (bare Kernel calls only;
+      qualified `Enum.min/1` etc. have a different AST shape and are untouched)
+    * arithmetic swap (T1.5) — `+` ↔ `-`, and `*` → `+` (`div` would change the
+      infix AST to call form, which the one-line textual twin cannot express)
+    * `div(a, b)` ↔ `rem(a, b)` — the integer-division/remainder confusion
 
   No mutation is generated inside `@moduledoc`/`@doc`/`@typedoc` (blanked, as in
   `mutate/1`), typespec attributes, strings/binaries, or charlists. Every emitted
@@ -254,6 +260,16 @@ defmodule GenTask.Mutation do
   defp spec_pattern({:cmp, :>=}), do: {~r/(?<![>])>=(?![>=])/, ">"}
   defp spec_pattern({:int, n, d}), do: {~r/(?<![\d._\w])#{n}(?![\d._\w])/, to_string(n + d)}
   defp spec_pattern({:bool, b}), do: {~r/\b#{b}\b/, to_string(not b)}
+  # min/max/div/rem are call-form (never infix); `(?<![\w.])` keeps Enum.min(
+  # and my_min( out. Infix + - * lean on the corpus being formatter-canonical:
+  # binary operators are always space-surrounded, so ` X ` cannot match unary
+  # minus, `++`, or a float exponent's sign (`1.0e-5` has no spaces).
+  defp spec_pattern({:minmax, op}), do: {~r/(?<![\w.])#{op}\(/, "#{swap_minmax(op)}("}
+
+  defp spec_pattern({:arith, op}),
+    do: {~r/(?<= )#{Regex.escape(to_string(op))}(?= )/, to_string(swap_arith(op))}
+
+  defp spec_pattern({:intdiv, op}), do: {~r/(?<![\w.])#{op}\(/, "#{swap_intdiv(op)}("}
   defp spec_pattern({:pair, a}), do: {~r/:#{a}\b/, ":#{flip_ok(a)}"}
   defp spec_pattern({:tuple, a}), do: {~r/:#{a}\b/, ":#{flip_ok(a)}"}
   defp spec_pattern({:ret, a}), do: {~r/:#{a}\b/, ":#{flip_ok(a)}"}
@@ -338,6 +354,22 @@ defmodule GenTask.Mutation do
   defp node_mutations({op, _, [_, _]}, _attr?) when op in [:<, :<=, :>, :>=],
     do: [{:cmp, op}]
 
+  # T1.5 operators. All are arity-2-only matches: unary minus ({:-, _, [x]})
+  # must never flip, and Enum.min/1-style qualified calls have a different AST
+  # shape ({{:., _, [...]}, _, _}) so bare min/2 = Kernel.min. `a..b` endpoints
+  # need no operator of their own — they are integer literals and the
+  # {:int, n, ±1} operator already fires inside ranges. Clause reordering is
+  # deliberately deferred: a multi-line site cannot be applied textually, and
+  # bugfix minting (the textual twin) must stay in step.
+  defp node_mutations({op, _, [_, _]}, _attr?) when op in [:min, :max],
+    do: [{:minmax, op}]
+
+  defp node_mutations({op, _, [_, _]}, _attr?) when op in [:+, :-, :*],
+    do: [{:arith, op}]
+
+  defp node_mutations({op, _, [_, _]}, _attr?) when op in [:div, :rem],
+    do: [{:intdiv, op}]
+
   defp node_mutations(n, _attr?) when is_integer(n) and n >= 0 and n <= 1000 do
     if n > 0, do: [{:int, n, 1}, {:int, n, -1}], else: [{:int, n, 1}]
   end
@@ -382,6 +414,9 @@ defmodule GenTask.Mutation do
   end
 
   defp apply_mutation({op, m, [l, r]}, {:cmp, op}), do: {swap_cmp(op), m, [l, r]}
+  defp apply_mutation({op, m, [l, r]}, {:minmax, op}), do: {swap_minmax(op), m, [l, r]}
+  defp apply_mutation({op, m, [l, r]}, {:arith, op}), do: {swap_arith(op), m, [l, r]}
+  defp apply_mutation({op, m, [l, r]}, {:intdiv, op}), do: {swap_intdiv(op), m, [l, r]}
   defp apply_mutation(n, {:int, n, d}) when is_integer(n), do: n + d
   defp apply_mutation(b, {:bool, b}), do: not b
   defp apply_mutation({a, rest}, {:pair, a}), do: {flip_ok(a), rest}
@@ -398,6 +433,18 @@ defmodule GenTask.Mutation do
   defp swap_cmp(:<=), do: :<
   defp swap_cmp(:>), do: :>=
   defp swap_cmp(:>=), do: :>
+
+  defp swap_minmax(:min), do: :max
+  defp swap_minmax(:max), do: :min
+
+  # +↔- is the classic AOR pair; * flips to + (div(a, b) would change the AST
+  # shape from infix to call form, which the one-line textual twin cannot do).
+  defp swap_arith(:+), do: :-
+  defp swap_arith(:-), do: :+
+  defp swap_arith(:*), do: :+
+
+  defp swap_intdiv(:div), do: :rem
+  defp swap_intdiv(:rem), do: :div
 
   defp flip_ok(:ok), do: :error
   defp flip_ok(:error), do: :ok
@@ -429,6 +476,9 @@ defmodule GenTask.Mutation do
   defp describe_spec({:tuple, a}), do: "{:#{a}, ...} -> {:#{flip_ok(a)}, ...}"
   defp describe_spec({:ret, a}), do: "return :#{a} -> :#{flip_ok(a)}"
   defp describe_spec({:blockret, a}), do: "return :#{a} -> :#{flip_ok(a)}"
+  defp describe_spec({:minmax, op}), do: "#{op} -> #{swap_minmax(op)}"
+  defp describe_spec({:arith, op}), do: "#{op} -> #{swap_arith(op)}"
+  defp describe_spec({:intdiv, op}), do: "#{op} -> #{swap_intdiv(op)}"
 
   # Deterministic even spread of at most `limit` items — indices `div(i*n, limit)`
   # are strictly increasing for n > limit, so no duplicates and full-range coverage
