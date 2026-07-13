@@ -60,7 +60,7 @@ defmodule EnrichPrompts do
 
     {opts, _, _} =
       OptionParser.parse(argv,
-        strict: [go: :boolean, report: :boolean, limit: :integer, only: :string]
+        strict: [go: :boolean, report: :boolean, limit: :integer, only: :string, force: :boolean]
       )
 
     cond do
@@ -130,7 +130,13 @@ defmodule EnrichPrompts do
     todo =
       opts
       |> population()
-      |> Enum.reject(&MapSet.member?(done, prompt_sha(Path.join("tasks", &1))))
+      |> then(fn fams ->
+        # --force re-enriches an already-enriched prompt (a first pass can land a
+        # thin rewrite — 041_001's was 14->35 lines while its peers reached 60-110).
+        if opts[:force],
+          do: fams,
+          else: Enum.reject(fams, &MapSet.member?(done, prompt_sha(Path.join("tasks", &1))))
+      end)
       |> then(&if opts[:limit], do: Enum.take(&1, opts[:limit]), else: &1)
 
     IO.puts("enriching #{length(todo)} prompt(s), sequential, ledger #{@ledger}\n")

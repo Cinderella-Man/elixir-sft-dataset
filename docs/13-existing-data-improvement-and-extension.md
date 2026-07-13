@@ -223,6 +223,32 @@ the new sha leaves the S6 ledger uncovered) → re-strengthen the harness (the
 whole point: a harness can finally pin behavior the prompt states) → cascade
 resyncs → re-gate. Every step has a tool; every step is ledgered.
 
+### 1.5.1 The semantic floor has a per-family CEILING (new finding, 2026-07-13)
+
+Chasing the one family whose strengthening the blind gate refused (041_001, an
+ETS-backed LRU) produced a conceptual result that changes how S8 should be
+read. Its surviving mutants split in two:
+
+- **Unobservable by construction** — `read_concurrency: true → false` on an ETS
+  table, the recency counter's STARTING value (`0 → 1`), and its STEP SIZE
+  (`+1 → +2`). None of these change anything a caller can see: the cache still
+  evicts in the same order. **No legitimate public-API test can kill them.** The
+  only way is `:sys.get_state`, which the S9 lint (correctly) refuses — and that
+  is precisely what the model tried, and why the strengthening was rejected.
+- **Observable and documentable** — `max_size > 0 → >=` (so `max_size: 0` is
+  accepted instead of raising) and `c + 1 → c + 0` (recency stops advancing, so
+  eviction order breaks). These are killable through the public API once the
+  prompt documents the validation and the recency contract.
+
+**Therefore:** a flat 0.5 semantic floor is not universally reachable, and a
+family sitting below it is not automatically defective. The honest metric is
+the kill rate among **observable** mutants; the rest is a documented ceiling.
+Practical rule for §4.2 / S8: before treating a below-floor family as work,
+classify its survivors — if they are internals-only (ETS options, counter seeds,
+private-state layout), the family is AT its ceiling and the correct action is to
+record that, not to strengthen (any "fix" would be an internals-pinning test,
+which the S9 lint exists to reject).
+
 ### 1.6 Earlier same-day quality tools (see STATUS backlog)
 
 `scripts/rescreen_repaired.exs` (retro blind screen; 22 calls outstanding) and
