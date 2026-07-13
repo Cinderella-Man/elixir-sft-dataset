@@ -263,8 +263,23 @@ spec, family-keyed splits, a round-trip validator, and dedup/sampling weights.
 8. **Never `git add -A` while a generation loop is alive** — it sweeps the loop's
    mid-run output into unrelated commits. Stage explicit paths; batch-commit loop
    output only after the run ends and the new dirs are validated.
-9. **Detach long runs with `run_detached.sh`** (it `setsid`s). And poll for
-   completion — do not trust a single completion callback.
+9. **Detach long runs with `run_detached.sh`** (it `setsid`s — a bare
+   `nohup … &` inside a tool call does not reliably survive). And when you wait
+   for one, **poll its PID, never a pattern**:
+
+       while kill -0 $PID 2>/dev/null; do sleep 30; done     # correct
+       while pgrep -f "enrich_prompts" >/dev/null; do … done # WRONG: the wait
+                                                             # loop's own command
+                                                             # line contains the
+                                                             # pattern, so pgrep
+                                                             # matches ITSELF and
+                                                             # the loop never ends
+
+   This exact bug cost ~100 minutes of dead time on 2026-07-13: the jobs had
+   finished and written their results, but two `pgrep -f` wait-loops were waiting
+   on themselves, so nothing reported completion. Also: a completion callback can
+   simply not arrive — check the ledger/log yourself before concluding a job is
+   still running.
 
 ---
 
