@@ -179,6 +179,25 @@ units minted in the same run. format_corpus knows the shape (bugfix prompts'
 buggy fences are captured mutant data, never reformatted — the repair_ rule).
 Next per Kamil's overnight brief: `strengthen_harnesses -- --go` (point 2).
 
+### Semantic-floor run COMPLETE — 2026-07-13 ~04:30 (docs/13 §1.4)
+
+`strengthen_harnesses` over all 30 weak-tail families: **10 already_ok** (the
+July-8 tail was substantially a MEASUREMENT ARTIFACT — the 0.00–0.35 band was
+all wt_ rows whose parents measure fine; zero calls spent), **3 applied and
+committed** (002_003 0.40→0.68, 097_002 0.47→0.84, 077_004 0.48→0.52 — each
+through add-only + green + lints + whole-mutant + re-measure + BLIND gate,
+propagated to wt_/tfim, re-gated perfect+mutants+format), **17 rejected**:
+12 by the blind gate, 2 by the S9 lint (the model tried `:sys.get_state` to
+cheat mutants), 2 wrote tests the reference fails, 1 stayed below floor.
+
+**The finding that matters (evidence in docs/13 §1.4):** for the 12 blind-gate
+families the PROMPT is the weak link, not the harness — they are terse (14–18
+lines) with no behavioral specificity, so any tightening test pins something
+unstated. Positive control: 097_002's detailed prompt produced the biggest
+win. **Work item, in this order:** enrich prompt → blind re-screen → re-
+strengthen (all three tools exist; rejected families re-attempt for free).
+This also largely closes the §4.2 semantic-floor question with evidence.
+
 ### Data extension research — docs/13 (2026-07-12 night; Kamil's deep-research brief)
 
 Full catalog in `docs/13-existing-data-improvement-and-extension.md`. Built and
