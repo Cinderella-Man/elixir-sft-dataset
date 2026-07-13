@@ -13,6 +13,81 @@ is needed.
 
 ---
 
+## ⭐ START HERE — the exact state, and the exact next action
+
+**Verified 2026-07-13 15:5x, immediately before this was written. Everything below
+was re-run, not remembered.**
+
+### The machine is idle and healthy
+
+| check | command | expected output (verified) |
+|---|---|---|
+| nothing running | `pgrep -af "generate.exs\|validate.exs\|screen_blind\|strengthen\|enrich"` | *(no output)* |
+| clean tree, pushed | `git status --porcelain` / `git log --oneline -1` | *(empty)* / `89f45dde` |
+| no work owed | `mix run scripts/work_status.exs --counts` | `variations=0 fim=0 write_test=0 test_fim=0 bugfix=0` |
+| factory tests | `mix test` | `296 passed` |
+| temp-path lint | `mix run scripts/lint_temp_paths.exs` | `60 shared-path harness(es), 0 violations ✓` |
+| corpus format | `elixir scripts/format_corpus.exs --check` | `0 deviating, 0 errors` |
+| tfim embeds | `mix run scripts/resync_tfim_embeds.exs` | `%{unchanged: 3237}` |
+| bugfix embeds | `mix run scripts/resync_bugfix_embeds.exs` | `%{unchanged: 960}` |
+| wt_ embeds | `mix run scripts/resync_embeds.exs -- --wt-all` | `%{unchanged: 331}` |
+| fim/wt_ fences | `elixir scripts/check_embeds.exs` | `1322 clean, 0 reflow, 0 drift` |
+
+**If any of those differ, something changed after this file was written — diagnose
+that before starting new work.** (A resync gate showing `would_resync` means a
+parent was edited and its children were not; run the same command with `--apply`.)
+
+### Pick your next action
+
+**A. If Kamil has decided §5.2 (the one true blocker) → do that first.** See §5.1
+item 1. Command: `mix run scripts/rescreen_repaired.exs -- --go` (~22 solver calls).
+A FAIL there means a prompt is under-specified: fix it with `enrich_prompts.exs`,
+then re-screen. This is the last thing standing between the corpus and Phase 3.
+
+**B. If you want free, no-decision work → finish the semantic floor (§5.3).** Four
+families are *real gaps* with named next steps; three others are AT CEILING and must
+be left alone. The exact recipe, per family:
+
+    mix run scripts/classify_survivors.exs -- --only "063_004*"   # confirm it is real work
+    mix run scripts/enrich_prompts.exs -- --go --only "063_004*"  # document the missing behavior
+    mix run scripts/screen_blind_solve.exs --only "063_004*" --rescreen
+    mix run scripts/strengthen_harnesses.exs -- --go              # then the harness
+    # then: the four resync gates above, then commit + push
+
+Per-family notes are in §5.3 — read them, they save you a wasted pass (e.g. 101_001
+just needs a retry; 013_001 needs *investigation*, not more calls).
+
+**C. If you want to extend the dataset → docs/13 §2.** Next up is *adaptation pairs*
+(brownfield editing — the one register the corpus lacks). Everything needed is
+specified there.
+
+**D. Before ANY training run → the export contract (docs/13 §3.1).** Within-family
+text overlap is 91.7% by construction; a naive random split leaks and invalidates
+your eval. This is not optional.
+
+### The three things that will bite you if you skip them
+
+1. **After editing ANY parent `prompt.md` or `test_harness.exs`**, its children are
+   stale. Run the cascade — see §7 "After ANY parent-prompt edit" — or CI will fail.
+2. **Never poll with `pgrep -f "<pattern>"`.** A wait-loop's own command line
+   contains the pattern, so it matches itself and waits forever. Poll a PID
+   (`while kill -0 $PID; do sleep 30; done`). This cost ~100 minutes of dead time.
+3. **Launch long jobs with `scripts/run_detached.sh`** (it `setsid`s). A bare
+   `nohup … &` inside a tool call does not reliably survive.
+
+### Where the evidence lives
+
+- **What the loop did:** `logs/runs.jsonl` (every accept/reject, ever).
+- **What each improvement tool did:** `logs/strengthen_harnesses.jsonl`,
+  `logs/enrich_prompts.jsonl`, `logs/bugfix_rejected.jsonl`,
+  `logs/semantic_mutants.jsonl`, `logs/screen_blind.jsonl` (+ `screen_triage.jsonl`).
+  §4 explains every row and, crucially, **what content key makes it valid**.
+- **The last runs' console output:** `logs/topup_20260713.log`,
+  `logs/strengthen2.log`, `logs/final_pass.log`, `logs/rescreen_enriched.log`.
+  (Old `logs/backfill_phase2.log` is the Phase-2 history.)
+
+---
+
 ## 0. Sixty-second orientation
 
 The repo is a **factory that produces a verified Elixir SFT dataset**, not just a
@@ -251,14 +326,38 @@ lines) it passes, and its harness went 0.47 → 0.87.
   every strengthening attempt tried before being rejected. **Record the ceiling and
   move on.**
 - **REAL GAPS — actionable:**
-  - `063_004` — the added test pins *zero-budget timeout* semantics the prompt still
-    omits. → enrich that specific behavior, re-strengthen. (~4 calls)
-  - `101_001` — the model tried to *modify* an existing test block; the add-only
-    guard refused. Just retry. (~2 calls)
-  - `013_001` — writes tests its own reference fails, three times running.
-    → investigate the reference/harness before spending more calls.
-  - `077_001` — reproducibly stalls at 0.42 with 15 observable survivors (interval
-    tree). The hardest of the set; needs a sharper harness, not a longer prompt.
+  - **`063_004_bounded_concurrency_concurrent_fetcher_01`** (0.47) — the strengthener's
+    added test pins *zero-budget timeout* semantics (`a zero budget times out every
+    source even when the fetches return instantly`) that the enriched prompt still
+    does not state. **Action:** `enrich_prompts.exs -- --go --force --only
+    "063_004*"` (the `--force` re-enriches an already-enriched prompt), making sure
+    the rewrite documents what a `timeout: 0` budget does; then re-screen; then
+    strengthen. ~4 calls. **Watch out:** its blind solves are noisy (bounded
+    concurrency is hard for the solver) — if the gate says *INCONCLUSIVE: failed the
+    ORIGINAL tests*, that is solver weakness, **not** a prompt defect. Retry, do not
+    enrich again on that evidence.
+  - **`101_001_sliding_window_counter_01`** (0.47) — last attempt died on the
+    **add-only guard**: the model tried to MODIFY an existing test block (which would
+    orphan that block's tfim gold). Nothing is wrong with the prompt (already
+    enriched 35→110 lines, screened GREEN). **Action:** just re-run
+    `strengthen_harnesses.exs -- --go`; it is stochastic. ~2 calls.
+  - **`013_001_exponential_backoff_retry_worker_01`** (0.41) — writes tests its own
+    reference FAILS, three attempts running, even with an enriched (15→60 lines),
+    GREEN-screened prompt. **Do not spend more calls blindly.** **Action:** read
+    `tasks/013_001_.../test_harness.exs` and `solution.ex` together and work out what
+    the added tests keep asserting that the reference will not do (likely timing:
+    the backoff schedule is probably not deterministically observable). It may be a
+    *reference* bug, or a task that needs a fake clock (see 072_* for the pattern the
+    corpus uses).
+  - **`077_001_interval_tree_for_overlapping_range_queries_01`** (0.38) — the hardest.
+    Reproducibly stalls at **0.42** across three attempts (before AND after
+    enrichment), with **15 observable survivors** — so it is a genuine harness gap,
+    not a ceiling. **Action:** hand-write the missing tests. The survivors are
+    boundary/`±1` mutants on interval comparisons (`classify_survivors.exs -- --only
+    "077_001*"` lists them exactly) — the harness needs cases where an interval
+    *touches* a query bound (start == query_end, end == query_start) and where an
+    interval is entirely inside/outside. Its sibling `077_004` was strengthened
+    successfully — read that harness for the pattern.
 
 ### 5.4 Data extension (docs/13) — built, and next up
 

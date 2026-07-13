@@ -18,12 +18,19 @@ Last completed: the free derivative top-up (2026-07-13) — 6 tfim + 1 bugfix +
 across every work type.** A flaky harness found by the post-run gate is fixed
 (see below).
 
-## 📖 COLD START? Read `docs/14-handover-and-work-register.md`
+## 📖 START HERE → `docs/14-handover-and-work-register.md`, section "⭐ START HERE"
 
-It is the complete handover: corpus inventory, every gate, every tool, every
-ledger and what its rows mean, the full open-work register with costs and
-owners, nine hard-won rules (each one a scar), and copy-paste runbooks. This
-file (STATUS) is the one-screen "what now"; docs/14 is "how, and why".
+That section gives you: the verified current state (with the exact command +
+expected output for every gate, so you can tell in 2 minutes whether anything
+drifted since it was written), the four possible next actions ranked, the exact
+per-family commands for the remaining work, the three traps that will bite you,
+and where every piece of evidence lives.
+
+The rest of docs/14 is the full reference: corpus inventory, every gate, every
+tool, every ledger and what content key makes its rows valid, the complete
+open-work register with costs and owners, nine hard-won rules (each one a scar
+from a real incident), and copy-paste runbooks. STATUS is the one-screen "what
+now"; docs/14 is "how, and why".
 
 ## Current mode: 🔧 CATCHING UP
 
