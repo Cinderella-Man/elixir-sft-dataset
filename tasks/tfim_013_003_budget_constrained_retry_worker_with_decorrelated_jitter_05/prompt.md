@@ -421,5 +421,73 @@ defmodule BudgetRetryWorkerTest do
     func = fn -> {:ok, :defaults_work} end
     assert {:ok, :defaults_work} = BudgetRetryWorker.execute(rw, func, [])
   end
+
+  # -------------------------------------------------------
+  # The documented jitter formula and budget rule, observed
+  # through the injected random's ARGUMENTS (no timing)
+  # -------------------------------------------------------
+
+  test "the injected random receives (base_delay_ms, prev_delay * 3) under defaults", %{rw: _rw} do
+    test_pid = self()
+
+    recording = fn min, max ->
+      send(test_pid, {:rand_args, min, max})
+      min
+    end
+
+    {:ok, rw2} = BudgetRetryWorker.start_link(clock: &Clock.now/0, random: recording)
+    func = fail_then_succeed(1, :done)
+
+    task = Task.async(fn -> BudgetRetryWorker.execute(rw2, func, []) end)
+
+    # Defaults: base_delay_ms = 100 and prev_delay starts at base_delay_ms,
+    # so the first retry must call random(100, 300).
+    assert_receive {:rand_args, 100, 300}, 2_000
+    Process.sleep(20)
+    Clock.advance(100)
+    assert {:ok, :done} = Task.await(task, 5_000)
+  end
+
+  test "elapsed time is measured against the recorded start timestamp", %{rw: _rw} do
+    {:ok, rw2} = BudgetRetryWorker.start_link(clock: &Clock.now/0, random: &MinRandom.rand/2)
+    Clock.advance(50_000)
+    func = fail_then_succeed(1, :done)
+
+    task = Task.async(fn -> BudgetRetryWorker.execute(rw2, func, []) end)
+
+    Process.sleep(20)
+    Clock.advance(100)
+
+    # started_at = 50_000: one 100 ms retry keeps elapsed tiny relative to the
+    # default 30_000 ms budget. A worker comparing against anything other than
+    # the recorded start would see a huge elapsed and exhaust immediately.
+    assert {:ok, :done} = Task.await(task, 5_000)
+  end
+
+  test "a retry landing exactly on the budget boundary is still scheduled", %{rw: _rw} do
+    {:ok, rw2} = BudgetRetryWorker.start_link(clock: &Clock.now/0, random: &MinRandom.rand/2)
+    start_supervised!({Counter, 0})
+
+    func = fn ->
+      if Counter.increment_and_get() == 1 do
+        Clock.advance(900)
+        {:error, :boom}
+      else
+        {:ok, :done}
+      end
+    end
+
+    task =
+      Task.async(fn ->
+        BudgetRetryWorker.execute(rw2, func, budget_ms: 1_000, base_delay_ms: 100)
+      end)
+
+    # elapsed (900) + capped delay (100) == budget (1000). The documented rule
+    # rejects a retry only when the sum WOULD EXCEED the budget — equality does
+    # not exceed, so this retry must run and the call must succeed.
+    Process.sleep(20)
+    Clock.advance(100)
+    assert {:ok, :done} = Task.await(task, 5_000)
+  end
 end
 ```
