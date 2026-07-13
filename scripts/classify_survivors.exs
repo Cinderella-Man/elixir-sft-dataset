@@ -94,7 +94,7 @@ defmodule ClassifySurvivors do
     |> Enum.reduce(%{}, fn line, acc ->
       with {:ok, %{"task" => t, "total" => tot} = row} <- JSON.decode(line),
            true <- tot > 0,
-           false <- String.starts_with?(t, "wt_"),
+           false <- String.starts_with?(t, "wt_") or String.starts_with?(t, "repair_"),
            true <- File.dir?(Path.join("tasks", t)) do
         prev = acc[t]
         if prev && prev["ts"] >= row["ts"], do: acc, else: Map.put(acc, t, row)

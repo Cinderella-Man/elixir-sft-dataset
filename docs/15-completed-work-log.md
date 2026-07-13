@@ -9,6 +9,24 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-13 — T1.5 closed: semantic-mutant operator set extended.**
+  New operators (AST + textual twins in step): min↔max, +↔-, *→+, div↔rem;
+  ranges covered by the existing ±1 (endpoints are literal children); clause
+  reordering deferred (multi-line sites cannot be applied textually — the
+  bugfix twin must stay in step). Rule-9 pilot reviewed line by line
+  (101_001: every mutant a plausible one-token bug; applier hits only binary
+  minus). Measurement rows now gate-sha-stamped ([Mutation, Evaluator]) so
+  rates from different operator sets never compare silently; strengthen
+  treats gate-mismatched rows as STALE-UNKNOWN. Full corpus re-measure under
+  the new set: 679 tasks, 16,632 mutants, 76.2% killed, mean 0.778. Yield:
+  6 new real-gap families (T2.7); at-ceiling verdicts re-confirmed (077_001
+  fuzz 18/18 IDENTICAL including the 3 new survivors); bugfix pool grows but
+  0 pending (3-per-seed cap already met — relevant at cap lift, docs/13 §2.5).
+  F8 fixed en route: repair_ dirs (frozen evidence) leaked into the semantic
+  sweep + its consumers, polluting the work list — excluded in validate,
+  classify_survivors and strengthen_harnesses (both tiers = the same
+  measurement-tool change). 308 tests green.
+
 - **2026-07-13 — T3.2 + T3.3 closed: the scrutiny tools are standing.**
   T3.2: weekly CI now spot-checks BOTH sides (CONTEXT rule 8) — the
   six-property bugfix audit on a random 15-sample (accepted side; properties

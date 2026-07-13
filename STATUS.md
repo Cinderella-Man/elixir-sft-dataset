@@ -13,10 +13,7 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-| what | pid | log | expected result |
-|---|---|---|---|
-| T1.5 full corpus semantic re-measure: `validate.exs --semantic-mutants` (launch noted below) | see below | `logs/semantic_remeasure_20260713.log` | fresh gate-sha-stamped rows for every root in `logs/semantic_mutants.jsonl` under the EXTENDED operator set (min/max, + -, * , div/rem). Old rows become hints (gate_sha mismatch → STALE-UNKNOWN in the strengthen work list). When done: histogram + new tail → classify + fuzz before treating anything as work. Relaunch: same command (appends fresh rows; latest-per-task wins). |
-
+**Nothing.** (T1.5's corpus re-measure completed 2026-07-13 late evening — docs/15.)
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order)
@@ -84,23 +81,6 @@ call per repaired accept]**
   outcome as free difficulty metadata.
 - HOW: all in `lib/gen_task/prompts.ex`; rationale in docs/12 §5.3.
 
-**T1.5 — Extend the semantic-mutant operator set. [IN PROGRESS 2026-07-13
-evening: operators + tests + gate-sha row stamping LANDED (pilot reviewed in
-detail: 101_001 0.82 all-new-killed; 077_001's 3 new survivors fuzz-proven
-unobservable). RUNNING: full corpus re-measure (see RUNNING RIGHT NOW).
-REMAINING: tail analysis of the new measurement — classify + fuzz any new
-below-floor families BEFORE calling them work (rules 7/11), then check the
-bugfix registry for newly mintable units (new killed mutants = new bugfix
-candidates) and mint via backfill.]**
-- WHY: the S8 floor is only as sharp as its operators (today: comparison swap,
-  ±1 on literals, :ok↔:error, bool flip). Sharper operators = better
-  tightness measurement AND more `bugfix_` units minted automatically.
-- WHAT: guard-boundary swaps (`min`↔`max`), range endpoints (`a..b`), clause
-  reordering, arithmetic swaps (`+`↔`-`, `*`↔`div`).
-- HOW: `lib/gen_task/mutation.ex` (`semantic_mutants_textual/2` + the AST
-  measurement twin stay in step), tests, corpus re-measure sweep. Expect new
-  below-floor families — classify + fuzz survivors BEFORE calling them work
-  (docs/14 rules 7 and 11).
 
 **T1.6 — Dialyzer gate over the golds. [NEEDS KAMIL: one mix.exs/lockfile
 change; then FREE (PLT build + weekly CI)]**
@@ -154,6 +134,20 @@ with random seeds; low expected yield, cheap.
 start before steady state). [BIG: 2,396 tfim + 302 wt_ + 80/332 seed openers;
 own tool + ledger + blind re-screen budget]** — docs/12 §7.4;
 frozen-template overfitting is a documented SFT failure mode.
+
+**T2.7 — New-operator semantic tail: 6 real-gap families (the T1.5 yield).
+[~2 calls/family via the strengthen pipeline]**
+- WHY: the extended operator set (min/max, arithmetic, div/rem) dropped six
+  previously-clear families below the 0.5 floor, every survivor observable
+  (heuristic): 097_004 0.40 (18 obs), 037_001 0.42 (21), 100_004 0.43 (23),
+  003_004 0.45 (22), 101_003 0.46 (14), 013_003 0.48 (15). The at-ceiling set
+  RE-CONFIRMED under the new operators: 023_002 (ceiling 0.52), 041_001
+  (0.85), 077_001 (fuzz-proven 18/18 IDENTICAL, incl. the 3 new survivors).
+- WHAT/HOW: the docs/14 §5.3 recipe per family — strengthen with the blind
+  gate as arbiter (these are GenServer families; per-family fuzz drivers are
+  impractical, the blind gate is the honest observable-behavior check);
+  enrich the prompt first wherever the blind gate rejects. Expect some to be
+  partial ceilings like 013_001/101_001 — record honest per-family ceilings.
 
 ### Tier 3 — protect the TRAINING side
 

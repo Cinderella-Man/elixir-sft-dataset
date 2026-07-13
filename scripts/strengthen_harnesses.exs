@@ -88,7 +88,7 @@ defmodule StrengthenHarnesses do
       |> Enum.reduce(%{}, fn line, acc ->
         with {:ok, %{"task" => t, "total" => tot} = row} <- JSON.decode(line),
              true <- tot > 0,
-             false <- String.starts_with?(t, "wt_") do
+             false <- String.starts_with?(t, "wt_") or String.starts_with?(t, "repair_") do
           prev = acc[t]
 
           if prev && prev["ts"] >= row["ts"],

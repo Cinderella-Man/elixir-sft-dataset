@@ -596,7 +596,13 @@ defmodule Validate do
   # measure first (docs/10 R10), then decide thresholds. EXPENSIVE: up to
   # `--sm-limit` (default 40) evals per task — scope with --only for spot checks.
   defp semantic_report(tasks, limit) do
-    mutable = Enum.filter(tasks, &(&1.shape in [:single, :multifile, :write_test]))
+    # repair_ dirs are frozen evidence pairs (docs/13 §1.5) — measuring their
+    # "assertion tightness" is meaningless and their rows polluted the
+    # 2026-07-13 work list (STATUS F8). Same exclusion as the blind screen.
+    mutable =
+      tasks
+      |> Enum.filter(&(&1.shape in [:single, :multifile, :write_test]))
+      |> Enum.reject(&String.starts_with?(&1.name, "repair_"))
 
     IO.puts(
       "Semantic mutants (report-only): #{length(mutable)} tasks, ≤#{limit} mutants each ..."
