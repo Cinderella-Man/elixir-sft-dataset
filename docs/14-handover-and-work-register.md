@@ -185,9 +185,27 @@ propagated to the `wt_` and `repair_` harness copies and the 10 tfim prompts, an
 proved with **three consecutive parallel full-family sweeps: ALL PERFECT** (it
 previously failed ~1 in 3).
 
-**Open follow-up (cheap, worth doing):** grep the corpus for other harnesses that
-build shared temp paths with `System.unique_integer` but no `System.pid()` — the
-same race is possible anywhere a harness touches the filesystem or a DB file.
+**Follow-up DONE (2026-07-13):** the corpus was swept for the same class. Of 680
+harnesses, **60 build a path in a shared directory**; two more were racy and are
+now fixed:
+- `102_003` — `System.unique_integer` with no `System.pid()` (the identical latent
+  bug),
+- `102_004` — a **completely FIXED** SQLite filename (`state_machine_test.sqlite3`),
+  i.e. *every* concurrent eval of that family shared one database. Worse than the
+  bug that started this.
+
+The `031_*` family's `/tmp/does_not_exist_#{:rand.uniform(…)}` paths are exempt by
+design: the file is *meant* not to exist, so a collision is harmless.
+
+Both fixed, propagated to their `wt_`/`repair_` harness copies and 20 tfim prompts,
+and proven with three consecutive **parallel** sweeps over all three DB-backed
+families: ALL PERFECT.
+
+**Standing gate added — `scripts/lint_temp_paths.exs`** (CI + pre-push): a harness
+that builds a path under `System.tmp_dir!()` or `/tmp` must include
+`System.pid()` alongside `System.unique_integer/1`. Self-tested (clean → planted
+violation → detected → restored), so the gate is not vacuous. Deliberately-missing
+paths are exempt.
 
 **Rejected idea, recorded so nobody repeats it:** I nearly made
 `resync_tfim_embeds` refresh a child's GOLD from its parent block (not just the

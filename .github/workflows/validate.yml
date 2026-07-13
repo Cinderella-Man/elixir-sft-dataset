@@ -63,6 +63,11 @@ jobs:
           out=$(mix run scripts/resync_bugfix_embeds.exs)
           echo "$out"
           echo "$out" | grep -q "would_resync\|error" && exit 1 || true
+      # Harnesses must not share a temp path across parallel evals: the validator
+      # runs one BEAM per task, and System.unique_integer is unique only WITHIN a
+      # BEAM, so two evals can open the same SQLite file (flaky 1-in-3 failures in
+      # 102_002; 102_003 latent; 102_004 used a fixed filename). docs/14 §5.0b.
+      - run: mix run scripts/lint_temp_paths.exs
       # wt_ dirs are byte-copies of their parent (module + harness) plus a prompt
       # that embeds the parent SPEC. check_embeds only sees the module fence, so
       # until 2026-07-13 a parent-prompt or harness edit rotted wt_ silently (it

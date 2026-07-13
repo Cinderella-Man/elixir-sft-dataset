@@ -487,7 +487,14 @@ defmodule StateMachineTest do
   defp ensure_repo_started do
     unless Process.whereis(@repo) do
       if is_nil(Application.get_env(:state_machine, @repo)) do
-        db = Path.join(System.tmp_dir!(), "sm_#{System.unique_integer([:positive])}.sqlite3")
+        # pid AND integer: unique_integer is unique only within one BEAM, and the
+        # validator runs one BEAM per task in parallel (same rule as
+        # EvalTask.Runner.uniq_suffix/0).
+        db =
+          Path.join(
+            System.tmp_dir!(),
+            "sm_#{System.pid()}_#{System.unique_integer([:positive])}.sqlite3"
+          )
 
         Application.put_env(:state_machine, @repo,
           database: db,

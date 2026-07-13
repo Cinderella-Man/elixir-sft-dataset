@@ -5,7 +5,15 @@
 # using the very same `Ecto.Adapters.SQL.Sandbox` the tests rely on — before any
 # test runs. The `StateMachine` GenServer still receives it purely via `repo:`.
 sqlite_repo_config = [
-  database: Path.join(System.tmp_dir!(), "state_machine_test.sqlite3"),
+  # Unique per OS PROCESS: the validator runs one BEAM per task in parallel, so a
+  # fixed filename means concurrent evals share one SQLite file and corrupt each
+  # other. System.unique_integer alone is not enough (it is per-BEAM) — the pid
+  # must be in the name too (same rule as EvalTask.Runner.uniq_suffix/0).
+  database:
+    Path.join(
+      System.tmp_dir!(),
+      "state_machine_test_#{System.pid()}_#{System.unique_integer([:positive])}.sqlite3"
+    ),
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: 5
 ]
