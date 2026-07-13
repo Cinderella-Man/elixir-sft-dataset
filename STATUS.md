@@ -69,8 +69,27 @@ committed immediately (one solved item = one commit).
   it in one batch WITH F2-A's triage).
 - F5-B (gate generator): **T1.8 chatter-lint extension — TODO.**
 
+**F7 — environmental failures written as screen VERDICTS (found live during
+the F2-A sweep).**
+- F7-A (fix data): 017_001's fresh RED row says "Postgres … not reachable at
+  127.0.0.1:5432" — an environment fact, not a prompt verdict. After the
+  sweep: annotate via a triage row (entailed/environmental) so it never enters
+  the prompt-gap queue; same for any other env-dependent RED the sweep writes.
+- F7-B (gate generator): `screen_blind_solve.exs` must classify
+  environment-unreachable grades as `green: nil` + `error: environmental`
+  (exactly like transport errors — "not a verdict on the prompt"), so no
+  future run can ledger an environmental RED. TODO after the sweep exits
+  (the running sweep uses its already-loaded copy).
+
 *(F4 — tools imitating grandfathered anti-patterns — and F6 — LLM-judge
 hallucinated verdict — closed 2026-07-13, both tiers done: docs/15.)*
+
+**Pre-triage notes for the F2-A RED queue (hand verdicts to cross-check the
+judge against, rule 10):** 005_003 = ENTAILED/keep (prompt says "older than"
+3×; the test pins exactly that inclusive-at-TTL boundary; solver dropped at
+`>=`). 001_004 (candidate badmatch crash), 002_001 (candidate typespec
+compile error), 015_003 (candidate calls its own never-started named
+supervisor) — solver-slip signatures, confirm at triage.
 
 ### Tier 1 — make every FUTURE generated unit better (loop + gates)
 
