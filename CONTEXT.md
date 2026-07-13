@@ -37,6 +37,63 @@
 
 ---
 
+## ⚠️ HOW WE WORK — HARD RULES (Kamil, 2026-07-13; these override everything else)
+
+Reading order for every session: **this section → `STATUS.md` → `docs/14`**.
+These rules exist because token exhaustion happens MANY times per 24h here, and
+losing work is NEVER acceptable. Every rule below was paid for.
+
+**1. Long-running work = detached script + session monitor. Always.**
+Anything that runs longer than a minute or makes LLM calls runs as:
+
+    scripts/run_detached.sh logs/<name>.log <command...>
+
+(`setsid` — it survives this session dying; the transport rides token-limit
+windows by sleeping 15 min per attempt, forever, by design). Then, in the
+session, arm a monitor so you are told the moment it exits:
+
+    # background shell (run_in_background), NOT a foreground wait:
+    while kill -0 <PID> 2>/dev/null; do sleep 60; done; tail -20 logs/<name>.log
+
+When the monitor fires (exit OR its own timeout), check the log + ledger and
+re-arm if the process is still alive. Never a bare `nohup … &`. Never a
+foreground wait. **NEVER poll with `pgrep -f "<pattern>"`** — the wait-loop's
+own command line contains the pattern, so it matches itself and hangs forever
+(cost ~100 minutes on 2026-07-13).
+
+**2. Every such script is ledgered: rows in, log out.**
+The script MUST (a) record every processed row/unit in a JSONL ledger under
+`logs/`, keyed by content sha, so a relaunch resumes exactly where it stopped
+and never redoes finished work; and (b) append its console output to its own
+log file. When the monitor says "exited", the ledger + log alone must answer
+"what did it do" — assume the session that launched it is already dead.
+
+**3. NEVER use multiple subagents / parallel agent fan-outs.**
+Running out of tokens mid-fan-out loses ALL their in-flight work. All work
+happens in the main session plus detached, ledgered scripts (which lose
+nothing when tokens run out — they wait and resume). This rule stands even if
+the harness offers workflows/subagents and even for "read-only" research.
+
+**4. `STATUS.md` is the live state, updated AS YOU GO — never at the end.**
+It is the default go-to place after this file. Launching a detached job?
+Write its pid + log + expected result + idempotent relaunch command into
+STATUS **before doing anything else**. Finished or learned something that
+changes the plan? Update STATUS immediately. Running out of tokens between
+"did the work" and "wrote it down" means the work is lost to the next session.
+
+**5. HARD RULE: `STATUS.md` contains ONLY todo / in-progress / blocked items —
+NOTHING that is done.** The point of STATUS is to find all the things that
+need work, at a glance. The moment something completes, move it OUT: its
+record lives in git history (commit messages) and `docs/15-completed-work-log.md`.
+A STATUS full of victory laps hides the actual work.
+
+**6. Commit and push at every milestone**, staging explicit paths only (never
+`git add -A` while any loop is running — it sweeps mid-run output into
+unrelated commits). Assume the session dies without warning: the files alone
+must let the next session pick up.
+
+---
+
 ## 1. What this project is
 
 This repo is **not an application** — it is a **hand-built dataset + evaluation harness for
