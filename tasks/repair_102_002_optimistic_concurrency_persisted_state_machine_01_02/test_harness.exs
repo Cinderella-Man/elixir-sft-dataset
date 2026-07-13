@@ -80,7 +80,12 @@ Application.put_env(:state_machine, StateMachine.MigrationRepo,
   database:
     Path.join(
       System.tmp_dir!(),
-      "state_machine_migration_test_#{System.unique_integer([:positive])}.db"
+      # System.pid() as well: unique_integer is unique only WITHIN one BEAM, and
+      # the validator runs one BEAM per task in parallel — two concurrent evals
+      # could draw the same integer, share this file, and corrupt each other's
+      # migration test (flaky 1/16 failures, 2026-07-13). Same rule as
+      # EvalTask.Runner.uniq_suffix/0.
+      "state_machine_migration_test_#{System.pid()}_#{System.unique_integer([:positive])}.db"
     ),
   pool_size: 1
 )
@@ -127,17 +132,22 @@ defmodule StateMachineTest do
     )
 
     # The table exists and every declared column is usable.
+    # The migration repo is NOT sandboxed (it is a real file, on purpose — see the
+    # header), so a row written here can outlive the test and collide with a
+    # concurrently-running eval of this same task. Key the row to this run.
+    mid = "m:#{System.pid()}:#{System.unique_integer([:positive])}"
+
     StateMachine.MigrationRepo.query!(
       "INSERT INTO entity_transitions " <>
         "(entity_id, event, from_state, to_state, version, inserted_at) " <>
-        "VALUES ('m:1', 'confirm', 'pending', 'confirmed', 1, '2026-01-01 00:00:00')",
-      []
+        "VALUES (?1, 'confirm', 'pending', 'confirmed', 1, '2026-01-01 00:00:00')",
+      [mid]
     )
 
     %{rows: [[count]]} =
       StateMachine.MigrationRepo.query!(
-        "SELECT count(*) FROM entity_transitions WHERE entity_id = 'm:1'",
-        []
+        "SELECT count(*) FROM entity_transitions WHERE entity_id = ?1",
+        [mid]
       )
 
     assert count == 1

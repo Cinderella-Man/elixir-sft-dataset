@@ -165,6 +165,39 @@ so this is automatic).
 
 Cost: CPU only. Then batch-commit the new dirs and push.
 
+### 5.0b Corpus defect found & fixed 2026-07-13 — flaky harness (102_002)
+
+The post-top-up perfect sweep failed 2 dirs at `1/16 tests failed`, intermittently.
+Root cause (two bugs, one on top of the other) in
+`102_002_optimistic_concurrency_persisted_state_machine`:
+
+1. Its migration test writes to a **non-sandboxed** SQLite repo (deliberately — it
+   exercises the real migrator) and asserted `count == 1` for a **fixed** row id, so
+   a leftover/concurrent row made it 2.
+2. The real culprit: the repo's DB **filename used `System.unique_integer` alone**,
+   which is unique only *within one BEAM* — and the validator runs **one BEAM per
+   task in parallel**, so two concurrent evals could draw the same integer, share the
+   same SQLite file, and corrupt each other. (`EvalTask.Runner.uniq_suffix/0` already
+   knew this and includes `System.pid()`; the harness did not.)
+
+Fixed both (row keyed to the run; DB file keyed to `System.pid()` + integer),
+propagated to the `wt_` and `repair_` harness copies and the 10 tfim prompts, and
+proved with **three consecutive parallel full-family sweeps: ALL PERFECT** (it
+previously failed ~1 in 3).
+
+**Open follow-up (cheap, worth doing):** grep the corpus for other harnesses that
+build shared temp paths with `System.unique_integer` but no `System.pid()` — the
+same race is possible anywhere a harness touches the filesystem or a DB file.
+
+**Rejected idea, recorded so nobody repeats it:** I nearly made
+`resync_tfim_embeds` refresh a child's GOLD from its parent block (not just the
+prompt). Don't. A gold legitimately differs from its parent block — the corpus
+formats golds as fragments and enforces ≤98 columns on them, while a parent harness
+is *not* column-gated, so golds carry deliberately shortened comments and assertion
+messages. A blanket refresh would import >98-column lines and break the perfect gate
+on 12+ dirs. If a parent test's *behavior* is edited, re-carve that one child's gold
+by hand and check the ≤98 rule (as was done here).
+
 ### 5.1 Blocking Phase 3 — decisions only Kamil can make
 
 | # | item | state | evidence | cost |

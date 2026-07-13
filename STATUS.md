@@ -7,20 +7,16 @@ on a quality improvement? Update it whenever the answer changes; everything else
 
 ---
 
-## ▶️ RUNNING RIGHT NOW (2026-07-13 14:2x)
+## ▶️ RUNNING RIGHT NOW
 
-| what | pid | log | expected result |
-|---|---|---|---|
-| Derivative top-up (`GEN_ONLY=backfill generate.exs`) — the free work in docs/14 §5.0 | 2083304 | `logs/topup_20260713.log` | ~6 tfim + ~2 bugfix units created BY the harness strengthening (new tests → new carvable blocks; a stronger harness kills mutants it used to miss, re-opening bugfix candidates). Zero tokens, CPU only. |
+**Nothing.** (If you see stray `tail -f` shells, they are orphaned monitors — kill
+them. And never poll with `pgrep -f "<pattern>"`: a wait-loop's own command line
+contains the pattern, so it matches ITSELF and waits forever — docs/14 rule 9.)
 
-**When it exits:** validate the touched families (`validate.exs --only`,
-`--mutants`), run the four embed gates, batch-commit the new dirs, push. Then
-this section goes back to "nothing running".
-
-**Nothing else is running.** If you see stray `tail -f` shells, they are orphaned
-monitors — kill them. And never poll with `pgrep -f "<pattern>"`: a wait-loop's own
-command line contains the pattern, so it matches itself and waits forever
-(docs/14 rule 9).
+Last completed: the free derivative top-up (2026-07-13) — 6 tfim + 1 bugfix +
+1 repair unit, all created BY the harness strengthening. **Registry: 0 pending
+across every work type.** A flaky harness found by the post-run gate is fixed
+(see below).
 
 ## 📖 COLD START? Read `docs/14-handover-and-work-register.md`
 

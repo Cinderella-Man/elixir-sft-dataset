@@ -399,7 +399,12 @@ Application.put_env(:state_machine, StateMachine.MigrationRepo,
   database:
     Path.join(
       System.tmp_dir!(),
-      "state_machine_migration_test_#{System.unique_integer([:positive])}.db"
+      # System.pid() as well: unique_integer is unique only WITHIN one BEAM, and
+      # the validator runs one BEAM per task in parallel — two concurrent evals
+      # could draw the same integer, share this file, and corrupt each other's
+      # migration test (flaky 1/16 failures, 2026-07-13). Same rule as
+      # EvalTask.Runner.uniq_suffix/0.
+      "state_machine_migration_test_#{System.pid()}_#{System.unique_integer([:positive])}.db"
     ),
   pool_size: 1
 )
