@@ -9,30 +9,46 @@ on a quality improvement? Update it whenever the answer changes; everything else
 
 ## ▶️ RUNNING RIGHT NOW
 
-| what | pid | log | expected result |
-|---|---|---|---|
-| `scripts/quality_chain2.sh` (launched 2026-07-13 ~17:1x) | **2254355** | `logs/quality_chain2_20260713.log` | stage 1: 013_001 blind re-screen vs its strengthened harness; stage 2: screens of the 4 prompt-gap fixes (102_002/3/4, 626_004); stage 3: judge triage of the 6 remaining REDs; stage 4: 101_001 strengthen retry #3; stage 5: FREE backfill (≥9 pending tfim); stage 6: report-only gates. Ends `=== [chain2] CHAIN2 DONE`. Idempotent relaunch: `scripts/run_detached.sh logs/quality_chain2_20260713.log scripts/quality_chain2.sh`. **Batch-commit new task dirs only after stage 5 exits** (docs/14 rule 8). |
+**Nothing.** (Verified: pgrep clean, all detached chains exited, everything
+committed and pushed.)
 
-Poll with `while kill -0 2254355 2>/dev/null; do sleep 30; done` — **never**
-`pgrep -f "<pattern>"` (docs/14 rule 9).
+### 2026-07-13 scrutiny session — COMPLETE (Kamil: "do all of these, scrutinize
+### everything, random verifies of approved and rejected data")
 
-**Completed earlier this session (all pushed):** quality_chain #1 (22 rescreens:
-12 GREEN / 10 RED → 4 fixed mechanically, 6 to triage; 063_004 strengthened
-0.47→0.94), reject-ledger audit (15 unsound 102_001 tfim rejects purged → +7
-units; 27/27 bugfix rejects sound), accept-side spot verify (8/8 batches
-clean), 013_001 hand-strengthened 0.41→0.77, 077_001 proven AT CEILING by
-public-API fuzzing (classifier vocabulary extended).
+All work ran through ledgered, resumable, detached tools (docs/14 rule 9). Results:
 
-### Found 2026-07-13 pm by the reject-ledger audit (`reverify_rejects.exs`)
+1. **§5.2 retro blind screen CLOSED: 59 PASS / 15 entailed / 0 open / 0
+   unscreened** (74 repaired accepts). Six genuine prompt↔harness gaps found
+   and fixed (+cascaded +re-screened GREEN): 102_002/3/4 (undocumented
+   migration-module name; 102_003 also had its GOLD defining the repo module
+   its own prompt forbade — a repair-loop artifact — plus an undocumented
+   atom-deserialisation contract), 626_004 (undocumented `:cleanup_tick`),
+   101_003 (harness asserts `keys/1`, never in the prompt). All six were
+   repaired accepts — live proof for the §5.2 loop-wiring decision.
+2. **Semantic floor (S8) CLOSED: 16 of 20 fixed, 4 at documented ceilings, 0
+   open.** New this session: 063_004 0.47→0.94 (chain), 013_001 0.41→0.77
+   (hand, no timing — injected-random observation), 101_001 0.47→0.76 (hand,
+   clock+`:cleanup` probes; the model's 3 attempts died imitating the
+   grandfathered `:sys.get_state` debt), 077_001 RECLASSIFIED at-ceiling
+   (public-API fuzzing proved all 15 survivors behaviorally identical —
+   docs/14's "hardest real gap" was a classifier-vocabulary artifact, fixed).
+3. **Reject-ledger audit: 15 unsound 102_001 tfim rows purged** (written by
+   the pre-manifest-fix gate, docs/12 §5.1.12) → 7 units minted; 073_001 rows
+   + 27/27 sampled bugfix rejects re-confirmed sound. Standing tool:
+   `scripts/reverify_rejects.exs`.
+4. **Accept-side spot verify: 8/8 batches clean** (204 random dirs through
+   validate/audit_bugfix; `scripts/spot_verify.sh`).
+5. **Adaptation pairs RED-gate measured: 249/249 mintable**
+   (`scripts/survey_adapt_redgate.exs`) — docs/13 §2.1 ready to build.
+6. **Judge-scrutiny catch:** the 101_003 triage judge proposed a prompt fix
+   contradicted by the prompt's own text and the gold; hand-verification found
+   the real gap instead (docs/14 rule 10). Register cleanup: the strengthener's
+   `# Prompt: "…"` citation comments (S10 chatter class, Kamil's spot-catch)
+   rewritten to plain behavioral style corpus-wide.
 
-**All 15 CURRENT `102_001` tfim reject rows were UNSOUND** — written 2026-07-11
-05:42 by the pre-manifest-fix bundle gate (the docs/10 §5.13 class, fixed
-07-12), never audited after the fix (the docs/12 §5.1.12 rule). Re-run through
-the real gate chain, every one passes today. Purged (backup:
-`logs/tfim_rejected.jsonl.bak_20260713`); registry honestly re-opened
-**test_fim +7 pending** (cap 10, 3 existing). The 3 CURRENT 073_001 rows
-re-confirmed as sound; 3 stale rows inert; bugfix-reject samples so far all
-sound.
+**Still waiting on Kamil (unchanged, decisions only):** §5.2 loop wiring
+(docs/12 §5.2.1 — evidence now overwhelming), §4.2 sign-offs, systemd timer
+install (4 commands). Then Phase 3.
 
 Last completed: the free derivative top-up (2026-07-13) — 6 tfim + 1 bugfix +
 1 repair unit, all created BY the harness strengthening. **Registry: 0 pending

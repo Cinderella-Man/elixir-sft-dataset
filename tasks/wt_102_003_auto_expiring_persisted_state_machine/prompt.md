@@ -74,7 +74,9 @@ Any other (state, event) combination is invalid.
 
 - `StateMachine.history(server, entity_id)` — returns `{:ok, list}` where list is every recorded
   transition for that entity in chronological (insertion) order. Each entry is a map with keys
-  `:event`, `:from_state`, `:to_state`, and `:inserted_at`.
+  `:event`, `:from_state`, `:to_state`, and `:inserted_at`. The `:event`, `:from_state` and
+  `:to_state` values are **atoms** in every returned entry — the string column values are
+  deserialised back on read — while `:inserted_at` stays a `DateTime`.
 
 ## Persistence
 

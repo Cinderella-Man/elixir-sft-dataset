@@ -15,23 +15,25 @@ is needed.
 
 ## ⭐ START HERE — the exact state, and the exact next action
 
-**Verified 2026-07-13 15:5x, immediately before this was written. Everything below
-was re-run, not remembered.**
+**Verified 2026-07-13 ~18:0x (updated after the scrutiny session — quality
+chains 1+2, reject-ledger audit, spot verify, semantic-floor close-out).
+Everything below was re-run, not remembered.**
 
 ### The machine is idle and healthy
 
 | check | command | expected output (verified) |
 |---|---|---|
-| nothing running | `pgrep -af "generate.exs\|validate.exs\|screen_blind\|strengthen\|enrich"` | *(no output)* |
-| clean tree, pushed | `git status --porcelain` / `git log --oneline -1` | *(empty)* / `89f45dde` |
+| nothing running | `pgrep -af "generate.exs\|validate.exs\|screen_blind\|strengthen\|enrich"` | *(no output — your own shell may self-match; ignore the `bash -c` line)* |
+| clean tree, pushed | `git status --porcelain` / `git status -sb` | *(empty)* / `## main...origin/main` in sync |
 | no work owed | `mix run scripts/work_status.exs --counts` | `variations=0 fim=0 write_test=0 test_fim=0 bugfix=0` |
 | factory tests | `mix test` | `296 passed` |
 | temp-path lint | `mix run scripts/lint_temp_paths.exs` | `60 shared-path harness(es), 0 violations ✓` |
 | corpus format | `elixir scripts/format_corpus.exs --check` | `0 deviating, 0 errors` |
-| tfim embeds | `mix run scripts/resync_tfim_embeds.exs` | `%{unchanged: 3237}` |
+| tfim embeds | `mix run scripts/resync_tfim_embeds.exs` | `%{unchanged: 3246}` |
 | bugfix embeds | `mix run scripts/resync_bugfix_embeds.exs` | `%{unchanged: 960}` |
 | wt_ embeds | `mix run scripts/resync_embeds.exs -- --wt-all` | `%{unchanged: 331}` |
 | fim/wt_ fences | `elixir scripts/check_embeds.exs` | `1322 clean, 0 reflow, 0 drift` |
+| retro §5.2 screen | `mix run scripts/rescreen_repaired.exs -- --report` | `59 PASS / 15 entailed / 0 open / 0 unscreened` |
 
 **If any of those differ, something changed after this file was written — diagnose
 that before starting new work.** (A resync gate showing `would_resync` means a
@@ -39,31 +41,25 @@ parent was edited and its children were not; run the same command with `--apply`
 
 ### Pick your next action
 
-**A. If Kamil has decided §5.2 (the one true blocker) → do that first.** See §5.1
-item 1. Command: `mix run scripts/rescreen_repaired.exs -- --go` (~22 solver calls).
-A FAIL there means a prompt is under-specified: fix it with `enrich_prompts.exs`,
-then re-screen. This is the last thing standing between the corpus and Phase 3.
+**A. The §5.2 retro screen and the semantic floor are BOTH DONE (2026-07-13).**
+Retro screen: 59 PASS / 15 entailed / 0 open (6 prompt gaps found & fixed en
+route — §5.1 item 1). Semantic floor: 16 of 20 fixed, 4 at documented ceilings
+(§5.3). What remains before Phase 3 is **decisions, not work**: Kamil's §5.2
+loop-wiring sign-off (docs/12 §5.2.1 — the retro evidence now strongly supports
+it), the §4.2 sign-offs, and the 4-command systemd timer install.
 
-**B. If you want free, no-decision work → finish the semantic floor (§5.3).** Four
-families are *real gaps* with named next steps; three others are AT CEILING and must
-be left alone. The exact recipe, per family:
+**B. If you want to extend the dataset → docs/13 §2.** Next up is *adaptation
+pairs* (brownfield editing — the one register the corpus lacks). The RED-gate
+measurement is DONE: **249/249 pairs mintable** (§5.4). What remains is the
+`:adapt` registry entry + runner — deterministic, zero LLM.
 
-    mix run scripts/classify_survivors.exs -- --only "063_004*"   # confirm it is real work
-    mix run scripts/enrich_prompts.exs -- --go --only "063_004*"  # document the missing behavior
-    mix run scripts/screen_blind_solve.exs --only "063_004*" --rescreen
-    mix run scripts/strengthen_harnesses.exs -- --go              # then the harness
-    # then: the four resync gates above, then commit + push
-
-Per-family notes are in §5.3 — read them, they save you a wasted pass (e.g. 101_001
-just needs a retry; 013_001 needs *investigation*, not more calls).
-
-**C. If you want to extend the dataset → docs/13 §2.** Next up is *adaptation pairs*
-(brownfield editing — the one register the corpus lacks). Everything needed is
-specified there.
-
-**D. Before ANY training run → the export contract (docs/13 §3.1).** Within-family
+**C. Before ANY training run → the export contract (docs/13 §3.1).** Within-family
 text overlap is 91.7% by construction; a naive random split leaks and invalidates
 your eval. This is not optional.
+
+**D. After ANY gate repair → audit the ledgers that gate wrote** with
+`scripts/reverify_rejects.exs` (§5.0c). On 2026-07-13 this found 15 unsound
+tfim rejects blocking 7 mintable units.
 
 ### The three things that will bite you if you skip them
 
@@ -230,15 +226,35 @@ check it.
 
 ### 5.0 Free work available immediately (no decisions, no tokens)
 
-`work_status` currently reads **6 pending tfim units + 2 pending bugfix units**.
-These appeared *because* the harness strengthening (§5.3) added tests: new tests =
-new carvable tfim blocks, and a stronger harness kills mutants it previously
-missed, re-opening bugfix candidates (their reject ledger is keyed by harness sha,
-so this is automatic).
+**None — the registry reads 0 pending across every work type** (2026-07-13
+evening; the 8-unit top-up AND the 9 units below were minted and committed).
+When strengthening adds tests or a reject-ledger purge re-opens candidates,
+pending units reappear here automatically; the mint command is:
 
     GEN_ONLY=backfill scripts/run_detached.sh logs/topup.log mix run scripts/generate.exs
 
 Cost: CPU only. Then batch-commit the new dirs and push.
+
+### 5.0c Reject-ledger audit (2026-07-13 pm) — 15 unsound rows purged, +9 units
+
+**The 074_x lesson repeated on the tfim ledger and was caught by auditing it.**
+All 15 CURRENT `102_001` rows in `logs/tfim_rejected.jsonl` had been written
+2026-07-11 05:42 by the pre-manifest-fix bundle gate (the docs/10 §5.13 class,
+fixed 07-12) and never re-audited after the fix. Re-run through the real gate
+chain (`scripts/reverify_rejects.exs`), every one passes today — the rows were
+silently blocking mintable units. Purged (backup
+`logs/tfim_rejected.jsonl.bak_20260713`); the next backfill minted **7 tfim
+units on 102_001** (+2 new carvables on 063_004). The 3 CURRENT 073_001 rows
+re-confirmed sound; 27/27 sampled bugfix rejects sound; the 1 fim reject kept.
+
+**Standing audit tools (one-shot class, delete at the line):**
+- `scripts/reverify_rejects.exs` — re-derives reject-ledger verdicts through
+  the SAME gates that wrote them; ledger `logs/reverify_rejects.jsonl`.
+  Run it after ANY gate repair (docs/12 §5.1.12 made executable).
+- `scripts/spot_verify.sh` — deterministic random re-verification of ACCEPTED
+  data (fixed shuf seed; 8 batches: numbered×perfect/mutants/fim, wt_×2, tfim,
+  all repair_, bugfix six-property audit); ledger `logs/spot_verify.jsonl`.
+  2026-07-13 result: **8/8 batches clean** (204 dirs re-verified).
 
 ### 5.0b Corpus defect found & fixed 2026-07-13 — flaky harness (102_002)
 
@@ -295,7 +311,7 @@ by hand and check the ≤98 rule (as was done here).
 
 | # | item | state | evidence | cost |
 |---|---|---|---|---|
-| 1 | **§5.2 accept-time blind screen for repaired bases** | **OPEN — the one true blocker** | A base/variation accepted after ≥1 repair had its blindness *defeated*: the fix prompt sees the failure report (test names, missing-function errors) and satisfies it. 101_002 was accepted exactly this way and shipped a harness asserting a function its prompt never mentioned. `rescreen_repaired.exs` computes the suspect population (74 of 126 accepted variations; 42 already PASS, 10 FAIL-but-triaged-entailed, **22 never screened**) | ~22 solver calls |
+| 1 | **§5.2 accept-time blind screen for repaired bases** | **RETRO SCREEN DONE 2026-07-13 — design decision (wire it into the loop) still Kamil's** | The 22 never-screened repaired accepts were screened: final population reads **59 PASS / 15 FAIL-triaged-entailed / 0 open / 0 unscreened**. The screen caught **6 genuine prompt↔harness gaps, all fixed + cascaded + re-screened GREEN**: 102_002/102_003/102_004 (migration module name undocumented; 102_003 additionally had its GOLD defining the repo module its own prompt forbade — a repair-loop artifact — and an undocumented atom-deserialisation contract, each caught by successive screens), 626_004 (undocumented `:cleanup_tick` message), 101_003 (harness asserts `keys/1`, never in the prompt — the literal 101_002 class again). Every hit was a repaired accept: the gap class is real and recurring, which is the strongest argument yet for wiring the accept-time blind screen into the loop before Phase 3 | retro: spent; loop wiring: docs/12 §5.2.1 |
 | 2 | **§4.2 sign-offs** (spot-review scope, prompt-monotony scope, semantic floor) | OPEN | The semantic-floor half is now *answered with evidence* (§5.3): the floor should be "kill rate among **observable** mutants", not a flat 0.5 | decision only |
 | 3 | **Nightly-sweep systemd timer install** | STAGED, needs 4 commands | `scripts/systemd/nightly-sweep.service` | 5 minutes |
 
@@ -308,7 +324,29 @@ targets (`defmacro`-blind enumerators), variation distinctness (the prompt never
 told the model which APIs were taken), describe-nested tfim carving, and
 predicate-named targets (`\w` cannot match `?`/`!`).
 
-### 5.3 The semantic floor (S8) — **13 of 20 families fixed; 7 classified**
+### 5.3 The semantic floor (S8) — **CLOSED 2026-07-13: 16 of 20 fixed, 4 at ceiling, 0 open**
+
+Final tally: the 13 below + **013_001 0.41→0.77** (hand-written: observe the
+backoff schedule through the injected `:random`, which receives the clamped
+delay — zero timing assertions, which is what the 3 automated attempts kept
+tripping on), **063_004 0.47→0.94** (chain-strengthened through the blind
+gate), **101_001 0.47→0.76** (hand-written: default-bucket quantization and
+retention probed via clock + `:cleanup`; the model's 3 attempts all died on
+the S9 lint because it imitated the `:sys.get_state` calls already present in
+the April-era tests — grandfathered debt teaches the strengthener to cheat).
+
+At ceiling, recorded and left alone: `041_001`, `041_003`, `023_002`, and —
+**reversing this file's earlier "hardest real gap" diagnosis** — `077_001`:
+all 15 of its survivors are AVL bookkeeping (heights, balance factors,
+rotation thresholds, equal-start insertion side), proven behaviorally
+IDENTICAL to the reference by public-API fuzzing over 32 adversarial case
+groups. The classifier's `@internal` vocabulary now knows structural
+bookkeeping (`height(`, `balance_factor`, `rotate_*`, `lh`/`rh`) and reads
+077_001 as AT CEILING 0.96. **Method note: `classify_survivors` is a line
+heuristic — before declaring a below-floor family a REAL GAP, fuzz its
+survivors through the public API (the 077_001 scratch experiment pattern).**
+
+*(original section, kept for the per-family history:)*
 
 The recipe that works, and the order matters:
 **enrich the prompt → canonical blind re-screen → re-strengthen the harness.**
@@ -367,7 +405,11 @@ lines) it passes, and its harness went 0.47 → 0.87.
 **Ready to build, in priority order** (full designs + measured volumes in docs/13 §2):
 1. **Adaptation pairs** — base gold + variation spec → "modify this module"; gate =
    the variation's existing harness; mint only where the base gold grades RED
-   against it. Teaches brownfield editing (absent from every current shape). ≤249 units.
+   against it. Teaches brownfield editing (absent from every current shape).
+   **RED-gate MEASURED 2026-07-13: 249/249 pairs RED** (237 test-fail, 12
+   compile-fail; `scripts/survey_adapt_redgate.exs`, ledger
+   `logs/adapt_redgate.jsonl`) — the mint gate is satisfied at maximum volume;
+   what remains is the `:adapt` registry entry + runner.
 2. **Multi-turn repair dialogues** — 86 attempt chains where every turn's wrongness
    is machine-graded. **PERISHABLE**: `logs/attempts/` is wiped when an id re-enters
    the loop. An archive exists (`logs/attempts_archive_20260712`); take another
@@ -430,6 +472,25 @@ spec, family-keyed splits, a round-trip validator, and dedup/sampling weights.
    on themselves, so nothing reported completion. Also: a completion callback can
    simply not arrive — check the ledger/log yourself before concluding a job is
    still running.
+
+10. **An LLM-judge verdict is a hypothesis — verify it against the artifacts
+    before acting.** The 101_003 triage judge proposed adding an *exclusive*
+    window-boundary sentence; the prompt's own line 31 and the gold both state
+    the *inclusive* rule, and the candidate had implemented it byte-identically
+    to the gold. Applying the judge's sentence would have made the prompt
+    contradict its task. The REAL gap (an undocumented `keys/1` the harness
+    asserts) was found by grading the failed candidate and reading the failure
+    list. Judge rows in `screen_triage.jsonl` need a human cross-check against
+    prompt + gold + candidate before any prompt edit; record overrides as
+    appended rows (last row per (task, sha) wins).
+
+11. **A heuristic classifier's "observable" is a hint, not a measurement.**
+    `classify_survivors` called 077_001's 15 AVL-bookkeeping survivors
+    observable because its vocabulary didn't know tree internals — this file
+    then called the family "the hardest real gap". Public-API fuzzing proved
+    every survivor behaviorally identical to the reference. Before spending
+    calls (or hand effort) on a below-floor family, fuzz its survivors through
+    the public API; extend the classifier's vocabulary when it misfires.
 
 ---
 
