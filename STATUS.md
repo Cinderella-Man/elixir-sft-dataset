@@ -37,19 +37,40 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 An item leaves this list only when done (→ docs/15) or when Kamil kills it.
 "FREE" = CPU/engineering only, no API calls.
 
-**HARD RULE (CONTEXT.md rule 7): every finding is TWO-TIER — Tier A fixes the
-existing data, Tier B gates the generation script so the class can never
-recur. A finding without its Tier B is not done.** Compliance table for the
-open finding classes:
+**HARD RULES (CONTEXT.md rules 7–10):** every finding = **TWO EXPLICIT
+TASKS** (Task A: fix the existing data; Task B: gate the generator so it can
+never recur) — the problem leaves STATUS only when BOTH are done; spot-checks
+run on accepted AND rejected data; every full-dataset run gets a
+detail-reviewed pilot first; every solved item is removed from here and
+committed immediately (one solved item = one commit).
 
-| finding class | Tier A (existing data) | Tier B (generation gate) |
-|---|---|---|
-| prompt↔harness gaps in repaired accepts (6 found) | fixed + re-screened GREEN (docs/15) | **T1.1 — pending Kamil's sign-off** |
-| blind evidence staled by harness edits | 54-root sweep RUNNING (+ RED triage) | sha-stamping done; **CI wiring pending (immediate queue)** |
-| unsound permanent-reject rows (gate repaired, ledger not audited) | purged + 9 units minted (docs/15) | **T1.7 (NEW) — gate-sha-keyed reject rows** + T3.2 weekly reverify sample |
-| tools imitate grandfathered anti-patterns | 101_001 fixed; corpus debt = T2.1 | prompts hardened (docs/15) |
-| generation-process chatter comments in shipped files | `# Prompt:` occurrences rewritten (docs/15) | **T1.8 (NEW) — chatter lint extension** |
-| LLM-judge hallucinated verdicts | 101_003 overridden by hand (docs/15) | T2.4 two-judge agreement; rule-10 convention (docs/14) |
+### 🔎 OPEN FINDINGS — two tasks each
+
+**F1 — repaired accepts shipped prompt↔harness gaps (6 found live).**
+- F1-A (fix data): DONE → docs/15 (6 prompts fixed, cascaded, re-screened GREEN).
+- F1-B (gate generator): **T1.1 accept-time blind re-screen in the loop —
+  PENDING KAMIL'S SIGN-OFF.**
+
+**F2 — blind-screen evidence silently staled by harness edits.**
+- F2-A (fix data): 54-root re-screen sweep **RUNNING** (see above) + RED
+  triage when it exits.
+- F2-B (gate generator): harness-sha stamping DONE; **CI + pre-push wiring
+  PENDING** (lands the moment the gate reads `stale=0`).
+
+**F3 — permanent reject rows survived their gate's repair (15 unsound found).**
+- F3-A (fix data): DONE → docs/15 (rows purged, 9 blocked units minted).
+- F3-B (gate generator): **T1.7 gate-sha-keyed reject rows — TODO** (+ T3.2
+  weekly reverify sample as backstop).
+
+**F5 — generation-process chatter comments shipped in 11 files.**
+- F5-A (fix data): `# Prompt:` class DONE → docs/15; **`--- added:` banner
+  class in the 13 previously-strengthened families — TODO** (reword + resync;
+  NOTE: changes harness shas → those families need freshness re-screens, do
+  it in one batch WITH F2-A's triage).
+- F5-B (gate generator): **T1.8 chatter-lint extension — TODO.**
+
+*(F4 — tools imitating grandfathered anti-patterns — and F6 — LLM-judge
+hallucinated verdict — closed 2026-07-13, both tiers done: docs/15.)*
 
 ### Tier 1 — make every FUTURE generated unit better (loop + gates)
 

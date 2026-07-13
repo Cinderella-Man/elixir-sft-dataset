@@ -93,19 +93,45 @@ unrelated commits). Assume the session dies without warning: the files alone
 must let the next session pick up.
 
 **7. Every finding is a TWO-TIER work item — always.**
-Whatever you find broken, it goes on the STATUS list as BOTH:
-  - **Tier A — fix the existing data** (retro: a ledgered, resumable tool or a
+Whatever you find broken, it goes on the STATUS list as **TWO EXPLICIT TASKS**:
+  - **Task A — fix the existing data** (retro: a ledgered, resumable tool or a
     verified hand edit with its full cascade), AND
-  - **Tier B — update the generation script / add a gate** (accept-time lint,
+  - **Task B — update the generation script / add a gate** (accept-time lint,
     loop check, CI gate) so the same class can NEVER be generated again.
-A finding without its Tier B is NOT done. The end goal of this project is the
-highest-quality dataset possible — we do not get there by fixing existing
-data, generating crap, and fixing it again. Every time we learn something, we
-fix it AND apply a gate (if possible) to the generation script. Corollaries:
-when a GATE is repaired, audit every ledger it ever wrote (docs/12 §5.1.12);
-and key permanent ledger rows to the gate's own code so a repaired gate
-auto-invalidates its old verdicts. (This generalizes docs/12 §7.3 step 3 —
-"wire the new check into the loop + CI first" — from rounds to every finding.)
+Each task carries its own state; the problem leaves STATUS only when BOTH are
+done. A finding without its Task B is NOT done. The end goal of this project
+is the highest-quality dataset possible — we do not get there by fixing
+existing data, generating crap, and fixing it again. Every time we learn
+something, we fix it AND apply a gate (if possible) to the generation script.
+Corollaries: when a GATE is repaired, audit every ledger it ever wrote
+(docs/12 §5.1.12); and key permanent ledger rows to the gate's own code so a
+repaired gate auto-invalidates its old verdicts. (This generalizes docs/12
+§7.3 step 3 — "wire the new check into the loop + CI first" — from rounds to
+every finding.)
+
+**8. Spot-check BOTH sides — accepted AND rejected data.**
+Scripts miss things on both sides, proven repeatedly: the bugfix ACCEPT audit
+caught AST-reprinted buggy modules that every behavioral gate had passed
+(2026-07-12), and the REJECT audit caught 15 mintable units blocked by rotten
+verdicts (2026-07-13). Standing tools: `scripts/spot_verify.sh` (accepted) +
+`scripts/reverify_rejects.exs` (rejected). Any new tool that accepts or
+rejects units must be spot-checked on BOTH verdict kinds before its results
+are trusted.
+
+**9. Pilot before full run.**
+Before running ANY script over the full dataset: run it on a FEW records
+first, review that output IN GREAT DETAIL (read the actual rows/diffs/files
+it produced — not just its summary line), resolve every issue and apply every
+improvement found, and only then launch the full run. Pilot findings go
+through rule 7 like any other finding. Precedent: the 2026-07-12 AST-reprint
+pollution was caught by a spot check only AFTER a full 900+-unit mint — a
+detailed pilot review would have caught it at unit three.
+
+**10. Solved = removed from STATUS + committed, immediately.**
+The moment a STATUS item is solved: remove it from STATUS (its record moves to
+`docs/15-completed-work-log.md`) and make a commit containing BOTH the
+improved code and the smaller STATUS. One solved item = one commit — never
+batch several solved items into a mega-commit at the end of a session.
 
 ---
 

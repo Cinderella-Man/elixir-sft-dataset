@@ -9,6 +9,24 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-13 — F4 closed (both tiers):** finding "our tools imitate
+  grandfathered anti-patterns" (the strengthener copied `:sys.get_state` from
+  101_001's April-era tests three times). Task A: 101_001 hand-strengthened
+  0.47→0.76 through documented behavior only. Task B: S9 bans named + a
+  do-not-imitate warning added to the strengthen prompt and the variations
+  template (base template already had them). Commits `10410bd6`, `eb44ff58`.
+  The wider debt cleanup (52 reach-in harnesses) remains open as T2.1.
+- **2026-07-13 — F6 closed (both tiers):** finding "an LLM-judge triage
+  verdict was wrong" (101_003: the judge proposed an exclusive window boundary
+  contradicted by the prompt's own line 31 and the gold). Task A: verdict
+  overridden by an appended human triage row; the REAL gap (undocumented
+  `keys/1`) found by grading the failed candidate, then fixed + re-screened.
+  Task B: docs/14 rule 10 (judge verdicts are hypotheses — hand-verify against
+  prompt + gold + candidate before acting); mechanical two-judge agreement
+  remains open as T2.4. Commits `10410bd6`, `331b92c2`.
+- **2026-07-13 — T1.3 closed:** S9 bans stated inside the tools' own prompts
+  (see F4 Task B). Commit `eb44ff58`.
+
 ---
 
 ## ARCHIVE — STATUS.md as of 2026-07-13 ~19:00 (verbatim)
