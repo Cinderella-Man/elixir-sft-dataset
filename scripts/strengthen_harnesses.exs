@@ -312,6 +312,10 @@ defmodule StrengthenHarnesses do
     - The EXISTING tests below may themselves violate these rules — that is
       grandfathered debt, kept only because their blocks are frozen. Do NOT
       imitate them; your new tests are held to the rules above.
+    - Comments must describe BEHAVIOR, never the process that produced the
+      test: a hard lint rejects the whole harness on comments that cite the
+      prompt (`# Prompt: ...`), use `--- added` banners, or carry repair
+      markers. Write what the test pins, not where the requirement came from.
     - Same conventions as the existing harness (`use ExUnit.Case, async: false`,
       no `ExUnit.start()`, self-contained, ZERO compile warnings, lines ≤ 98
       columns, process-unique temp paths via `System.pid()` +
@@ -472,8 +476,11 @@ defmodule StrengthenHarnesses do
 
             true ->
               {:error,
-               "blind solver fails ADDED test(s) — the harness pins behavior the prompt " <>
-                 "does not state. Failing: " <> Enum.join(Enum.take(added, 4), "; ")}
+               "blind solver fails ADDED test(s) — EITHER the harness pins behavior the " <>
+                 "prompt does not state (enrich the prompt), OR the solver got documented " <>
+                 "behavior wrong (retry — 101_003's 1_000-ms default was documented " <>
+                 "verbatim and still failed blind). Check the prompt for each failing " <>
+                 "test BEFORE enriching. Failing: " <> Enum.join(Enum.take(added, 4), "; ")}
           end
         end
 
