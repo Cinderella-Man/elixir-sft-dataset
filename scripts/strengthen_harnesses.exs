@@ -351,12 +351,22 @@ defmodule StrengthenHarnesses do
       {:ok, blind} ->
         json = grade(cfg, id, prompt, blind, harness, manifest, "solution.ex")
 
-        if Evaluator.green?({:ok, json}),
-          do: :ok,
-          else:
-            {:error,
-             "blind solver fails the strengthened harness — an added test demands " <>
-               "something the prompt does not state: " <> Cycle.reason_for({:ok, json})}
+        if Evaluator.green?({:ok, json}) do
+          :ok
+        else
+          # Name the failing tests: a bare 'blind solver fails' verdict leaves
+          # the morning triage nothing to act on — and the failing test names
+          # ARE the diagnosis (each names the undocumented behavior an added
+          # test pinned). Same information-gap rule as docs/12 §5.1.14.
+          failures =
+            (json["test_failures"] || [])
+            |> Enum.take(4)
+            |> Enum.map_join("; ", & &1["test"])
+
+          {:error,
+           "blind solver fails the strengthened harness — added test(s) demand behavior " <>
+             "the prompt does not state. Failing: " <> failures}
+        end
 
       {:error, reason} ->
         {:error, "blind solve call failed: #{inspect(reason)}"}
