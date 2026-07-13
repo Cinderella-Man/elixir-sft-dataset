@@ -13,14 +13,7 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-| what | pid | log | expected result |
-|---|---|---|---|
-| `scripts/quality_chain3.sh` (overnight, launched 2026-07-14 ~00:3x on Kamil's go: "continue with all the tasks you can think of") | **4051032** | `logs/quality_chain3_20260714.log` | stage 1: 100_004 strengthen retry #3 (~2 calls); stage 2: T2.3 — fresh blind solve for each of the 14 FAIL-triaged-entailed keeps (~14 calls, sha-stamped rows; GREEN upgrades a keep to PASS). Idempotent relaunch: `scripts/run_detached.sh logs/quality_chain3_20260714.log scripts/quality_chain3.sh`. |
-
-**Also this overnight session (in the main loop):** hand-strengthening the
-four diagnosed T2.7 families in order — 101_003, 013_003, 003_004, 037_001 —
-one commit each; then the freshness re-screen batch for hand-edited
-harnesses; then T2.5 (randomized-seed sweep, free) if CPU allows.
+**Nothing.** (Overnight chains + hand-strengthening finished 2026-07-14 ~02:0x; results in docs/15.)
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order)
@@ -142,30 +135,18 @@ start before steady state). [BIG: 2,396 tfim + 302 wt_ + 80/332 seed openers;
 own tool + ledger + blind re-screen budget]** — docs/12 §7.4;
 frozen-template overfitting is a documented SFT failure mode.
 
-**T2.7 — New-operator semantic tail: 1 of 6 applied; 5 remain with per-family
-diagnoses (passes 1–2 run 2026-07-13/14; ~22 calls spent).**
-- DONE: 097_004 0.40→0.97 (+8, committed — docs/15).
-- REMAINING, with the evidence-backed next step per family (the 013_001/
-  101_001 lesson: persistent blind rejections need HAND-written tests through
-  documented observation channels, not more model volleys):
-  - **101_003 (0.46)** — TWO independent blind solvers failed the SAME added
-    test on a VERBATIM-DOCUMENTED default ("bucket width defaults to
-    1_000 ms"). Hand-investigate: read the added test + prompt together; the
-    default's statement may be misleading in context, or the test couples it
-    to something else. Do NOT enrich on this evidence.
-  - **003_004 (0.45)** — S9 reach-in rejection TWICE despite the do-not-
-    imitate prompt. Hand-write observable-channel tests (pool checkout/return
-    counters through the public API), the 101_001 recipe.
-  - **013_003 (0.48)** — pass 1 INCONCLUSIVE (solver failed originals), pass
-    2 failed added tests. Decorrelated-jitter family: same shape as sibling
-    013_001 — observe through the injected random/clock hooks, zero timing.
-    Hand-write.
-  - **037_001 (0.42→0.44)** — strengthening ADDED tests but stayed below
-    floor. Run classify + read survivors: possibly a partial ceiling
-    (anonymizer masking internals) — set the honest per-family target first.
-  - **100_004 (0.42)** — two solver defects in a row (unpinned-size warning,
-    then non-compiling solve); pure noise so far. One more retry rides along
-    with the next strengthen batch.
+**T2.7 residue — 100_004 (0.42, 23 observable survivors). [hand work,
+~1 session]**
+- WHY: chronically solver-hard — three strengthen attempts and two blind
+  solves all died on solver code-quality defects (unpinned `size(offset)`
+  bitstring warnings, non-compiling TOTP solves); nothing wrong is known
+  about prompt or harness. The other five T2.7 families are resolved
+  (docs/15: 097_004 0.97, 101_003 1.00, 003_004 0.925, 013_003 0.69-with-
+  ceiling, 037_001 recorded at its SPEC-CEILING).
+- WHAT/HOW: hand-write tests against its 23 observable survivors through the
+  documented TOTP/vault API (the 013_001/101_001/003_004 recipe); expect some
+  survivors to be spec-ceiling members (unspecified encoding freedom) —
+  classify + read before writing.
 
 ### Tier 3 — protect the TRAINING side
 

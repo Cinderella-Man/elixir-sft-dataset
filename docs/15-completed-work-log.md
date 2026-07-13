@@ -9,6 +9,28 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-14 (overnight) — T2.7 resolved (5 of 6; residue = 100_004 in the
+  register).** Hand-strengthened through documented observation channels,
+  zero timing, zero reach-ins: **101_003 0.46 → 1.00** (26/26; +5 tests +
+  the 24 h cleanup horizon documented — it was unpinnable as "a reasonable
+  maximum window"), **003_004 0.45 → 0.925** (37/40; +8 tests + validation/
+  round-UP paragraph; 3 survivors are verified redundant-clamp internals;
+  the rate-1.0-masks-arithmetic and t=0-masks-elapsed-origin probe lessons
+  recorded in the commit), **013_003 0.48 → 0.69** (20/29; ceiling =
+  default-random ±1 octet + polling granularity; the first measurement read
+  29/29 because a broken added test failed the reference — the perfect gate
+  caught it, docs/12 §5.1.9 vindicated again), **097_004 0.40 → 0.97**
+  (strengthen tool, pass 1). **037_001 recorded AT ITS SPEC-CEILING (~0.42)**
+  — all 21 survivors shift WHICH fake value the {:fake, seed} generator
+  emits, while the prompt deliberately specifies only determinism +
+  referential integrity: observable but UNPINNABLE-BY-SPEC (a third survivor
+  category besides internals and killable — S8 note added to docs/13).
+  Blind properties: 003_004 GREEN; 101_003 + 013_003 fresh REDs
+  hand-triaged entailed (3rd/3rd independent solver slips on documented
+  behavior — both rows cite the prompt lines). T2.3 (chain3): the 14
+  entailed keeps second-sourced — 4 flipped to PASS; population now
+  63 PASS / 10 entailed / 1 hand-triaged.
+
 - **2026-07-14 — T2.7 passes 1–2 (partial): 097_004 0.40→0.97 (+8 tests,
   cascaded, perfect).** Retry outcomes drove three tool improvements landed
   en route: the strengthen prompt now states the chatter rule its own lint

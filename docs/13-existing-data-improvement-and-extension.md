@@ -249,6 +249,21 @@ private-state layout), the family is AT its ceiling and the correct action is to
 record that, not to strengthen (any "fix" would be an internals-pinning test,
 which the S9 lint exists to reject).
 
+### 1.5.1b A second ceiling class: observable but UNPINNABLE-BY-SPEC (2026-07-14)
+
+037_001 (data anonymizer) sharpened §1.5.1's framework. Its 21 surviving
+mutants all change WHICH fake value the `{:fake, seed}` generator produces —
+fully observable through the public API — but the prompt deliberately
+specifies only determinism and referential integrity, never the output
+formats. Any pinning test would over-specify (and fail every legitimate
+alternative implementation), which is exactly what the blind gate rejects.
+So the honest S8 metric is the kill rate among **spec-pinned** mutants:
+survivors classify three ways — killable (real gap), internals (invisible
+through the API), and **spec-freedom** (visible, deliberately unspecified).
+The redundant-defense pattern (clamps duplicated by later tests, unreachable
+guard floors — 003_004's three, 037_001's mask branch) is a sub-species of
+internals: code whose removal a caller cannot detect.
+
 ### 1.5.2 Point 2 — final result (2026-07-13)
 
 **13 of the 20 tail families now clear the 0.5 semantic floor** (mean kill-rate
