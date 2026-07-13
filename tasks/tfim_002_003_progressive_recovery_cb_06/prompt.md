@@ -535,5 +535,182 @@ defmodule ProgressiveRecoveryCircuitBreakerTest do
     ProgressiveRecoveryCircuitBreaker.call(cb, err_fn())
     assert :open = ProgressiveRecoveryCircuitBreaker.state(cb)
   end
+
+  # -------------------------------------------------------
+  # Helpers for the default-configuration tests below
+  # -------------------------------------------------------
+
+  # Starts an extra breaker under a process-unique name, defaulting every
+  # option except the injected clock (so documented defaults are exercised).
+  defp start_cb(opts) do
+    name = :"prcb_#{System.pid()}_#{System.unique_integer([:positive])}"
+
+    {:ok, _pid} =
+      ProgressiveRecoveryCircuitBreaker.start_link(
+        Keyword.merge([name: name, clock: &Clock.now/0], opts)
+      )
+
+    name
+  end
+
+  defp repeat_call(cb, n, func) do
+    for _ <- 1..n, do: ProgressiveRecoveryCircuitBreaker.call(cb, func)
+    :ok
+  end
+
+  # Default breaker (threshold 5, reset 30_000ms, 1 probe) driven into
+  # :recovering at stage 0 of the default ladder.
+  defp default_cb_in_recovering do
+    cb = start_cb([])
+    repeat_call(cb, 5, err_fn())
+    assert :open = ProgressiveRecoveryCircuitBreaker.state(cb)
+    Clock.advance(30_000)
+    assert :half_open = ProgressiveRecoveryCircuitBreaker.state(cb)
+    assert {:ok, :v} = ProgressiveRecoveryCircuitBreaker.call(cb, ok_fn())
+    assert :recovering = ProgressiveRecoveryCircuitBreaker.state(cb)
+    cb
+  end
+
+  # -------------------------------------------------------
+  # Documented defaults
+  # -------------------------------------------------------
+
+  test "default failure_threshold trips only on the 5th consecutive failure" do
+    cb = start_cb([])
+
+    repeat_call(cb, 4, err_fn())
+    assert :closed = ProgressiveRecoveryCircuitBreaker.state(cb)
+
+    assert {:error, :f} = ProgressiveRecoveryCircuitBreaker.call(cb, err_fn())
+    assert :open = ProgressiveRecoveryCircuitBreaker.state(cb)
+  end
+
+  test "default reset timeout is 30_000ms and the default single probe is allowed" do
+    cb = start_cb([])
+    repeat_call(cb, 5, err_fn())
+    assert :open = ProgressiveRecoveryCircuitBreaker.state(cb)
+
+    Clock.advance(29_999)
+    assert :open = ProgressiveRecoveryCircuitBreaker.state(cb)
+
+    Clock.advance(1)
+    assert :half_open = ProgressiveRecoveryCircuitBreaker.state(cb)
+
+    # half_open_max_probes defaults to 1 — the probe must be let through.
+    assert {:ok, :v} = ProgressiveRecoveryCircuitBreaker.call(cb, ok_fn())
+    assert :recovering = ProgressiveRecoveryCircuitBreaker.state(cb)
+  end
+
+  test "default stage 0 tolerates zero failures" do
+    cb = default_cb_in_recovering()
+
+    assert {:error, :f} = ProgressiveRecoveryCircuitBreaker.call(cb, err_fn())
+    assert :open = ProgressiveRecoveryCircuitBreaker.state(cb)
+  end
+
+  test "default ladder: stage 0 needs 5 calls, stage 1 needs 15 with 1 failure tolerated" do
+    cb = default_cb_in_recovering()
+
+    # 4 of the 5 calls required by stage 0 — stage not cleared yet.
+    repeat_call(cb, 4, ok_fn())
+    assert :recovering = ProgressiveRecoveryCircuitBreaker.state(cb)
+
+    # 5th call clears stage 0 → stage 1 ({15, 1}).
+    assert {:ok, :v} = ProgressiveRecoveryCircuitBreaker.call(cb, ok_fn())
+    assert :recovering = ProgressiveRecoveryCircuitBreaker.state(cb)
+
+    # Stage 1 tolerates exactly 1 failure (a stage-0 zero tolerance here
+    # would have reopened the circuit).
+    assert {:error, :f} = ProgressiveRecoveryCircuitBreaker.call(cb, err_fn())
+    assert :recovering = ProgressiveRecoveryCircuitBreaker.state(cb)
+
+    # 1 failure + 13 successes = 14 of the 15 calls stage 1 requires.
+    repeat_call(cb, 13, ok_fn())
+    assert :recovering = ProgressiveRecoveryCircuitBreaker.state(cb)
+
+    # The 15th call is a 2nd failure → exceeds stage 1 tolerance → :open.
+    assert {:error, :f} = ProgressiveRecoveryCircuitBreaker.call(cb, err_fn())
+    assert :open = ProgressiveRecoveryCircuitBreaker.state(cb)
+  end
+
+  test "default final stage needs 30 calls and tolerates 2 failures before closing" do
+    cb = default_cb_in_recovering()
+
+    repeat_call(cb, 5, ok_fn())
+    repeat_call(cb, 15, ok_fn())
+    assert :recovering = ProgressiveRecoveryCircuitBreaker.state(cb)
+
+    # Stage 2 ({30, 2}): two failures are within tolerance.
+    repeat_call(cb, 2, err_fn())
+    assert :recovering = ProgressiveRecoveryCircuitBreaker.state(cb)
+
+    # 2 failures + 27 successes = 29 of the 30 required calls — not closed yet.
+    repeat_call(cb, 27, ok_fn())
+    assert :recovering = ProgressiveRecoveryCircuitBreaker.state(cb)
+
+    # The 30th call clears the final stage → :closed.
+    assert {:ok, :v} = ProgressiveRecoveryCircuitBreaker.call(cb, ok_fn())
+    assert :closed = ProgressiveRecoveryCircuitBreaker.state(cb)
+  end
+
+  test "closing via full recovery leaves a zeroed consecutive failure count" do
+    cb = default_cb_in_recovering()
+
+    repeat_call(cb, 5, ok_fn())
+    repeat_call(cb, 15, ok_fn())
+    repeat_call(cb, 30, ok_fn())
+    assert :closed = ProgressiveRecoveryCircuitBreaker.state(cb)
+
+    # A full 5 consecutive failures must be needed again, not fewer.
+    repeat_call(cb, 4, err_fn())
+    assert :closed = ProgressiveRecoveryCircuitBreaker.state(cb)
+
+    assert {:error, :f} = ProgressiveRecoveryCircuitBreaker.call(cb, err_fn())
+    assert :open = ProgressiveRecoveryCircuitBreaker.state(cb)
+  end
+
+  # -------------------------------------------------------
+  # Probe budget and outcome classification
+  # -------------------------------------------------------
+
+  test "half-open lets no calls through when the probe budget is zero" do
+    cb =
+      start_cb(
+        failure_threshold: 3,
+        reset_timeout_ms: 1_000,
+        half_open_max_probes: 0,
+        recovery_stages: [{3, 0}]
+      )
+
+    repeat_call(cb, 3, err_fn())
+    Clock.advance(1_000)
+    assert :half_open = ProgressiveRecoveryCircuitBreaker.state(cb)
+
+    tracker = self()
+
+    assert {:error, :circuit_open} =
+             ProgressiveRecoveryCircuitBreaker.call(cb, fn ->
+               send(tracker, :was_called)
+               {:ok, :v}
+             end)
+
+    refute_received :was_called
+    assert :half_open = ProgressiveRecoveryCircuitBreaker.state(cb)
+  end
+
+  test "an unexpected return shape counts as a failure in closed state" do
+    cb =
+      start_cb(
+        failure_threshold: 3,
+        reset_timeout_ms: 1_000,
+        recovery_stages: [{3, 0}]
+      )
+
+    repeat_call(cb, 2, fn -> :not_a_result end)
+    assert :closed = ProgressiveRecoveryCircuitBreaker.state(cb)
+
+    ProgressiveRecoveryCircuitBreaker.call(cb, fn -> :not_a_result end)
+    assert :open = ProgressiveRecoveryCircuitBreaker.state(cb)
+  end
 end
 ```

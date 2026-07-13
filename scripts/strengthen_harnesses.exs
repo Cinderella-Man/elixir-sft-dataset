@@ -253,13 +253,32 @@ defmodule StrengthenHarnesses do
     case Cycle.opus(cfg, id, "strengthen_harness", system, user) do
       {:ok, text, _meta} ->
         case Reply.parse(text) do
-          %{"test_harness.exs" => h} when is_binary(h) and h != "" -> {:ok, h}
-          _ -> {:error, "reply carried no test_harness.exs block"}
+          %{"test_harness.exs" => h} when is_binary(h) and h != "" ->
+            # Canonicalize before any gate runs: a model-written harness is not
+            # formatter-canonical, and the corpus format gate would reject it at
+            # push time long after the (correct) content decision (found on the
+            # first applied family, 002_003). Formatting cannot change behavior;
+            # every gate below still runs on the exact bytes that get written.
+            {:ok, canonicalize(h)}
+
+          _ ->
+            {:error, "reply carried no test_harness.exs block"}
         end
 
       {:error, reason} ->
         {:error, "strengthen call failed: #{inspect(reason)}"}
     end
+  end
+
+  # `mix format` output with the repo's trailing-newline convention.
+  defp canonicalize(src) do
+    src
+    |> Code.format_string!()
+    |> IO.iodata_to_binary()
+    |> String.trim_trailing("\n")
+    |> Kernel.<>("\n")
+  rescue
+    _ -> src
   end
 
   defp add_only(harness0, harness1) do
