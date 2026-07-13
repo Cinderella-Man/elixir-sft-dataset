@@ -56,6 +56,13 @@ jobs:
           out=$(mix run scripts/resync_tfim_embeds.exs)
           echo "$out"
           echo "$out" | grep -q "would_resync\|error" && exit 1 || true
+      # bugfix_ prompts embed the parent task spec verbatim (docs/13 §1.1): a
+      # parent-prompt edit must propagate, or 959 debugging tasks teach a stale
+      # spec alongside a real bug.
+      - run: |
+          out=$(mix run scripts/resync_bugfix_embeds.exs)
+          echo "$out"
+          echo "$out" | grep -q "would_resync\|error" && exit 1 || true
       # module-FIM + wt_ embeds must match their parents (docs/12 §5.1 item 8):
       # zero reflow and zero drift since the 2026-07-12 remediation. The
       # planted-phantom self-test proves the checker is not vacuous.

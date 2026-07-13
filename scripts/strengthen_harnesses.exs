@@ -62,26 +62,53 @@ defmodule StrengthenHarnesses do
   # (wt_X's gold harness is a byte-copy of X_01's — strengthening the parent
   # covers both; the measurement lists them separately).
 
+  # Ledger rows are only meaningful for the (solution, harness) they were
+  # measured on. Rows predating the sha keys (everything before 2026-07-13) are
+  # treated as STALE-UNKNOWN: they still seed the work list (a stale row is a
+  # hint, not a verdict), but the loop re-measures live before acting, and the
+  # dry list labels them so nobody quotes a rotten number again (the 07-08 rows
+  # survived the 07-09 R10 harness campaign and misled the §4.2 floor debate for
+  # four days).
   defp weak_parents do
-    best =
+    {best, staleness} =
       @measured
       |> File.stream!()
-      |> Enum.reduce(%{}, fn line, acc ->
+      |> Enum.reduce({%{}, %{}}, fn line, {best, stale} ->
         case JSON.decode(line) do
-          {:ok, %{"task" => t, "killed" => k, "total" => tot}} when tot > 0 ->
-            Map.update(acc, t, k / tot, &max(&1, k / tot))
+          {:ok, %{"task" => t, "killed" => k, "total" => tot} = row} when tot > 0 ->
+            {Map.update(best, t, k / tot, &max(&1, k / tot)),
+             Map.put(stale, t, row_stale?(t, row))}
 
           _ ->
-            acc
+            {best, stale}
         end
       end)
 
     best
     |> Enum.filter(fn {_t, rate} -> rate < @floor end)
-    |> Enum.map(fn {t, rate} -> {parent_dir(t), rate} end)
-    |> Enum.filter(fn {dir, _} -> dir && File.dir?(dir) end)
-    |> Enum.reduce(%{}, fn {dir, rate}, acc -> Map.update(acc, dir, rate, &min(&1, rate)) end)
-    |> Enum.sort_by(&elem(&1, 1))
+    |> Enum.map(fn {t, rate} -> {parent_dir(t), rate, Map.get(staleness, t, true)} end)
+    |> Enum.filter(fn {dir, _, _} -> dir && File.dir?(dir) end)
+    |> Enum.reduce(%{}, fn {dir, rate, stale}, acc ->
+      Map.update(acc, dir, {rate, stale}, fn {r, s} -> {min(r, rate), s and stale} end)
+    end)
+    |> Enum.sort_by(fn {_dir, {rate, _}} -> rate end)
+  end
+
+  # A row is stale when its content keys are absent (pre-2026-07-13 rows) or no
+  # longer match the files on disk.
+  defp row_stale?(task, row) do
+    dir = Path.join("tasks", task)
+
+    cond do
+      not File.dir?(dir) -> true
+      is_nil(row["harness_sha"]) or is_nil(row["solution_sha"]) -> true
+      true -> row["harness_sha"] != file_sha(dir, "test_harness.exs")
+    end
+  end
+
+  defp file_sha(dir, name) do
+    path = Path.join(dir, name)
+    if File.regular?(path), do: CycleLog.content_sha(File.read!(path))
   end
 
   defp parent_dir("wt_" <> rest), do: hd(Path.wildcard("tasks/#{rest}_01"))
@@ -96,11 +123,13 @@ defmodule StrengthenHarnesses do
 
     IO.puts("Semantic-floor work list (< #{@floor} best kill rate), deduped to parents:\n")
 
-    for {dir, rate} <- parents do
+    for {dir, {rate, stale}} <- parents do
       status =
-        if MapSet.member?(done, harness_sha(dir)),
-          do: "DONE (this harness content already strengthened)",
-          else: "todo"
+        cond do
+          MapSet.member?(done, harness_sha(dir)) -> "DONE (this harness already strengthened)"
+          stale -> "todo (ledger row STALE — harness changed since; re-measured live)"
+          true -> "todo"
+        end
 
       IO.puts("  #{Float.round(rate, 2)}  #{Path.basename(dir)}  #{status}")
     end
@@ -125,7 +154,7 @@ defmodule StrengthenHarnesses do
 
     IO.puts("strengthening #{length(todo)} family(ies), sequential, ledger #{@ledger}\n")
 
-    Enum.each(Enum.with_index(todo, 1), fn {{dir, ledger_rate}, i} ->
+    Enum.each(Enum.with_index(todo, 1), fn {{dir, {ledger_rate, _stale}}, i} ->
       IO.write(
         "[#{i}/#{length(todo)}] #{Path.basename(dir)} (ledgered #{Float.round(ledger_rate, 2)}) ... "
       )

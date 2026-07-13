@@ -626,12 +626,22 @@ defmodule Validate do
             end
           end)
 
+        # Content keys: a kill rate is only meaningful for the exact
+        # (solution, harness) pair it was measured on. Without them the ledger
+        # rots silently — the 2026-07-09 R10 harness campaign invalidated every
+        # 07-08 row and NOBODY NOTICED for four days (the "20 weak families"
+        # figure in docs/12 §4.2 was stale the whole time). Consumers must
+        # ignore rows whose shas no longer match (docs/12 §5.1.12).
+        harness_path = Path.join(task.dir, "test_harness.exs")
+
         row = %{
           task: task.name,
           killed: killed,
           total: killed + length(survivors),
           survivors: Enum.reverse(survivors),
           dropped: dropped,
+          solution_sha: sha256(source),
+          harness_sha: if(File.regular?(harness_path), do: sha256(File.read!(harness_path))),
           ts: DateTime.utc_now() |> DateTime.to_iso8601()
         }
 
@@ -1022,6 +1032,8 @@ defmodule Validate do
   defp tally_sources(records), do: Enum.frequencies_by(records, & &1["source"])
 
   defp fmt_j(j), do: :erlang.float_to_binary(j / 1, decimals: 3)
+
+  defp sha256(text), do: :crypto.hash(:sha256, text) |> Base.encode16(case: :lower)
 
   defp mutant_file(solution_path, mutate_fun) do
     mutated = solution_path |> File.read!() |> mutate_fun.()

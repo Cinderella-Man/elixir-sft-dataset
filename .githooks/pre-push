@@ -35,6 +35,15 @@ if [ -n "$families" ]; then
   elixir scripts/validate.exs --mutants --only "$globs" | tail -1
   echo "[pre-push] format check on touched families"
   elixir scripts/format_corpus.exs --check --only "$globs" | tail -1
+  echo "[pre-push] bugfix embed staleness check on touched families"
+  bugfix_out=$(mix run scripts/resync_bugfix_embeds.exs -- --only "$globs")
+  echo "$bugfix_out" | tail -1
+  if echo "$bugfix_out" | grep -q "would_resync\|error"; then
+    echo "[pre-push] FAIL: bugfix prompts embed a stale parent spec —" \
+      "run: mix run scripts/resync_bugfix_embeds.exs -- --only \"$globs\" --apply"
+    exit 1
+  fi
+
   echo "[pre-push] tfim embed staleness check on touched families"
   resync_out=$(mix run scripts/resync_tfim_embeds.exs -- --only "$globs")
   echo "$resync_out" | tail -1
