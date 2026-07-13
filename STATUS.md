@@ -7,6 +7,13 @@ on a quality improvement? Update it whenever the answer changes; everything else
 
 ---
 
+## 📖 COLD START? Read `docs/14-handover-and-work-register.md`
+
+It is the complete handover: corpus inventory, every gate, every tool, every
+ledger and what its rows mean, the full open-work register with costs and
+owners, nine hard-won rules (each one a scar), and copy-paste runbooks. This
+file (STATUS) is the one-screen "what now"; docs/14 is "how, and why".
+
 ## Current mode: 🔧 CATCHING UP
 
 **Improvement round #1 — the 2026-07 quality-assurance catch-up.**
@@ -239,7 +246,21 @@ cap lifts (~1,900 free tfim). **Blocking prerequisite before any training
 use: the export contract + family-keyed split (91.7% within-family text
 overlap — a random split would leak).**
 
-**What still stands before Phase 3** (unchanged owners):
+**What still stands before Phase 3** (full detail: docs/14 §5.1):
+- **§5.2 decision (Kamil) — the one true blocker.** Accept-time blind screen for
+  repaired bases. Evidence is live: 101_002 was accepted after a repair and
+  shipped a harness asserting a function its prompt never mentioned.
+  `rescreen_repaired.exs` says 22 of 74 suspects are still unscreened (~22 calls).
+- §4.2 sign-offs (Kamil) — note the semantic-floor half is now ANSWERED with
+  evidence (docs/14 §5.3): the floor should be "kill rate among OBSERVABLE
+  mutants", not a flat 0.5.
+- Nightly-sweep systemd timer install (Kamil, 4 commands).
+- FREE WORK AVAILABLE NOW (no decision needed): 6 tfim + 2 bugfix units are
+  pending because the strengthened harnesses created new carvable blocks and
+  re-opened previously-unkillable mutants. One backfill run mints them.
+
+(original list follows)
+
 - **§5.2 decision (Kamil)** — accept-time blind screen for repaired bases;
   101_002 is the confirmed live instance of the gap.
 - docs/12 §4.2 sign-offs (Kamil) and the nightly-sweep systemd timer install
