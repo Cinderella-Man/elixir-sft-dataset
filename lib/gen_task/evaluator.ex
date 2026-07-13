@@ -222,6 +222,7 @@ defmodule GenTask.Evaluator do
     )
     |> add_harness_shortfalls(harness, prompt)
     |> add_solution_shortfalls(files["solution.ex"] || "")
+    |> add_chatter_shortfalls(files)
     |> add_prompt_coverage_shortfalls(harness, prompt, files["solution.ex"] || "")
     |> case do
       [] -> nil
@@ -276,6 +277,63 @@ defmodule GenTask.Evaluator do
             "dead code wrapped to silence warnings; delete the helper and the code it launders"
         )
     end
+  end
+
+  # Unambiguous generation-process markers, matched in COMMENT LINES only (string
+  # literals may carry deliberate unicode payloads — the 2026-07-10 S10 sweep left
+  # those alone on purpose). Deliberately NOT here: bare "Wait," — 002_001 has a
+  # legitimate "# Wait, probe, fail" sequence comment (a real false positive).
+  @chatter_markers [
+    {"Prompt:", "cites the task prompt (write behavioral comments, not citations)"},
+    {"--- added", "process banner (the reader must not learn WHEN a test was written)"},
+    {"# FIX:", "repair chatter"},
+    {"# Fixed:", "repair chatter"},
+    {"the evaluator", "references the grading machinery"},
+    {"✅", "assistant chatter emoji"},
+    {"🔑", "assistant chatter emoji"}
+  ]
+
+  @doc """
+  Generation-process chatter in COMMENT lines of `src`: comments that talk about
+  how the file was produced (prompt citations, `--- added` banners, repair
+  markers, evaluator references, chatter emoji) instead of describing behavior.
+  S10 made executable (STATUS F5-B): the `# Prompt: "…"` citation class shipped
+  into 11 files on 2026-07-13 and was caught by eye, not by any gate. Returns
+  `"line N: <marker> — <why>"` strings.
+  """
+  @spec process_chatter(String.t()) :: [String.t()]
+  def process_chatter(src) do
+    src
+    |> String.split("\n")
+    |> Enum.with_index(1)
+    |> Enum.flat_map(fn {line, n} ->
+      # `#{` is string interpolation, not a comment — skip it.
+      case Regex.run(~r/#(?!\{)(.*)$/, line) do
+        [_, comment] ->
+          for {marker, why} <- @chatter_markers,
+              String.contains?("#" <> comment, marker),
+              do: "line #{n}: #{String.trim(marker)} — #{why}"
+
+        _ ->
+          []
+      end
+    end)
+  end
+
+  defp add_chatter_shortfalls(list, files) do
+    hits =
+      for name <- ["solution.ex", "test_harness.exs"],
+          src = files[name] || "",
+          src != "",
+          hit <- process_chatter(src),
+          do: "#{name} #{hit}"
+
+    add_if(
+      list,
+      hits != [],
+      "generation-process chatter in comments (#{Enum.join(hits, "; ")}) — " <>
+        "comments must describe behavior, never the process that wrote the file"
+    )
   end
 
   # Names a prompt documents implicitly by naming the behaviour: OTP child specs,

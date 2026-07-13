@@ -224,7 +224,7 @@ defmodule PasswordPolicyV1Test do
     assert_raise ArgumentError, fn -> PasswordPolicy.evaluate("whatever", %{min_score: 10}) end
   end
 
-  # --- added: pin the numeric boundaries and the Levenshtein implementation -------------
+  # --- numeric boundaries and the Levenshtein distance contract ------------------------
 
   test "default min_length of 8 accepts an 8-character password but rejects a 7-character one" do
     # TODO

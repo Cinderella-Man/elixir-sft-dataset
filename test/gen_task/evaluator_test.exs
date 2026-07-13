@@ -496,4 +496,46 @@ defmodule GenTask.EvaluatorTest do
       assert Evaluator.warning_details(:timeout_or_crash) == []
     end
   end
+
+  describe "process_chatter/1 (S10 lint, STATUS F5-B)" do
+    test "flags a prompt-citation comment (the 063_004 class)" do
+      src = """
+      defmodule T do
+        # Prompt: "timeout_ms: 0 means the budget is already spent"
+        test "zero budget" do
+          assert true
+        end
+      end
+      """
+
+      assert [hit] = Evaluator.process_chatter(src)
+      assert hit =~ "line 2"
+      assert hit =~ "Prompt:"
+    end
+
+    test "flags an added-banner comment (the 097_002 class)" do
+      src = "# --- added: pin the numeric boundaries ---\ntest_stuff()"
+      assert [hit] = Evaluator.process_chatter(src)
+      assert hit =~ "process banner"
+    end
+
+    test "silent on behavioral comments, interpolation, and the Wait-sequence false positive" do
+      src = """
+      defmodule T do
+        # A zero budget is already spent: the deadline check precedes collection.
+        # Wait, probe, fail — the recovery sequence under test.
+        def go(x), do: "value: \#{x} Prompt: not a comment"
+      end
+      """
+
+      assert Evaluator.process_chatter(src) == []
+    end
+
+    test "chatter is a HARD quality shortfall on either file" do
+      files = %{"test_harness.exs" => "# Fixed: now passes the evaluator\nx = 1"}
+      shortfall = Evaluator.quality_shortfall(@full, files)
+      assert shortfall =~ "generation-process chatter"
+      assert shortfall =~ "repair chatter"
+    end
+  end
 end

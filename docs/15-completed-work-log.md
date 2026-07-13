@@ -9,6 +9,18 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-13 — F5 / T1.8 closed (both tiers): generation-process chatter.**
+  Task B first (gate-first per docs/12 §7.3): `Evaluator.process_chatter/1` —
+  comment-line-only scan for unambiguous process markers (`Prompt:` citations,
+  `--- added` banners, `# FIX:`/`# Fixed:`, "the evaluator", chatter emoji;
+  deliberately NOT bare "Wait," — 002_001 has a legitimate `# Wait, probe,
+  fail` sequence comment) — wired as a HARD shortfall in `quality_shortfall`,
+  4 new tests (300 total), calibrated corpus-wide: exactly 2 true hits, zero
+  false positives across every solution/harness. Task A: the 097_002 banner
+  (parent + wt_ byte-copy + 10 tfim embeds) reworded to behavioral style,
+  family re-gated perfect, freshness re-proven (blind re-screen GREEN).
+  Earlier same day: the `# Prompt:` class (063_004, 11 files) — Kamil's
+  spot-catch.
 - **2026-07-13 — F2 / T1.2 closed (both tiers): the S6 freshness gate.**
   Finding: blind-screen evidence was keyed by prompt sha only, so harness
   edits silently invalidated it — first spotted on 013_001, then measured at

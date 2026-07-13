@@ -20,13 +20,10 @@ evening — docs/15.)
 
 ## ⏭️ IMMEDIATE QUEUE (in order)
 
-1. **F5-A/F5-B** — the `--- added:` banner sweep + the chatter-lint extension
-   (T1.8). NOTE: the banner rewording changes harness shas → re-screen those
-   families in the same batch (the freshness gate now enforces this).
-2. **F3-B / T1.7** — gate-sha keying for permanent reject ledgers.
-3. **T3.2 / T3.3** — weekly-CI wiring for spot_verify + reverify sample;
+1. **F3-B / T1.7** — gate-sha keying for permanent reject ledgers.
+2. **T3.2 / T3.3** — weekly-CI wiring for spot_verify + reverify sample;
    fuzz_survivors standing tool; (T3.3b landed with F7).
-4. Then the register order: T1.5 operators, T2.3 second-sourcing, T1.4 with
+3. Then the register order: T1.5 operators, T2.3 second-sourcing, T1.4 with
    Phase 3 — and the Kamil-gated items (T1.1, T1.6, §4.2, timer) as unblocked.
 
 ## 📋 QUALITY TODO REGISTER (2026-07-13 — why / what / how / cost per item)
@@ -53,16 +50,10 @@ committed immediately (one solved item = one commit).
 - F3-B (gate generator): **T1.7 gate-sha-keyed reject rows — TODO** (+ T3.2
   weekly reverify sample as backstop).
 
-**F5 — generation-process chatter comments shipped in 11 files.**
-- F5-A (fix data): `# Prompt:` class DONE → docs/15; **`--- added:` banner
-  class in the 13 previously-strengthened families — TODO** (reword + resync;
-  NOTE: changes harness shas → those families need freshness re-screens, do
-  it in one batch WITH F2-A's triage).
-- F5-B (gate generator): **T1.8 chatter-lint extension — TODO.**
-
 *(Closed with both tiers done — see docs/15: F2 — blind evidence staled by
-harness edits; F4 — tools imitating grandfathered anti-patterns; F6 —
-LLM-judge hallucinated verdict; F7 — environmental failures as verdicts.)*
+harness edits; F4 — tools imitating grandfathered anti-patterns; F5 —
+generation-process chatter; F6 — LLM-judge hallucinated verdict; F7 —
+environmental failures as verdicts.)*
 
 ### Tier 1 — make every FUTURE generated unit better (loop + gates)
 
@@ -133,22 +124,6 @@ unsound-reject finding)**
   `gate_sha` stay valid until the next `reverify_rejects.exs` pass clears
   them; T3.2's weekly reverify sample is the backstop. Tests + registry
   counts must stay honest (`missing/2` sees re-opened units).
-
-**T1.8 — Extend the chatter lint to generation-process meta-comments. [FREE]
-(Tier B of the `# Prompt:` finding)**
-- WHY: the strengthener shipped `# Prompt: "…"` citation comments into 11
-  files — S10-class process chatter in a register no hand-written harness
-  uses. Caught by Kamil's eye, not by any gate. The S10 sweep's markers
-  (emoji, `# FIX`, "Wait,") never covered citation-style comments.
-- WHAT: the accept-gate chatter lint also flags comments that cite the
-  generation process rather than describe behavior: `# Prompt:`,
-  `# The prompt says`, `# --- added:`-style banners. Tier A: sweep the 13
-  previously-strengthened families for the `--- added:` banner class and
-  reword (deterministic edits + tfim/wt resyncs — comments live outside
-  carved test blocks).
-- HOW: extend the detectors in the Evaluator lint set (`quality_shortfall`)
-  + `--self-test` with a planted comment; corpus grep proves 0 instances
-  after the Tier A sweep.
 
 ### Tier 2 — raise EXISTING corpus quality (evidence says more is there)
 
