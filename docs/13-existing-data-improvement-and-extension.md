@@ -110,7 +110,41 @@ docs/10 §5.13 site found this week). Fixed in verify AND the minted dirs now
 ship the manifest (self-contained). The 85 "unverified" decompose per §0 row 9;
 the behavior/compile subsets re-verify on the next mint run.
 
-### 1.4 Earlier same-day quality tools (see STATUS backlog)
+### 1.4 Semantic-floor run (2026-07-13 night) — what it actually found
+
+`strengthen_harnesses --go` over the 30-family weak tail produced three
+classes, and the classification is the deliverable:
+
+- **10 `already_ok`** — the live re-measure beats the floor: the July-8 tail
+  was substantially a MEASUREMENT ARTIFACT. Ledger analysis confirms it: of
+  the 49 sub-floor rows, 29 were `wt_` rows and 10 of those have parents that
+  measure fine; the catastrophic 0.00–0.35 band was all artifact. Zero LLM
+  calls spent on them. **This closes most of the docs/12 §4.2 "semantic floor"
+  question with evidence rather than opinion.**
+- **1 `applied`** — 002_003 (0.40 → 0.68, +8 tests) through every gate
+  (add-only, green, lints, whole-mutant, re-measure, blind gate), wt_ twin +
+  tfim embeds propagated, family re-gated perfect+mutants.
+- **6 `rejected`, and the rejections are the real finding.** One fell short of
+  the floor (077_001: 0.38 → 0.42 — interval-tree boundary mutants are
+  genuinely hard to kill). One wrote tests the reference itself fails
+  (013_001). **Four (105_001, 074_001, 013_002, 107_002, 041_001) were caught
+  by the BLIND GATE**: the strengthened harness demanded behavior the prompt
+  never states, a prompt-only solver failed it, the original harness was
+  restored automatically.
+
+**Diagnosis of the blind-gate group (checked, not assumed):** the unnamed
+functions in those modules are only OTP callbacks/seams — the prompts do not
+lack API surface, they lack BEHAVIORAL SPECIFICITY, and they are TERSE
+(013_002: 15 lines, 041_001: 14, 074_001: 18). With that much solver latitude,
+any test that tightens behavior necessarily pins something unstated. **So for
+these families the weak link is the PROMPT, not the harness** — the honest
+remediation order is: enrich the prompt (documenting real intended behavior),
+re-screen it blind, THEN re-strengthen. Harness-first would have smuggled
+undocumented requirements into the corpus, which is exactly what the blind
+gate exists to prevent. Rejected families carry no permanent ledger entry —
+only successes skip — so they re-attempt for free after a prompt fix.
+
+### 1.5 Earlier same-day quality tools (see STATUS backlog)
 
 `scripts/rescreen_repaired.exs` (retro blind screen; 22 calls outstanding) and
 `scripts/strengthen_harnesses.exs` (30 weak-harness families, gated
