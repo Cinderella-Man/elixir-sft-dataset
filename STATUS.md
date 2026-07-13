@@ -13,9 +13,8 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-| what | pid | log | expected result |
-|---|---|---|---|
-| T2.5 randomized-ExUnit-seed full perfect sweep (`EVAL_SEED=20260714 validate.exs`) | 4113704 | `logs/randseed_sweep_20260714.log` | ALL PERFECT under a shuffled test order (order-dependence hunt, docs/12 §5.4); any failure = a real order-dependence bug → fix two-tier. Relaunch: same command. |
+**Nothing.** (Overnight work complete 2026-07-14 ~02:4x — see docs/15 and the
+morning summary in the session.)
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order)
@@ -128,9 +127,7 @@ quality beyond execution filtering (docs/12 §6.4). HOW: 3-axis rubric on a
 stratified sample, agreement-logged second judge family (PoLL) — rule 10
 showed single-judge bias is real.
 
-**T2.5 — Randomized ExUnit seed sweep. [FREE]** — WHY: eval seed pinned to 0;
-order-dependence bugs invisible (docs/12 §5.4). HOW: occasional sweep variant
-with random seeds; low expected yield, cheap.
+
 
 **T2.6 — Prompt-register monotony rewrite (improvement round #2 — do NOT
 start before steady state). [BIG: 2,396 tfim + 302 wt_ + 80/332 seed openers;

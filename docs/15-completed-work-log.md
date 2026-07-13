@@ -9,6 +9,16 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-14 — T2.5 done: randomized-ExUnit-seed full perfect sweep
+  (`EVAL_SEED=20260714`, no build needed — the override existed for stability
+  confirmations).** Result: NO order-dependence bugs (12 flake suspects all
+  recovered serially); 017_001 environmental as always; and one REAL catch —
+  `tfim_100_002_02` shipped a 113-column gold line, minted 07-12 18:21 in
+  the minutes BETWEEN the last pre-gate batch and the ≤98-fragment mint gate
+  landing (18:45), invisible since because only scoped sweeps ran. Gold
+  rewrapped, unit perfect, class confirmed contained to this one unit by the
+  same full sweep (Tier B — the mint gate — has existed since 07-12).
+
 - **2026-07-14 (overnight) — T2.7 resolved (5 of 6; residue = 100_004 in the
   register).** Hand-strengthened through documented observation channels,
   zero timing, zero reach-ins: **101_003 0.46 → 1.00** (26/26; +5 tests +
