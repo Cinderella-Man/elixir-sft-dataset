@@ -306,5 +306,66 @@ defmodule SlidingSumTest do
     assert 42 == SlidingSum.sum(sc, "active", 60_000)
     assert SlidingSum.keys(sc) == ["active"]
   end
+
+  # -------------------------------------------------------
+  # Documented defaults and boundaries, observed through the
+  # public API (injected clock; sum/3 after send/2 as barrier)
+  # -------------------------------------------------------
+
+  test "default bucket_ms is 1000: an amount at t=999 belongs to the bucket at 0", %{sc: _sc} do
+    {:ok, sc2} = SlidingSum.start_link(clock: &Clock.now/0, cleanup_interval_ms: :infinity)
+
+    Clock.set(999)
+    SlidingSum.add(sc2, "k", 5)
+    Clock.set(1_999)
+
+    # Bucket 0 (starting at time 0) lies entirely outside a 1000 ms window now.
+    assert 0 == SlidingSum.sum(sc2, "k", 1_000)
+  end
+
+  test "default bucket_ms is 1000: an amount at t=1000 starts a new bucket", %{sc: _sc} do
+    {:ok, sc2} = SlidingSum.start_link(clock: &Clock.now/0, cleanup_interval_ms: :infinity)
+
+    Clock.set(1_000)
+    SlidingSum.add(sc2, "k", 5)
+
+    # Bucket 1 starts exactly at 1000; the cutoff quantizes to bucket starts
+    # and the old side is inclusive, so even a 1 ms window still sees it.
+    assert 5 == SlidingSum.sum(sc2, "k", 1)
+  end
+
+  test "a zero window is legal and follows the inclusive start-time rule", %{sc: sc} do
+    SlidingSum.add(sc, "z", 7)
+
+    # window_ms = 0 means cutoff = now; the current bucket starts at 0 = now,
+    # which satisfies bucket_start >= now - 0, so the amount is counted.
+    assert 7 == SlidingSum.sum(sc, "z", 0)
+  end
+
+  test "a bucket starting exactly at the window cutoff is included", %{sc: sc} do
+    SlidingSum.add(sc, "edge", 3)
+    Clock.set(1_000)
+
+    # cutoff = 1000 - 1000 = 0; the bucket starts at 0 — inclusive boundary.
+    assert 3 == SlidingSum.sum(sc, "edge", 1_000)
+  end
+
+  test "cleanup keeps a bucket exactly on the 24-hour horizon, drops older ones", %{sc: sc} do
+    SlidingSum.add(sc, "old", 5)
+
+    Clock.set(200_000)
+    SlidingSum.add(sc, "old", 11)
+
+    # now - 86_400_000 == 0: the t=0 bucket sits exactly on the horizon — kept.
+    Clock.set(86_400_000)
+    send(sc, :cleanup)
+    assert 16 == SlidingSum.sum(sc, "old", 100_000_000)
+
+    # 100 s later the t=0 bucket is beyond the horizon and dropped, while the
+    # t=200_000 bucket (start 200_000 >= cutoff 100_000) survives.
+    Clock.set(86_500_000)
+    send(sc, :cleanup)
+    assert 11 == SlidingSum.sum(sc, "old", 100_000_000)
+  end
 end
 ```

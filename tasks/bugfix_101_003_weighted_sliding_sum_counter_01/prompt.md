@@ -49,9 +49,13 @@ Semantics and internal design requirements:
   affect `"conn:b"`.
 - Memory must not leak: the GenServer state must store per-key bucket sums under
   `state.keys`. Run a periodic cleanup (via `Process.send_after`) that removes
-  buckets — and whole keys — that have fallen outside a reasonable maximum
-  window. Also handle a `:cleanup` message sent directly to the process so tests
-  can trigger cleanup synchronously. After cleanup, `state.keys` must be an empty
+  buckets — and whole keys — that have fallen outside the maximum retention
+  window of **24 hours** (`24 * 60 * 60 * 1000` ms): a bucket is retained by
+  cleanup exactly when its start time satisfies the same inclusive rule as
+  `sum/3`, i.e. `bucket_start >= now - 86_400_000` — a bucket starting exactly
+  on that horizon survives. Also handle a `:cleanup` message sent directly to
+  the process so tests can trigger cleanup synchronously. After cleanup,
+  `state.keys` must be an empty
   map when all data has expired.
 
 Give me the complete module in a single file. Use only the OTP standard library,
