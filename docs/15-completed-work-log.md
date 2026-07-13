@@ -9,6 +9,16 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-13 — F3 / T1.7 closed (both tiers): gate-sha-keyed reject ledgers.**
+  Finding: verdicts written by a broken gate survived the gate's repair (the
+  074_x class recurred as 15 unsound 102_001 tfim rows blocking 7 mintable
+  units for two days). Task A: rows purged + 9 units minted (earlier today).
+  Task B: `CycleLog.gate_sha/1` (md5s of the verdict-chain modules collapsed
+  to one sha) stamped into every new tfim/fim/bugfix reject row; all three
+  readers treat a row from a different gate version as RE-OPENABLE, while
+  unstamped legacy rows stay valid (they were all re-audited today; the T3.2
+  weekly reverify sample is the backstop). 4 new tests, 304 green; registry
+  counts unchanged (no phantom re-openings).
 - **2026-07-13 — F5 / T1.8 closed (both tiers): generation-process chatter.**
   Task B first (gate-first per docs/12 §7.3): `Evaluator.process_chatter/1` —
   comment-line-only scan for unambiguous process markers (`Prompt:` citations,

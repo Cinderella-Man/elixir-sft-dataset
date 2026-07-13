@@ -141,12 +141,13 @@ defmodule GenTask.CycleLog do
   parent harness does not cover — unfixable without editing the parent harness — so
   they must not be re-selected on later runs.
   """
-  @spec record_fim_rejected(Config.t(), String.t(), String.t()) :: :ok
-  def record_fim_rejected(%Config{logs_dir: logs_dir}, prefix, target) do
+  @spec record_fim_rejected(Config.t(), String.t(), String.t(), String.t() | nil) :: :ok
+  def record_fim_rejected(%Config{logs_dir: logs_dir}, prefix, target, gate_sha \\ nil) do
     append_jsonl(Path.join(logs_dir, "fim_rejected.jsonl"), %{
       ts: ts(),
       prefix: prefix,
-      target: target
+      target: target,
+      gate_sha: gate_sha
     })
   end
 
@@ -158,19 +159,28 @@ defmodule GenTask.CycleLog do
   pass is pure waste — but keying on the harness hash means a hand-edited parent
   harness automatically invalidates its old rejections.
   """
-  @spec record_tfim_rejected(Config.t(), String.t(), String.t(), String.t()) :: :ok
-  def record_tfim_rejected(%Config{logs_dir: logs_dir}, prefix, name, sha) do
+  @spec record_tfim_rejected(Config.t(), String.t(), String.t(), String.t(), String.t() | nil) ::
+          :ok
+  def record_tfim_rejected(%Config{logs_dir: logs_dir}, prefix, name, sha, gate_sha \\ nil) do
     append_jsonl(Path.join(logs_dir, "tfim_rejected.jsonl"), %{
       ts: ts(),
       prefix: prefix,
       name: name,
-      harness_sha: sha
+      harness_sha: sha,
+      gate_sha: gate_sha
     })
   end
 
-  @doc "Previously-rejected tfim block names for `prefix` at harness hash `sha`, as a MapSet."
-  @spec rejected_tfim_targets(Config.t(), String.t(), String.t()) :: MapSet.t(String.t())
-  def rejected_tfim_targets(%Config{logs_dir: logs_dir}, prefix, sha) do
+  @doc """
+  Previously-rejected tfim block names for `prefix` at harness hash `sha`, as a
+  MapSet. Rows stamped with a `gate_sha` count only while it matches
+  `current_gate_sha` — a repaired gate auto-re-opens its old rejections (T1.7).
+  Legacy rows without the stamp stay valid: the 2026-07-13 reverify audit
+  re-verified every current row, and future audits are the backstop (T3.2).
+  """
+  @spec rejected_tfim_targets(Config.t(), String.t(), String.t(), String.t() | nil) ::
+          MapSet.t(String.t())
+  def rejected_tfim_targets(%Config{logs_dir: logs_dir}, prefix, sha, current_gate_sha \\ nil) do
     path = Path.join(logs_dir, "tfim_rejected.jsonl")
 
     case File.read(path) do
@@ -179,8 +189,11 @@ defmodule GenTask.CycleLog do
         |> String.split("\n", trim: true)
         |> Enum.flat_map(fn line ->
           case Jason.decode(line) do
-            {:ok, %{"prefix" => ^prefix, "harness_sha" => ^sha, "name" => n}} -> [n]
-            _ -> []
+            {:ok, %{"prefix" => ^prefix, "harness_sha" => ^sha, "name" => n} = row} ->
+              if gate_row_valid?(row, current_gate_sha), do: [n], else: []
+
+            _ ->
+              []
           end
         end)
         |> MapSet.new()
@@ -190,9 +203,34 @@ defmodule GenTask.CycleLog do
     end
   end
 
+  # A reject row from a DIFFERENT gate version is re-openable, not a verdict.
+  defp gate_row_valid?(row, current_gate_sha) do
+    case row["gate_sha"] do
+      nil -> true
+      sha -> current_gate_sha == nil or sha == current_gate_sha
+    end
+  end
+
   @doc "SHA-256 hex of a file body, for content-keyed reject ledgers."
   @spec content_sha(String.t()) :: String.t()
   def content_sha(body), do: :crypto.hash(:sha256, body) |> Base.encode16(case: :lower)
+
+  @doc """
+  One hex sha identifying the CODE of the gate that produced a verdict: the
+  concatenated md5 checksums of the given modules' compiled BEAM objects,
+  collapsed to a single sha256. Permanent-reject rows stamped with this
+  invalidate automatically when any gate module is recompiled with different
+  code — a repaired gate can no longer be haunted by its old verdicts
+  (STATUS F3-B / T1.7: 15 unsound 102_001 tfim rejects survived the 07-12
+  bundle-gate repair for two days because nothing keyed the verdict to the
+  gate itself; docs/12 §5.1.12 made structural).
+  """
+  @spec gate_sha([module()]) :: String.t()
+  def gate_sha(modules) do
+    modules
+    |> Enum.map_join("", &(&1.module_info(:md5) |> Base.encode16(case: :lower)))
+    |> content_sha()
+  end
 
   @doc "Record a backfill seed's vacuous-harness self-check verdict, keyed by content hash."
   @spec record_seed_verdict(Config.t(), String.t(), String.t(), map()) :: :ok
@@ -226,9 +264,12 @@ defmodule GenTask.CycleLog do
     end
   end
 
-  @doc "Previously-rejected FIM targets for `prefix` (from `fim_rejected.jsonl`), as a list."
-  @spec rejected_fim_targets(Config.t(), String.t()) :: [String.t()]
-  def rejected_fim_targets(%Config{logs_dir: logs_dir}, prefix) do
+  @doc """
+  Previously-rejected FIM targets for `prefix` (from `fim_rejected.jsonl`), as a
+  list. Same gate-sha validity rule as `rejected_tfim_targets/4` (T1.7).
+  """
+  @spec rejected_fim_targets(Config.t(), String.t(), String.t() | nil) :: [String.t()]
+  def rejected_fim_targets(%Config{logs_dir: logs_dir}, prefix, current_gate_sha \\ nil) do
     path = Path.join(logs_dir, "fim_rejected.jsonl")
 
     case File.read(path) do
@@ -237,8 +278,11 @@ defmodule GenTask.CycleLog do
         |> String.split("\n", trim: true)
         |> Enum.flat_map(fn line ->
           case Jason.decode(line) do
-            {:ok, %{"prefix" => ^prefix, "target" => t}} -> [t]
-            _ -> []
+            {:ok, %{"prefix" => ^prefix, "target" => t} = row} ->
+              if gate_row_valid?(row, current_gate_sha), do: [t], else: []
+
+            _ ->
+              []
           end
         end)
 

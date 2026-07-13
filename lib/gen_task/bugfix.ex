@@ -378,6 +378,7 @@ defmodule GenTask.Bugfix do
 
   defp rejected_labels(cfg, prefix, key) do
     path = Path.join(cfg.logs_dir, @rejected_ledger)
+    current_gate = gate_sha()
 
     case File.read(path) do
       {:ok, body} ->
@@ -385,8 +386,12 @@ defmodule GenTask.Bugfix do
         |> String.split("\n", trim: true)
         |> Enum.reduce(MapSet.new(), fn line, acc ->
           case JSON.decode(line) do
-            {:ok, %{"prefix" => ^prefix, "sha" => ^key, "label" => label}} ->
-              MapSet.put(acc, label)
+            {:ok, %{"prefix" => ^prefix, "sha" => ^key, "label" => label} = row} ->
+              # A row stamped by a DIFFERENT gate version is re-openable, not a
+              # verdict; unstamped legacy rows stay valid (audited 2026-07-13).
+              if row["gate_sha"] in [nil, current_gate],
+                do: MapSet.put(acc, label),
+                else: acc
 
             _ ->
               acc
@@ -398,6 +403,11 @@ defmodule GenTask.Bugfix do
     end
   end
 
+  # The verdict chain for a bugfix reject: mutant construction + grading.
+  # Repairing any of it re-opens old rejections automatically (T1.7).
+  defp gate_sha,
+    do: CycleLog.gate_sha([__MODULE__, GenTask.Mutation, GenTask.Evaluator])
+
   defp record_rejected(seed, label, cfg) do
     File.mkdir_p!(cfg.logs_dir)
 
@@ -407,6 +417,7 @@ defmodule GenTask.Bugfix do
         prefix: prefix(seed),
         sha: reject_key(seed),
         label: label,
+        gate_sha: gate_sha(),
         ts: DateTime.utc_now() |> DateTime.to_iso8601()
       }) <> "\n",
       [:append]

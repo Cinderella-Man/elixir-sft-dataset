@@ -63,7 +63,8 @@ defmodule GenTask.TestFim do
     harness = seed.files["test_harness.exs"]
     covered = covered_quals(seed, cfg)
 
-    rejected = CycleLog.rejected_tfim_targets(cfg, prefix(seed), CycleLog.content_sha(harness))
+    rejected =
+      CycleLog.rejected_tfim_targets(cfg, prefix(seed), CycleLog.content_sha(harness), gate_sha())
 
     harness
     |> carvable_blocks()
@@ -228,8 +229,14 @@ defmodule GenTask.TestFim do
   # backfill passes skip the block instead of re-running the gates.
   defp record_rejected(seed, cand, cfg) do
     sha = CycleLog.content_sha(seed.files["test_harness.exs"])
-    CycleLog.record_tfim_rejected(cfg, prefix(seed), qual(cand), sha)
+    CycleLog.record_tfim_rejected(cfg, prefix(seed), qual(cand), sha, gate_sha())
   end
+
+  # The verdict chain for a tfim reject spans the carver/isolation logic here,
+  # the mutation kill, and the grading itself — a repair to ANY of them
+  # re-opens this module's old rejections (T1.7; the 074_x and 102_001 lesson).
+  defp gate_sha,
+    do: CycleLog.gate_sha([__MODULE__, GenTask.Mutation, GenTask.Evaluator])
 
   # Single-file → isolation-kill; multifile (bundle) → static AST assertion check on
   # the GOLD BLOCK itself (mutation of a `<file>` bundle is deferred; checking the

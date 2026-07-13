@@ -78,4 +78,50 @@ defmodule GenTask.CycleLogTest do
       assert File.exists?(Path.join([tmp, "attempts", "b", "attempt_00"]))
     end
   end
+
+  describe "gate-sha keying of permanent reject ledgers (T1.7)" do
+    test "gate_sha/1 is stable per module set and differs across sets" do
+      a = CycleLog.gate_sha([GenTask.Mutation])
+      assert a == CycleLog.gate_sha([GenTask.Mutation])
+      assert a != CycleLog.gate_sha([GenTask.Evaluator])
+      assert a =~ ~r/^[0-9a-f]{64}$/
+    end
+
+    test "a tfim reject from the CURRENT gate blocks; a different gate re-opens; legacy blocks" do
+      tmp = tmp_dir()
+      gate = CycleLog.gate_sha([GenTask.Mutation])
+
+      CycleLog.record_tfim_rejected(cfg(tmp), "099_009_x", "current-gate", "H", gate)
+      CycleLog.record_tfim_rejected(cfg(tmp), "099_009_x", "old-gate", "H", "deadbeef")
+      CycleLog.record_tfim_rejected(cfg(tmp), "099_009_x", "legacy-unstamped", "H")
+
+      rejected = CycleLog.rejected_tfim_targets(cfg(tmp), "099_009_x", "H", gate)
+
+      assert MapSet.member?(rejected, "current-gate")
+      refute MapSet.member?(rejected, "old-gate")
+      assert MapSet.member?(rejected, "legacy-unstamped")
+    end
+
+    test "fim rejects follow the same rule" do
+      tmp = tmp_dir()
+      gate = CycleLog.gate_sha([GenTask.Mutation])
+
+      CycleLog.record_fim_rejected(cfg(tmp), "099_009_x", "kept/1", gate)
+      CycleLog.record_fim_rejected(cfg(tmp), "099_009_x", "reopened/2", "deadbeef")
+      CycleLog.record_fim_rejected(cfg(tmp), "099_009_x", "legacy/1")
+
+      targets = CycleLog.rejected_fim_targets(cfg(tmp), "099_009_x", gate)
+
+      assert "kept/1" in targets
+      refute "reopened/2" in targets
+      assert "legacy/1" in targets
+    end
+
+    test "a nil current gate sha (raw readers, audit tools) filters nothing" do
+      tmp = tmp_dir()
+      CycleLog.record_tfim_rejected(cfg(tmp), "099_009_x", "stamped", "H", "deadbeef")
+      rejected = CycleLog.rejected_tfim_targets(cfg(tmp), "099_009_x", "H")
+      assert MapSet.member?(rejected, "stamped")
+    end
+  end
 end

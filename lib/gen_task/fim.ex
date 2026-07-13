@@ -112,9 +112,14 @@ defmodule GenTask.Fim do
   # Targets we must NOT select: functions already turned into a `_0d` subtask, plus
   # targets permanently rejected on a prior run.
   defp excluded_targets(seed, cfg) do
-    rejected = MapSet.new(CycleLog.rejected_fim_targets(cfg, prefix(seed)))
+    rejected = MapSet.new(CycleLog.rejected_fim_targets(cfg, prefix(seed), gate_sha()))
     MapSet.union(covered_targets(seed, cfg), rejected)
   end
+
+  # A fim reject's verdict chain: target enumeration/coverage here, mutation
+  # kills, grading. Repairing any of them re-opens old rejections (T1.7).
+  defp gate_sha,
+    do: CycleLog.gate_sha([__MODULE__, GenTask.Mutation, GenTask.Evaluator])
 
   # `name/arity` of the function each existing `_0d` subtask already fills (its
   # solution.ex is just that one function).
@@ -600,7 +605,7 @@ defmodule GenTask.Fim do
 
               # Unfixable here (we may not edit the parent harness): record it so it is
               # not re-selected on a later run.
-              CycleLog.record_fim_rejected(cfg, prefix(seed), target)
+              CycleLog.record_fim_rejected(cfg, prefix(seed), target, gate_sha())
 
               {:halt,
                {reject(seed, log_id, target, stats, "parent harness does not cover #{target}"),

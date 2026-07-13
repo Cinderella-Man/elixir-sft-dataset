@@ -20,10 +20,9 @@ evening — docs/15.)
 
 ## ⏭️ IMMEDIATE QUEUE (in order)
 
-1. **F3-B / T1.7** — gate-sha keying for permanent reject ledgers.
-2. **T3.2 / T3.3** — weekly-CI wiring for spot_verify + reverify sample;
+1. **T3.2 / T3.3** — weekly-CI wiring for spot_verify + reverify sample;
    fuzz_survivors standing tool; (T3.3b landed with F7).
-3. Then the register order: T1.5 operators, T2.3 second-sourcing, T1.4 with
+2. Then the register order: T1.5 operators, T2.3 second-sourcing, T1.4 with
    Phase 3 — and the Kamil-gated items (T1.1, T1.6, §4.2, timer) as unblocked.
 
 ## 📋 QUALITY TODO REGISTER (2026-07-13 — why / what / how / cost per item)
@@ -45,13 +44,8 @@ committed immediately (one solved item = one commit).
 - F1-B (gate generator): **T1.1 accept-time blind re-screen in the loop —
   PENDING KAMIL'S SIGN-OFF.**
 
-**F3 — permanent reject rows survived their gate's repair (15 unsound found).**
-- F3-A (fix data): DONE → docs/15 (rows purged, 9 blocked units minted).
-- F3-B (gate generator): **T1.7 gate-sha-keyed reject rows — TODO** (+ T3.2
-  weekly reverify sample as backstop).
-
 *(Closed with both tiers done — see docs/15: F2 — blind evidence staled by
-harness edits; F4 — tools imitating grandfathered anti-patterns; F5 —
+harness edits; F3 — reject rows surviving their gate's repair; F4 — tools imitating grandfathered anti-patterns; F5 —
 generation-process chatter; F6 — LLM-judge hallucinated verdict; F7 —
 environmental failures as verdicts.)*
 
@@ -106,24 +100,6 @@ change; then FREE (PLT build + weekly CI)]**
 - WHAT/HOW: add `dialyxir`, one-time PLT, driver staging each gold with its
   deps, weekly CI gate. Pilot on 5 families first. Design: docs/13 §2.6.
 
-**T1.7 — Gate-sha keying for permanent reject ledgers. [FREE] (Tier B of the
-unsound-reject finding)**
-- WHY: 15 unsound `102_001` tfim reject rows sat for 2 days because verdicts
-  written by a broken gate survived the gate's repair — the 074_x class,
-  RECURRED. The repo's own rule 1 ("a ledger without a content key rots
-  silently") was applied to the data but never to the GATE'S OWN CODE.
-- WHAT: every permanent-reject row also records `gate_sha` — the content sha
-  of the module(s) that produced the verdict (`test_fim.ex`, `bugfix.ex`,
-  `mutation.ex` as appropriate). Readers treat a row whose `gate_sha` no
-  longer matches the compiled module as RE-OPENABLE (exactly how a changed
-  harness sha already re-opens bugfix rejects). A gate repair then
-  auto-invalidates its old verdicts instead of relying on someone remembering
-  to audit.
-- HOW: the `record_rejected` sites + `rejected_labels`-style readers in
-  `lib/gen_task/{test_fim,bugfix}.ex` (+ fim's ledger); legacy rows without
-  `gate_sha` stay valid until the next `reverify_rejects.exs` pass clears
-  them; T3.2's weekly reverify sample is the backstop. Tests + registry
-  counts must stay honest (`missing/2` sees re-opened units).
 
 ### Tier 2 — raise EXISTING corpus quality (evidence says more is there)
 
