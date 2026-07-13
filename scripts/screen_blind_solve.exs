@@ -206,7 +206,7 @@ defmodule ScreenBlind do
     try do
       case Evaluator.grade(task.dir, cfg, path) do
         {:ok, json} ->
-          %{
+          entry = %{
             green: Evaluator.green?(json),
             compiled: json["compiled"] == true,
             tests_passed: json["tests_passed"] || 0,
@@ -215,6 +215,14 @@ defmodule ScreenBlind do
             first_failure: first_failure(json)
           }
 
+          # F7-B (STATUS): an eval that failed because the ENVIRONMENT is
+          # missing (e.g. the runner's "Postgres is required for this task but
+          # is not reachable" raise) says nothing about the prompt — record it
+          # like a transport error (green: nil), never as a RED verdict.
+          if environmental?(entry.first_failure),
+            do: %{green: nil, error: "environmental: " <> entry.first_failure},
+            else: entry
+
         :timeout_or_crash ->
           %{green: false, compiled: false, first_failure: "eval timed out or crashed"}
       end
@@ -222,6 +230,11 @@ defmodule ScreenBlind do
       File.rm(path)
     end
   end
+
+  defp environmental?(nil), do: false
+
+  defp environmental?(text),
+    do: String.contains?(text, "required for this task but is not reachable")
 
   defp first_failure(json) do
     case json["test_failures"] do

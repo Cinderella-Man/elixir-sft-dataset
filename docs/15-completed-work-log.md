@@ -9,6 +9,12 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-13 — F7 closed (both tiers):** finding "environmental failures
+  written as screen VERDICTS" (017_001's sweep row recorded 'Postgres not
+  reachable' as a RED). Task A: human triage row marks it environmental —
+  never a prompt-gap. Task B: `screen_blind_solve.exs` now classifies
+  environment-unreachable grades as `green: nil` / `error: environmental`
+  (like transport errors), so no future run can ledger an environmental RED.
 - **2026-07-13 — F4 closed (both tiers):** finding "our tools imitate
   grandfathered anti-patterns" (the strengthener copied `:sys.get_state` from
   101_001's April-era tests three times). Task A: 101_001 hand-strengthened
