@@ -28,6 +28,15 @@
 # (resync_embeds --wt-all) and bugfix_ prompts (resync_bugfix_embeds); repair_
 # prompts are captured evidence and stay frozen by design.
 #
+# AFTER a run, refresh the S6 ledger with the canonical screen — an enriched
+# prompt has a new sha, so `logs/screen_blind.jsonl` no longer covers it, and
+# the in-tool gate (though the same mechanism) is not the ledger of record:
+#
+#   mix run scripts/screen_blind_solve.exs --only "<fam1>,<fam2>,…"
+#
+# Then re-strengthen: the whole point is a harness that can finally pin the
+# behavior the prompt now states (`scripts/strengthen_harnesses.exs -- --go`).
+#
 # Usage:
 #   mix run scripts/enrich_prompts.exs                    # DRY: the work list
 #   mix run scripts/enrich_prompts.exs -- --go            # PAID: ~2 calls/family

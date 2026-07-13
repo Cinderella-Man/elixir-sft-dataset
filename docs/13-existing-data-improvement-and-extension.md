@@ -176,7 +176,54 @@ into GenServer internals (`:sys.get_state`) to kill mutants without testing
 observable behavior — the accept-gate lint protecting a different tool from a
 different failure mode.
 
-### 1.5 Earlier same-day quality tools (see STATUS backlog)
+### 1.5 Acting on the semantic-floor findings (2026-07-13, Kamil: "do/fix/
+### investigate all of point 2")
+
+**The honest baseline first.** Fresh sha-keyed re-measurement of all 17
+rejected families confirms every one is genuinely below the floor (0.38–0.49),
+so the tail is real work, not more measurement noise.
+
+**Two staleness holes found while investigating — both silent, both now gated:**
+
+1. **`wt_` dirs had NO spec/harness gate.** `check_embeds` only compares a wt_
+   prompt's MODULE fence, but a wt_ dir is a full byte-copy of its parent
+   (module + harness) plus a prompt embedding the parent SPEC. Result: **51
+   stale dirs** — 48 prompts embedding a doc-stripped older module, and **3
+   carrying a stale GOLD HARNESS** (pre-R10 tests shipped as the answer key).
+   `resync_embeds --wt-all` (dry by default) is now a CI + pre-push gate.
+2. **Two regressions of my own**, caught by running every gate to a fixed
+   point: `resync_tfim_embeds` could not read a `property` gold (all 28
+   property units errored — CI would have failed), and `format_corpus`
+   reformatted wt_ prompt fences that are *derived* from a deliberately
+   unformatted parent prompt, so the format gate and the embed resync rewrote
+   each other forever. Both fixed; all four embed gates now converge
+   simultaneously (format 0 · check_embeds 1322/0/0 · wt_ 331 · bugfix 959 ·
+   tfim 3231).
+
+**The prompt-enrichment loop (`scripts/enrich_prompts.exs`).** The 12
+blind-gate families get their SPEC fixed, not their tests: the model sees only
+the current prompt + the reference module (never the harness — writing a spec
+against the tests is the corruption blind screening exists to prevent), and a
+rewrite must pass five gates: no verbatim test-name leak; no ≥4 consecutive
+module lines copied (a spec must not hand over the answer, which would make
+the blind gate vacuous); public API preserved; strictly additive; and a BLIND
+SOLVE against the existing harness. Applying cascades to every child that
+embeds the parent spec (wt_ + bugfix_; repair_ prompts are frozen evidence).
+
+Result: **9+ of 12 enriched** (e.g. 001_001 22→109 lines, 075_001 17→73,
+013_002 15→63), 9/9 clean on an independent re-audit of the leak/giveaway
+gates, families still grade perfect, every embed gate converged.
+**The clinching evidence: 001_001's ORIGINAL prompt was screened RED by the S6
+blind screen on 07-08 (0/10 tests — a documented "hard-task keep"). The
+enriched prompt passes a blind solve.** The prompt was the defect all along.
+
+**Order of operations (now the documented remediation recipe):** enrich the
+prompt → canonical blind re-screen (`screen_blind_solve.exs --only …`, since
+the new sha leaves the S6 ledger uncovered) → re-strengthen the harness (the
+whole point: a harness can finally pin behavior the prompt states) → cascade
+resyncs → re-gate. Every step has a tool; every step is ledgered.
+
+### 1.6 Earlier same-day quality tools (see STATUS backlog)
 
 `scripts/rescreen_repaired.exs` (retro blind screen; 22 calls outstanding) and
 `scripts/strengthen_harnesses.exs` (30 weak-harness families, gated
