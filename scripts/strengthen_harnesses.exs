@@ -29,6 +29,7 @@
 #   mix run scripts/strengthen_harnesses.exs                   # DRY: the work list
 #   mix run scripts/strengthen_harnesses.exs -- --go           # run (PAID: ~2 calls/family)
 #   mix run scripts/strengthen_harnesses.exs -- --go --limit 3 # first N families
+#   mix run scripts/strengthen_harnesses.exs -- --go --only "063_004*,101_001*"
 #   mix run scripts/strengthen_harnesses.exs -- --report       # ledger summary
 #
 # Ledger: logs/strengthen_harnesses.jsonl (one row per family per attempt).
@@ -48,12 +49,14 @@ defmodule StrengthenHarnesses do
     argv = Enum.drop_while(argv, &(&1 == "--"))
 
     {opts, _, _} =
-      OptionParser.parse(argv, strict: [go: :boolean, report: :boolean, limit: :integer])
+      OptionParser.parse(argv,
+        strict: [go: :boolean, report: :boolean, limit: :integer, only: :string]
+      )
 
     cond do
       opts[:report] -> report()
       opts[:go] -> go(opts)
-      true -> dry()
+      true -> dry(opts)
     end
   end
 
@@ -125,14 +128,30 @@ defmodule StrengthenHarnesses do
     if File.regular?(path), do: CycleLog.content_sha(File.read!(path))
   end
 
+  # Same comma-separated glob filter as enrich_prompts.exs (`--only "063_004*,101_001*"`).
+  defp filter_only(parents, opts) do
+    Enum.filter(parents, fn {dir, _} -> match_only?(Path.basename(dir), opts[:only]) end)
+  end
+
+  defp match_only?(_f, nil), do: true
+
+  defp match_only?(f, globs) do
+    globs
+    |> String.split(",", trim: true)
+    |> Enum.any?(fn g ->
+      re = g |> String.trim() |> Regex.escape() |> String.replace("\\*", ".*")
+      Regex.match?(~r/#{re}/, f)
+    end)
+  end
+
   defp parent_dir("wt_" <> rest), do: hd(Path.wildcard("tasks/#{rest}_01"))
 
   defp parent_dir(task) do
     if File.dir?(Path.join("tasks", task)), do: Path.join("tasks", task), else: nil
   end
 
-  defp dry do
-    parents = weak_parents()
+  defp dry(opts) do
+    parents = weak_parents() |> filter_only(opts)
     done = success_shas()
 
     IO.puts("Semantic-floor work list (< #{@floor} best kill rate), deduped to parents:\n")
@@ -163,6 +182,7 @@ defmodule StrengthenHarnesses do
 
     todo =
       weak_parents()
+      |> filter_only(opts)
       |> Enum.reject(fn {dir, _} -> MapSet.member?(done, harness_sha(dir)) end)
       |> then(&if opts[:limit], do: Enum.take(&1, opts[:limit]), else: &1)
 

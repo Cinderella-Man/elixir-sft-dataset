@@ -9,9 +9,19 @@ on a quality improvement? Update it whenever the answer changes; everything else
 
 ## ▶️ RUNNING RIGHT NOW
 
-**Nothing.** (If you see stray `tail -f` shells, they are orphaned monitors — kill
-them. And never poll with `pgrep -f "<pattern>"`: a wait-loop's own command line
-contains the pattern, so it matches ITSELF and waits forever — docs/14 rule 9.)
+| what | pid | log | expected result |
+|---|---|---|---|
+| `scripts/quality_chain.sh` (launched 2026-07-13 ~16:4x by Kamil's go: "do all of these") | **2180530** | `logs/quality_chain_20260713.log` | stage 1: 22 S6 rows appended to `logs/screen_blind.jsonl` (rescreen of repaired accepts, §5.2 evidence); stage 2/2b: 063_004 prompt enriched (`--force`) + canonical screen row; stage 3: strengthen 063_004 + 101_001 (`--only` flag added this session). Ends with `=== [chain] CHAIN DONE`. Relaunch after any death is idempotent: `scripts/run_detached.sh logs/quality_chain_20260713.log scripts/quality_chain.sh` — every stage resumes from its ledger. |
+
+Poll with `while kill -0 2180530 2>/dev/null; do sleep 30; done` — **never**
+`pgrep -f "<pattern>"` (it matches ITSELF and waits forever — docs/14 rule 9).
+When done: `rescreen_repaired -- --report` + triage any FAIL(open); then the
+four embed gates; then batch-commit.
+
+Also in flight this session (Kamil: "do all of these — scrutinize everything,
+random verifies of approved and rejected data"): spot-verify sweep of accepted
+dirs + reject-ledger re-verification (deterministic, own ledgers), 013_001
+investigation, 077_001 hand-written boundary tests.
 
 Last completed: the free derivative top-up (2026-07-13) — 6 tfim + 1 bugfix +
 1 repair unit, all created BY the harness strengthening. **Registry: 0 pending
