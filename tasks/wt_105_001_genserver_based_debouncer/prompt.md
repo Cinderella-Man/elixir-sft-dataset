@@ -24,46 +24,91 @@ into a single execution.
 
 ## Public API
 
-- `Debouncer.start_link(opts)` — starts the process. It should accept a `:name`
-  option for process registration, defaulting to `Debouncer` (i.e. the module
-  name) when not provided. Return the usual `{:ok, pid}`.
+- `Debouncer.start_link(opts)` — starts the process. `opts` is a keyword list.
+  It should accept a `:name` option for process registration, defaulting to
+  `Debouncer` (i.e. the module name) when not provided. Returns the usual
+  `GenServer.on_start()` result: `{:ok, pid}` on success, and
+  `{:error, {:already_started, pid}}` if a process is already registered under
+  that name. The server starts with no pending keys.
 
 - `Debouncer.call(key, delay_ms, func)` — schedules `func` (a zero-arity function)
   to run after `delay_ms` milliseconds. `key` can be any term. `func` is a
   zero-arity closure whose only significance to the debouncer is that it gets
-  invoked. This function should return `:ok` and return promptly (it must not
-  block waiting for `func` to run). It targets the default registered process
-  (the one registered under the name `Debouncer`).
+  invoked. This function returns `:ok` and returns promptly (it must not block
+  waiting for `func` to run, and it must not block waiting for the server to
+  process the request either — it is fire-and-forget). It targets the default
+  registered process (the one registered under the name `Debouncer`), regardless
+  of what `:name` any other running instance was started with.
+
+  `delay_ms` must be a non-negative integer and `func` must be a function of
+  arity 0. Calls that violate this — a negative or non-integer `delay_ms`, or a
+  function of any other arity — raise a `FunctionClauseError` at the call site
+  rather than being sent to the server. `delay_ms` of `0` is legal and means
+  "fire on the next scheduler pass" — the func still runs asynchronously, never
+  inline in the caller.
 
 ## Debounce semantics
 
 - **Coalescing.** If `call/3` is invoked again with the **same key** before the
-  pending timer for that key fires, the timer is reset (restarted from
-  `delay_ms`) and the newly supplied `func` **replaces** the previously pending
-  one. When the burst finally settles (i.e. `delay_ms` elapses with no further
-  calls for that key), **only the most recently supplied `func` for that key
-  runs, and it runs exactly once.** The earlier funcs from that burst are never
-  executed.
+  pending timer for that key fires, the timer is reset (restarted from the *new*
+  call's `delay_ms`) and the newly supplied `func` **replaces** the previously
+  pending one. When the burst finally settles (i.e. `delay_ms` elapses with no
+  further calls for that key), **only the most recently supplied `func` for that
+  key runs, and it runs exactly once.** The earlier funcs from that burst are
+  never executed. There is no cap on how long a key can be held off: an endless
+  stream of calls spaced under `delay_ms` apart keeps deferring the func
+  indefinitely.
 
-- **The delay is real.** `func` must not run before `delay_ms` has elapsed since
-  the most recent `call/3` for that key.
+- **The delay is real, including under a race.** `func` must not run before
+  `delay_ms` has elapsed since the most recent `call/3` for that key. This must
+  hold even in the window where an old timer has already fired and its message is
+  sitting in the server's mailbox when the new `call/3` arrives — cancelling a
+  timer cannot recall a message that was already delivered. Such a stale
+  expiry must be recognized and discarded: it must not run the old func, must not
+  run the new func early, and must not clear the new pending entry. Only the
+  expiry that corresponds to the *currently pending* schedule for a key is
+  allowed to fire. (Tagging each scheduled expiry with a unique identity — e.g. a
+  `make_ref/0` stored alongside the timer — is the straightforward way to do
+  this.)
+
+- **Each call's delay is its own.** The delay used for a key is whatever the most
+  recent `call/3` supplied. Calling `call(:k, 500, f1)` then, 10ms later,
+  `call(:k, 20, f2)` means `f2` runs roughly 20ms after the second call, not 500ms
+  after the first.
 
 - **Keys are independent.** A pending debounce on one key must have no effect on
-  any other key. Calls for different keys each get their own independent timer
-  and each fire on their own schedule.
+  any other key. Calls for different keys each get their own independent timer and
+  each fire on their own schedule, in whatever order their delays dictate — a
+  short-delay key fires before a long-delay key that was scheduled earlier. Keys
+  are compared by term equality, so `:a`, `"a"`, and `{:a, 1}` are three distinct
+  keys.
 
 - **State is cleared after firing.** Once a key's `func` has executed, that key's
-  pending state is gone. A subsequent `call/3` for the same key (after the
-  previous one already fired) starts a brand-new debounce cycle and will execute
-  again.
+  pending state is removed from the server. A subsequent `call/3` for the same key
+  (after the previous one already fired) starts a brand-new debounce cycle and
+  will execute again — the debouncer keeps no memory of keys that have already
+  fired, and there is no dedup across cycles. There is no way to observe or cancel
+  a pending key through the public API; the only way state leaves the server is by
+  firing.
+
+- **A misbehaving `func` is contained.** Because the funcs are arbitrary caller
+  code, a `func` that raises, exits, or blocks for a long time must not crash the
+  GenServer, must not delay other keys' timers, and must not prevent subsequent
+  `call/3`s from being accepted and honored. The server's own pending state for
+  that key is cleared when the func is dispatched, regardless of whether the func
+  ultimately succeeds. Two funcs whose executions overlap in time (e.g. a slow
+  func for key `:a` still running when key `:b` fires) run concurrently rather
+  than serially.
 
 ## Implementation notes
 
 - Use `Process.send_after/3` for the timers and cancel/replace them
-  (`Process.cancel_timer/1`) when a key is called again while pending.
-- Consider running `func` outside the server's own reduction path (e.g. in a
-  spawned process) so a slow or crashing `func` can't wedge the GenServer, but
-  this is your call as long as the observable semantics above hold.
+  (`Process.cancel_timer/1`) when a key is called again while pending. Remember
+  that cancellation is best-effort — see the stale-expiry rule above.
+- Run `func` outside the server's own reduction path (e.g. in a spawned process)
+  so a slow or crashing `func` can't wedge the GenServer. The server does not link
+  to, monitor, or await the func's execution, and does not report its result
+  anywhere.
 - Use only the OTP standard library — no external dependencies.
 
 Give me the complete module in a single file.

@@ -79,9 +79,13 @@ defmodule EnrichPrompts do
           body
           |> String.split("\n", trim: true)
           |> Enum.map(&JSON.decode!/1)
-          |> Enum.filter(fn r ->
-            r["verdict"] == "rejected" and String.contains?(r["detail"] || "", "blind solver")
-          end)
+          # ANY family the strengthener could not fix is a candidate: the blind-gate
+          # rejections are the clearest case (a test pinned undocumented behavior),
+          # but the same terse-spec weakness explains the others — the model reached
+          # into internals because the prompt names no observable contract (S9), or
+          # it wrote tests the reference fails because it had to guess semantics.
+          # Policy: if the harness cannot be fixed, fix the SPEC first.
+          |> Enum.filter(&(&1["verdict"] == "rejected"))
           |> Enum.map(& &1["family"])
           |> Enum.uniq()
 
