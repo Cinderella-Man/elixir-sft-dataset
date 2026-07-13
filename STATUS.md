@@ -12,16 +12,25 @@ on a quality improvement? Update it whenever the answer changes; everything else
 | what | pid | log | expected result |
 |---|---|---|---|
 | `scripts/quality_chain.sh` (launched 2026-07-13 ~16:4x by Kamil's go: "do all of these") | **2180530** | `logs/quality_chain_20260713.log` | stage 1: 22 S6 rows appended to `logs/screen_blind.jsonl` (rescreen of repaired accepts, §5.2 evidence); stage 2/2b: 063_004 prompt enriched (`--force`) + canonical screen row; stage 3: strengthen 063_004 + 101_001 (`--only` flag added this session). Ends with `=== [chain] CHAIN DONE`. Relaunch after any death is idempotent: `scripts/run_detached.sh logs/quality_chain_20260713.log scripts/quality_chain.sh` — every stage resumes from its ledger. |
+| `scripts/reverify_rejects.exs` (reject-ledger audit, CPU-only) | 2193259 | `logs/reverify_20260713.log` | remaining bugfix-reject sample re-verified into `logs/reverify_rejects.jsonl` |
+| `scripts/spot_verify.sh` (accept-side random re-verification, CPU-only) | 2197261 | `logs/spot_verify_20260713.log` | 8 batches ok in `logs/spot_verify.jsonl` (45 numbered ×perfect/mutants/fim, 12 wt_ ×2, 25 tfim, 17 repair_, 25 bugfix audit); any FAIL batch has its evidence in `logs/spot_verify_<batch>.log` |
 
-Poll with `while kill -0 2180530 2>/dev/null; do sleep 30; done` — **never**
+Poll with `while kill -0 <pid> 2>/dev/null; do sleep 30; done` — **never**
 `pgrep -f "<pattern>"` (it matches ITSELF and waits forever — docs/14 rule 9).
-When done: `rescreen_repaired -- --report` + triage any FAIL(open); then the
-four embed gates; then batch-commit.
+When the chain is done: `rescreen_repaired -- --report` + triage any FAIL(open);
+then `GEN_ONLY=backfill` (mints the 7 re-opened 102_001 tfim units + any new
+strengthen-created blocks); then the four embed gates; then batch-commit.
 
-Also in flight this session (Kamil: "do all of these — scrutinize everything,
-random verifies of approved and rejected data"): spot-verify sweep of accepted
-dirs + reject-ledger re-verification (deterministic, own ledgers), 013_001
-investigation, 077_001 hand-written boundary tests.
+### Found 2026-07-13 pm by the reject-ledger audit (`reverify_rejects.exs`)
+
+**All 15 CURRENT `102_001` tfim reject rows were UNSOUND** — written 2026-07-11
+05:42 by the pre-manifest-fix bundle gate (the docs/10 §5.13 class, fixed
+07-12), never audited after the fix (the docs/12 §5.1.12 rule). Re-run through
+the real gate chain, every one passes today. Purged (backup:
+`logs/tfim_rejected.jsonl.bak_20260713`); registry honestly re-opened
+**test_fim +7 pending** (cap 10, 3 existing). The 3 CURRENT 073_001 rows
+re-confirmed as sound; 3 stale rows inert; bugfix-reject samples so far all
+sound.
 
 Last completed: the free derivative top-up (2026-07-13) — 6 tfim + 1 bugfix +
 1 repair unit, all created BY the harness strengthening. **Registry: 0 pending
