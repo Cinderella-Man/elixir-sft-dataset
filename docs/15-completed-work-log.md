@@ -9,6 +9,21 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-13 — F2 / T1.2 closed (both tiers): the S6 freshness gate.**
+  Finding: blind-screen evidence was keyed by prompt sha only, so harness
+  edits silently invalidated it — first spotted on 013_001, then measured at
+  scale: 47 roots (mostly the 07-09 R10-tightened harnesses) carried verdicts
+  for older harnesses, plus 7 S6 coverage holes. Task A: 54-root re-screen
+  sweep → 42 GREEN / 12 RED; triage of the 12: 10 entailed solver slips
+  (6 judge + 5 rule-10 hand verdicts, incl. refuting a pre-R10 judge proposal
+  to document an internal `subs` field), 1 environmental (=F7), and **1 real
+  gap — 014_004** (harness asserts ArgumentError on non-positive
+  max_concurrency; prompt only said "must be a positive integer") — prompt
+  fixed, cascaded, re-screened GREEN. Task B: `screen_blind_solve` stamps
+  `harness_sha` into every row; `scripts/check_screen_freshness.exs` gates in
+  CI + pre-push (self-tested); final state `stale=0, unscreened=0` over 332
+  roots. Also fixed: `repair_` dirs (frozen evidence) leaked into the
+  screenable population of both tools.
 - **2026-07-13 — F7 closed (both tiers):** finding "environmental failures
   written as screen VERDICTS" (017_001's sweep row recorded 'Postgres not
   reachable' as a RED). Task A: human triage row marks it environmental —

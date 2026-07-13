@@ -13,24 +13,21 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-| what | pid | log | expected result |
-|---|---|---|---|
-| T1.2 freshness re-screen sweep: `screen_blind_solve --only <54 roots> --rescreen` (launched 2026-07-13 ~18:5x) | **2345136** | `logs/rescreen_freshness_20260713.log` | 54 sha-stamped rows appended to `logs/screen_blind.jsonl` (47 roots whose blind verdicts predate their current harness — mostly the 07-09 R10 harness campaign — plus 7 S6 coverage holes incl. 018_003). REDs already visible in the log (001_004, 002_001, …) → triage queue below. Monitor armed in-session. Relaunch after any death: same command WITHOUT `--rescreen` (the sha-stamped ledger then skips finished rows). |
+**Nothing.** (F2's sweep, its triage, and the CI wiring completed 2026-07-13
+evening — docs/15.)
 
 ---
 
-## ⏭️ IMMEDIATE QUEUE (in order, when the sweep exits)
+## ⏭️ IMMEDIATE QUEUE (in order)
 
-1. **Finish T1.2:** read `logs/rescreen_freshness_20260713.log`; hand-verify +
-   triage every RED (judge verdicts are hypotheses — docs/14 rule 10; expect a
-   mix of solver slips and possibly new 101_002-class prompt gaps); fix any
-   real gaps (prompt edit → wt_/bugfix resync → re-screen); then
-   `mix run scripts/check_screen_freshness.exs` must print `stale=0`; then
-   wire the checker into CI (`.github/workflows/validate.yml`) + pre-push
-   (`.githooks/pre-push`); re-run `--self-test` (engages once sha-stamped rows
-   exist); commit ledgers + wiring.
-2. **Batch-commit** the sweep's ledger rows (tracked: `logs/screen_blind.jsonl`,
-   `logs/screen_triage.jsonl`).
+1. **F5-A/F5-B** — the `--- added:` banner sweep + the chatter-lint extension
+   (T1.8). NOTE: the banner rewording changes harness shas → re-screen those
+   families in the same batch (the freshness gate now enforces this).
+2. **F3-B / T1.7** — gate-sha keying for permanent reject ledgers.
+3. **T3.2 / T3.3** — weekly-CI wiring for spot_verify + reverify sample;
+   fuzz_survivors standing tool; (T3.3b landed with F7).
+4. Then the register order: T1.5 operators, T2.3 second-sourcing, T1.4 with
+   Phase 3 — and the Kamil-gated items (T1.1, T1.6, §4.2, timer) as unblocked.
 
 ## 📋 QUALITY TODO REGISTER (2026-07-13 — why / what / how / cost per item)
 
@@ -51,12 +48,6 @@ committed immediately (one solved item = one commit).
 - F1-B (gate generator): **T1.1 accept-time blind re-screen in the loop —
   PENDING KAMIL'S SIGN-OFF.**
 
-**F2 — blind-screen evidence silently staled by harness edits.**
-- F2-A (fix data): 54-root re-screen sweep **RUNNING** (see above) + RED
-  triage when it exits.
-- F2-B (gate generator): harness-sha stamping DONE; **CI + pre-push wiring
-  PENDING** (lands the moment the gate reads `stale=0`).
-
 **F3 — permanent reject rows survived their gate's repair (15 unsound found).**
 - F3-A (fix data): DONE → docs/15 (rows purged, 9 blocked units minted).
 - F3-B (gate generator): **T1.7 gate-sha-keyed reject rows — TODO** (+ T3.2
@@ -69,15 +60,9 @@ committed immediately (one solved item = one commit).
   it in one batch WITH F2-A's triage).
 - F5-B (gate generator): **T1.8 chatter-lint extension — TODO.**
 
-*(F4 — tools imitating grandfathered anti-patterns — and F6 — LLM-judge
-hallucinated verdict — closed 2026-07-13, both tiers done: docs/15.)*
-
-**Pre-triage notes for the F2-A RED queue (hand verdicts to cross-check the
-judge against, rule 10):** 005_003 = ENTAILED/keep (prompt says "older than"
-3×; the test pins exactly that inclusive-at-TTL boundary; solver dropped at
-`>=`). 001_004 (candidate badmatch crash), 002_001 (candidate typespec
-compile error), 015_003 (candidate calls its own never-started named
-supervisor) — solver-slip signatures, confirm at triage.
+*(Closed with both tiers done — see docs/15: F2 — blind evidence staled by
+harness edits; F4 — tools imitating grandfathered anti-patterns; F6 —
+LLM-judge hallucinated verdict; F7 — environmental failures as verdicts.)*
 
 ### Tier 1 — make every FUTURE generated unit better (loop + gates)
 
@@ -96,17 +81,6 @@ call per repaired accept]**
 - HOW: post-accept hook in the accept path reusing the `screen_blind_solve`
   mechanism + ledger; behind `GEN_BLIND_RESCREEN=1`; CI later refuses accepts
   lacking the evidence row. Design sketch: docs/12 §5.2.1.
-
-**T1.2 — S6 freshness gate: blind evidence must match the CURRENT harness.
-[IN PROGRESS — checker built + self-tested; screen rows now sha-stamped;
-backlog sweep RUNNING (see above); REMAINING: triage sweep REDs → `stale=0`
-→ wire into CI + pre-push]**
-- WHY: `logs/screen_blind.jsonl` was keyed by PROMPT sha only, but blind
-  solvability is a property of the (prompt, harness) PAIR — a harness edit
-  silently invalidated the evidence (hit live on 013_001).
-- WHAT/HOW: `scripts/check_screen_freshness.exs` (gate + `--self-test`);
-  fresh = sha-stamped row, or strengthen-success row for that exact harness,
-  or legacy row newer than the harness's last git commit.
 
 **T1.4 — Phase 3 template upgrades (docs/12 §5.3 — designed, never landed).
 [FREE, forward-only; land WITH Phase 3, not before]**

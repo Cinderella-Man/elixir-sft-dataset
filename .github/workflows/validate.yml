@@ -68,6 +68,12 @@ jobs:
       # BEAM, so two evals can open the same SQLite file (flaky 1-in-3 failures in
       # 102_002; 102_003 latent; 102_004 used a fixed filename). docs/14 §5.0b.
       - run: mix run scripts/lint_temp_paths.exs
+      # The S6 blind verdict belongs to the (prompt, harness) PAIR: a harness
+      # edit silently invalidates the screen-ledger row (found live 2026-07-13:
+      # 47 R10-tightened harnesses were never blind-re-proven). STALE = gate
+      # failure; a re-screen is ~1 solver call per family (STATUS F2).
+      - run: mix run scripts/check_screen_freshness.exs -- --self-test
+      - run: mix run scripts/check_screen_freshness.exs
       # wt_ dirs are byte-copies of their parent (module + harness) plus a prompt
       # that embeds the parent SPEC. check_embeds only sees the module fence, so
       # until 2026-07-13 a parent-prompt or harness edit rotted wt_ silently (it

@@ -47,6 +47,9 @@ if [ -n "$families" ]; then
   echo "[pre-push] temp-path lint (parallel-eval collisions)"
   mix run scripts/lint_temp_paths.exs
 
+  echo "[pre-push] S6 freshness (blind verdicts must match current harnesses)"
+  mix run scripts/check_screen_freshness.exs
+
   echo "[pre-push] wt_ spec/harness staleness check (all wt_ dirs)"
   wt_out=$(mix run scripts/resync_embeds.exs -- --wt-all)
   echo "$wt_out" | tail -1

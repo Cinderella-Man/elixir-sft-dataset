@@ -22,7 +22,7 @@ I need these functions in the public API:
 - `ConcurrentPriorityQueue.start_link(opts)` to start the process. It should accept:
   - `:name` — option for process registration
   - `:processor` — a single-arity function called to "process" each task. Default: `fn task -> task end`
-  - `:max_concurrency` — the maximum number of tasks that can be processed simultaneously (default `1`). Must be a positive integer.
+  - `:max_concurrency` — the maximum number of tasks that can be processed simultaneously (default `1`). Must be a positive integer, and `start_link/1` must validate it: a non-positive or non-integer value raises an `ArgumentError` (it must not return an error tuple or exit).
 
   When a task finishes and there are more tasks queued, the GenServer immediately picks the next highest-priority task if a concurrency slot is available.
 
