@@ -59,17 +59,34 @@ defmodule CheckScreenFreshness do
     Enum.each(stale, fn {name, why} -> IO.puts("  STALE      #{name} — #{why}") end)
     Enum.each(unscreened, &IO.puts("  unscreened #{&1}"))
 
-    if stale == [] do
-      IO.puts("screen freshness: OK ✓ (unscreened is S6 coverage, not staleness)")
-    else
-      IO.puts("""
+    cond do
+      stale == [] and unscreened == [] ->
+        IO.puts("screen freshness: OK ✓ (every root has fresh blind evidence)")
 
-      #{length(stale)} root(s) carry blind verdicts for an OLDER harness. Re-screen:
-        mix run scripts/screen_blind_solve.exs --only "<name>" --rescreen
-      Never delete the old rows — append-only; the latest row wins.
-      """)
+      true ->
+        # Both classes are HARD failures since 2026-07-14 (coverage reached
+        # zero holes, so it can be held): a harness edit makes a root STALE,
+        # and a prompt edit makes it UNSCREENED — either way the blind
+        # property is unproven for what is on disk.
+        if stale != [] do
+          IO.puts("""
 
-      System.halt(1)
+          #{length(stale)} root(s) carry blind verdicts for an OLDER harness. Re-screen:
+            mix run scripts/screen_blind_solve.exs --only "<name>" --rescreen
+          Never delete the old rows — append-only; the latest row wins.
+          """)
+        end
+
+        if unscreened != [] do
+          IO.puts("""
+
+          #{length(unscreened)} root(s) have NO verdict for their CURRENT prompt
+          (edited prompt → new sha). Screen them (no --rescreen needed):
+            mix run scripts/screen_blind_solve.exs --only "<name>"
+          """)
+        end
+
+        System.halt(1)
     end
   end
 

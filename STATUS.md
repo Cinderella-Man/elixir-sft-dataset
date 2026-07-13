@@ -13,7 +13,9 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**Nothing.** (Overnight chains + hand-strengthening finished 2026-07-14 ~02:0x; results in docs/15.)
+| what | pid | log | expected result |
+|---|---|---|---|
+| T2.5 randomized-ExUnit-seed full perfect sweep (`EVAL_SEED=20260714 validate.exs`) | 4113704 | `logs/randseed_sweep_20260714.log` | ALL PERFECT under a shuffled test order (order-dependence hunt, docs/12 §5.4); any failure = a real order-dependence bug → fix two-tier. Relaunch: same command. |
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order)
