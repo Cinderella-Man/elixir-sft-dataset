@@ -13,24 +13,25 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**Nothing.** (T3.1 export contract CLOSED 2026-07-14 — docs/16 +
-`scripts/export_dataset.exs`, CI-gated. Training runs are now unblocked.)
+**Nothing.** (Machine idle and healthy, re-verified 2026-07-14 evening:
+0 derivative work owed, 490 bases queued, exporter independently
+re-validated — docs/15. Training runs are unblocked.)
 ---
 
-## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-14 morning)
+## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-14 evening)
 
-1. **Kamil's four decisions** (section below) — they gate Phase 3, T1.1,
-   T1.6 (and TD.3 behind it), and the nightly timer. Nothing else blocks them.
-2. Ready now, no decision needed: paid review passes — **T2.2** scaled
-   semantic review (stratified 60-root batch, then decide on full),
-   **T2.4** rubric judge over passing tasks.
-3. **T1.4** template upgrades land WITH the Phase 3 restart, not before.
-4. Bigger builds: **TD.1** adapt pairs (deterministic, zero LLM, 249/249
-   measured mintable), **T3.1** export contract (MANDATORY before any
-   training run), then the TD.2–TD.4 decisions.
-
-*(T1.5 closed 07-13; T2.3 + T2.5 + all of T2.7 + T2.1 (24/24 reach-in
-purge) closed 07-14 — docs/15.)*
+1. **Kamil's five decisions** (section below) — they gate Phase 3, T1.1,
+   T1.6 (and TD.3 behind it), the nightly timer, and the T2.2 full-pass
+   question. Nothing else blocks them.
+2. **F10-A** — close 018_003's harness gap. The ONE confirmed T2.2 finding
+   the batch fleet did NOT cover (it was the pilot control, not a batch
+   member — verified 2026-07-14 evening). One `close_gaps.exs` run +
+   cascade; details in the finding below.
+3. Ready now, no decision needed, paid: **T2.4** rubric judge over passing
+   tasks.
+4. **T1.4** template upgrades land WITH the Phase 3 restart, not before.
+5. Bigger builds: **TD.1** adapt pairs (deterministic, zero LLM, 249/249
+   measured mintable), then the TD.2–TD.4 decisions.
 
 ## 📋 QUALITY TODO REGISTER (2026-07-13 — why / what / how / cost per item)
 
@@ -51,9 +52,14 @@ committed immediately (one solved item = one commit).
 truncated to the second"; the harness's 9 `archived_at` assertions pin
 neither truncation (`microsecond == {0, 0}`) nor `time_zone == "Etc/UTC"` —
 an untruncated `DateTime.utc_now()` solver passes the whole suite.**
-- F10-A (fix data): add-only strengthen-style tests on 018_003 (then blind
-  gate + wt_/tfim cascade). Fold into the T2.2 batch triage — more
-  harness_gap siblings are likely coming.
+- F10-A (fix data): **STILL OPEN — do not assume T2.2-T caught it.**
+  Verified 2026-07-14 evening: the T2.2-T fleet closed all 89 *batch*
+  findings, but 018_003 was the pilot CONTROL, not a batch member — no
+  `close_gaps.jsonl` row exists and the harness still greps clean for
+  `microsecond`/`Etc/UTC`/`truncate`. Action: seed `close_gaps.exs` with
+  this finding (add-only truncation + time-zone pins), then blind gate +
+  wt_/tfim cascade. (Its control-row gold_defect does NOT apply: the
+  dead-code `ignore/1` exists only in the pre-fix git reconstruction.)
 - F10-B (gate generator): the class belongs to T1.4's harness checklist
   (per-promise coverage); reference this finding there as evidence.
 
@@ -127,8 +133,8 @@ frozen-template overfitting is a documented SFT failure mode.
 
 ### Tier 3 — protect the TRAINING side
 
-
-
+*(empty — T3.1 was the only item; the next training-side item lands here
+when a training run is planned.)*
 
 ### Data extension (docs/13 §2 — build order after Tier 1)
 
@@ -139,7 +145,8 @@ Deterministic, zero LLM. Design: docs/13 §2.1.
 `logs/attempts/` before any big run; archive from 2026-07-12 exists). docs/13 §2.2.
 **TD.3 — dedoc** (blocked on T1.6 Dialyzer). docs/13 §2.3.
 **TD.4 — style-repair pairs (207) + cap lifts (~1,900 free tfim)** — decide
-together with T3.1's weighting. docs/13 §2.4–2.5.
+against docs/16 §4's advisory weights (test_fim already down-weighted to
+0.25; a cap lift adds volume in the most-discounted shape). docs/13 §2.4–2.5.
 
 ---
 
@@ -159,11 +166,12 @@ together with T3.1's weighting. docs/13 §2.4–2.5.
    `duplicate_ids` return violating its own @spec; 043_001's named-table
    atom vs declared `:ets.tid()` type.)
 5. **T2.2 full-pass decision** — the 60-root batch says 88% of roots carry
-   ≥1 confirmed finding (~1.5/root → ~490 corpus-wide). RECOMMENDATION:
-   do NOT pay the remaining ~272-root review (~16M tokens) — the classes
-   are now known and dominated by promise-coverage debt; spend instead on
-   the T2.2-T fixes + T1.4's checklist, and re-review a small sample AFTER
-   those land to verify the class is closed.
+   ≥1 confirmed finding (~1.5/root → ~490 corpus-wide). All 89 batch
+   findings are already FIXED (T2.2-T closed 07-14 — docs/15).
+   RECOMMENDATION: do NOT pay the remaining ~272-root review (~16M
+   tokens) — the classes are known and dominated by promise-coverage debt;
+   spend instead on T1.4's checklist, and re-review a small sample AFTER it
+   lands to verify the class is closed.
 
 ## Current mode: 🔧 CATCHING UP (improvement round #1, 2026-07)
 
