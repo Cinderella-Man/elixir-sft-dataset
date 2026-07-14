@@ -193,7 +193,10 @@ defmodule MultiSeriesResampler do
 
   defp empty_last(names), do: Map.new(names, &{&1, nil})
 
-  defp floor_bucket(ts, interval_ms), do: div(ts, interval_ms) * interval_ms
+  # Floored division, not truncation: a negative timestamp must land in the
+  # bucket at or below it (floor(t / interval) * interval), matching the grid
+  # rule for the earliest timestamp.
+  defp floor_bucket(ts, interval_ms), do: Integer.floor_div(ts, interval_ms) * interval_ms
 
   defp aggregate(points, :last), do: points |> List.last() |> elem(1)
   defp aggregate(points, :first), do: points |> hd() |> elem(1)
@@ -226,7 +229,7 @@ end
 ## Failing test report
 
 ```
-11 of 14 test(s) failed:
+12 of 15 test(s) failed:
 
   * test :sum aggregates each series independently per bucket
       no case clause matching:
@@ -252,5 +255,5 @@ end
           {:ok, [{0, 10}, {1500, 20}]}
       
 
-  (…7 more)
+  (…8 more)
 ```
