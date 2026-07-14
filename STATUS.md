@@ -13,9 +13,20 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**Nothing.** (Machine idle and healthy, re-verified 2026-07-14 evening:
-0 derivative work owed, 490 bases queued, exporter independently
-re-validated — docs/15. Training runs are unblocked.)
+**F10-A: close_gaps run on 018_003** (launched 2026-07-14 evening).
+- pid: `logs/close_gaps_f10.pid` · log: `logs/close_gaps_f10.log` · row →
+  `logs/close_gaps.jsonl` (seed row appended to `logs/semantic_review.jsonl`,
+  era `hand_seed`, keyed to live shas)
+- expected: one `applied` row for
+  `018_003_cascading_archive_tree_with_origin_aware_restore_01` — add-only
+  truncation (`microsecond == {0, 0}`) + `Etc/UTC` tests, kill rate not
+  dropped, blind gate GREEN, wt_ twin updated, 10 tfim children resynced.
+  A `rejected` row = read the detail, likely solver-weak blind → retry once.
+- idempotent relaunch (ledger keyed by harness sha):
+  `scripts/run_detached.sh logs/close_gaps_f10.log mix run scripts/close_gaps.exs -- --go --only "018_003*"`
+- ⚠️ NEVER run close_gaps `--go` UNSCOPED: its dry list shows 6 phantom
+  todos (110_004, 100_004, 110_001, 020_004, 104_002, 032_001) — closed BY
+  HAND 07-14 (docs/15), so no tool-ledger row matches their current sha.
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-14 evening)
