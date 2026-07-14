@@ -13,7 +13,15 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**Nothing.** (T2.7 residue 100_004 closed 2026-07-14 morning — docs/15.) Plan: add-only harness tests — (1) independent RFC 6238
+**DETACHED (launched 2026-07-14): T2.1 PILOT — rewrite_reachins on 004_001**
+(rule 9: one family, helper-only barrier class, zero affected tfim golds;
+~2 LLM calls + local gates). Log: `logs/rewrite_reachins_pilot.log`; ledger:
+`logs/rewrite_reachins.jsonl` (git-track it with `-f` once rows exist).
+On exit: rule-9 DETAIL REVIEW — diff the harness, read the rewritten helper
+line by line, check the ledger row + freshness + family perfect — BEFORE any
+fleet run. Idempotent relaunch:
+`scripts/run_detached.sh logs/rewrite_reachins_pilot.log mix run
+scripts/rewrite_reachins.exs -- --go --only "004_001*"`. PID: see session. Plan: add-only harness tests — (1) independent RFC 6238
 reference computation (base32 decode + HMAC-SHA1 + dynamic truncation are all
 verbatim in the prompt) swept over 300 steps, (2) secret-shape test (160 bits
 = 32 unpadded base32 chars, documented), (3) window-default=1 probe (base±2
