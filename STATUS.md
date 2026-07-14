@@ -29,6 +29,12 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 - after exit: `-- --report`; hand-check every TRIAGE root against the
   artifacts (docs/14 rule 10) before ANY edit; findings become two-tier
   STATUS items (rule 7).
+
+**ALSO RUNNING: full-corpus perfect sweep** (all 6,147 dirs — the
+weekly-CI-equivalent assurance after tonight's +249 adapt and 018_003
+strengthening). pid `logs/full_sweep.pid` · log `logs/full_sweep.log`.
+Relaunch: `scripts/run_detached.sh logs/full_sweep.log elixir scripts/validate.exs`.
+CPU-only; expected well under an hour at concurrency 16.
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-14 evening)
