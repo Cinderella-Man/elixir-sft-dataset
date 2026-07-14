@@ -149,8 +149,9 @@ defmodule Generators do
   A combinator that accepts a list of `{weight, generator}` tuples and produces
   values from the generators with probability proportional to each weight.
 
-  Weights must be positive integers. The likelihood of a value being drawn from
-  a particular generator equals `weight / sum(all_weights)`.
+  Weights must be non-negative integers; a weight of `0` disables its generator
+  entirely. The likelihood of a value being drawn from a particular generator
+  equals `weight / sum(all_weights)`.
 
   ## Example
 
@@ -180,10 +181,6 @@ defmodule Generators do
   # Private helpers
   # ---------------------------------------------------------------------------
 
-  # Produces a non-empty, letters-only string of at most 50 characters.
-  # Draws a length first, then fills exactly that many codepoints from the
-  # union of a–z and A–Z, so empty strings and digits are structurally
-  # impossible — no filter step required.
   defp user_name do
     # TODO
   end

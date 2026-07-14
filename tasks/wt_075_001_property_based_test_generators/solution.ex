@@ -132,8 +132,9 @@ defmodule Generators do
   A combinator that accepts a list of `{weight, generator}` tuples and produces
   values from the generators with probability proportional to each weight.
 
-  Weights must be positive integers. The likelihood of a value being drawn from
-  a particular generator equals `weight / sum(all_weights)`.
+  Weights must be non-negative integers; a weight of `0` disables its generator
+  entirely. The likelihood of a value being drawn from a particular generator
+  equals `weight / sum(all_weights)`.
 
   ## Example
 

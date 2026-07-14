@@ -65,7 +65,9 @@ defmodule Leaderboard do
   # Types
   # ---------------------------------------------------------------------------
 
-  @type board :: :ets.tid()
+  # With :named_table, :ets.new/2 returns the table's name atom, and every
+  # operation below addresses the table by that name.
+  @type board :: atom()
   @type player_id :: term()
   @type score :: number()
 
@@ -81,8 +83,8 @@ defmodule Leaderboard do
   """
   @spec new(atom()) :: {:ok, board()}
   def new(board_name) when is_atom(board_name) do
-    tid = :ets.new(board_name, [:set, :public, :named_table, read_concurrency: true])
-    {:ok, tid}
+    board = :ets.new(board_name, [:set, :public, :named_table, read_concurrency: true])
+    {:ok, board}
   end
 
   @doc """
