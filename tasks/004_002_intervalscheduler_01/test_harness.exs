@@ -41,9 +41,11 @@ defmodule IntervalSchedulerTest do
   end
 
   # Manually drive a tick and block until the GenServer has processed it.
+  # The synchronous `jobs/1` call cannot be answered until the scheduler has
+  # finished handling the `:tick` message queued ahead of it.
   defp tick(pid) do
     send(pid, :tick)
-    _ = :sys.get_state(pid)
+    _ = IntervalScheduler.jobs(pid)
     :ok
   end
 

@@ -396,10 +396,14 @@ defmodule CoalescingPaymentsTest do
 
     Clock.advance(10_001)
     send(pid, :cleanup)
-    :sys.get_state(pid)
+
+    # A synchronous call cannot be answered until the cleanup message ahead of it
+    # has been handled, and it shows that no work is left in flight.
+    assert CoalescingPayments.in_flight_count(pid) == 0
 
     assert length(CoalescingPayments.get_payments(pid)) == 20
 
+    # The expired key no longer short-circuits: the payment is processed again.
     {:ok, _} = CoalescingPayments.process_payment(pid, @valid, "batch-1")
     assert length(CoalescingPayments.get_payments(pid)) == 21
   end

@@ -388,12 +388,12 @@ defmodule EventBusTest do
     ref = Process.monitor(child)
     assert_receive {:DOWN, ^ref, :process, ^child, _}, 500
 
-    # Give the EventBus time to process the :DOWN message
-    # We do a synchronous call to ensure the :DOWN has been handled
-    :sys.get_state(bus)
+    # A publish to a topic nobody subscribed to is a synchronous no-op; once it
+    # returns, the bus has already handled the subscriber's :DOWN message.
+    assert :ok = EventBus.publish(bus, "barrier", :sync)
 
     # Now publish — nobody should receive it, and it shouldn't crash
-    EventBus.publish(bus, "t", :ghost)
+    assert :ok = EventBus.publish(bus, "t", :ghost)
 
     refute_receive {:event, "t", :ghost}, 200
   end
@@ -413,7 +413,10 @@ defmodule EventBusTest do
     send(child, :stop)
     ref = Process.monitor(child)
     assert_receive {:DOWN, ^ref, :process, ^child, _}, 500
-    :sys.get_state(bus)
+
+    # A publish to a topic matching no subscription is a synchronous no-op; once
+    # it returns, the bus has already handled the subscriber's :DOWN message.
+    assert :ok = EventBus.publish(bus, "barrier", :sync)
 
     # Subscribe ourselves to verify we're the only ones getting messages
     {:ok, _} = EventBus.subscribe(bus, "topic.a", self())

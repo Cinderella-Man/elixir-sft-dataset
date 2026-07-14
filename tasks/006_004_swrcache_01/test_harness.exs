@@ -275,7 +275,9 @@ defmodule SwrCacheTest do
 
     Clock.advance(500)
     send(c, :sweep)
-    :sys.get_state(c)
+
+    # Only the past-stale entry :a is dropped; the stale-but-live :b survives.
+    assert %{entries: 1} = SwrCache.stats(c)
 
     assert :miss = SwrCache.get(c, :a)
     # :b is stale now (t=500, fresh_until=200) but NOT past hard expiry (3000)

@@ -494,11 +494,15 @@ defmodule PriorityEventBusTest do
     GenServer.stop(sub, :shutdown)
     assert_receive {:DOWN, ^ref, _, _, _}
 
-    # Give bus a moment to handle its own :DOWN
-    :sys.get_state(bus)
-
+    # The bus's own :DOWN is already queued ahead of this call, so by the time
+    # it answers, the dead subscriber has been cleaned out of every topic.
     assert [] = PriorityEventBus.subscribers(bus, "a")
     assert [] = PriorityEventBus.subscribers(bus, "b")
+
+    # A publish to either topic now reaches nobody.
+    assert {:ok, 0} = PriorityEventBus.publish(bus, "a", :evt)
+    assert {:ok, 0} = PriorityEventBus.publish(bus, "b", :evt)
+    refute_received {:got, :d, _, _}
   end
 end
 ```
