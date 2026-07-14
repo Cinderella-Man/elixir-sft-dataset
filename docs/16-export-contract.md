@@ -54,6 +54,7 @@ One JSONL row per task directory, chat-shaped:
     "family": "016",
     "split": "train",
     "sample_weight": 1.0,
+    "family_size": 61,
     "prompt_sha": "…", "completion_sha": "…"
   }
 }
@@ -164,11 +165,16 @@ family instead.
 5. **Empty content** — an empty prompt or gold.
 6. **Coverage** — every gradable dir on disk is either exported or explicitly
    excluded; nothing is silently dropped.
+7. **Duplicates** — the same task exported more than once (a duplicate
+   round-trips cleanly, so without this check it would pass silently).
+8. **Metadata drift** — a `sample_weight` that does not match the §4 shape
+   mapping, or a `family_size` that does not match the on-disk family count.
 
 `--selfcheck` proves the gate is not vacuous: it plants each violation class
 in a copy of the export (a straddling family, a `write_test` row whose
-completion is its input module, a `repair_` row) and asserts `--check`
-catches each one, then asserts the clean export passes.
+completion is its input module, a `repair_` row, a duplicated row, drifted
+weight/family_size metadata) and asserts `--check` catches each one, then
+asserts the clean export passes.
 
 CI runs `--selfcheck` then `--check` on every push (cheap: no LLM, no eval).
 

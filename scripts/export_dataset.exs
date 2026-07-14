@@ -66,17 +66,26 @@ defmodule ExportDataset do
 
   @doc false
   def examples do
-    EvalTask.Discovery.all()
-    |> Enum.filter(& &1.found)
-    |> Enum.reject(&excluded?/1)
-    |> Enum.map(&example/1)
+    tasks =
+      EvalTask.Discovery.all()
+      |> Enum.filter(& &1.found)
+      |> Enum.reject(&excluded?/1)
+
+    fam_sizes = family_sizes(tasks)
+
+    tasks
+    |> Enum.map(&example(&1, fam_sizes))
     |> Enum.sort_by(& &1["metadata"]["task"])
   end
 
   # repair_ dirs are frozen evidence, never training data (docs/16 §2.3).
   defp excluded?(task), do: String.starts_with?(task.name, "repair_")
 
-  defp example(task) do
+  # Exported examples per family — emitted so a training run can re-weight by
+  # family instead of by shape (docs/16 §4).
+  defp family_sizes(tasks), do: Enum.frequencies_by(tasks, &family_of(&1.name))
+
+  defp example(task, fam_sizes) do
     prompt = File.read!(Path.join(task.dir, "prompt.md"))
     gold = File.read!(Path.join(task.dir, gold_file!(task.shape)))
     family = family_of(task.name)
@@ -92,6 +101,7 @@ defmodule ExportDataset do
         "family" => family,
         "split" => split_of(family),
         "sample_weight" => Map.fetch!(@weights, task.shape),
+        "family_size" => Map.fetch!(fam_sizes, family),
         "prompt_sha" => CycleLog.content_sha(prompt),
         "completion_sha" => CycleLog.content_sha(gold)
       }
@@ -196,13 +206,25 @@ defmodule ExportDataset do
 
     exported = MapSet.new(rows, & &1["metadata"]["task"])
 
+    fam_sizes =
+      on_disk
+      |> Map.values()
+      |> Enum.reject(&excluded?/1)
+      |> family_sizes()
+
     split_leaks =
       rows
       |> Enum.group_by(& &1["metadata"]["family"], & &1["metadata"]["split"])
       |> Enum.filter(fn {_f, splits} -> length(Enum.uniq(splits)) > 1 end)
       |> Enum.map(fn {f, _} -> "SPLIT LEAK: family #{f} appears in BOTH train and val" end)
 
-    row_violations = Enum.flat_map(rows, &row_violations(&1, on_disk))
+    duplicates =
+      rows
+      |> Enum.frequencies_by(& &1["metadata"]["task"])
+      |> Enum.filter(fn {_n, c} -> c > 1 end)
+      |> Enum.map(fn {n, c} -> "DUPLICATE: #{n} appears #{c} times in the export" end)
+
+    row_violations = Enum.flat_map(rows, &row_violations(&1, on_disk, fam_sizes))
 
     missing =
       on_disk
@@ -210,10 +232,10 @@ defmodule ExportDataset do
       |> Enum.reject(&(excluded?(&1) or MapSet.member?(exported, &1.name)))
       |> Enum.map(&"COVERAGE: #{&1.name} exists on disk but was not exported")
 
-    split_leaks ++ row_violations ++ missing
+    split_leaks ++ duplicates ++ row_violations ++ missing
   end
 
-  defp row_violations(row, on_disk) do
+  defp row_violations(row, on_disk, fam_sizes) do
     meta = row["metadata"]
     name = meta["task"]
     [user, assistant] = row["messages"]
@@ -254,6 +276,16 @@ defmodule ExportDataset do
           meta["split"] != split_of(family_of(name)),
           "SPLIT: #{name} exported to #{meta["split"]}, contract says " <>
             "#{split_of(family_of(name))}"
+        )
+        |> add_if(
+          meta["sample_weight"] != Map.fetch!(@weights, task.shape),
+          "WEIGHT: #{name} carries sample_weight #{inspect(meta["sample_weight"])}, " <>
+            "the #{shape} mapping (docs/16 §4) says #{Map.fetch!(@weights, task.shape)}"
+        )
+        |> add_if(
+          meta["family_size"] != Map.fetch!(fam_sizes, family_of(name)),
+          "FAMILY_SIZE: #{name} carries #{inspect(meta["family_size"])}, " <>
+            "disk says #{Map.fetch!(fam_sizes, family_of(name))}"
         )
         |> add_if(
           String.trim(user["content"]) == "" or String.trim(assistant["content"]) == "",
@@ -301,7 +333,10 @@ defmodule ExportDataset do
       {"frozen repair_ evidence exported as training data", plant_repair(clean),
        ~r/^EXCLUDED DATA/},
       {"a dropped example (silent coverage hole)", Enum.drop(clean, 1), ~r/^COVERAGE/},
-      {"an emptied gold", empty_gold(clean), ~r/^ROUND-TRIP|^EMPTY/}
+      {"an emptied gold", empty_gold(clean), ~r/^ROUND-TRIP|^EMPTY/},
+      {"a duplicated row", [hd(clean) | clean], ~r/^DUPLICATE/},
+      {"a drifted sample_weight", drift_weight(clean), ~r/^WEIGHT/},
+      {"a drifted family_size", drift_family_size(clean), ~r/^FAMILY_SIZE/}
     ]
 
     results =
@@ -367,6 +402,14 @@ defmodule ExportDataset do
     }
 
     [row | rows]
+  end
+
+  defp drift_weight(rows) do
+    [put_in(hd(rows), ["metadata", "sample_weight"], 9.9) | tl(rows)]
+  end
+
+  defp drift_family_size(rows) do
+    [put_in(hd(rows), ["metadata", "family_size"], 0) | tl(rows)]
   end
 
   defp empty_gold(rows) do

@@ -9,6 +9,29 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-14 (late) — T3.1 post-close validation: the exporter
+  round-trips clean under independent re-verification; one contract breach
+  found & fixed (`family_size`), and the gate hardened.** Everything was
+  re-checked OUTSIDE the exporter's own gate (independent Python recompute):
+  5,881 rows parse; the split recomputed from scratch (`sha256("split-v1:" <>
+  family) mod 20`) matches every row and is family-atomic; per-shape weights
+  match the §4 mapping; `prompt_sha`/`completion_sha` verified against
+  content; every assistant message is a single well-formed ```` ```elixir ````
+  fence and NO gold contains a nested fence; coverage exact (5,881 exported +
+  17 excluded `repair_` = 5,898 dirs on disk); two consecutive export runs
+  are byte-identical; CI wires selfcheck → export → check. The breach:
+  docs/16 §4 promised `metadata.family_size` and the exporter emitted it on
+  ZERO rows — now emitted everywhere (Task A). The rule-7 gate side (Task B):
+  `--check` verified neither metadata nor duplicates — a duplicated row
+  round-trips cleanly, so it would have passed silently; the gate now has
+  DUPLICATE / WEIGHT / FAMILY_SIZE violation classes and `--selfcheck` plants
+  all three (8/8 planted violations caught). En route, F10 (018_003) was
+  re-verified as STILL OPEN: the T2.2-T fleet closed the 89 *batch* findings,
+  but 018_003 was the pilot CONTROL, not a batch member — no `close_gaps`
+  row exists and its harness still pins neither truncation nor time zone
+  (its dead-code gold defect, by contrast, exists only in the pre-fix
+  reconstruction, not the live gold). STATUS updated accordingly.
+
 - **2026-07-14 (night) — T3.1 CLOSED: the export contract is live and
   CI-gated. Training runs are unblocked.** `docs/16-export-contract.md` +
   `scripts/export_dataset.exs`. Decisions made and written down: (1) the
