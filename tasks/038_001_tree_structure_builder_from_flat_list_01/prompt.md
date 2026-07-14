@@ -14,6 +14,8 @@ I need these functions in the public API:
   empty, return `{:ok, []}`.
   Returns `{:error, {:cycle_detected, ids}}` if a cycle is found, where `ids` is
   the list of node ids involved in the cycle.
+  Returns `{:error, {:duplicate_ids, ids}}` if any id appears more than once in
+  the input, where `ids` is the list of duplicated ids.
 
 The function must support these options:
 - `:orphan_strategy` — what to do when a node's `parent_id` points to an id that

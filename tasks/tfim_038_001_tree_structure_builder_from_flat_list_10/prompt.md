@@ -48,7 +48,10 @@ defmodule TreeBuilder do
   @type forest :: [tree_node()]
   @type orphan_strategy :: :discard | :raise_to_root
   @type build_opt :: {:orphan_strategy, orphan_strategy()}
-  @type build_result :: {:ok, forest()} | {:error, {:cycle_detected, [id()]}}
+  @type build_result ::
+          {:ok, forest()}
+          | {:error, {:cycle_detected, [id()]}}
+          | {:error, {:duplicate_ids, [id()]}}
 
   @doc """
   Builds a forest (list of root trees) from a flat list of node maps.
@@ -65,6 +68,8 @@ defmodule TreeBuilder do
     - `{:ok, forest}` on success (empty list when `items` is empty).
     - `{:error, {:cycle_detected, ids}}` when a cycle is detected; `ids` is the
       list of node ids that form the cycle.
+    - `{:error, {:duplicate_ids, ids}}` when any id appears more than once in
+      `items`; `ids` lists the duplicated ids.
   """
   @spec build([node_map()], [build_opt()]) :: build_result()
   def build(items, opts \\ [])
@@ -571,6 +576,16 @@ defmodule TreeBuilderTest do
     assert {:ok, [root]} = TreeBuilder.build(items)
     assert root.id == "root"
     assert [%{id: "child"}] = root.children
+  end
+
+  test "a duplicated id is rejected with the duplicate list" do
+    items = [
+      %{id: 1, parent_id: nil},
+      %{id: 2, parent_id: 1},
+      %{id: 1, parent_id: nil}
+    ]
+
+    assert {:error, {:duplicate_ids, [1]}} = TreeBuilder.build(items)
   end
 end
 ```

@@ -31,6 +31,8 @@ I need these functions in the public API:
   empty, return `{:ok, []}`.
   Returns `{:error, {:cycle_detected, ids}}` if a cycle is found, where `ids` is
   the list of node ids involved in the cycle.
+  Returns `{:error, {:duplicate_ids, ids}}` if any id appears more than once in
+  the input, where `ids` is the list of duplicated ids.
 
 The function must support these options:
 - `:orphan_strategy` — what to do when a node's `parent_id` points to an id that
@@ -94,7 +96,10 @@ defmodule TreeBuilder do
   @type forest :: [tree_node()]
   @type orphan_strategy :: :discard | :raise_to_root
   @type build_opt :: {:orphan_strategy, orphan_strategy()}
-  @type build_result :: {:ok, forest()} | {:error, {:cycle_detected, [id()]}}
+  @type build_result ::
+          {:ok, forest()}
+          | {:error, {:cycle_detected, [id()]}}
+          | {:error, {:duplicate_ids, [id()]}}
 
   @doc """
   Builds a forest (list of root trees) from a flat list of node maps.
@@ -111,6 +116,8 @@ defmodule TreeBuilder do
     - `{:ok, forest}` on success (empty list when `items` is empty).
     - `{:error, {:cycle_detected, ids}}` when a cycle is detected; `ids` is the
       list of node ids that form the cycle.
+    - `{:error, {:duplicate_ids, ids}}` when any id appears more than once in
+      `items`; `ids` lists the duplicated ids.
   """
   @spec build([node_map()], [build_opt()]) :: build_result()
   def build(items, opts \\ [])

@@ -1,33 +1,50 @@
-# Task: Implement `build_subtree/3`
+# Fix the bug
 
-You are working on `TreeBuilder`, a module that converts a flat list of maps into
-a nested forest. Most of the module is already written for you. Your job is to
-implement the single private function `build_subtree/3`, one function at a time.
+The module below was written for the task that follows, but ONE behavior bug
+slipped in. The test suite (not shown) fails with the report at the bottom.
+Find the bug and fix it — change as little as possible; do not restructure
+working code. Reply with the complete corrected module.
 
-## What `build_subtree/3` must do
+## The task the module implements
 
-Implement the private `build_subtree/3` function. It takes three arguments:
+Write me an Elixir module called `TreeBuilder` that converts a flat list of maps into a
+nested tree structure.
 
-1. `id` — the id of the node to build,
-2. `id_to_node` — a map from id to the original node map (`%{id() => node_map()}`),
-3. `children_map` — a map from parent id to a list of child ids in their original
-   input order (`%{id() => [id()]}`).
+Each input item is a map with at least these two fields:
+- `:id` — a unique identifier (any term: integer, string, atom)
+- `:parent_id` — the id of the parent node, or `nil` if this node is a root
 
-It must recursively build and return a single tree node:
+I need these functions in the public API:
 
-- Look up the original node map for `id` in `id_to_node` (the id is guaranteed to
-  be present, so a strict fetch is appropriate).
-- Look up this node's child ids in `children_map`, defaulting to `[]` when the id
-  has no entry (leaf node).
-- For each child id, recursively build its subtree with `build_subtree/3`,
-  preserving the order given by `children_map`.
-- Return the original node map with a `:children` key added, whose value is the
-  list of recursively-built child nodes. Leaf nodes therefore get `children: []`.
+- `TreeBuilder.build(items, opts \\ [])` — takes the flat list and returns
+  `{:ok, forest}` where `forest` is a list of root-level nodes, each being the
+  original map with a `:children` key added (a list of child nodes, recursively
+  structured the same way). Leaf nodes have `children: []`. If the input is
+  empty, return `{:ok, []}`.
+  Returns `{:error, {:cycle_detected, ids}}` if a cycle is found, where `ids` is
+  the list of node ids involved in the cycle.
+  Returns `{:error, {:duplicate_ids, ids}}` if any id appears more than once in
+  the input, where `ids` is the list of duplicated ids.
 
-All original fields of the node map must be preserved; the function only adds the
-`:children` key.
+The function must support these options:
+- `:orphan_strategy` — what to do when a node's `parent_id` points to an id that
+  doesn't exist in the list. Accepted values:
+  - `:discard` (default) — silently drop orphan nodes from the output
+  - `:raise_to_root` — treat orphans as root nodes
 
-## Module (implement the body of `build_subtree/3` where marked `# TODO`)
+Nodes in the output should preserve all original fields from the input map and
+simply gain the extra `:children` key. The order of children under each parent
+should follow the original order those items appeared in the input list. Root
+nodes should also appear in their original input order.
+
+Cycle detection must work for direct cycles (A → B → A) as well as indirect
+ones (A → B → C → A). It must not false-positive on valid deep trees or on
+diamond shapes that aren't true cycles.
+
+Do not use any external dependencies — only the Elixir / Erlang standard library.
+Give me the complete module in a single file.
+
+## The buggy module
 
 ```elixir
 defmodule TreeBuilder do
@@ -178,7 +195,7 @@ defmodule TreeBuilder do
       dupes =
         ids
         |> Enum.frequencies()
-        |> Enum.filter(fn {_id, count} -> count > 1 end)
+        |> Enum.filter(fn {_id, count} -> count >= 1 end)
         |> Enum.map(fn {id, _} -> id end)
 
       {:error, {:duplicate_ids, dupes}}
@@ -202,8 +219,18 @@ defmodule TreeBuilder do
     end)
   end
 
+  # Recursively build a tree node, attaching children.
+  @spec build_subtree(id(), %{id() => node_map()}, %{id() => [id()]}) :: tree_node()
   defp build_subtree(id, id_to_node, children_map) do
-    # TODO
+    node = Map.fetch!(id_to_node, id)
+    child_ids = Map.get(children_map, id, [])
+
+    children =
+      Enum.map(child_ids, fn child_id ->
+        build_subtree(child_id, id_to_node, children_map)
+      end)
+
+    Map.put(node, :children, children)
   end
 
   # ---------------------------------------------------------------------------
@@ -295,4 +322,18 @@ defmodule TreeBuilder do
     end)
   end
 end
+```
+
+## Failing test report
+
+```
+1 of 22 test(s) failed:
+
+  * test a duplicated id is rejected with the duplicate list
+      
+      
+      match (=) failed
+      code:  assert {:error, {:duplicate_ids, [1]}} = TreeBuilder.build(items)
+      left:  {:error, {:duplicate_ids, [1]}}
+      right: {:error, {:duplicate_ids, [1, 2]}}
 ```
