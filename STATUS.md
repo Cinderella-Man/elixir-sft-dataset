@@ -13,8 +13,16 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**T2.1 fleet pass 1 DONE (15/24 applied + committed; all diffs reviewed,
-all gates green). 9 families remain in three classes:**
+**DETACHED (2026-07-14): T2.1 fleet PASS 2 over the 9 remaining families,
+pid 667251**, log `logs/rewrite_reachins_fleet.log`. The count-lint
+contradiction is fixed (exempted + ledgered as count_shortfall) and both
+blind-fails-rewritten families are hand-triaged KEEP-and-retry (solver slips
+on verbatim-documented behavior — prompt L46 "never-seen topic" / L25
+"largest period ever requested"). Idempotent relaunch: same command as
+below. On exit: review new diffs + re-carves, gates, commit.
+
+**Fleet pass 1 DONE (15/24 applied + committed; all diffs reviewed, all
+gates green). The 9 in pass 2, by class:**
 1. **Tool contradiction (4, deterministic — fix the tool first):** 005_002,
    006_003, 006_004, 023_002 rejected by the min-test-count lint (harness
    has fewer tests than today's ≥#public-functions floor — pre-existing
