@@ -279,13 +279,30 @@ defmodule RewriteReachins do
     case Cycle.opus(cfg, id, "rewrite_reachins", system, user) do
       {:ok, text, _meta} ->
         case Reply.parse(text) do
-          %{"test_harness.exs" => h} when is_binary(h) and h != "" -> {:ok, canonicalize(h)}
-          _ -> {:error, "reply carried no test_harness.exs block"}
+          %{"test_harness.exs" => h} when is_binary(h) and h != "" ->
+            candidate = canonicalize(h)
+            save_candidate(id, harness, candidate)
+            {:ok, candidate}
+
+          _ ->
+            {:error, "reply carried no test_harness.exs block"}
         end
 
       {:error, reason} ->
         {:error, "rewrite call failed: #{inspect(reason)}"}
     end
+  end
+
+  # Keep every rewrite candidate for review: a rejection's ledger row holds only
+  # the failing gate's message, and judging WHAT the model produced (rule-9
+  # pilot review, blind-gate triage) needs the full source. Keyed by the
+  # harness-before sha so retries against the same harness overwrite, while a
+  # later harness gets its own file.
+  defp save_candidate(id, harness_before, candidate) do
+    dir = "logs/rewrite_candidates"
+    File.mkdir_p!(dir)
+    sha8 = String.slice(CycleLog.content_sha(harness_before), 0, 8)
+    File.write!(Path.join(dir, "#{id}__#{sha8}.exs"), candidate)
   end
 
   defp canonicalize(src) do

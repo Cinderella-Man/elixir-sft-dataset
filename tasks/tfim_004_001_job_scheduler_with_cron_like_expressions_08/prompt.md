@@ -480,10 +480,12 @@ defmodule SchedulerTest do
     %{s: pid}
   end
 
-  # Helper: send a :tick and wait for the GenServer to process it
+  # Helper: send a :tick, then issue a synchronous public-API call so the tick
+  # is guaranteed to have been processed before the helper returns.
   defp tick(pid) do
     send(pid, :tick)
-    :sys.get_state(pid)
+    Scheduler.jobs(pid)
+    :ok
   end
 
   # -------------------------------------------------------
