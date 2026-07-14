@@ -9,6 +9,43 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-14 — T2.1 CLOSED 24/24: the S9 reach-in debt is purged from the
+  corpus.** Zero `:sys.get_state`/`:sys.replace_state` remains in any
+  harness, gold, or embed outside frozen `repair_` evidence (24 root
+  harnesses / 11 base ideas / 24 wt_ copies / 7 tfim golds that had been
+  TRAINING TARGETS for the cheat). Every family's semantic kill rate held
+  EXACTLY — not one dropped across the whole purge — because the rewrites
+  replace each reach-in with the observable consequence it was standing in
+  for: refill starvation distinguishing swept-vs-retained (003_001), fresh
+  burst budgets (003_002), re-query under a different capacity (003_004),
+  clock REWIND to a live moment (006_001 — a retained entry would read as a
+  hit again), a window wider than the retention horizon (101_001),
+  monitor + refute DOWN liveness (107_003), stats/1 counts that TIGHTEN the
+  old check (006_003/006_004), and sync-barrier reads ordered behind
+  :cleanup/:tick everywhere. Mechanics: `scripts/rewrite_reachins.exs`
+  (design docs/13 §1.7) — pilot 004_001 (rule 9, line-by-line) → fleet pass
+  1 (14 applied, 5 golds re-carved in place) → pass 2 (6 applied) → 3
+  chronically solver-hard stragglers hand-applied per the T2.7 recipe after
+  each failed the blind gate twice on hand-verified verbatim-documented
+  behavior. Tool lessons landed en route: candidates archived for triage
+  (rule-9 pilot finding); the min-test-count lint EXEMPTED for this tool
+  (grandfathered count debt vs the name-set-unchanged rule made 4 families
+  structurally unpassable — debt ledgered as `count_shortfall`, strengthen/
+  T1.4 scope); `check_screen_freshness` accepts rewrite-ledger success rows
+  as S6 evidence (same blind gate as strengthen). Blind evidence: 21
+  applied via the tool's own blind gate, 005_003 re-screened GREEN
+  (3rd-solver success), 007_001 + 007_002 REDs hand-triaged entailed with
+  multi-source histories (007_001: FOURTH failure on the same documented
+  cold-start mean, incl. the 07-08 judge row; 007_002: third failure on the
+  documented max_period retention bound — the candidate returned the
+  untrimmed 55/15). One hand improvement: 005_003's survives-cleanup test
+  sets its size override BEFORE the sweep, pinning override survival
+  (isolation :killed). Latent Phase-3 note: catalog idea `tasks.md:3511` is
+  a `:sys`-API task that today's S9 hard accept lint would reject — needs
+  an exemption or a skip when Phase 3 reaches it. Also recorded: 007_001's
+  prompt pins the internal state layout verbatim (`state.streams["name"]
+  .values`) — prompt-design debt for the Phase-3 template review.
+
 - **2026-07-14 — T2.7 fully closed: the 100_004 residue hand-strengthened
   0.42 → 0.90 (36/40), at its honest internals ceiling.** The existing
   harness used `current_code` as its own oracle, which NO code-generation

@@ -13,50 +13,23 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**DETACHED (2026-07-14): blind re-screen of the 3 hand-applied T2.1
-stragglers** (005_003, 007_001, 007_002 — chronically solver-hard; each
-failed the tool's blind gate twice ON HAND-VERIFIED-DOCUMENTED behavior, so
-their gate-passing candidates were hand-applied per the T2.7 recipe: all
-local gates green — perfect, whole-mutants, semantic rates held EXACTLY at
-0.6875/0.7917/0.6316, isolation :killed on the one hand-modified block,
-corpus reach-in scan PURGED, 007_002's 2 golds re-carved ≤98). The
-re-screen provides the S6 evidence row per family; REDs get rule-10 hand
-triage rows (the prompt lines are already identified: 005_003 L46, 007_001
-L11 + the 07-08 judge row as second source, 007_002 L25). Log:
-`logs/rescreen_t21_stragglers.log`. Idempotent relaunch:
-`scripts/run_detached.sh logs/rescreen_t21_stragglers.log mix run
-scripts/screen_blind_solve.exs --only "005_003*,007_001*,007_002*"
---rescreen` (drop --rescreen on relaunch). After triage + freshness green:
-commit = T2.1 CLOSED (24/24). Plan: add-only harness tests — (1) independent RFC 6238
-reference computation (base32 decode + HMAC-SHA1 + dynamic truncation are all
-verbatim in the prompt) swept over 300 steps, (2) secret-shape test (160 bits
-= 32 unpadded base32 chars, documented), (3) window-default=1 probe (base±2
-codes rejected without a :window option). Expected: kills all 19 arithmetic
-survivors; the 4 guard-widening mutants in decode_char (65→64, 90→91, 50→49,
-55→56 on the `char in ?A..?Z` / `?2..?7` guards) are unreachable through the
-documented API (the vault only ever decodes its own valid secrets) → honest
-internals ceiling 36/40 = 0.90. Then: perfect gate, format, mutants, semantic
-re-measure + survivor classification, wt_/tfim cascade, blind re-screen
-(detached), mint any new carves.
+**Nothing.** (T2.1 closed 24/24 on 2026-07-14 — docs/15.)
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-14 morning)
 
 1. **Kamil's four decisions** (section below) — they gate Phase 3, T1.1,
    T1.6 (and TD.3 behind it), and the nightly timer. Nothing else blocks them.
-2. Ready now, no decision needed: **T2.1** S9 debt — design DONE
-   (docs/13 §1.7); next: build `rewrite_reachins.exs`, pilot on 004_001,
-   then the remaining families.
-3. Paid review passes once 2 is drained: **T2.2** scaled semantic review
-   (stratified 60-root batch, then decide on full), **T2.4** rubric judge
-   over passing tasks.
-4. **T1.4** template upgrades land WITH the Phase 3 restart, not before.
-5. Bigger builds: **TD.1** adapt pairs (deterministic, zero LLM, 249/249
+2. Ready now, no decision needed: paid review passes — **T2.2** scaled
+   semantic review (stratified 60-root batch, then decide on full),
+   **T2.4** rubric judge over passing tasks.
+3. **T1.4** template upgrades land WITH the Phase 3 restart, not before.
+4. Bigger builds: **TD.1** adapt pairs (deterministic, zero LLM, 249/249
    measured mintable), **T3.1** export contract (MANDATORY before any
    training run), then the TD.2–TD.4 decisions.
 
-*(T1.5 closed 07-13; T2.3 + T2.5 + all of T2.7 incl. the 100_004 residue
-closed 07-14 — docs/15.)*
+*(T1.5 closed 07-13; T2.3 + T2.5 + all of T2.7 + T2.1 (24/24 reach-in
+purge) closed 07-14 — docs/15.)*
 
 ## 📋 QUALITY TODO REGISTER (2026-07-13 — why / what / how / cost per item)
 
@@ -125,24 +98,6 @@ change; then FREE (PLT build + weekly CI)]**
 
 
 ### Tier 2 — raise EXISTING corpus quality (evidence says more is there)
-
-**T2.1 — Clear the S9 grandfathered reach-in debt. DESIGN DONE 2026-07-14
-(docs/13 §1.7) — build + pilot next. [measured: 24 root harnesses / 11 base
-ideas / 24 wt_ copies / 7 tfim golds carrying the pattern as training
-targets; ~24 rewrite calls + ~24 blind re-screens]**
-- WHY: proven 2026-07-13 that it actively corrupts future work — the
-  strengthener imitated the existing reach-ins on 101_001 three times.
-  Reach-in tests are also weaker tests. Task B is already live (reach-ins are
-  a HARD accept-path shortfall), so this is pure Task A over old data.
-- WHAT: `scripts/rewrite_reachins.exs` — ledgered rewrite tool in the
-  strengthen mold per docs/13 §1.7 (block-level rewrite, name-preserving;
-  perfect + mutants + semantic-no-drop + blind gates; restore-on-failure;
-  re-carve path for the 7 affected tfim golds via the carver's own gold
-  production + isolation-kill; orphaned children PARKED for Kamil, never
-  deleted unilaterally).
-- HOW: pilot on ONE family with zero affected tfim children (004_001) per
-  rule 9, line-by-line review, then the fleet. `Process.sleep` (146) stays
-  out of scope — flake-ledger evidence only (docs/12 §4.2.6).
 
 **T2.2 — Scaled semantic review. [PAID: ~3.5M tokens for a stratified 60-root
 batch; full ~330 roots ≈ 20M]**
