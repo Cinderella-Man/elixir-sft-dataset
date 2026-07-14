@@ -54,15 +54,32 @@ defmodule RubricJudge do
           only: :string,
           sample: :integer,
           limit: :integer,
-          second_model: :string
+          second_model: :string,
+          single: :string,
+          as: :string
         ]
       )
 
     cond do
       opts[:report] -> report()
+      opts[:single] -> go_single(opts)
       opts[:go] -> go(opts)
       true -> plan(opts)
     end
+  end
+
+  # Judge one arbitrary staged dir (positive controls: a known-defective
+  # pre-fix triple reconstructed from git — the instrument must score it LOW
+  # or the whole pass is vacuous). The `label:` prefix keeps control rows out
+  # of the batch resume keys, exactly like semantic_review's controls.
+  defp go_single(opts) do
+    cfg = Config.new([])
+    second = opts[:second_model] || "sonnet"
+    label = opts[:as] || "control"
+    dir = opts[:single]
+    row = judge_root(cfg, second, dir, :control, "#{label}:#{Path.basename(dir)}")
+    append_ledger(row)
+    IO.puts(Jason.encode!(row, pretty: true))
   end
 
   # ── population + deterministic stratified batch (semantic_review's shape) ──
@@ -165,15 +182,20 @@ defmodule RubricJudge do
     report()
   end
 
-  defp judge_root(cfg, second_model, dir, era) do
-    name = Path.basename(dir)
+  defp judge_root(cfg, second_model, dir, era, name_override \\ nil) do
+    name = name_override || Path.basename(dir)
     prompt = File.read!(Path.join(dir, "prompt.md"))
     solution = File.read!(Path.join(dir, "solution.ex"))
     harness = File.read!(Path.join(dir, "test_harness.exs"))
 
     judges =
       for model <- [cfg.model, second_model] do
-        case judge_call(%{cfg | model: model}, name, prompt, solution, harness) do
+        # max_turns 4: the CLI burns a turn attempting a (disabled) tool call,
+        # and the second family proved able to burn two on the control run —
+        # error_max_turns with the default 2.
+        judge_cfg = %{cfg | model: model, max_turns: max(cfg.max_turns, 4)}
+
+        case judge_call(judge_cfg, name, prompt, solution, harness) do
           {:ok, verdict} -> Map.merge(verdict, %{"model" => model})
           {:error, why} -> %{"model" => model, "error" => inspect(why)}
         end
@@ -341,9 +363,14 @@ defmodule RubricJudge do
                "prompt_sha" => p,
                "solution_sha" => s,
                "harness_sha" => h,
-               "rubric_sha" => r
+               "rubric_sha" => r,
+               "judges" => judges
              }} ->
-              MapSet.put(acc, Enum.join([t, p, s, h, r], "|"))
+              # A row with a judge error is NOT done — resume must re-run it
+              # (found live: sonnet error_max_turns on the 095_003 control).
+              if Enum.all?(judges, &(&1["scores"] != nil)),
+                do: MapSet.put(acc, Enum.join([t, p, s, h, r], "|")),
+                else: acc
 
             _ ->
               acc
