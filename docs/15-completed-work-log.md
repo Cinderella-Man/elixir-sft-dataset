@@ -9,6 +9,33 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-14 — T2.2 MEASUREMENT DONE: the stratified 60-root semantic
+  review batch ran to completion (89 confirmed findings; 88% of roots carry
+  at least one).** Tool: `scripts/semantic_review.exs` — one full-context
+  review call per root (rubric = the 07-12 pilot's classes, anti-noise
+  instruction) + one independent adversarial-verify call per finding; 11 of
+  100 raw findings refuted as noise, 0 errors. Rule-9 pilot first: the
+  positive control (pre-fix 018_003 reconstructed from git) re-found the
+  planted dead-code defect verbatim AND surfaced live F10; 3-root noise
+  calibration produced 7 findings, all hand-verified real. Batch breakdown:
+  **74 harness_gap / 12 gold_defect / 3 prompt_defect; 13 high-severity.**
+  Hand-checked 10/10 real so far, incl. both HIGH golds: **095_003** — the
+  money module's `split/2` uses div/rem, so for the negative amounts the
+  prompt explicitly allows, shares sum to the WRONG total (-5 split 2 →
+  -4); **031_002** — the gold computes the whole-number-float distinction
+  then rejects BOTH branches identically, its comment arguing against the
+  prompt's own rule ("`:integer` must be a JSON number that is a whole
+  number"), harness silent = three-way incoherence. Dominant corpus
+  disease: PROMISE-COVERAGE debt — documented defaults never exercised
+  (:name/:timeout/:size options, auto-tick paths, promised agg modes,
+  promised edge directions), tests whose names claim more than their
+  bodies test. Even 100_004 (hand-strengthened this same morning) took a
+  justified high: no test ever passes an explicit `:window`.
+  Extrapolation: ~1.5 confirmed findings/root → ~490 corpus-wide, ~66 gold
+  defects. Cost: ~60 review + ~100 verify calls, well under the 3.5M
+  estimate. The triage program + the full-pass decision are registered in
+  STATUS (measurement half of T2.2 ends here).
+
 - **2026-07-14 — T2.1 CLOSED 24/24: the S9 reach-in debt is purged from the
   corpus.** Zero `:sys.get_state`/`:sys.replace_state` remains in any
   harness, gold, or embed outside frozen `repair_` evidence (24 root

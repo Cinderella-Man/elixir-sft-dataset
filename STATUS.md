@@ -13,20 +13,8 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**DETACHED (2026-07-14): T2.2 — the 60-root stratified semantic review
-batch (57 remaining; 3 done in calibration).** Pilot verdict: GO — positive
-control re-found the planted 018_003 defect AND surfaced live F10; noise
-calibration on 3 "believed-clean" roots produced 7 confirmed findings, ALL
-hand-verified REAL (004_003 @doc lies about the error atom; 035_002 div-
-vs-floor on documented integer timestamps + 3-of-7 agg modes untested;
-038_001 undocumented duplicate_ids return violating its own @spec — live
-T1.6 evidence). Refuter correctly killed the 1 noise finding. Tool
-precision 8/8 on hand-checks. Log: `logs/semantic_review_batch.log`;
-ledger `logs/semantic_review.jsonl` (git-track with -f at close). On exit:
-`--report`, hand-triage EVERY confirmed finding (rule 10), then the
-defect-rate estimate decides the full ~330 pass. Idempotent relaunch:
-`scripts/run_detached.sh logs/semantic_review_batch.log mix run
-scripts/semantic_review.exs -- --go`.
+**Nothing.** (T2.2 measurement done 2026-07-14 — docs/15. The batch's 89
+confirmed findings are now the T2.2-T triage program below.)
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-14 morning)
@@ -123,12 +111,19 @@ change; then FREE (PLT build + weekly CI)]**
 
 ### Tier 2 — raise EXISTING corpus quality (evidence says more is there)
 
-**T2.2 — Scaled semantic review. [PAID: ~3.5M tokens for a stratified 60-root
-batch; full ~330 roots ≈ 20M]**
-- WHY: the 11-dir pilot found 2 real gold defects (018_003, 101_002); the
-  corpus-wide defect rate is unknown.
-- HOW: stratified by era, adversarially verified findings only, small-batch
-  ledger protocol; then decide whether the full pass pays.
+**T2.2-T — Triage the 60-root batch's 89 confirmed findings
+(logs/semantic_review.jsonl; measurement itself DONE — docs/15).
+[hand triage + strengthen-mold fix runs; 10/10 hand-checked real so far]**
+- ORDER: (1) the 13 HIGH-severity (2 gold: 095_003 negative-split money
+  bug, 031_002 whole-number-float three-way incoherence — both hand-
+  CONFIRMED; 10 harness gaps; 1 prompt contradiction 040_001); (2) the 12
+  gold_defects (wrong training targets); (3) the 74 harness_gaps — mostly
+  ONE class: promise-coverage debt (documented defaults/options/edge
+  directions never exercised) — fix via a strengthen-mold add-only run
+  seeded by the findings, blind-gated, cascaded; (4) the 3 prompt_defects.
+- Every fix follows rule 7: data fix + (where a class) generator gate.
+  Class-level Task B is T1.4's per-promise harness checklist — the batch
+  is its evidence base now.
 
 **T2.4 — Rubric LLM-judge pass over PASSING tasks (sampled). [PAID; round-#2
 candidate]** — WHY: our judge only ever sees failures; judge filtering adds
@@ -178,7 +173,16 @@ together with T3.1's weighting. docs/13 §2.4–2.5.
    **spec-ceiling** (observable but unpinnable-by-spec — docs/13 §1.5.1b,
    born from 037_001).
 3. **Nightly-sweep systemd timer install** — 4 commands, docs/12 §4.1.10.
-4. **T1.6 Dialyzer** — one `mix.exs` + lockfile change.
+4. **T1.6 Dialyzer** — one `mix.exs` + lockfile change. (Two more live
+   would-have-caught cases from today's T2.2 batch: 038_001's undocumented
+   `duplicate_ids` return violating its own @spec; 043_001's named-table
+   atom vs declared `:ets.tid()` type.)
+5. **T2.2 full-pass decision** — the 60-root batch says 88% of roots carry
+   ≥1 confirmed finding (~1.5/root → ~490 corpus-wide). RECOMMENDATION:
+   do NOT pay the remaining ~272-root review (~16M tokens) — the classes
+   are now known and dominated by promise-coverage debt; spend instead on
+   the T2.2-T fixes + T1.4's checklist, and re-review a small sample AFTER
+   those land to verify the class is closed.
 
 ## Current mode: 🔧 CATCHING UP (improvement round #1, 2026-07)
 
