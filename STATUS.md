@@ -59,6 +59,17 @@ committed immediately (one solved item = one commit).
 
 ### 🔎 OPEN FINDINGS — two tasks each
 
+**F10 — 018_003 harness gap (T2.2's first live find, hand-verified
+2026-07-14): prompt L20 promises `archived_at` is "a `DateTime` in UTC
+truncated to the second"; the harness's 9 `archived_at` assertions pin
+neither truncation (`microsecond == {0, 0}`) nor `time_zone == "Etc/UTC"` —
+an untruncated `DateTime.utc_now()` solver passes the whole suite.**
+- F10-A (fix data): add-only strengthen-style tests on 018_003 (then blind
+  gate + wt_/tfim cascade). Fold into the T2.2 batch triage — more
+  harness_gap siblings are likely coming.
+- F10-B (gate generator): the class belongs to T1.4's harness checklist
+  (per-promise coverage); reference this finding there as evidence.
+
 **F1 — repaired accepts shipped prompt↔harness gaps (6 found live).**
 - F1-A (fix data): DONE → docs/15 (6 prompts fixed, cascaded, re-screened GREEN).
 - F1-B (gate generator): **T1.1 accept-time blind re-screen in the loop —
