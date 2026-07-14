@@ -110,7 +110,15 @@ defmodule DecayPercentile do
   end
 
   defp weighted_rank(weighted, percentile) do
-    sorted = Enum.sort_by(weighted, fn {v, _w} -> v end)
+    # A sample whose weight has underflowed to exactly 0.0 contributes nothing
+    # and must not be selectable — the same absence rule that makes an
+    # all-underflowed series {:error, :empty} (a zero-weight sample would
+    # otherwise win percentile 0.0, since 0.0 >= a target of 0.0).
+    sorted =
+      weighted
+      |> Enum.reject(fn {_v, w} -> w == 0.0 end)
+      |> Enum.sort_by(fn {v, _w} -> v end)
+
     total = Enum.reduce(sorted, 0.0, fn {_v, w}, acc -> acc + w end)
 
     if sorted == [] or total == 0.0 do
@@ -251,6 +259,44 @@ defmodule DecayPercentileTest do
   end
 
   # ---------------------------------------------------------
+  # Fully underflowed weights read as empty, not as a stale value
+  # ---------------------------------------------------------
+
+  test "series whose weights have all underflowed to zero reports empty" do
+    start_server([])
+
+    DecayPercentile.record(:u, 1)
+    DecayPercentile.record(:u, 50)
+    DecayPercentile.record(:u, 100)
+
+    # 2000 half-lives: every 0.5 ^ (age / half_life) underflows to 0.0, so the
+    # series holds samples but carries no weight at all.
+    Clock.advance(2_000_000)
+
+    assert {:error, :empty} = DecayPercentile.query(:u, 0.0)
+    assert {:error, :empty} = DecayPercentile.query(:u, 0.5)
+    assert {:error, :empty} = DecayPercentile.query(:u, 1.0)
+    assert {:error, :empty} = DecayPercentile.total_weight(:u)
+  end
+
+  test "recording after total underflow makes the series report the fresh sample" do
+    start_server([])
+
+    DecayPercentile.record(:u2, 1)
+    Clock.advance(2_000_000)
+    assert {:error, :empty} = DecayPercentile.query(:u2, 0.5)
+
+    # The fresh sample has weight 1.0 while the underflowed one contributes 0.0,
+    # so it alone determines every percentile.
+    DecayPercentile.record(:u2, 7)
+
+    assert {:ok, 7} = DecayPercentile.query(:u2, 0.0)
+    assert {:ok, 7} = DecayPercentile.query(:u2, 1.0)
+    assert {:ok, w} = DecayPercentile.total_weight(:u2)
+    assert_in_delta w, 1.0, 1.0e-9
+  end
+
+  # ---------------------------------------------------------
   # Bounded memory & housekeeping
   # ---------------------------------------------------------
 
@@ -283,6 +329,18 @@ defmodule DecayPercentileTest do
     DecayPercentile.reset(:a)
     assert {:error, :empty} = DecayPercentile.query(:a, 0.5)
     assert {:ok, 999} = DecayPercentile.query(:b, 0.5)
+  end
+
+  test "underflow in one series leaves a freshly recorded series unaffected" do
+    start_server([])
+
+    DecayPercentile.record(:old, 1)
+    Clock.advance(2_000_000)
+    DecayPercentile.record(:new, 42)
+
+    assert {:error, :empty} = DecayPercentile.query(:old, 0.5)
+    assert {:error, :empty} = DecayPercentile.total_weight(:old)
+    assert {:ok, 42} = DecayPercentile.query(:new, 0.5)
   end
 
   test "invalid half_life raises" do

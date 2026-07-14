@@ -40,7 +40,9 @@ percentiles with no abrupt jumps when a sample crosses a boundary.
   percentile over the current samples of series `name`. `percentile` is a float in
   `0.0..1.0`. Returns `{:ok, value}` where `value` is one of the recorded samples,
   or `{:error, :empty}` when the series has no samples (or all weights have
-  underflowed to zero).
+  underflowed to zero). A sample whose weight has underflowed to zero is
+  excluded from selection entirely — it can never be the returned value, at
+  any percentile.
 
 - `DecayPercentile.total_weight(name)` — returns `{:ok, w}` where `w` is the sum
   of the current decayed weights (a float), or `{:error, :empty}`. Useful as an
@@ -119,7 +121,7 @@ defmodule DecayPercentile do
 
   @spec query(term, float) :: {:ok, number} | {:error, :empty}
   def query(name, percentile)
-      when is_number(percentile) and percentile >= 0.0 and percentile <= 1.0 do
+      when is_number(percentile) and percentile > 0.0 and percentile <= 1.0 do
     GenServer.call(@default_name, {:query, name, percentile})
   end
 
@@ -184,7 +186,15 @@ defmodule DecayPercentile do
   end
 
   defp weighted_rank(weighted, percentile) do
-    sorted = Enum.sort_by(weighted, fn {v, _w} -> v end)
+    # A sample whose weight has underflowed to exactly 0.0 contributes nothing
+    # and must not be selectable — the same absence rule that makes an
+    # all-underflowed series {:error, :empty} (a zero-weight sample would
+    # otherwise win percentile 0.0, since 0.0 >= a target of 0.0).
+    sorted =
+      weighted
+      |> Enum.reject(fn {_v, w} -> w == 0.0 end)
+      |> Enum.sort_by(fn {v, _w} -> v end)
+
     total = Enum.reduce(sorted, 0.0, fn {_v, w}, acc -> acc + w end)
 
     if sorted == [] or total == 0.0 do
@@ -203,7 +213,7 @@ defmodule DecayPercentile do
           end
         end)
 
-      {:error, value}
+      {:ok, value}
     end
   end
 
@@ -228,43 +238,19 @@ end
 ## Failing test report
 
 ```
-6 of 10 test(s) failed:
+5 of 13 test(s) failed:
 
   * test with equal fresh weights, percentiles match plain nearest-rank
-      
-      
-      match (=) failed
-      code:  assert {:ok, 50} = DecayPercentile.query(:d, 0.5)
-      left:  {:ok, 50}
-      right: {:error, 50}
-      
+      no function clause matching in DecayPercentile.query/2
 
   * test single sample returns that sample for any percentile
-      
-      
-      match (=) failed
-      code:  assert {:ok, 42} = DecayPercentile.query(:one, 0.0)
-      left:  {:ok, 42}
-      right: {:error, 42}
-      
+      no function clause matching in DecayPercentile.query/2
 
-  * test a fresh sample outweighs an old one and shifts the median
-      
-      
-      match (=) failed
-      code:  assert {:ok, 100} = DecayPercentile.query(:t, 0.5)
-      left:  {:ok, 100}
-      right: {:error, 100}
-      
+  * test series whose weights have all underflowed to zero reports empty
+      no function clause matching in DecayPercentile.query/2
 
-  * test uniform aging does not change the reported percentile
-      
-      
-      match (=) failed
-      code:  assert {:ok, 1} = DecayPercentile.query(:t, 0.5)
-      left:  {:ok, 1}
-      right: {:error, 1}
-      
+  * test recording after total underflow makes the series report the fresh sample
+      no function clause matching in DecayPercentile.query/2
 
-  (…2 more)
+  (…1 more)
 ```

@@ -48,7 +48,9 @@ percentiles with no abrupt jumps when a sample crosses a boundary.
   percentile over the current samples of series `name`. `percentile` is a float in
   `0.0..1.0`. Returns `{:ok, value}` where `value` is one of the recorded samples,
   or `{:error, :empty}` when the series has no samples (or all weights have
-  underflowed to zero).
+  underflowed to zero). A sample whose weight has underflowed to zero is
+  excluded from selection entirely — it can never be the returned value, at
+  any percentile.
 
 - `DecayPercentile.total_weight(name)` — returns `{:ok, w}` where `w` is the sum
   of the current decayed weights (a float), or `{:error, :empty}`. Useful as an
@@ -192,7 +194,15 @@ defmodule DecayPercentile do
   end
 
   defp weighted_rank(weighted, percentile) do
-    sorted = Enum.sort_by(weighted, fn {v, _w} -> v end)
+    # A sample whose weight has underflowed to exactly 0.0 contributes nothing
+    # and must not be selectable — the same absence rule that makes an
+    # all-underflowed series {:error, :empty} (a zero-weight sample would
+    # otherwise win percentile 0.0, since 0.0 >= a target of 0.0).
+    sorted =
+      weighted
+      |> Enum.reject(fn {_v, w} -> w == 0.0 end)
+      |> Enum.sort_by(fn {v, _w} -> v end)
+
     total = Enum.reduce(sorted, 0.0, fn {_v, w}, acc -> acc + w end)
 
     if sorted == [] or total == 0.0 do

@@ -31,7 +31,9 @@ percentiles with no abrupt jumps when a sample crosses a boundary.
   percentile over the current samples of series `name`. `percentile` is a float in
   `0.0..1.0`. Returns `{:ok, value}` where `value` is one of the recorded samples,
   or `{:error, :empty}` when the series has no samples (or all weights have
-  underflowed to zero).
+  underflowed to zero). A sample whose weight has underflowed to zero is
+  excluded from selection entirely — it can never be the returned value, at
+  any percentile.
 
 - `DecayPercentile.total_weight(name)` — returns `{:ok, w}` where `w` is the sum
   of the current decayed weights (a float), or `{:error, :empty}`. Useful as an
