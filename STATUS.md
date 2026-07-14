@@ -13,9 +13,21 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**Nothing.** (Last run: TD.1 full adapt mint, 2026-07-14 ~22:35–23:0x UTC —
-249/249 minted and ALL PERFECT; closed → docs/15. Fresh attempts snapshot
-taken: `logs/attempts_archive_20260714b`.)
+**T2.4 rubric-judge PILOT (rule 9): 4 roots × 2 judge families** (launched
+2026-07-14 ~23:5x UTC).
+- pid: `logs/rubric_pilot.pid` · log: `logs/rubric_pilot.log` · rows →
+  `logs/rubric_judge.jsonl` (one row per root, both judges inside, keyed by
+  task+3 content shas+rubric sha)
+- tool: `scripts/rubric_judge.exs` (new — docs/12 §6.4 3-axis rubric:
+  requirement_conformance / logical_correctness / edge_case_consideration,
+  1-5 each, evidence required for ≤3; PoLL second family = sonnet,
+  per-axis agreement logged)
+- idempotent relaunch:
+  `scripts/run_detached.sh logs/rubric_pilot.log mix run scripts/rubric_judge.exs -- --go --limit 4`
+- after exit: rule-9 DETAIL review of all 4 rows (hand-check every issue
+  against the artifacts — docs/14 rule 10); only then decide the 40-root
+  batch (~80 calls). Also re-check CI for pushes 61f221fd + 0de6a235
+  (in_progress at 23:10 UTC).
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-14 evening)
