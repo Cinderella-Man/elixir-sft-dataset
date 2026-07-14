@@ -13,8 +13,13 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**Nothing.** (T2.2 measurement done 2026-07-14 — docs/15. The batch's 89
-confirmed findings are now the T2.2-T triage program below.)
+**IN PROGRESS (2026-07-14): T2.2-T phase 1 — 2 of 13 highs DONE (both
+gold defects: 095_003 + 031_002, committed 763ed80c/ed393462, blind GREEN,
+all gates green, bugfix children delete+reminted coherently).** Next: the
+10 high harness gaps + 040_001 prompt contradiction — plan: hand-triage
+each against its prompt, then close the gap class efficiently with a
+findings-SEEDED strengthen run (the strengthen mold, seeded by the review
+ledger instead of mutant survivors) so the 74 mediums ride the same tool.
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-14 morning)
