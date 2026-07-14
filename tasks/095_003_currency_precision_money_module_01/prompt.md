@@ -49,7 +49,7 @@ and rounding to the nearest whole minor unit (round halves away from zero).
 ```elixir
 Money.from_major(12.34, :USD)  # => %Money{amount: 1234, currency: :USD}
 Money.from_major(500, :JPY)    # => %Money{amount: 500,  currency: :JPY}
-Money.from_major(1.2345, :BHD) # => %Money{amount: 1234, currency: :BHD}  (1.2345 -> 1234.5 -> 1235? no: 1.2345*1000=1234.5 -> 1235)
+Money.from_major(1.2345, :BHD) # => %Money{amount: 1235, currency: :BHD}
 ```
 
 (`from_major(1.2345, :BHD)` scales `1.2345 * 1000 = 1234.5` and rounds to
@@ -71,9 +71,10 @@ currency.
 
 Divides a money value evenly among `n` parties (`n` a **positive integer**),
 working in whole minor units. Returns a **list of `n` `Money` structs**;
-distribute the remainder one minor unit at a time to the first `rem(amount, n)`
-parties so the shares always sum back to the original amount. Raise
-`ArgumentError` if `n` is not a positive integer.
+distribute the remainder one minor unit at a time to the first
+`Integer.mod(amount, n)` parties so the shares always sum back to the original
+amount — including negative amounts (floored division, so e.g. `-5` split 2
+ways is `[-2, -3]`). Raise `ArgumentError` if `n` is not a positive integer.
 
 ```elixir
 Money.split(Money.new(1000, :JPY), 3)

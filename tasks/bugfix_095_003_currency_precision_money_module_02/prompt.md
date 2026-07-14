@@ -58,7 +58,7 @@ and rounding to the nearest whole minor unit (round halves away from zero).
 ```elixir
 Money.from_major(12.34, :USD)  # => %Money{amount: 1234, currency: :USD}
 Money.from_major(500, :JPY)    # => %Money{amount: 500,  currency: :JPY}
-Money.from_major(1.2345, :BHD) # => %Money{amount: 1234, currency: :BHD}  (1.2345 -> 1234.5 -> 1235? no: 1.2345*1000=1234.5 -> 1235)
+Money.from_major(1.2345, :BHD) # => %Money{amount: 1235, currency: :BHD}
 ```
 
 (`from_major(1.2345, :BHD)` scales `1.2345 * 1000 = 1234.5` and rounds to
@@ -80,9 +80,10 @@ currency.
 
 Divides a money value evenly among `n` parties (`n` a **positive integer**),
 working in whole minor units. Returns a **list of `n` `Money` structs**;
-distribute the remainder one minor unit at a time to the first `rem(amount, n)`
-parties so the shares always sum back to the original amount. Raise
-`ArgumentError` if `n` is not a positive integer.
+distribute the remainder one minor unit at a time to the first
+`Integer.mod(amount, n)` parties so the shares always sum back to the original
+amount — including negative amounts (floored division, so e.g. `-5` split 2
+ways is `[-2, -3]`). Raise `ArgumentError` if `n` is not a positive integer.
 
 ```elixir
 Money.split(Money.new(1000, :JPY), 3)
@@ -203,14 +204,16 @@ defmodule Money do
 
   @doc """
   Splits a money value evenly among `n` parties (a positive integer), working
-  in whole minor units. The remainder is given to the first `rem(amount, n)`
-  parties so shares sum back to the original.
+  in whole minor units. The remainder is given to the first
+  `Integer.mod(amount, n)` parties so shares sum back to the original — for
+  negative amounts too, which is why the division must floor rather than
+  truncate toward zero.
   """
   @spec split(t(), pos_integer()) :: [t()]
   def split(%__MODULE__{amount: amount, currency: currency}, n)
       when is_integer(n) and n > 0 do
-    base = div(amount, n)
-    remainder = rem(amount, n)
+    base = Integer.floor_div(amount, n)
+    remainder = Integer.mod(amount, n)
 
     Enum.map(0..(n - 1), fn i ->
       cents = if i < remainder, do: base + 1, else: base
@@ -245,7 +248,7 @@ end
 ## Failing test report
 
 ```
-3 of 21 test(s) failed:
+3 of 22 test(s) failed:
 
   * test exponent/1 returns the right precision per currency
       
