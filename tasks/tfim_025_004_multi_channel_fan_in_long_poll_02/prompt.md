@@ -310,5 +310,66 @@ defmodule MultiChannelNotificationPollerTest do
   test "publish with no subscribers does not crash", %{server: server} do
     assert :ok = Notifications.publish(server, "nobody", "chan", %{"ignored" => true})
   end
+
+  # -------------------------------------------------------
+  # Default :timeout_ms — the option may be omitted entirely
+  # -------------------------------------------------------
+
+  # Republishes until the in-flight poll answers, so no wall-clock sleep is
+  # needed to line the publish up with the poller's subscription.
+  defp publish_until_answered(task, server, user_id, channel, payload, attempts \\ 40) do
+    case Task.yield(task, 50) do
+      {:ok, conn} ->
+        conn
+
+      nil when attempts > 0 ->
+        Notifications.publish(server, user_id, channel, payload)
+        publish_until_answered(task, server, user_id, channel, payload, attempts - 1)
+
+      _ ->
+        flunk("long poll never answered while notifications were being published")
+    end
+  end
+
+  test "poll without :timeout_ms keeps holding the connection open", %{server: server} do
+    opts = [notifications_server: server]
+    task = Task.async(fn -> poll(opts, "user:default", ["orders"]) end)
+
+    # The documented default is 30_000 ms, so the poll must still be pending
+    # well past the 500 ms the other tests configure explicitly.
+    assert Task.yield(task, 1_000) == nil
+
+    conn = publish_until_answered(task, server, "user:default", "orders", %{"held" => true})
+    assert conn.status == 200
+
+    body = Jason.decode!(conn.resp_body)
+    assert body["channel"] == "orders"
+    assert body["payload"] == %{"held" => true}
+  end
+
+  test "poll without :timeout_ms still validates channels", %{server: server} do
+    conn =
+      :get
+      |> conn("/api/notifications/poll")
+      |> assign(:user_id, "user:default")
+      |> NotificationRouter.call(NotificationRouter.init(notifications_server: server))
+
+    assert conn.status == 400
+    assert conn.resp_body == "no channels"
+  end
+
+  # -------------------------------------------------------
+  # Response bodies for the error paths
+  # -------------------------------------------------------
+
+  test "401 response carries the unauthorized body", %{opts: opts} do
+    conn =
+      :get
+      |> conn("/api/notifications/poll?channels=a")
+      |> NotificationRouter.call(NotificationRouter.init(opts))
+
+    assert conn.status == 401
+    assert conn.resp_body == "unauthorized"
+  end
 end
 ```

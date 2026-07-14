@@ -386,5 +386,57 @@ defmodule PercentileTest do
     Clock.advance(500)
     assert {:error, :empty} = Percentile.query(:t, 0.5)
   end
+
+  # -------------------------------------------------------
+  # Both windows supplied together: both constraints apply
+  # -------------------------------------------------------
+
+  test "count limit still applies when a time window is also configured" do
+    start_server(window_ms: 1_000, max_samples: 3)
+
+    # Every sample is recorded at t=0, so nothing has expired; only the count
+    # window can trim, and it must leave the three most recent: [8, 9, 10].
+    for v <- 1..10, do: Percentile.record(:both, v)
+
+    assert {:ok, 8} = Percentile.query(:both, 0.0)
+    assert {:ok, 10} = Percentile.query(:both, 1.0)
+    # ceil(0.5*3) = 2 -> s_2 = 9
+    assert {:ok, 9} = Percentile.query(:both, 0.50)
+  end
+
+  test "time expiry still applies when a count window is also configured" do
+    start_server(window_ms: 1_000, max_samples: 100)
+
+    # Far fewer samples than max_samples, so only the time window can remove
+    # them; once they age past the window the series must report empty.
+    for v <- 1..3, do: Percentile.record(:both, v)
+    assert {:ok, 1} = Percentile.query(:both, 0.0)
+    assert {:ok, 3} = Percentile.query(:both, 1.0)
+
+    Clock.advance(1_000)
+    assert {:error, :empty} = Percentile.query(:both, 0.5)
+  end
+
+  test "both windows constrain the same series simultaneously" do
+    start_server(window_ms: 1_000, max_samples: 3)
+
+    # t=0: four samples arrive, count window drops 10 -> live [20, 30, 40]
+    for v <- [10, 20, 30, 40], do: Percentile.record(:both, v)
+    assert {:ok, 20} = Percentile.query(:both, 0.0)
+    assert {:ok, 40} = Percentile.query(:both, 1.0)
+
+    # t=600: 50 arrives, count window drops the oldest -> live [30, 40, 50]
+    Clock.advance(600)
+    Percentile.record(:both, 50)
+    assert {:ok, 30} = Percentile.query(:both, 0.0)
+    assert {:ok, 50} = Percentile.query(:both, 1.0)
+
+    # t=1100: the t=0 samples (30, 40) are 1100ms old and expire; 50 (age 600)
+    # is the only live sample, so it is both the min and the max.
+    Clock.advance(500)
+    assert {:ok, 50} = Percentile.query(:both, 0.0)
+    assert {:ok, 50} = Percentile.query(:both, 0.50)
+    assert {:ok, 50} = Percentile.query(:both, 1.0)
+  end
 end
 ```

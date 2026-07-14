@@ -280,6 +280,30 @@ defmodule FactoryTest do
     assert is_binary(user.email) and user.email != ""
   end
 
+  test "build(:post) creates the association record and assigns its id" do
+    before = length(FakeRepo.all())
+    post = Factory.build(:post)
+
+    # The auto-created user is persisted so that its id can be assigned.
+    assert is_integer(post.user_id)
+    assert length(FakeRepo.all()) == before + 1
+
+    assert Enum.any?(FakeRepo.all(), fn
+             %MyApp.User{id: id} -> id == post.user_id
+             _ -> false
+           end)
+  end
+
+  test "build(:post) with a user_id override creates no association record" do
+    {:ok, existing} = Factory.insert(:user)
+    before = length(FakeRepo.all())
+
+    post = Factory.build(:post, user_id: existing.id)
+
+    assert post.user_id == existing.id
+    assert length(FakeRepo.all()) == before
+  end
+
   # insert success semantics
 
   test "insert/1 returns {:ok, struct} with an id on success" do
@@ -375,6 +399,19 @@ defmodule FactoryTest do
     assert a != b
   end
 
+  test "sequence/2 counts up from 1 by one on each call" do
+    assert Factory.sequence(:counting_seq, fn n -> n end) == 1
+    assert Factory.sequence(:counting_seq, fn n -> n end) == 2
+    assert Factory.sequence(:counting_seq, fn n -> n end) == 3
+  end
+
+  test "each sequence name has an independent counter starting at 1" do
+    assert Factory.sequence(:independent_seq_a, fn n -> n end) == 1
+    assert Factory.sequence(:independent_seq_b, fn n -> n end) == 1
+    assert Factory.sequence(:independent_seq_a, fn n -> n end) == 2
+    assert Factory.sequence(:independent_seq_b, fn n -> n end) == 2
+  end
+
   test "sequences are safe under concurrent access" do
     tasks =
       for _ <- 1..50 do
@@ -383,6 +420,16 @@ defmodule FactoryTest do
 
     results = Task.await_many(tasks)
     assert length(Enum.uniq(results)) == 50
+  end
+
+  test "concurrent access yields exactly the integers 1..50 for one sequence" do
+    tasks =
+      for _ <- 1..50 do
+        Task.async(fn -> Factory.sequence(:concurrent_range_seq, fn n -> n end) end)
+      end
+
+    results = Task.await_many(tasks)
+    assert Enum.sort(results) == Enum.to_list(1..50)
   end
 end
 ```

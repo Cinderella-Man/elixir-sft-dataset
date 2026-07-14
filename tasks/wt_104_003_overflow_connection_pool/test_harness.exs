@@ -50,6 +50,30 @@ defmodule OverflowPoolTest do
     assert s.total == 3 and s.available == 3 and s.in_use == 0 and s.overflow == 0
   end
 
+  # --- option defaults -----------------------------------------------------
+
+  test "defaults to a base of 5 eager connections with no overflow allowed" do
+    {counter, create} = counting_create()
+    start_supervised!({OverflowPool, name: :op_defaults, create: create})
+
+    # :size defaults to 5, so five connections exist eagerly at startup.
+    assert created(counter) == 5
+
+    s = OverflowPool.stats(:op_defaults)
+    assert s.size == 5 and s.max_overflow == 0
+    assert s.total == 5 and s.available == 5 and s.in_use == 0 and s.overflow == 0
+
+    results = for _ <- 1..5, do: OverflowPool.checkout(:op_defaults, 100)
+    assert Enum.all?(results, &match?({:ok, _}, &1))
+
+    # :max_overflow defaults to 0, so the pool never grows past the base of 5.
+    assert {:error, :timeout} = OverflowPool.checkout(:op_defaults, 50)
+    assert created(counter) == 5
+
+    s = OverflowPool.stats(:op_defaults)
+    assert s.total == 5 and s.in_use == 5 and s.available == 0 and s.overflow == 0
+  end
+
   # --- overflow creation ---------------------------------------------------
 
   test "creates overflow up to size + max_overflow, then times out" do
@@ -131,6 +155,50 @@ defmodule OverflowPoolTest do
     assert s.total == 2
 
     send(waiter, :release)
+  end
+
+  # --- waiter ordering -----------------------------------------------------
+
+  test "blocked waiters are served in FIFO order, longest-waiting first" do
+    start_supervised!({OverflowPool, name: :op_fifo, size: 2, max_overflow: 0})
+
+    assert {:ok, c1} = OverflowPool.checkout(:op_fifo, 100)
+    assert {:ok, c2} = OverflowPool.checkout(:op_fifo, 100)
+
+    parent = self()
+
+    spawn_waiter = fn tag ->
+      spawn(fn ->
+        send(parent, {:served, tag, OverflowPool.checkout(:op_fifo, 5_000)})
+
+        receive do
+          :release -> :ok
+        end
+      end)
+    end
+
+    # The pool is at size + max_overflow, so each waiter blocks rather than
+    # being served; the first waiter is therefore enqueued before the second.
+    first = spawn_waiter.(:first)
+    refute_receive {:served, :first, _}, 100
+
+    second = spawn_waiter.(:second)
+    refute_receive {:served, :second, _}, 100
+
+    # The returned connection goes directly to the longest-waiting caller.
+    assert :ok = OverflowPool.checkin(:op_fifo, c1)
+    assert_receive {:served, :first, {:ok, got1}}, 1_000
+    assert got1 == c1
+
+    # One connection serves exactly one caller: the later waiter still blocks.
+    refute_receive {:served, :second, _}, 100
+
+    assert :ok = OverflowPool.checkin(:op_fifo, c2)
+    assert_receive {:served, :second, {:ok, got2}}, 1_000
+    assert got2 == c2
+
+    send(first, :release)
+    send(second, :release)
   end
 
   # --- crash reclamation ---------------------------------------------------

@@ -298,6 +298,37 @@ defmodule GraceWatchdogTest do
     assert :ok = GraceWatchdog.heartbeat(:nope)
   end
 
+  test "unregister for a name that was never registered returns :ok" do
+    assert :ok = GraceWatchdog.unregister(:nope)
+
+    # The watchdog stays usable afterwards: a fresh registration still fires.
+    test = self()
+    :ok = GraceWatchdog.register(:w, dummy_pid(), 40, 1, notifier(test))
+    assert_receive {:timed_out, :w, 1}, 1_000
+  end
+
+  test "unregistering an unknown name leaves other registrations untouched" do
+    test = self()
+    :ok = GraceWatchdog.register(:w, dummy_pid(), 40, 2, notifier(test))
+
+    assert :ok = GraceWatchdog.unregister(:nope)
+    assert {:error, :not_registered} = GraceWatchdog.misses(:nope)
+    assert {:ok, _} = GraceWatchdog.misses(:w)
+
+    assert_receive {:timed_out, :w, 2}, 1_000
+  end
+
+  test "unregistering the same name twice is a no-op the second time" do
+    test = self()
+    :ok = GraceWatchdog.register(:w, dummy_pid(), 40, 2, notifier(test))
+
+    assert :ok = GraceWatchdog.unregister(:w)
+    assert :ok = GraceWatchdog.unregister(:w)
+    assert {:error, :not_registered} = GraceWatchdog.misses(:w)
+
+    refute_receive {:timed_out, :w, _}, 300
+  end
+
   # ------------------------------------------------------------------
   # Custom :name option
   # ------------------------------------------------------------------

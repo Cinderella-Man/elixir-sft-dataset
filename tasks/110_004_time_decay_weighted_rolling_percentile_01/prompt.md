@@ -36,8 +36,9 @@ percentiles with no abrupt jumps when a sample crosses a boundary.
   any percentile.
 
 - `DecayPercentile.total_weight(name)` — returns `{:ok, w}` where `w` is the sum
-  of the current decayed weights (a float), or `{:error, :empty}`. Useful as an
-  "effective sample count" for inspection.
+  of the current decayed weights (a float), or `{:error, :empty}` under the same
+  emptiness rule as `query` (no samples, or every weight underflowed to zero —
+  never `{:ok, 0.0}`). Useful as an "effective sample count" for inspection.
 
 - `DecayPercentile.reset(name)` — discards all samples for series `name`.
   Returns `:ok`.

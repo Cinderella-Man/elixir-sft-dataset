@@ -159,4 +159,60 @@ defmodule FeatureFlagsTest do
     results = Task.await_many(tasks)
     assert Enum.all?(results, & &1)
   end
+
+  # -------------------------------------------------------
+  # Table shape and start_link options
+  # -------------------------------------------------------
+
+  test "default table is a named :set called :feature_flags owned by the server", %{pid: pid} do
+    assert :ets.info(:feature_flags, :name) == :feature_flags
+    assert :ets.info(:feature_flags, :named_table) == true
+    assert :ets.info(:feature_flags, :type) == :set
+    assert :ets.info(:feature_flags, :owner) == pid
+  end
+
+  test "start_link honours :table_name and :name options" do
+    suffix = "#{System.pid()}_#{System.unique_integer([:positive])}"
+    table = String.to_atom("flags_table_#{suffix}")
+    server = String.to_atom("flags_server_#{suffix}")
+
+    pid =
+      start_supervised!(
+        {FeatureFlags, [table_name: table, name: server]},
+        id: :custom_feature_flags
+      )
+
+    # The process is registered under the requested name...
+    assert Process.whereis(server) == pid
+
+    # ...and the ETS table carries the requested name, not the default.
+    assert :ets.info(table, :name) == table
+    assert :ets.info(table, :named_table) == true
+    assert :ets.info(table, :type) == :set
+    assert :ets.info(table, :owner) == pid
+  end
+
+  # -------------------------------------------------------
+  # Reads bypass the GenServer process
+  # -------------------------------------------------------
+
+  test "enabled? and enabled_for? read from ETS while the server is unavailable", %{pid: pid} do
+    FeatureFlags.enable(:direct_read)
+    FeatureFlags.enable_for_percentage(:direct_pct, 100)
+
+    # With the owning process suspended it cannot serve any call; reads must
+    # still answer because they go straight to the named ETS table.
+    :sys.suspend(pid)
+
+    reader =
+      Task.async(fn ->
+        {FeatureFlags.enabled?(:direct_read), FeatureFlags.enabled_for?(:direct_pct, "user:1")}
+      end)
+
+    outcome = Task.yield(reader, 1_000) || Task.shutdown(reader, :brutal_kill)
+
+    :sys.resume(pid)
+
+    assert outcome == {:ok, {true, true}}
+  end
 end
