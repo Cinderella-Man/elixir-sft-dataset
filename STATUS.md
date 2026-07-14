@@ -13,21 +13,22 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**T2.4 rubric-judge PILOT (rule 9): 4 roots × 2 judge families** (launched
-2026-07-14 ~23:5x UTC).
-- pid: `logs/rubric_pilot.pid` · log: `logs/rubric_pilot.log` · rows →
-  `logs/rubric_judge.jsonl` (one row per root, both judges inside, keyed by
-  task+3 content shas+rubric sha)
-- tool: `scripts/rubric_judge.exs` (new — docs/12 §6.4 3-axis rubric:
-  requirement_conformance / logical_correctness / edge_case_consideration,
-  1-5 each, evidence required for ≤3; PoLL second family = sonnet,
-  per-axis agreement logged)
+**T2.4 rubric-judge BATCH: 40 stratified roots × 2 judge families**
+(launched 2026-07-14 ~23:4x UTC; 4 pilot roots already done → ~36 roots /
+~72 calls remaining; expect several hours).
+- pid: `logs/rubric_batch.pid` · log: `logs/rubric_batch.log` · rows →
+  `logs/rubric_judge.jsonl`
+- PILOT + CONTROL PASSED (rule 9): 4 pilot roots clean 5s from BOTH
+  families; the pre-fix 095_003 positive control was caught by BOTH
+  (opus 5/3/3, sonnet 3/3/2 — same two defects independently; the
+  both-judge-low triage rule fires on it). Two tool defects found & fixed
+  en route: sonnet error_max_turns (judge calls now max_turns 4), and
+  errored rows counting as done (resume now re-runs them).
 - idempotent relaunch:
-  `scripts/run_detached.sh logs/rubric_pilot.log mix run scripts/rubric_judge.exs -- --go --limit 4`
-- after exit: rule-9 DETAIL review of all 4 rows (hand-check every issue
-  against the artifacts — docs/14 rule 10); only then decide the 40-root
-  batch (~80 calls). Also re-check CI for pushes 61f221fd + 0de6a235
-  (in_progress at 23:10 UTC).
+  `scripts/run_detached.sh logs/rubric_batch.log mix run scripts/rubric_judge.exs -- --go`
+- after exit: `-- --report`; hand-check every TRIAGE root against the
+  artifacts (docs/14 rule 10) before ANY edit; findings become two-tier
+  STATUS items (rule 7).
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-14 evening)
