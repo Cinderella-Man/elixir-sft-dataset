@@ -13,9 +13,25 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**Nothing.** (T2.2-T highs phase CLOSED 13/13 on 2026-07-14 — docs/15.
-Next in T2.2-T: the 10 remaining gold_defect mediums by hand, then the 39
-medium gap families via `close_gaps.exs -- --go`.)
+**DETACHED (2026-07-14 evening): T2.2-T final queue — close_gaps fleet over
+the ~39 medium gap families** (the 8 gold-medium fixes landed first so the
+7 overlap families are coherent; resume skips the 10 high families). Log
+`logs/close_gaps_mediums.log`; ledger `logs/close_gaps.jsonl`. Expected:
+mostly applied; blind-noise rejections retry via relaunch; chronic families
+fall to the hand-apply recipe. Idempotent relaunch: `scripts/run_detached.sh
+logs/close_gaps_mediums.log mix run scripts/close_gaps.exs -- --go`.
+
+**PARKED (needs a design decision): 032_001 prompt_defect** — the
+documented defaults (`on_conflict: :replace_all` + `conflict_target:
+:nothing`) are invalid at the Ecto/Postgres level, so a default-options
+ingest fails every row into :failed; every harness insert test passes the
+options explicitly. A coherent fix changes documented defaults on a
+tier-B family — decide the default pair (e.g. `on_conflict: :raise` +
+no target, or require an explicit target for replace_all), then prompt +
+gold + tests + re-screen together.
+
+**Gold mediums: 8 of 9 DONE** (5 doc contracts, 2 behavioral, 1
+documented-and-pinned; 23 bugfix children reminted; docs/15).
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-14 morning)
