@@ -64,8 +64,12 @@ environmental failures as verdicts.)*
 ### Tier 1 — make every FUTURE generated unit better (loop + gates)
 
 **T1.1 — Wire the §5.2 blind re-screen into the generation loop.
-[NEEDS KAMIL'S SIGN-OFF on the policy; build ~half a day; runtime ~1 solver
-call per repaired accept]**
+[BUILD LANDED DARK 2026-07-15 (docs/15) — flag `GEN_BLIND_RESCREEN=1`,
+default OFF, zero behavior change until flipped. NEEDS KAMIL'S SIGN-OFF
+on the policy; then flipping the flag is the whole remaining work.
+Runtime ~1 solver call per repaired accept. Not built (discuss at
+sign-off): the §5.2.2 entailment judge over repair-time harness diffs,
+and a CI check refusing accepts lacking the evidence row.]**
 - WHY: a base/variation accepted after ≥1 repair was fixed by a model that SAW
   the harness failure report, so acceptance proves nothing about the prompt
   alone. Not theoretical: 6 of the 22 retro-screened repaired accepts had
@@ -143,8 +147,9 @@ against docs/16 §4's advisory weights (test_fim already down-weighted to
 
 ## 🧍 WAITING ON KAMIL (decisions only — nothing else blocks Phase 3)
 
-1. **T1.1 / §5.2 sign-off** — wire the accept-time blind re-screen into the
-   loop (evidence: 6 gaps in 22 repaired accepts).
+1. **T1.1 / §5.2 sign-off** — the accept-time blind re-screen (evidence:
+   6 gaps in 22 repaired accepts). The build is already landed DARK
+   behind `GEN_BLIND_RESCREEN=1` — sign-off flips one flag.
 2. **docs/12 §4.2 sign-offs** — spot-review scope, prompt-monotony scope;
    the semantic-floor half is answered (floor = kill rate among OBSERVABLE
    mutants; measured, closed — see docs/15). Note S8 now has the complete

@@ -357,15 +357,15 @@ defmodule GenTask.Variations do
   # `{:ok, solution_source}` or `{:error, reason}`. Public (@doc false) so the seam
   # is unit-testable with a fake transport.
   @doc false
-  @spec blind_solution(String.t(), String.t(), Config.t()) ::
+  @spec blind_solution(String.t(), String.t(), Config.t(), String.t()) ::
           {:ok, String.t()} | {:error, term()}
-  def blind_solution(vtask_id, prompt_md, %Config{} = cfg) do
+  def blind_solution(vtask_id, prompt_md, %Config{} = cfg, step \\ "variation_blind_solve") do
     {system, user} = Prompts.base_solve(prompt_md)
 
     case Cycle.generate(
            cfg,
            vtask_id,
-           "variation_blind_solve",
+           step,
            system,
            user,
            &Reply.validate_answer/1

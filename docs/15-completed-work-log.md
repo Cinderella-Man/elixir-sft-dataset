@@ -9,6 +9,26 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-15 (night) — T1.1 BUILD landed dark: the §5.2.1 accept-time
+  blind re-screen is wired into the base accept path behind
+  `GEN_BLIND_RESCREEN=1` (default OFF — zero behavior change until Kamil's
+  sign-off flips it).** Mechanics: a base accepted with `attempts > 1`
+  (fixed by a model that SAW the harness report) gets one independent
+  blind re-solve of the FINAL prompt (`Variations.blind_solution`, new
+  step label `base_blind_rescreen`) graded against the FINAL harness
+  before promotion. GREEN → promote + an S6 evidence row appended to
+  `logs/screen_blind.jsonl` in the exact script schema (prompt `sha` +
+  `harness_sha` pair, `source: accept_time_rescreen` — freshness gate
+  compatible). RED → **quarantine, never silent promotion**: the full
+  evidence (triplet + blind candidate + grade + reason) lands in
+  `logs/quarantine/<task_id>/`, the outcome rows `:quarantined`, and the
+  loop SKIPS quarantined ideas on later passes (no call burn while triage
+  waits). Environmental failures row `green: nil` per F7 — never a
+  verdict; attempt-1 accepts promote with no extra call (already blind by
+  construction). 8 unit tests (327 green). Deliberately NOT built pending
+  the sign-off discussion: the §5.2.2 entailment judge over repair-time
+  harness diffs, and the CI check refusing accepts without evidence rows.
+
 - **2026-07-14 (late) — TD.1 CLOSED: the `:adapt` shape is live and the
   corpus grew 249 units (5,898 → 6,147 dirs; export 5,881 → 6,130 rows),
   zero LLM calls.** Brownfield adaptation pairs (docs/13 §2.1): prompt =

@@ -32,6 +32,7 @@ defmodule GenTask.Config do
           skip_bugfix: boolean(),
           skip_adapt: boolean(),
           skip_variation_blind: boolean(),
+          blind_rescreen: boolean(),
           tfim_max_per_task: pos_integer(),
           max_turns: pos_integer(),
           limit: pos_integer() | nil,
@@ -70,6 +71,9 @@ defmodule GenTask.Config do
             skip_bugfix: false,
             skip_adapt: false,
             skip_variation_blind: false,
+            # T1.1 (docs/12 §5.2.1): accept-time blind re-screen for bases accepted
+            # after ≥1 repair. OFF until Kamil signs off the policy (STATUS).
+            blind_rescreen: false,
             tfim_max_per_task: 10,
             max_turns: 2,
             limit: nil,
@@ -115,6 +119,7 @@ defmodule GenTask.Config do
       skip_bugfix: env_bool(env_fun, "GEN_SKIP_BUGFIX"),
       skip_adapt: env_bool(env_fun, "GEN_SKIP_ADAPT"),
       skip_variation_blind: env_bool(env_fun, "GEN_SKIP_VARIATION_BLIND"),
+      blind_rescreen: env_bool(env_fun, "GEN_BLIND_RESCREEN"),
       tfim_max_per_task: env_int(env_fun, "GEN_TFIM_MAX_PER_TASK", 10),
       max_turns: env_int(env_fun, "GEN_MAX_TURNS", 2),
       limit: env_int(env_fun, "GEN_LIMIT", nil),
