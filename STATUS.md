@@ -17,14 +17,23 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 morning summary in the session.)
 ---
 
-## ⏭️ IMMEDIATE QUEUE (in order)
+## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-14 morning)
 
-1. Register order: **T1.5** mutation operators (free), **T2.3**
-   second-sourcing the 15 entailed keeps (~15 calls), **T2.1** S9 debt
-   (design the re-carve path first), **T1.4** with Phase 3 — and the
-   Kamil-gated items (T1.1, T1.6, §4.2 sign-offs, systemd timer) as unblocked.
-2. Bigger builds when Tier 1 is drained: TD.1 adapt pairs, T3.1 export
-   contract (mandatory pre-training), T2.2 scaled review.
+1. **Kamil's four decisions** (section below) — they gate Phase 3, T1.1,
+   T1.6 (and TD.3 behind it), and the nightly timer. Nothing else blocks them.
+2. Ready now, no decision needed: **T2.7 residue — 100_004** hand-
+   strengthening (~1 session, the 013_001/101_001/003_004 recipe), then
+   **T2.1** S9 debt — design the re-carve path FIRST (docs/14 §5.0b caveat),
+   then the 11 reach-in families.
+3. Paid review passes once 2 is drained: **T2.2** scaled semantic review
+   (stratified 60-root batch, then decide on full), **T2.4** rubric judge
+   over passing tasks.
+4. **T1.4** template upgrades land WITH the Phase 3 restart, not before.
+5. Bigger builds: **TD.1** adapt pairs (deterministic, zero LLM, 249/249
+   measured mintable), **T3.1** export contract (MANDATORY before any
+   training run), then the TD.2–TD.4 decisions.
+
+*(T1.5 closed 07-13, T2.3 + T2.5 + T2.7 main body closed 07-14 — docs/15.)*
 
 ## 📋 QUALITY TODO REGISTER (2026-07-13 — why / what / how / cost per item)
 
@@ -114,13 +123,6 @@ batch; full ~330 roots ≈ 20M]**
 - HOW: stratified by era, adversarially verified findings only, small-batch
   ledger protocol; then decide whether the full pass pays.
 
-**T2.3 — Second-source the 15 "FAIL, triaged entailed" keeps. [~15 calls]**
-- WHY: each rests on a single triage verdict, and a judge verdict was proven
-  WRONG on 2026-07-13 (101_003 — docs/14 rule 10). One more independent blind
-  solve per keep either flips it GREEN or confirms solver-weak with two
-  sources.
-- HOW: `screen_blind_solve --only <the 15> --rescreen`; triage new signal.
-
 **T2.4 — Rubric LLM-judge pass over PASSING tasks (sampled). [PAID; round-#2
 candidate]** — WHY: our judge only ever sees failures; judge filtering adds
 quality beyond execution filtering (docs/12 §6.4). HOW: 3-axis rubric on a
@@ -177,7 +179,10 @@ together with T3.1's weighting. docs/13 §2.4–2.5.
    loop (evidence: 6 gaps in 22 repaired accepts).
 2. **docs/12 §4.2 sign-offs** — spot-review scope, prompt-monotony scope;
    the semantic-floor half is answered (floor = kill rate among OBSERVABLE
-   mutants; measured, closed — see docs/15).
+   mutants; measured, closed — see docs/15). Note S8 now has the complete
+   three-way survivor framework to sign off against: killable / internals /
+   **spec-ceiling** (observable but unpinnable-by-spec — docs/13 §1.5.1b,
+   born from 037_001).
 3. **Nightly-sweep systemd timer install** — 4 commands, docs/12 §4.1.10.
 4. **T1.6 Dialyzer** — one `mix.exs` + lockfile change.
 
