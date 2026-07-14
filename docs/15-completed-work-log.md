@@ -9,6 +9,30 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-14 (night) — T3.1 CLOSED: the export contract is live and
+  CI-gated. Training runs are unblocked.** `docs/16-export-contract.md` +
+  `scripts/export_dataset.exs`. Decisions made and written down: (1) the
+  **family** — the leakage unit is the base idea `a` (the 3-digit prefix),
+  because every derived shape embeds its parent's text; 5,881 exportable
+  dirs collapse to **83 families**, and a family is ATOMIC across splits;
+  (2) the **split** — deterministic `sha256("split-v1:" <> family) mod 20`,
+  no RNG and no seed file, so it can never reshuffle; ~5% → **4 whole
+  held-out families** (032, 065, 073, 108 = 282 examples), a genuine
+  held-out-IDEA eval rather than a memorisation score; (3) **FIM exports as
+  chat**, not raw infill control tokens (the prompts already state the task
+  in words — one uniform format, comparable val across shapes, no tokenizer
+  lock-in; raw FIM stays re-derivable); (4) the **gold-per-shape mapping**,
+  whose one trap is `write_test`: its gold is `test_harness.exs`, NOT
+  `solution.ex` (that is the INPUT module embedded in the prompt — exporting
+  it would train "write tests for X" → X). The round-trip validator enforces
+  all of it and is proven non-vacuous: `--selfcheck` plants 5 violations
+  (straddling family, the write_test gold trap, frozen `repair_` evidence,
+  a silently dropped row, an emptied gold) and catches all 5. `repair_` dirs
+  (17) are excluded by contract. Weights are advisory metadata (test_fim
+  0.25 / fim + bugfix 0.5 / base shapes 1.0) so the first training run
+  changes them on purpose, not by accident. CI runs selfcheck + check on
+  every push.
+
 - **2026-07-14 (night) — T2.2-T CLOSED IN FULL: all 89 confirmed findings
   from the 60-root review resolved, same day they were measured.** Final
   ledger: 46 gap families closed by `close_gaps.exs` (43 tool-applied over

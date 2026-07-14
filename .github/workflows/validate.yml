@@ -79,6 +79,15 @@ jobs:
       # failure; a re-screen is ~1 solver call per family (STATUS F2).
       - run: mix run scripts/check_screen_freshness.exs -- --self-test
       - run: mix run scripts/check_screen_freshness.exs
+      # The export contract (docs/16): 91.7% within-family text overlap means a
+      # naive split leaks train->val and makes every eval a memorisation score.
+      # The exporter is the ONLY sanctioned path to training data; --selfcheck
+      # proves the gate bites (5 planted violations), --check validates the
+      # export re-derived from the current corpus. No LLM, no eval: cheap.
+      - run: mix run scripts/export_dataset.exs -- --selfcheck
+      - run: |
+          mix run scripts/export_dataset.exs
+          mix run scripts/export_dataset.exs -- --check
       # wt_ dirs are byte-copies of their parent (module + harness) plus a prompt
       # that embeds the parent SPEC. check_embeds only sees the module fence, so
       # until 2026-07-13 a parent-prompt or harness edit rotted wt_ silently (it

@@ -13,9 +13,8 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**Nothing.** (T2.2-T CLOSED in full 2026-07-14 night — all 89 batch
-findings resolved: every gap family closed, all 12 gold defects + 3 prompt
-defects fixed incl. the formerly parked 032_001. Record in docs/15.)
+**Nothing.** (T3.1 export contract CLOSED 2026-07-14 — docs/16 +
+`scripts/export_dataset.exs`, CI-gated. Training runs are now unblocked.)
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-14 morning)
@@ -128,12 +127,6 @@ frozen-template overfitting is a documented SFT failure mode.
 
 ### Tier 3 — protect the TRAINING side
 
-**T3.1 — Export contract + family-keyed split + round-trip validator.
-[MANDATORY before any training run; FREE to build]** — WHY: 91.7%
-within-family text overlap BY CONSTRUCTION — a naive random split leaks
-train→val and invalidates every eval. HOW: docs/13 §3.1 (per-shape spec,
-FIM-as-chat decision, family-keyed splits, dedup/sampling weights, CI-gated
-round-trip validation).
 
 
 
