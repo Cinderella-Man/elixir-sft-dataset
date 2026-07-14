@@ -142,9 +142,9 @@ defmodule ConfigMerger do
           not Map.has_key?(override, key) ->
             Map.fetch!(base, key)
 
-          # Key only exists in override — but respect lock (do not introduce
-          # a locked key if it genuinely isn't in base either; if it *is* in
-          # base the guard below handles it).
+          # Key only exists in override. Locking preserves BASE values, and
+          # there is no base value at this path, so the override value flows
+          # through.
           not Map.has_key?(base, key) ->
             Map.fetch!(override, key)
 
