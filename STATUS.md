@@ -13,21 +13,20 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**IN PROGRESS (main session, 2026-07-14): T2.2 — scaled semantic review,
-stratified 60-root batch.** Building `scripts/semantic_review.exs`: per
-root ONE review call (prompt+gold+harness, rubric = the 07-12 pilot's four
-finding classes, anti-noise instruction) then ONE adversarial-verify call
-per finding (independent refuter; only unrefuted findings count — the
-register's "adversarially verified findings only"). Ledger
-`logs/semantic_review.jsonl`, rows keyed by the (prompt, solution, harness)
-sha-triple + a review_sha of both prompt templates (self-invalidating on
-template change). Strata by git first-add date (hand era / early loop /
-current loop), deterministic sample. Rule-9 pilot BEFORE the batch: positive
-control = the pre-fix 2026-07-12 018_003 gold reconstructed from git (the
-tool must re-find the known defect) + a few believed-clean roots reviewed
-for noise, output hand-read. Then detached 60-root run + monitor. Findings
-→ rule-7 two-tier items after hand-check (rule 10: model findings are
-hypotheses).
+**DETACHED (2026-07-14): T2.2 — the 60-root stratified semantic review
+batch (57 remaining; 3 done in calibration).** Pilot verdict: GO — positive
+control re-found the planted 018_003 defect AND surfaced live F10; noise
+calibration on 3 "believed-clean" roots produced 7 confirmed findings, ALL
+hand-verified REAL (004_003 @doc lies about the error atom; 035_002 div-
+vs-floor on documented integer timestamps + 3-of-7 agg modes untested;
+038_001 undocumented duplicate_ids return violating its own @spec — live
+T1.6 evidence). Refuter correctly killed the 1 noise finding. Tool
+precision 8/8 on hand-checks. Log: `logs/semantic_review_batch.log`;
+ledger `logs/semantic_review.jsonl` (git-track with -f at close). On exit:
+`--report`, hand-triage EVERY confirmed finding (rule 10), then the
+defect-rate estimate decides the full ~330 pass. Idempotent relaunch:
+`scripts/run_detached.sh logs/semantic_review_batch.log mix run
+scripts/semantic_review.exs -- --go`.
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-14 morning)
