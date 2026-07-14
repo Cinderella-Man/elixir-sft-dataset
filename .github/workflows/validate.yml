@@ -31,6 +31,11 @@ jobs:
           --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          # check_screen_freshness compares legacy ledger rows against per-file
+          # `git log` dates; a shallow clone reports every file as committed at
+          # the tip → 261 false STALEs (2026-07-14). The gate also self-guards.
+          fetch-depth: 0
       - uses: erlef/setup-beam@v1
         with:
           version-file: .tool-versions

@@ -9,6 +9,31 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-14 — F9 closed (both tiers, same morning it was noticed): the
+  freshness gate lied in shallow clones — CI red since the gate landed.**
+  Finding (Kamil's catch): CI reported 261 STALE roots, every one "predating
+  the harness commit 2026-07-14T07:22:08" — the SAME second, which is the
+  tip-commit time. `actions/checkout@v4` defaults to `fetch-depth: 1`; in a
+  shallow clone `git log -1 -- <file>` reports every file as last committed
+  at the tip, so all 248 legacy rows (no `harness_sha` — judged by git dates)
+  read stale. The other 13 "stale" were a SECOND independent gap: the
+  `fresh_via_strengthen` path reads `logs/strengthen_harnesses.jsonl`, which
+  was never git-tracked — absent in CI, those roots fell through to the
+  git-date fallback and their harnesses are BY DEFINITION newer than their
+  screen rows. CI had been red since the gate was wired in (97aa33f5, 07-13
+  evening, 18 pushes) — unnoticed but SAFE: shallow clones make files look
+  newer, so the bug only ever produced false REDs, never false GREENs; no
+  data was mis-certified, no ledger row written. Task A (unbreak CI):
+  `fetch-depth: 0` on checkout + the strengthen ledger force-tracked (28 KB,
+  73 rows — same rationale as the reject ledgers on 07-13: gate evidence
+  must survive a fresh clone; future strengthen runs commit their appends).
+  Task B (can never lie again): the gate now refuses to run in a shallow
+  clone — `git rev-parse --is-shallow-repository` → explicit environmental
+  error, exit 2, remediation in the message (the F7 rule: environmental
+  conditions must never become verdicts). Proven non-vacuously on both
+  sides: a real `--depth 1` clone → guard fires, exit 2; full clone →
+  self-test OK, 332/332 fresh (71 sha + 248 legacy + 13 strengthen), exit 0.
+
 - **2026-07-14 — T2.5 done: randomized-ExUnit-seed full perfect sweep
   (`EVAL_SEED=20260714`, no build needed — the override existed for stability
   confirmations).** Result: NO order-dependence bugs (12 flake suspects all

@@ -36,6 +36,21 @@ defmodule CheckScreenFreshness do
     argv = Enum.drop_while(argv, &(&1 == "--"))
     {opts, _, _} = OptionParser.parse(argv, strict: [self_test: :boolean])
 
+    # Legacy rows (no harness_sha) are judged by per-file git dates, which a
+    # shallow clone falsifies: every file looks committed at the tip, so all
+    # legacy rows read STALE (261 false REDs in CI, 2026-07-14). Environmental
+    # conditions must never become verdicts (the F7 rule) — refuse instead.
+    if shallow_clone?() do
+      IO.puts("""
+      ERROR: this is a SHALLOW git clone — per-file commit dates are untruthful
+      here, so legacy-row freshness cannot be evaluated. This is an environmental
+      failure, not a staleness verdict. Fetch full history and re-run:
+        actions/checkout with `fetch-depth: 0`   (or locally: git fetch --unshallow)
+      """)
+
+      System.halt(2)
+    end
+
     roots = roots()
     screen = screen_by_prompt_sha()
     strengthened = strengthen_success_shas()
@@ -152,6 +167,11 @@ defmodule CheckScreenFreshness do
     |> Enum.map(& &1["harness_sha_after"])
     |> Enum.reject(&is_nil/1)
     |> MapSet.new()
+  end
+
+  defp shallow_clone? do
+    {out, 0} = System.cmd("git", ["rev-parse", "--is-shallow-repository"])
+    String.trim(out) == "true"
   end
 
   defp harness_commit_iso(dir) do
