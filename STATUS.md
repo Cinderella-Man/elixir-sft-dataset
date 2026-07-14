@@ -13,20 +13,9 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**F10-A: close_gaps run on 018_003** (launched 2026-07-14 evening).
-- pid: `logs/close_gaps_f10.pid` · log: `logs/close_gaps_f10.log` · row →
-  `logs/close_gaps.jsonl` (seed row appended to `logs/semantic_review.jsonl`,
-  era `hand_seed`, keyed to live shas)
-- expected: one `applied` row for
-  `018_003_cascading_archive_tree_with_origin_aware_restore_01` — add-only
-  truncation (`microsecond == {0, 0}`) + `Etc/UTC` tests, kill rate not
-  dropped, blind gate GREEN, wt_ twin updated, 10 tfim children resynced.
-  A `rejected` row = read the detail, likely solver-weak blind → retry once.
-- idempotent relaunch (ledger keyed by harness sha):
-  `scripts/run_detached.sh logs/close_gaps_f10.log mix run scripts/close_gaps.exs -- --go --only "018_003*"`
-- ⚠️ NEVER run close_gaps `--go` UNSCOPED: its dry list shows 6 phantom
-  todos (110_004, 100_004, 110_001, 020_004, 104_002, 032_001) — closed BY
-  HAND 07-14 (docs/15), so no tool-ledger row matches their current sha.
+**Nothing.** (Machine idle; last run: F10-A close_gaps on 018_003,
+`applied` 2026-07-14 evening, bite-proven — docs/15. Training runs are
+unblocked.)
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-14 evening)
@@ -34,14 +23,10 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 1. **Kamil's five decisions** (section below) — they gate Phase 3, T1.1,
    T1.6 (and TD.3 behind it), the nightly timer, and the T2.2 full-pass
    question. Nothing else blocks them.
-2. **F10-A** — close 018_003's harness gap. The ONE confirmed T2.2 finding
-   the batch fleet did NOT cover (it was the pilot control, not a batch
-   member — verified 2026-07-14 evening). One `close_gaps.exs` run +
-   cascade; details in the finding below.
-3. Ready now, no decision needed, paid: **T2.4** rubric judge over passing
+2. Ready now, no decision needed, paid: **T2.4** rubric judge over passing
    tasks.
-4. **T1.4** template upgrades land WITH the Phase 3 restart, not before.
-5. Bigger builds: **TD.1** adapt pairs (deterministic, zero LLM, 249/249
+3. **T1.4** template upgrades land WITH the Phase 3 restart, not before.
+4. Bigger builds: **TD.1** adapt pairs (deterministic, zero LLM, 249/249
    measured mintable), then the TD.2–TD.4 decisions.
 
 ## 📋 QUALITY TODO REGISTER (2026-07-13 — why / what / how / cost per item)
@@ -58,21 +43,14 @@ committed immediately (one solved item = one commit).
 
 ### 🔎 OPEN FINDINGS — two tasks each
 
-**F10 — 018_003 harness gap (T2.2's first live find, hand-verified
-2026-07-14): prompt L20 promises `archived_at` is "a `DateTime` in UTC
-truncated to the second"; the harness's 9 `archived_at` assertions pin
-neither truncation (`microsecond == {0, 0}`) nor `time_zone == "Etc/UTC"` —
-an untruncated `DateTime.utc_now()` solver passes the whole suite.**
-- F10-A (fix data): **STILL OPEN — do not assume T2.2-T caught it.**
-  Verified 2026-07-14 evening: the T2.2-T fleet closed all 89 *batch*
-  findings, but 018_003 was the pilot CONTROL, not a batch member — no
-  `close_gaps.jsonl` row exists and the harness still greps clean for
-  `microsecond`/`Etc/UTC`/`truncate`. Action: seed `close_gaps.exs` with
-  this finding (add-only truncation + time-zone pins), then blind gate +
-  wt_/tfim cascade. (Its control-row gold_defect does NOT apply: the
-  dead-code `ignore/1` exists only in the pre-fix git reconstruction.)
+**F10 — 018_003 harness gap: prompt L20 promises `archived_at` is "a
+`DateTime` in UTC truncated to the second"; the harness pinned neither
+truncation nor time zone.**
+- F10-A (fix data): DONE → docs/15 (07-14 late: +3 add-only tests via
+  close_gaps, bite-proven both ways, wt_ + 10 tfim cascaded).
 - F10-B (gate generator): the class belongs to T1.4's harness checklist
-  (per-promise coverage); reference this finding there as evidence.
+  (per-promise coverage); reference this finding there as evidence. OPEN —
+  lands WITH Phase 3 (T1.4), like F1-B.
 
 **F1 — repaired accepts shipped prompt↔harness gaps (6 found live).**
 - F1-A (fix data): DONE → docs/15 (6 prompts fixed, cascaded, re-screened GREEN).

@@ -27,6 +27,11 @@
 #   mix run scripts/close_gaps.exs -- --go --high-only  # only families with a HIGH gap
 #   mix run scripts/close_gaps.exs -- --report          # ledger summary
 #
+# ⚠️ Run --go SCOPED (--only). Six families were closed BY HAND on 07-14
+# (110_004, 100_004, 110_001, 020_004, 104_002, 032_001 — docs/15), so no
+# tool row matches their current harness sha and the dry list shows them as
+# phantom "todo" forever. An unscoped --go re-attempts them with paid calls.
+#
 # Ledger: logs/close_gaps.jsonl (gate-sha-stamped rows keyed by
 # harness_sha_before; resume skips families whose CURRENT harness has a
 # success row). Candidates archived to logs/gap_candidates/ before gating.

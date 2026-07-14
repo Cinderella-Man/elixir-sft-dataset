@@ -9,6 +9,28 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-14 (late) — F10-A CLOSED: 018_003's `archived_at` gap is
+  pinned, bite-proven both ways.** The one T2.2 finding the batch fleet
+  missed (it was the pilot CONTROL — `close_gaps` skips `:`-prefixed task
+  names by design) was closed by seeding `logs/semantic_review.jsonl` with a
+  hand-provenanced row (era `hand_seed`, keyed to LIVE shas; the control's
+  adversarial verdict applies verbatim — evidence lines at L144-145/L237-238,
+  promise at prompt L20) and running `close_gaps.exs -- --go --only
+  "018_003*"` detached. Verdict `applied`: +3 add-only tests (`describe
+  "archived_at shape"`) pinning `time_zone == "Etc/UTC"`, zero offsets,
+  `microsecond == {0, 0}` and truncate-identity on the returned node, the
+  stored cascade, and `list_archived`; kill rate held 0.97→0.97; blind gate
+  GREEN; wt_ twin updated; 10 tfim prompts resynced. Bite proof (rule 8,
+  both sides): a one-line untruncated mutant (`DateTime.utc_now()` sans
+  truncate) grades **31/31 GREEN on the pre-fix harness** and **fails
+  EXACTLY the 3 added tests** on the new one; gold 34/34, zero warnings;
+  all four resync/embed gates + corpus format clean. Operational scar now
+  in the tool header: close_gaps `--go` must be run SCOPED — six
+  hand-closed families (110_004, 100_004, 110_001, 020_004, 104_002,
+  032_001) read as phantom "todo" forever because hand application writes
+  no tool-ledger row. F10-B (per-promise coverage checklist) remains T1.4
+  scope, as registered.
+
 - **2026-07-14 (late) — T3.1 post-close validation: the exporter
   round-trips clean under independent re-verification; one contract breach
   found & fixed (`family_size`), and the gate hardened.** Everything was

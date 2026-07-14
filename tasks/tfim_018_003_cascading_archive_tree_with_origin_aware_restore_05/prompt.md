@@ -688,6 +688,62 @@ defmodule CascadeCrud.ArchiveTest do
   end
 
   # -------------------------------------------------------
+  # Archive timestamp shape
+  # -------------------------------------------------------
+
+  describe "archived_at shape" do
+    test "the returned target timestamp is UTC and truncated to the second", %{server: s} do
+      root = folder!(s, "root")
+
+      assert {:ok, %{node: node}} = Archive.archive_node(s, root.id)
+      assert %DateTime{} = ts = node.archived_at
+
+      # UTC zone: no offset from UTC, and the UTC zone name.
+      assert ts.time_zone == "Etc/UTC"
+      assert ts.utc_offset == 0
+      assert ts.std_offset == 0
+
+      # Second precision: no sub-second component survives truncation.
+      assert ts.microsecond == {0, 0}
+      assert DateTime.truncate(ts, :second) == ts
+    end
+
+    test "stored timestamps on target and cascade are UTC second-precision", %{server: s} do
+      root = folder!(s, "root")
+      sub = folder!(s, "sub", root.id)
+      leaf = file!(s, "a.txt", sub.id)
+
+      archive!(s, root.id)
+
+      for id <- [root.id, sub.id, leaf.id] do
+        assert {:ok, stored} = Archive.fetch_node(s, id, include_archived: true)
+        assert %DateTime{} = ts = stored.archived_at
+        assert ts.time_zone == "Etc/UTC"
+        assert ts.utc_offset == 0
+        assert ts.std_offset == 0
+        assert ts.microsecond == {0, 0}
+        assert DateTime.truncate(ts, :second) == ts
+      end
+    end
+
+    test "a directly archived file also carries a UTC second-precision stamp", %{server: s} do
+      root = folder!(s, "root")
+      f = file!(s, "a.txt", root.id)
+
+      assert {:ok, %{node: node, cascaded: []}} = Archive.archive_node(s, f.id)
+      assert %DateTime{} = ts = node.archived_at
+      assert ts.time_zone == "Etc/UTC"
+      assert ts.microsecond == {0, 0}
+      assert DateTime.truncate(ts, :second) == ts
+
+      assert {:ok, listed} = Archive.list_archived(s)
+      assert [only] = listed
+      assert only.id == f.id
+      assert only.archived_at == ts
+    end
+  end
+
+  # -------------------------------------------------------
   # Origin-aware restore
   # -------------------------------------------------------
 
