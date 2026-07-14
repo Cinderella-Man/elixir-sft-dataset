@@ -403,18 +403,16 @@ defmodule MovingAverageTest do
     assert {:ok, result} = MovingAverage.get(ma, "mem", :sma, 5)
     assert_close(result, 998.0)
 
-    # Inspect state to verify bounded storage
-    state = :sys.get_state(ma)
+    # Because storage is bounded by max_period, the older values are gone for
+    # good: a much wider window can only average the handful of retained
+    # values. An unbounded buffer would answer 900.5 here (the true mean of
+    # 801..1000), while a buffer holding at most ~10 recent values cannot
+    # produce anything below 995.5 (the mean of 991..1000).
+    assert {:ok, wide} = MovingAverage.get(ma, "mem", :sma, 200)
 
-    # The stored values for "mem" should be a bounded structure.
-    # We look for whatever internal key holds the values buffer.
-    # Accept any structure with at most ~max_period elements.
-    stream_data = state.streams["mem"] || state["mem"]
-    values = stream_data[:values] || stream_data.values
-
-    # The buffer should have at most max_period entries (5), not 1001
-    assert length(values) <= 10,
-           "Expected bounded buffer but found #{length(values)} entries"
+    assert wide > 995.0,
+           "Expected a bounded buffer, but SMA over period 200 answered #{wide}, " <>
+             "which implies far more than max_period values are still stored"
   end
 
   test "requesting a larger period grows the buffer to accommodate it", %{ma: ma} do

@@ -13,31 +13,21 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**DETACHED (2026-07-14): T2.1 fleet PASS 2 over the 9 remaining families,
-pid 667251**, log `logs/rewrite_reachins_fleet.log`. The count-lint
-contradiction is fixed (exempted + ledgered as count_shortfall) and both
-blind-fails-rewritten families are hand-triaged KEEP-and-retry (solver slips
-on verbatim-documented behavior — prompt L46 "never-seen topic" / L25
-"largest period ever requested"). Idempotent relaunch: same command as
-below. On exit: review new diffs + re-carves, gates, commit.
-
-**Fleet pass 1 DONE (15/24 applied + committed; all diffs reviewed, all
-gates green). The 9 in pass 2, by class:**
-1. **Tool contradiction (4, deterministic — fix the tool first):** 005_002,
-   006_003, 006_004, 023_002 rejected by the min-test-count lint (harness
-   has fewer tests than today's ≥#public-functions floor — pre-existing
-   debt the rewrite cannot fix under the name-set-unchanged rule). Fix:
-   skip THAT one shortfall when the test-name set is unchanged, flag the
-   count debt in the ledger row (it is T1.4/strengthen scope, not T2.1).
-2. **Blind-gate solver noise (3 — relaunch retries them):** 004_002
-   (candidate did not compile), 005_001, 007_001 (failed only UNTOUCHED
-   tests). Relaunch: `scripts/run_detached.sh logs/rewrite_reachins_fleet.log
-   mix run scripts/rewrite_reachins.exs -- --go`.
-3. **Blind fails REWRITTEN tests (2 — rule-10 HAND TRIAGE before retry):**
-   005_003 ("cleanup drops topics with empty history and no subscribers"),
-   007_002 ("larger period grows max_period and retains more history" — its
-   2 tfim golds also still carry reach-ins, resolve together). Candidates
-   archived in `logs/rewrite_candidates/`. Plan: add-only harness tests — (1) independent RFC 6238
+**DETACHED (2026-07-14): blind re-screen of the 3 hand-applied T2.1
+stragglers** (005_003, 007_001, 007_002 — chronically solver-hard; each
+failed the tool's blind gate twice ON HAND-VERIFIED-DOCUMENTED behavior, so
+their gate-passing candidates were hand-applied per the T2.7 recipe: all
+local gates green — perfect, whole-mutants, semantic rates held EXACTLY at
+0.6875/0.7917/0.6316, isolation :killed on the one hand-modified block,
+corpus reach-in scan PURGED, 007_002's 2 golds re-carved ≤98). The
+re-screen provides the S6 evidence row per family; REDs get rule-10 hand
+triage rows (the prompt lines are already identified: 005_003 L46, 007_001
+L11 + the 07-08 judge row as second source, 007_002 L25). Log:
+`logs/rescreen_t21_stragglers.log`. Idempotent relaunch:
+`scripts/run_detached.sh logs/rescreen_t21_stragglers.log mix run
+scripts/screen_blind_solve.exs --only "005_003*,007_001*,007_002*"
+--rescreen` (drop --rescreen on relaunch). After triage + freshness green:
+commit = T2.1 CLOSED (24/24). Plan: add-only harness tests — (1) independent RFC 6238
 reference computation (base32 decode + HMAC-SHA1 + dynamic truncation are all
 verbatim in the prompt) swept over 300 steps, (2) secret-shape test (160 bits
 = 32 unpadded base32 chars, documented), (3) window-default=1 probe (base±2

@@ -567,32 +567,46 @@ defmodule ReplayEventBusTest do
     Clock.advance(15_000)
 
     send(bus, :cleanup)
-    :sys.get_state(bus)
 
+    # history/2 is a synchronous call, so it can only be served after the
+    # bus has finished handling the :cleanup sweep queued before it.
     assert [] = ReplayEventBus.history(bus, "t")
   end
 
   test "cleanup drops topics with empty history and no subscribers", %{bus: bus} do
+    # A per-topic history size override is part of the topic entry. Once the
+    # sweep drops the topic, it is indistinguishable from a never-seen topic,
+    # so the bus-wide default (10) governs the topic again.
+    :ok = ReplayEventBus.set_history_size(bus, "t", 3)
+
     ReplayEventBus.publish(bus, "t", :old)
     Clock.advance(15_000)
 
     send(bus, :cleanup)
-    :sys.get_state(bus)
 
-    state = :sys.get_state(bus)
-    refute Map.has_key?(state.topics, "t")
+    assert [] = ReplayEventBus.history(bus, "t")
+
+    for i <- 1..15, do: ReplayEventBus.publish(bus, "t", i)
+
+    assert Enum.to_list(6..15) == ReplayEventBus.history(bus, "t")
   end
 
   test "cleanup keeps topics with subscribers even if history is empty", %{bus: bus} do
     {:ok, _} = ReplayEventBus.subscribe(bus, "t", self())
+    :ok = ReplayEventBus.set_history_size(bus, "t", 3)
     # No events published, history empty
     Clock.advance(15_000)
 
     send(bus, :cleanup)
-    :sys.get_state(bus)
 
-    state = :sys.get_state(bus)
-    assert Map.has_key?(state.topics, "t")
+    assert [] = ReplayEventBus.history(bus, "t")
+
+    # The topic survived the sweep along with its subscriber: live events are
+    # still delivered to it, and its per-topic size override still applies.
+    for i <- 1..5, do: ReplayEventBus.publish(bus, "t", i)
+
+    assert [1, 2, 3, 4, 5] = drain("t")
+    assert [3, 4, 5] = ReplayEventBus.history(bus, "t")
   end
 
   # -------------------------------------------------------

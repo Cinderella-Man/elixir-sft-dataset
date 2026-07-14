@@ -286,7 +286,7 @@ end
 
 ```elixir
 defmodule WeightedMovingAverageTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   setup do
     {:ok, pid} = WeightedMovingAverage.start_link([])
@@ -360,8 +360,15 @@ defmodule WeightedMovingAverageTest do
     for v <- 21..30, do: WeightedMovingAverage.push(s, "a", v)
     _ = WeightedMovingAverage.get(s, "a", :wma, 3)
 
-    state = :sys.get_state(s)
-    assert length(state.streams["a"].values) == 3
+    # Only the newest three values ([30, 29, 28]) are retained, so a wider
+    # window cold-starts over exactly those three rather than reaching back
+    # into the discarded history.
+    # WMA = (3*30 + 2*29 + 1*28) / 6 = (90 + 58 + 28) / 6 = 176 / 6
+    {:ok, wide} = WeightedMovingAverage.get(s, "a", :wma, 10)
+    assert close_to(wide, 176 / 6)
+
+    # Three retained values cannot satisfy an HMA that needs four.
+    assert {:error, :insufficient_data} = WeightedMovingAverage.get(s, "a", :hma, 4)
   end
 
   test "larger period grows max_period and retains more history", %{wma: s} do
