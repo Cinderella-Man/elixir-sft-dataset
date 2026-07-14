@@ -9,6 +9,35 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-14 — T2.7 fully closed: the 100_004 residue hand-strengthened
+  0.42 → 0.90 (36/40), at its honest internals ceiling.** The existing
+  harness used `current_code` as its own oracle, which NO code-generation
+  mutant can fail; the prompt documents the entire RFC 6238 pipeline
+  verbatim, so the fix was an INDEPENDENT reference computation inside the
+  harness (RFC 4648 decode + HMAC-SHA1 + RFC 4226 truncation, deliberately
+  written with Bitwise masks where the gold uses rem-moduli) swept over 300
+  steps, plus a secret-shape test (160 bits = 32 unpadded base32 chars) and
+  a window-default=1 probe (base±2 rejected, collision-guarded). Killed all
+  19 killable survivors; the 4 remaining are decode_char GUARD-WIDENINGS
+  (65→64, 90→91, 50→49, 55→56 — accepting `@`/`[`/`1`/`8` that no code path
+  can ever feed it, since the vault only decodes its own valid secrets) =
+  internals, the 003_004 redundant-clamp category, all four predicted before
+  writing a line. War story: the first draft of the reference shipped
+  unpinned `size(...)` bitstring variables — the EXACT defect class that
+  killed this family's blind solvers — and the perfect gate caught it
+  (2 warnings → hard fail). Blind property: fresh re-screen RED on a
+  candidate COMPILE failure (`&&&/2` without `import Bitwise` ×2 + three
+  unpinned `size(...)` matches; zero tests ran) — hand-triaged entailed,
+  3rd/3rd solver-quality death; candidate archived in
+  logs/screen_candidates/, triage row cites it. TOTP forces bitwise +
+  bitstring size-matches (the sharpest Elixir edges for solvers) — the
+  family is a hard-task keep, not a spec defect. Cascade: 10 tfim embeds +
+  wt_ byte-copy resynced, wt_ twin re-measured at the same 36/40, perfect +
+  raise-mutants + embeds + format + temp-path all green, registry +0 (tfim/
+  bugfix pools at cap), freshness 332/332. T2.7 final tally (6 of 6):
+  097_004 0.97, 101_003 1.00, 003_004 0.925, 013_003 0.69-with-ceiling,
+  037_001 at spec-ceiling, 100_004 0.90-with-ceiling.
+
 - **2026-07-14 — F9 closed (both tiers, same morning it was noticed): the
   freshness gate lied in shallow clones — CI red since the gate landed.**
   Finding (Kamil's catch): CI reported 261 STALE roots, every one "predating

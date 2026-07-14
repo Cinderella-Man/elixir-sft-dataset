@@ -13,18 +13,25 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**Nothing.** (Overnight work complete 2026-07-14 ~02:4x — see docs/15 and the
-morning summary in the session.)
+**Nothing.** (T2.7 residue 100_004 closed 2026-07-14 morning — docs/15.) Plan: add-only harness tests — (1) independent RFC 6238
+reference computation (base32 decode + HMAC-SHA1 + dynamic truncation are all
+verbatim in the prompt) swept over 300 steps, (2) secret-shape test (160 bits
+= 32 unpadded base32 chars, documented), (3) window-default=1 probe (base±2
+codes rejected without a :window option). Expected: kills all 19 arithmetic
+survivors; the 4 guard-widening mutants in decode_char (65→64, 90→91, 50→49,
+55→56 on the `char in ?A..?Z` / `?2..?7` guards) are unreachable through the
+documented API (the vault only ever decodes its own valid secrets) → honest
+internals ceiling 36/40 = 0.90. Then: perfect gate, format, mutants, semantic
+re-measure + survivor classification, wt_/tfim cascade, blind re-screen
+(detached), mint any new carves.
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-14 morning)
 
 1. **Kamil's four decisions** (section below) — they gate Phase 3, T1.1,
    T1.6 (and TD.3 behind it), and the nightly timer. Nothing else blocks them.
-2. Ready now, no decision needed: **T2.7 residue — 100_004** hand-
-   strengthening (~1 session, the 013_001/101_001/003_004 recipe), then
-   **T2.1** S9 debt — design the re-carve path FIRST (docs/14 §5.0b caveat),
-   then the 11 reach-in families.
+2. Ready now, no decision needed: **T2.1** S9 debt — design the re-carve
+   path FIRST (docs/14 §5.0b caveat), then the 11 reach-in families.
 3. Paid review passes once 2 is drained: **T2.2** scaled semantic review
    (stratified 60-root batch, then decide on full), **T2.4** rubric judge
    over passing tasks.
@@ -33,7 +40,8 @@ morning summary in the session.)
    measured mintable), **T3.1** export contract (MANDATORY before any
    training run), then the TD.2–TD.4 decisions.
 
-*(T1.5 closed 07-13, T2.3 + T2.5 + T2.7 main body closed 07-14 — docs/15.)*
+*(T1.5 closed 07-13; T2.3 + T2.5 + all of T2.7 incl. the 100_004 residue
+closed 07-14 — docs/15.)*
 
 ## 📋 QUALITY TODO REGISTER (2026-07-13 — why / what / how / cost per item)
 
@@ -135,19 +143,6 @@ showed single-judge bias is real.
 start before steady state). [BIG: 2,396 tfim + 302 wt_ + 80/332 seed openers;
 own tool + ledger + blind re-screen budget]** — docs/12 §7.4;
 frozen-template overfitting is a documented SFT failure mode.
-
-**T2.7 residue — 100_004 (0.42, 23 observable survivors). [hand work,
-~1 session]**
-- WHY: chronically solver-hard — three strengthen attempts and two blind
-  solves all died on solver code-quality defects (unpinned `size(offset)`
-  bitstring warnings, non-compiling TOTP solves); nothing wrong is known
-  about prompt or harness. The other five T2.7 families are resolved
-  (docs/15: 097_004 0.97, 101_003 1.00, 003_004 0.925, 013_003 0.69-with-
-  ceiling, 037_001 recorded at its SPEC-CEILING).
-- WHAT/HOW: hand-write tests against its 23 observable survivors through the
-  documented TOTP/vault API (the 013_001/101_001/003_004 recipe); expect some
-  survivors to be spec-ceiling members (unspecified encoding freedom) —
-  classify + read before writing.
 
 ### Tier 3 — protect the TRAINING side
 
