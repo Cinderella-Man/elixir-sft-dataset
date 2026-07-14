@@ -322,6 +322,22 @@ defmodule CancellablePoolTest do
     send(worker_pid, :proceed)
   end
 
+  # Announces itself under a distinct tag, then raises once released, so a
+  # crash can be triggered at a precise moment while other work is pending.
+  defp crash_on_signal(gate) do
+    fn ->
+      send(gate, {:crash_ready, self()})
+
+      receive do
+        :proceed -> raise "boom"
+      end
+    end
+  end
+
+  defp unique_name(prefix) do
+    :"#{prefix}_#{System.pid()}_#{System.unique_integer([:positive])}"
+  end
+
   setup do
     pool =
       start_supervised!(
@@ -581,6 +597,39 @@ defmodule CancellablePoolTest do
     assert status.idle_workers + status.busy_workers == 2
   end
 
+  # A crash with work still pending must not strand the queue: the replacement
+  # worker has to pick up the queued task, and the rest of the queue must drain
+  # as the other workers free up.
+  test "queued tasks survive a worker crash and still run in order", %{pool: pool} do
+    gate = self()
+    collector = self()
+
+    {:ok, ref_crash} = CancellablePool.submit(pool, crash_on_signal(gate))
+    {:ok, _} = CancellablePool.submit(pool, blocking_task(gate))
+
+    assert_receive {:crash_ready, crashing_worker}, 1_000
+    assert_receive {:ready, blocked_worker}, 1_000
+
+    {:ok, ref_q1} = CancellablePool.submit(pool, fn -> send(collector, {:ran, 1}) && :q1 end)
+    {:ok, ref_q2} = CancellablePool.submit(pool, fn -> send(collector, {:ran, 2}) && :q2 end)
+
+    # Crash the worker while both tasks are still waiting in the queue.
+    release(crashing_worker)
+
+    assert {:error, {:task_crashed, _reason}} = CancellablePool.await(pool, ref_crash, 2_000)
+
+    # The replacement worker must take the head of the queue.
+    assert {:ok, :q1} = CancellablePool.await(pool, ref_q1, 2_000)
+    assert_receive {:ran, 1}, 2_000
+
+    # The remaining queued task runs once the other worker frees up.
+    release(blocked_worker)
+    assert {:ok, :q2} = CancellablePool.await(pool, ref_q2, 2_000)
+    assert_receive {:ran, 2}, 2_000
+
+    assert CancellablePool.status(pool).queue_length == 0
+  end
+
   # -------------------------------------------------------
   # Timeout
   # -------------------------------------------------------
@@ -588,6 +637,52 @@ defmodule CancellablePoolTest do
   test "await returns timeout when task takes too long", %{pool: pool} do
     {:ok, ref} = CancellablePool.submit(pool, slow_task(2_000, :late))
     assert {:error, :timeout} = CancellablePool.await(pool, ref, 100)
+  end
+
+  # -------------------------------------------------------
+  # Default options
+  # -------------------------------------------------------
+
+  test "pool started without options has 3 idle workers and an empty queue", _context do
+    pool =
+      start_supervised!({CancellablePool, name: unique_name(:default_pool)}, id: :defaults)
+
+    status = CancellablePool.status(pool)
+
+    assert status.idle_workers == 3
+    assert status.busy_workers == 0
+    assert status.queue_length == 0
+    assert status.cancelled_count == 0
+  end
+
+  test "pool started without options queues 10 tasks before rejecting", _context do
+    gate = self()
+
+    pool =
+      start_supervised!({CancellablePool, name: unique_name(:default_queue_pool)},
+        id: :default_queue
+      )
+
+    # Occupy all three default workers.
+    for _ <- 1..3 do
+      {:ok, _} = CancellablePool.submit(pool, blocking_task(gate))
+    end
+
+    workers =
+      for _ <- 1..3 do
+        assert_receive {:ready, worker}, 1_000
+        worker
+      end
+
+    # The default queue holds exactly 10 pending tasks.
+    for i <- 1..10 do
+      assert {:ok, _ref} = CancellablePool.submit(pool, quick_task(i))
+    end
+
+    assert CancellablePool.status(pool).queue_length == 10
+    assert {:error, :queue_full} = CancellablePool.submit(pool, quick_task(:overflow))
+
+    Enum.each(workers, &release/1)
   end
 
   # -------------------------------------------------------

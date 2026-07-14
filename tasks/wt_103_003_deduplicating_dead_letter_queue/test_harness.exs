@@ -61,6 +61,20 @@ defmodule DedupDLQTest do
     assert Enum.map(DedupDLQ.peek(dlq, "q", 10), & &1.dedup_key) == ["a", "b"]
   end
 
+  test "peek truncates to count, keeping the oldest entries", %{dlq: dlq} do
+    {:ok, :new, _} = DedupDLQ.push(dlq, "q", "a", :ma, :err, %{})
+    Clock.advance(1)
+    {:ok, :new, _} = DedupDLQ.push(dlq, "q", "b", :mb, :err, %{})
+    Clock.advance(1)
+    {:ok, :new, _} = DedupDLQ.push(dlq, "q", "c", :mc, :err, %{})
+
+    assert Enum.map(DedupDLQ.peek(dlq, "q", 2), & &1.dedup_key) == ["a", "b"]
+    assert Enum.map(DedupDLQ.peek(dlq, "q", 1), & &1.dedup_key) == ["a"]
+    assert DedupDLQ.peek(dlq, "q", 0) == []
+    # peeking is non-destructive: all three are still queued
+    assert length(DedupDLQ.peek(dlq, "q", 3)) == 3
+  end
+
   test "retry success removes the coalesced entry", %{dlq: dlq} do
     {:ok, :new, _} = DedupDLQ.push(dlq, "q", "k", :m, :err, %{})
     assert :ok = DedupDLQ.retry(dlq, "q", "k", fn _ -> :ok end)
@@ -73,6 +87,22 @@ defmodule DedupDLQTest do
     assert [e] = DedupDLQ.peek(dlq, "q", 10)
     assert e.retry_count == 1
     assert e.occurrences == 1
+  end
+
+  test "duplicate push after a failed retry preserves retry_count", %{dlq: dlq} do
+    {:ok, :new, id} = DedupDLQ.push(dlq, "q", "k", :first, :err_a, %{v: 1})
+    assert {:error, :boom} = DedupDLQ.retry(dlq, "q", "k", fn _ -> {:error, :boom} end)
+
+    Clock.advance(30)
+    assert {:ok, :duplicate, ^id} = DedupDLQ.push(dlq, "q", "k", :second, :err_b, %{v: 2})
+
+    assert [e] = DedupDLQ.peek(dlq, "q", 10)
+    assert e.retry_count == 1
+    assert e.occurrences == 2
+    assert e.id == id
+    assert e.first_seen == 0
+    assert e.last_seen == 30
+    assert e.message == :second
   end
 
   test "raising handler counts as failure without crashing", %{dlq: dlq} do

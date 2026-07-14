@@ -617,6 +617,32 @@ defmodule TeamRouterOptimisticTest do
   end
 
   # -------------------------------------------------------
+  # POST — a non-integer If-Match can never match a version
+  # -------------------------------------------------------
+
+  test "POST with a non-numeric If-Match returns 412 and writes nothing", %{store: store} do
+    v = version(store, "team-1")
+    conn = post_member(store, "team-1", "carol", "token-alice", "abc")
+
+    assert conn.status == 412
+    assert json_body(conn)["error"] == "precondition_failed"
+    refute TeamStore.is_member?(store, "team-1", "carol")
+    assert version(store, "team-1") == v
+  end
+
+  test "POST with a trailing-garbage If-Match returns 412 even at the live version", %{
+    store: store
+  } do
+    v = version(store, "team-1")
+    conn = post_member(store, "team-1", "carol", "token-alice", "#{v}x")
+
+    assert conn.status == 412
+    assert json_body(conn)["error"] == "precondition_failed"
+    refute TeamStore.is_member?(store, "team-1", "carol")
+    assert version(store, "team-1") == v
+  end
+
+  # -------------------------------------------------------
   # POST — authorization / not found / bad request
   # -------------------------------------------------------
 
@@ -676,6 +702,34 @@ defmodule TeamRouterOptimisticTest do
     conn = get_members(store, "team-2", "token-carol")
     assert conn.status == 200
     assert json_body(conn)["members"] == ["carol"]
+  end
+
+  # -------------------------------------------------------
+  # Absolute version numbering starts at 0
+  # -------------------------------------------------------
+
+  test "a freshly created team has no members and version 0", %{store: store} do
+    :ok = TeamStore.create_team(store, "team-fresh")
+
+    assert {:ok, 0} = TeamStore.get_version(store, "team-fresh")
+    assert {:ok, []} = TeamStore.list_members(store, "team-fresh")
+  end
+
+  test "versions counted from 0 are client-visible: seed yields 1, then POST yields 2", %{
+    store: store
+  } do
+    :ok = TeamStore.create_team(store, "team-fresh")
+    :ok = TeamStore.add_member(store, "team-fresh", "alice")
+
+    read = get_members(store, "team-fresh", "token-alice")
+    assert read.status == 200
+    assert json_body(read)["version"] == 1
+    assert etag(read) == "1"
+
+    write = post_member(store, "team-fresh", "bob", "token-alice", "1")
+    assert write.status == 201
+    assert json_body(write)["version"] == 2
+    assert etag(write) == "2"
   end
 
   # -------------------------------------------------------

@@ -39,6 +39,40 @@ defmodule MutableDAGTest do
     assert Enum.sort(order) == [:a, :b]
   end
 
+  test "re-adding a vertex that already has edges keeps those edges" do
+    dag = build([:a, :b, :c, :d], [{:a, :b}, {:a, :c}, {:b, :d}, {:c, :d}])
+
+    dag =
+      dag
+      |> MutableDAG.add_vertex(:a)
+      |> MutableDAG.add_vertex(:b)
+      |> MutableDAG.add_vertex(:d)
+
+    assert Enum.sort(MutableDAG.successors(dag, :a)) == [:b, :c]
+    assert Enum.sort(MutableDAG.predecessors(dag, :d)) == [:b, :c]
+    assert MutableDAG.successors(dag, :b) == [:d]
+    assert MutableDAG.predecessors(dag, :b) == [:a]
+    assert {:ok, [[:a], [:b, :c], [:d]]} = MutableDAG.topological_layers(dag)
+  end
+
+  test "re-adding a vertex leaves the topological order intact" do
+    edges = [{:a, :b}, {:b, :c}]
+    dag = build([:a, :b, :c], edges)
+
+    dag = MutableDAG.add_vertex(dag, :b)
+
+    {:ok, order} = MutableDAG.topological_sort(dag)
+    assert Enum.sort(order) == [:a, :b, :c]
+    assert valid_topological_order?(order, edges)
+  end
+
+  test "re-adding a vertex does not reopen a cycle-forming edge" do
+    dag = build([:a, :b, :c], [{:a, :b}, {:b, :c}])
+    dag = MutableDAG.add_vertex(dag, :b)
+
+    assert {:error, {:cycle, [:c, :a, :b, :c]}} = MutableDAG.add_edge(dag, :c, :a)
+  end
+
   # -------------------------------------------------------
   # Cycle diagnostics
   # -------------------------------------------------------
@@ -131,5 +165,20 @@ defmodule MutableDAGTest do
     same = MutableDAG.remove_vertex(dag, :ghost)
     {:ok, order} = MutableDAG.topological_sort(same)
     assert Enum.sort(order) == [:a, :b]
+  end
+
+  test "a removed vertex can be re-added as a fresh isolated vertex" do
+    dag = build([:a, :b, :c], [{:a, :b}, {:b, :c}])
+
+    dag =
+      dag
+      |> MutableDAG.remove_vertex(:b)
+      |> MutableDAG.add_vertex(:b)
+
+    assert MutableDAG.successors(dag, :b) == []
+    assert MutableDAG.predecessors(dag, :b) == []
+    assert MutableDAG.successors(dag, :a) == []
+    assert MutableDAG.predecessors(dag, :c) == []
+    assert {:ok, [[:a, :b, :c]]} = MutableDAG.topological_layers(dag)
   end
 end

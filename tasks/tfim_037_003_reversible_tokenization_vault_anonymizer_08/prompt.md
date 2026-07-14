@@ -136,6 +136,47 @@ defmodule AnonymizerTest do
       refute Map.has_key?(r, :email)
       assert r.name == "Al"
     end
+
+    test "counter starts at 1 and increments by 1 per newly seen value" do
+      records = [%{email: "a@x.com"}, %{email: "b@x.com"}, %{email: "c@x.com"}]
+      {[r1, r2, r3], _v} = Anonymizer.tokenize(records, [:email])
+      assert r1.email == "TOK_EMAIL_1"
+      assert r2.email == "TOK_EMAIL_2"
+      assert r3.email == "TOK_EMAIL_3"
+    end
+
+    test "counter advances only on first sight of a value, not on repeats" do
+      records = [
+        %{email: "a@x.com"},
+        %{email: "a@x.com"},
+        %{email: "b@x.com"},
+        %{email: "a@x.com"},
+        %{email: "c@x.com"}
+      ]
+
+      {[r1, r2, r3, r4, r5], _v} = Anonymizer.tokenize(records, [:email])
+      assert r1.email == "TOK_EMAIL_1"
+      assert r2.email == "TOK_EMAIL_1"
+      assert r3.email == "TOK_EMAIL_2"
+      assert r4.email == "TOK_EMAIL_1"
+      assert r5.email == "TOK_EMAIL_3"
+    end
+
+    test "each field counts from 1 independently in its own namespace" do
+      records = [
+        %{email: "e1", ssn: "s1"},
+        %{email: "e2", ssn: "s1"},
+        %{email: "e1", ssn: "s2"}
+      ]
+
+      {[r1, r2, r3], _v} = Anonymizer.tokenize(records, [:email, :ssn])
+      assert r1.email == "TOK_EMAIL_1"
+      assert r1.ssn == "TOK_SSN_1"
+      assert r2.email == "TOK_EMAIL_2"
+      assert r2.ssn == "TOK_SSN_1"
+      assert r3.email == "TOK_EMAIL_1"
+      assert r3.ssn == "TOK_SSN_2"
+    end
   end
 
   describe "detokenize round trip" do
@@ -154,6 +195,17 @@ defmodule AnonymizerTest do
       {_t, vault} = Anonymizer.tokenize([%{email: "a@x.com"}], [:email])
       records = [%{email: "not-a-token", age: 30}]
       assert Anonymizer.detokenize(records, vault) == records
+    end
+
+    test "literal tokens restore to the value their counter position names" do
+      records = [%{email: "a@x.com"}, %{email: "b@x.com"}]
+      {_t, vault} = Anonymizer.tokenize(records, [:email])
+
+      assert Anonymizer.detokenize([%{email: "TOK_EMAIL_1"}], vault) ==
+               [%{email: "a@x.com"}]
+
+      assert Anonymizer.detokenize([%{email: "TOK_EMAIL_2"}], vault) ==
+               [%{email: "b@x.com"}]
     end
   end
 

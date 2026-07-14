@@ -187,6 +187,17 @@ defmodule MultiSeriesResamplerTest do
   }
   @interval 2_000
 
+  # Values chosen so that every aggregation mode yields a different row map:
+  # the earliest, latest, smallest and largest value of a bucket are all
+  # distinct once both series are read together.
+  #
+  #   bucket 0    : cpu[10, 90, 40] (in time order)  mem[8, 2]
+  #   bucket 2000 : cpu[3, 1, 7]                     mem[6, 4]
+  @spread %{
+    cpu: [{1_500, 40}, {0, 10}, {2_500, 1}, {500, 90}, {3_900, 7}, {2_100, 3}],
+    mem: [{1_900, 2}, {200, 8}, {3_100, 4}, {2_200, 6}]
+  }
+
   defp row(result, bucket) do
     {^bucket, map} = Enum.find(result, fn {b, _} -> b == bucket end)
     map
@@ -318,6 +329,47 @@ defmodule MultiSeriesResamplerTest do
     assert_raise ArgumentError, fn ->
       MultiSeriesResampler.resample(@series, @interval, fill: :backward)
     end
+  end
+
+  test ":first picks per-series earliest value in the bucket" do
+    # Earliest by timestamp, not smallest and not first in the input list:
+    # cpu's bucket-0 points arrive out of order and its earliest value (10)
+    # sits below its latest (40) and its largest (90).
+    result = MultiSeriesResampler.resample(@spread, @interval, agg: :first, fill: nil)
+
+    assert row(result, 0) == %{cpu: 10, mem: 8}
+    assert row(result, 2_000) == %{cpu: 3, mem: 6}
+  end
+
+  test ":max picks per-series largest value in the bucket" do
+    result = MultiSeriesResampler.resample(@spread, @interval, agg: :max, fill: nil)
+
+    assert row(result, 0) == %{cpu: 90, mem: 8}
+    assert row(result, 2_000) == %{cpu: 7, mem: 6}
+  end
+
+  test ":min picks per-series smallest value in the bucket" do
+    result = MultiSeriesResampler.resample(@spread, @interval, agg: :min, fill: nil)
+
+    assert row(result, 0) == %{cpu: 10, mem: 2}
+    assert row(result, 2_000) == %{cpu: 1, mem: 4}
+  end
+
+  test "omitting :agg aggregates with :last" do
+    # cpu's bucket values in time order are 10, 90, 40, so :last (40) differs
+    # from :first, :min, :max, :sum, :count and :mean.
+    series = %{cpu: [{1_500, 40}, {0, 10}, {500, 90}], mem: [{200, 3}, {900, 8}]}
+    result = MultiSeriesResampler.resample(series, @interval, fill: nil)
+
+    assert result == [{0, %{cpu: 40, mem: 8}}]
+  end
+
+  test "omitting :fill leaves empty buckets nil" do
+    # Bucket 2000 has no cpu points; forward filling would carry 5 into it.
+    series = %{cpu: [{0, 5}, {4_500, 7}]}
+    result = MultiSeriesResampler.resample(series, @interval, agg: :last)
+
+    assert result == [{0, %{cpu: 5}}, {2_000, %{cpu: nil}}, {4_000, %{cpu: 7}}]
   end
 end
 ```

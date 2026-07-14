@@ -78,6 +78,86 @@ defmodule SingleUseTokenTest do
   end
 
   # -------------------------------------------------------
+  # Nonce independence for identical issuance arguments
+  # -------------------------------------------------------
+
+  test "two tokens issued with the same payload and ttl are different binaries",
+       %{server: server} do
+    # Each call mints a fresh random nonce, so identical arguments still yield
+    # distinct tokens even though the clock is frozen.
+    t1 = SingleUseToken.issue(server, %{user_id: 7}, 300)
+    t2 = SingleUseToken.issue(server, %{user_id: 7}, 300)
+
+    refute t1 == t2
+  end
+
+  test "redeeming a token does not consume another token with the identical payload",
+       %{server: server} do
+    t1 = SingleUseToken.issue(server, %{user_id: 7}, 300)
+    t2 = SingleUseToken.issue(server, %{user_id: 7}, 300)
+
+    assert {:ok, %{user_id: 7}} = SingleUseToken.redeem(server, t1)
+    # Distinct nonces: t1's redemption leaves t2 fully redeemable.
+    assert {:ok, %{user_id: 7}} = SingleUseToken.redeem(server, t2)
+
+    # Each token is now individually consumed.
+    assert {:error, :replayed} = SingleUseToken.redeem(server, t1)
+    assert {:error, :replayed} = SingleUseToken.redeem(server, t2)
+  end
+
+  # -------------------------------------------------------
+  # Default clock (`:clock` omitted)
+  # -------------------------------------------------------
+
+  test "server started without :clock issues and redeems tokens" do
+    server =
+      start_supervised!(
+        Supervisor.child_spec({SingleUseToken, secret: "default-clock-secret"},
+          id: :default_clock_server
+        )
+      )
+
+    token = SingleUseToken.issue(server, %{user_id: 3}, 300)
+    assert {:ok, %{user_id: 3}} = SingleUseToken.redeem(server, token)
+    assert {:error, :replayed} = SingleUseToken.redeem(server, token)
+  end
+
+  test "the omitted :clock defaults to Unix epoch seconds" do
+    secret = "epoch-secret"
+    now = System.os_time(:second)
+
+    # Issues on the default clock; the two peers share the secret, so the tokens
+    # verify there and are judged against a known epoch-second time.
+    issuer =
+      start_supervised!(
+        Supervisor.child_spec({SingleUseToken, secret: secret}, id: :epoch_issuer)
+      )
+
+    present_peer =
+      start_supervised!(
+        Supervisor.child_spec({SingleUseToken, secret: secret, clock: fn -> now end},
+          id: :epoch_present_peer
+        )
+      )
+
+    future_peer =
+      start_supervised!(
+        Supervisor.child_spec({SingleUseToken, secret: secret, clock: fn -> now + 3_600 end},
+          id: :epoch_future_peer
+        )
+      )
+
+    # A 60-second token issued "now" is still valid at epoch second `now` ...
+    assert {:ok, "epoch"} =
+             SingleUseToken.redeem(present_peer, SingleUseToken.issue(issuer, "epoch", 60))
+
+    # ... and expired an hour later, which only holds if the default clock ticks
+    # in epoch seconds rather than some other unit or epoch.
+    assert {:error, :expired} =
+             SingleUseToken.redeem(future_peer, SingleUseToken.issue(issuer, "epoch", 60))
+  end
+
+  # -------------------------------------------------------
   # Expiry
   # -------------------------------------------------------
 

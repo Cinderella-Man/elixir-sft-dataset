@@ -643,5 +643,73 @@ defmodule GeneratorsTest do
       assert Enum.max(lengths) == 20
     end
   end
+
+  # -------------------------------------------------------
+  # Exact map shapes
+  #
+  # The documented maps carry exactly the listed keys and no others, so
+  # an extra field (e.g. :created_at) is a contract violation even though
+  # every documented key is still present.
+  # -------------------------------------------------------
+
+  describe "generated maps carry exactly the documented keys" do
+    property "user/0 maps have exactly :id, :name, :email, :age and :role" do
+      check all(user <- Generators.user()) do
+        assert map_size(user) == 5
+        assert Enum.sort(Map.keys(user)) == [:age, :email, :id, :name, :role]
+      end
+    end
+
+    property "money/0 maps have exactly :amount and :currency" do
+      check all(m <- Generators.money()) do
+        assert map_size(m) == 2
+        assert Enum.sort(Map.keys(m)) == [:amount, :currency]
+      end
+    end
+
+    property "date_range/0 maps have exactly :start_date and :end_date" do
+      check all(dr <- Generators.date_range()) do
+        assert map_size(dr) == 2
+        assert Enum.sort(Map.keys(dr)) == [:end_date, :start_date]
+      end
+    end
+  end
+
+  # -------------------------------------------------------
+  # Shrinking through one_of_weighted/1
+  #
+  # The combinator only decides which generator to draw from; a failing
+  # property must still shrink toward the chosen generator's own minimal
+  # value rather than getting stuck on whatever value was first drawn.
+  # -------------------------------------------------------
+
+  describe "one_of_weighted/1 preserves shrinking" do
+    defp always_failing_shrink(generator, seed) do
+      options = [initial_seed: seed, max_runs: 20, max_shrinking_steps: 10_000]
+
+      {:error, %{shrunk_failure: shrunk}} =
+        StreamData.check_all(generator, options, fn value -> {:error, value} end)
+
+      shrunk
+    end
+
+    test "a single weighted generator shrinks toward its own minimal value" do
+      gen = Generators.one_of_weighted([{1, StreamData.integer(100..1_000)}])
+
+      assert always_failing_shrink(gen, {7, 8, 9}) == 100
+    end
+
+    test "shrinking flows through whichever weighted generator was chosen" do
+      # Both branches bottom out at 50, so whichever one the weights select,
+      # a failing property must shrink all the way down to that value.
+      gen =
+        Generators.one_of_weighted([
+          {5, StreamData.integer(50..500)},
+          {1, StreamData.integer(50..500)}
+        ])
+
+      assert always_failing_shrink(gen, {11, 12, 13}) == 50
+    end
+  end
 end
 ```

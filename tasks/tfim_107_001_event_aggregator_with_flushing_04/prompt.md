@@ -281,5 +281,69 @@ defmodule AggregatorTest do
     # at t ~= 200ms, i.e. around t ~= 600ms.
     assert_receive {:flushed, [:d]}, 400
   end
+
+  # ---------------------------------------------------------------
+  # Option defaults
+  # ---------------------------------------------------------------
+
+  test "batch_size defaults to 100 when not provided" do
+    # Long interval so only the size trigger can fire; :batch_size omitted.
+    agg = start_agg(interval_ms: 5_000)
+
+    Enum.each(1..99, fn n -> Aggregator.push(agg, n) end)
+
+    # 99 buffered events is still one short of the documented default of 100.
+    refute_receive {:flushed, _}, 200
+
+    Aggregator.push(agg, 100)
+
+    assert_receive {:flushed, batch}, 500
+    assert batch == Enum.to_list(1..100)
+  end
+
+  test "interval_ms defaults to 1_000 when not provided" do
+    # Batch size large enough that only the time trigger can fire.
+    agg = start_agg(batch_size: 50)
+
+    Aggregator.push(agg, :a)
+
+    # A default of 1_000ms means no flush is due yet at ~700ms.
+    refute_receive {:flushed, _}, 700
+
+    # But the partial batch must be flushed once the default interval elapses.
+    assert_receive {:flushed, [:a]}, 800
+  end
+
+  test "on_flush defaults to a no-op so the aggregator survives flushes without it" do
+    # No :on_flush given at all: flushing must not crash the process.
+    agg = start_supervised!({Aggregator, [batch_size: 2, interval_ms: 100]})
+    ref = Process.monitor(agg)
+
+    # Force a size-triggered flush, then a time-triggered flush of a leftover.
+    Aggregator.push(agg, :a)
+    Aggregator.push(agg, :b)
+    Aggregator.push(agg, :c)
+
+    refute_receive {:DOWN, ^ref, :process, ^agg, _reason}, 500
+    assert Process.alive?(agg)
+  end
+
+  # ---------------------------------------------------------------
+  # Name registration
+  # ---------------------------------------------------------------
+
+  test "registers under :name and accepts pushes addressed to that name" do
+    name = :"aggregator_#{System.pid()}_#{System.unique_integer([:positive])}"
+
+    pid = start_agg(name: name, batch_size: 2, interval_ms: 5_000)
+
+    assert Process.whereis(name) == pid
+
+    # push/2 must accept the registered name, not just a pid.
+    Aggregator.push(name, :a)
+    Aggregator.push(name, :b)
+
+    assert_receive {:flushed, [:a, :b]}, 500
+  end
 end
 ```

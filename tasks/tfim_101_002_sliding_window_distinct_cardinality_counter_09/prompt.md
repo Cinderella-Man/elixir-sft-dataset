@@ -435,5 +435,156 @@ defmodule SlidingUniqueCounterTest do
     assert 1 = SlidingUniqueCounter.distinct_count(sc, "x", 1_000)
     assert 2 = SlidingUniqueCounter.distinct_count(sc, "y", 1_000)
   end
+
+  # -------------------------------------------------------
+  # Periodic (self-scheduled) cleanup
+  # -------------------------------------------------------
+
+  test "cleanup fires on its own schedule without a directly sent :cleanup" do
+    # The counter is given a clock that reports every read back to this test.
+    # Once the test stops calling the server, any further clock read can only
+    # come from the process waking itself up to run the periodic cleanup.
+    {:ok, sc} = start_reporting_counter(cleanup_interval_ms: 20)
+
+    SlidingUniqueCounter.add(sc, "k", "u1")
+    assert SlidingUniqueCounter.tracked_key_count(sc) == 1
+
+    flush_clock_reads()
+    Clock.advance(10_000)
+
+    await_clock_read_at_least(10_000)
+    assert SlidingUniqueCounter.tracked_key_count(sc) == 0
+  end
+
+  test "periodic cleanup re-arms itself and purges data that expires later" do
+    {:ok, sc} = start_reporting_counter(cleanup_interval_ms: 20)
+
+    SlidingUniqueCounter.add(sc, "k1", "u1")
+    flush_clock_reads()
+    Clock.advance(10_000)
+
+    await_clock_read_at_least(10_000)
+    assert SlidingUniqueCounter.tracked_key_count(sc) == 0
+
+    # Data added after that first purge must be reclaimed by a later cleanup,
+    # which only happens if cleanup keeps re-scheduling itself.
+    Clock.set(20_000)
+    SlidingUniqueCounter.add(sc, "k2", "u2")
+    assert SlidingUniqueCounter.tracked_key_count(sc) == 1
+
+    flush_clock_reads()
+    Clock.set(40_000)
+
+    await_clock_read_at_least(40_000)
+    assert SlidingUniqueCounter.tracked_key_count(sc) == 0
+  end
+
+  # -------------------------------------------------------
+  # Option defaults and :name registration
+  # -------------------------------------------------------
+
+  test "bucket_ms defaults to 1_000" do
+    {:ok, sc} =
+      SlidingUniqueCounter.start_link(clock: &Clock.now/0, cleanup_interval_ms: :infinity)
+
+    Clock.set(900)
+    SlidingUniqueCounter.add(sc, "k", "early")
+
+    # With 1_000ms buckets, "early" sits in bucket 0, which starts at 0. At
+    # now=1_000 a 500ms window keeps only buckets starting at or after 500.
+    Clock.set(1_000)
+    assert 0 = SlidingUniqueCounter.distinct_count(sc, "k", 500)
+
+    # "late" lands in bucket 1, which starts exactly at 1_000 and so is inside
+    # a 1ms window at now=1_000 (threshold 999).
+    SlidingUniqueCounter.add(sc, "k", "late")
+    assert 1 = SlidingUniqueCounter.distinct_count(sc, "k", 1)
+  end
+
+  test "max_window_ms defaults to 3_600_000 as the cleanup retention horizon" do
+    {:ok, sc} =
+      SlidingUniqueCounter.start_link(
+        clock: &Clock.now/0,
+        bucket_ms: 100,
+        cleanup_interval_ms: :infinity
+      )
+
+    Clock.set(0)
+    SlidingUniqueCounter.add(sc, "k", "u1")
+
+    # The member's bucket starts at 0; at now=3_600_000 the retention threshold
+    # is also 0, so the key is still within the horizon.
+    Clock.set(3_600_000)
+    send(sc, :cleanup)
+    assert SlidingUniqueCounter.tracked_key_count(sc) == 1
+
+    # One bucket later the threshold has moved past the bucket start.
+    Clock.set(3_600_101)
+    send(sc, :cleanup)
+    assert SlidingUniqueCounter.tracked_key_count(sc) == 0
+  end
+
+  test "counting works on the default monotonic clock when :clock is omitted" do
+    {:ok, sc} = SlidingUniqueCounter.start_link(bucket_ms: 100, cleanup_interval_ms: :infinity)
+
+    SlidingUniqueCounter.add(sc, "k", "u1")
+    SlidingUniqueCounter.add(sc, "k", "u1")
+    SlidingUniqueCounter.add(sc, "k", "u2")
+
+    assert 2 = SlidingUniqueCounter.distinct_count(sc, "k", 60_000)
+  end
+
+  test ":name registers the process so the whole API is usable by name" do
+    name = :"sliding_unique_counter_#{System.pid()}_#{System.unique_integer([:positive])}"
+
+    {:ok, _pid} =
+      SlidingUniqueCounter.start_link(
+        name: name,
+        clock: &Clock.now/0,
+        bucket_ms: 100,
+        cleanup_interval_ms: :infinity,
+        max_window_ms: 1_000
+      )
+
+    assert :ok = SlidingUniqueCounter.add(name, "k", "u1")
+    assert :ok = SlidingUniqueCounter.add(name, "k", "u1")
+    assert :ok = SlidingUniqueCounter.add(name, "k", "u2")
+
+    assert 2 = SlidingUniqueCounter.distinct_count(name, "k", 1_000)
+    assert SlidingUniqueCounter.tracked_key_count(name) == 1
+  end
+
+  # -------------------------------------------------------
+  # Helpers
+  # -------------------------------------------------------
+
+  defp start_reporting_counter(opts) do
+    test_pid = self()
+
+    clock = fn ->
+      now = Clock.now()
+      send(test_pid, {:clock_read, now})
+      now
+    end
+
+    SlidingUniqueCounter.start_link([clock: clock, bucket_ms: 100, max_window_ms: 1_000] ++ opts)
+  end
+
+  defp flush_clock_reads do
+    receive do
+      {:clock_read, _} -> flush_clock_reads()
+    after
+      0 -> :ok
+    end
+  end
+
+  defp await_clock_read_at_least(target) do
+    receive do
+      {:clock_read, now} when now >= target -> :ok
+      {:clock_read, _} -> await_clock_read_at_least(target)
+    after
+      2_000 -> flunk("the counter never read the clock again on its own schedule")
+    end
+  end
 end
 ```

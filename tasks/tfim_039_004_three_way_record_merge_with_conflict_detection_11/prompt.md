@@ -272,5 +272,55 @@ defmodule RecordMergeTest do
     assert merged == [%{id: 1, a: 10}, %{id: 3, a: 30}, %{id: 4, a: 4}]
     assert conflicts == []
   end
+
+  test "theirs deleting a record we modified is a delete_modify blamed on theirs" do
+    base = [%{id: 1, x: 1}]
+    ours = [%{id: 1, x: 5}]
+    theirs = []
+
+    assert RecordMerge.merge(base, ours, theirs) ==
+             %{
+               merged: [],
+               conflicts: [
+                 %{id: 1, type: :delete_modify, deleted_by: :theirs, modified: %{id: 1, x: 5}}
+               ]
+             }
+  end
+
+  test "field absent in base but added differently on both sides conflicts with :missing base" do
+    base = [%{id: 1, a: 1}]
+    ours = [%{id: 1, a: 1, b: 2}]
+    theirs = [%{id: 1, a: 1, b: 3}]
+
+    assert RecordMerge.merge(base, ours, theirs) ==
+             %{
+               merged: [],
+               conflicts: [
+                 %{
+                   id: 1,
+                   type: :modify_modify,
+                   fields: %{b: %{base: :missing, ours: 2, theirs: 3}}
+                 }
+               ]
+             }
+  end
+
+  test "field deleted by ours and modified by theirs conflicts with :missing on our side" do
+    base = [%{id: 1, a: 1, b: 1}]
+    ours = [%{id: 1, a: 1}]
+    theirs = [%{id: 1, a: 1, b: 2}]
+
+    assert RecordMerge.merge(base, ours, theirs) ==
+             %{
+               merged: [],
+               conflicts: [
+                 %{
+                   id: 1,
+                   type: :modify_modify,
+                   fields: %{b: %{base: 1, ours: :missing, theirs: 2}}
+                 }
+               ]
+             }
+  end
 end
 ```

@@ -641,5 +641,83 @@ defmodule RetrySchedulerTest do
     tick(rs)
     assert {:error, :not_found} = RetryScheduler.status(rs, "j")
   end
+
+  # -------------------------------------------------------
+  # Automatic ticking driven by :tick_interval_ms
+  # -------------------------------------------------------
+
+  test "a server with a finite tick interval runs a due job with no manual tick" do
+    {:ok, rs} = RetryScheduler.start_link(clock: &Clock.now/0, tick_interval_ms: 10)
+
+    :ok = RetryScheduler.schedule(rs, "j", @t0, {JobSink, :ok, [self()]})
+
+    # Nothing but the scheduler's own periodic tick can drive this attempt.
+    assert_receive :ran, 2_000
+    assert {:ok, :completed, 1} = RetryScheduler.status(rs, "j")
+  end
+
+  test "auto-ticking keeps firing, so a job due later still runs" do
+    {:ok, rs} = RetryScheduler.start_link(clock: &Clock.now/0, tick_interval_ms: 10)
+
+    future = NaiveDateTime.add(@t0, 60, :second)
+    :ok = RetryScheduler.schedule(rs, "j", future, {JobSink, :ok, [self()]})
+
+    # Early ticks find the job not yet due and must leave it alone.
+    refute_receive :ran, 150
+    assert {:ok, :pending, 0} = RetryScheduler.status(rs, "j")
+
+    # Once the clock passes run_at, a later tick must still arrive: the
+    # scheduler re-arms its timer after every tick.
+    Clock.advance_ms(60_001)
+    assert_receive :ran, 2_000
+    assert {:ok, :completed, 1} = RetryScheduler.status(rs, "j")
+  end
+
+  test "tick_interval_ms :infinity never auto-ticks; only manual ticks run jobs", %{rs: rs} do
+    :ok = RetryScheduler.schedule(rs, "j", @t0, {JobSink, :ok, [self()]})
+
+    # The job is due immediately, yet auto-ticking is disabled.
+    refute_receive :ran, 300
+    assert {:ok, :pending, 0} = RetryScheduler.status(rs, "j")
+
+    tick(rs)
+    assert_received :ran
+    assert {:ok, :completed, 1} = RetryScheduler.status(rs, "j")
+  end
+
+  # -------------------------------------------------------
+  # Cancellation from terminal states
+  # -------------------------------------------------------
+
+  test "cancel removes a :completed job", %{rs: rs} do
+    :ok = RetryScheduler.schedule(rs, "j", @t0, {JobSink, :ok, [self()]})
+    tick(rs)
+    assert {:ok, :completed, 1} = RetryScheduler.status(rs, "j")
+
+    assert :ok = RetryScheduler.cancel(rs, "j")
+    assert {:error, :not_found} = RetryScheduler.status(rs, "j")
+    assert [] = RetryScheduler.jobs(rs)
+  end
+
+  test "cancel removes a :dead job", %{rs: rs} do
+    :ok = RetryScheduler.schedule(rs, "j", @t0, {JobSink, :err, [self()]}, max_attempts: 1)
+    tick(rs)
+    assert {:ok, :dead, 1} = RetryScheduler.status(rs, "j")
+
+    assert :ok = RetryScheduler.cancel(rs, "j")
+    assert {:error, :not_found} = RetryScheduler.status(rs, "j")
+    assert [] = RetryScheduler.jobs(rs)
+  end
+
+  test "a name freed by cancelling a terminal job can be scheduled again", %{rs: rs} do
+    :ok = RetryScheduler.schedule(rs, "j", @t0, {JobSink, :ok, [self()]})
+    tick(rs)
+    assert {:ok, :completed, 1} = RetryScheduler.status(rs, "j")
+    assert_received :ran
+
+    assert :ok = RetryScheduler.cancel(rs, "j")
+    assert :ok = RetryScheduler.schedule(rs, "j", @t0, {JobSink, :ok, [self()]})
+    assert {:ok, :pending, 0} = RetryScheduler.status(rs, "j")
+  end
 end
 ```

@@ -423,5 +423,53 @@ defmodule WebhookReceiverOrderedTest do
     conn = do_request(opts, :get, "/api/webhooks/stripe", "")
     assert conn.status in [404, 405]
   end
+
+  test "drained buffered events are marked :delivered, not :pending", %{
+    opts: opts,
+    store: store
+  } do
+    assert deliver(opts, "e1", "s1", 1).status == 200
+    assert deliver(opts, "e3", "s1", 3).status == 202
+    assert deliver(opts, "e4", "s1", 4).status == 202
+    assert deliver(opts, "e2", "s1", 2).status == 200
+
+    events = WebhookReceiver.Store.delivered_events(store, "s1")
+    assert Enum.map(events, & &1.sequence) == [1, 2, 3, 4]
+    assert Enum.map(events, & &1.status) == [:delivered, :delivered, :delivered, :delivered]
+  end
+
+  test "events drained via Store.deliver/2 are marked :delivered", %{store: store} do
+    e1 = %{event_id: "d1", stream_id: "z", sequence: 1, payload: %{}, status: :pending}
+    e2 = %{event_id: "d2", stream_id: "z", sequence: 2, payload: %{}, status: :pending}
+
+    assert {:ok, :buffered} = WebhookReceiver.Store.deliver(store, e2)
+    assert {:ok, :received} = WebhookReceiver.Store.deliver(store, e1)
+
+    events = WebhookReceiver.Store.delivered_events(store, "z")
+    assert Enum.map(events, & &1.event_id) == ["d1", "d2"]
+    assert Enum.map(events, & &1.status) == [:delivered, :delivered]
+  end
+
+  test "missing stripe-signature header returns 401", %{opts: opts, store: store} do
+    payload = build_event("e1", "s1", 1)
+    conn = do_request(opts, :post, "/api/webhooks/stripe", payload, [])
+
+    assert conn.status == 401
+    assert json_body(conn)["error"] == "invalid_signature"
+    assert WebhookReceiver.Store.last_sequence(store, "s1") == 0
+    assert WebhookReceiver.Store.delivered_events(store, "s1") == []
+  end
+
+  test "empty stripe-signature header returns 401", %{opts: opts, store: store} do
+    payload = build_event("e1", "s1", 1)
+
+    conn =
+      do_request(opts, :post, "/api/webhooks/stripe", payload, [{"stripe-signature", ""}])
+
+    assert conn.status == 401
+    assert json_body(conn)["error"] == "invalid_signature"
+    assert WebhookReceiver.Store.last_sequence(store, "s1") == 0
+    assert WebhookReceiver.Store.delivered_events(store, "s1") == []
+  end
 end
 ```

@@ -293,5 +293,54 @@ defmodule MetricsTest do
     assert Metrics.count(:c) == 100
     assert Metrics.rate(:c, 1) == 100
   end
+
+  # -------------------------------------------------------
+  # hot path bypasses the owning process
+  # -------------------------------------------------------
+
+  # The owning process only holds the table; increment must reach ETS directly,
+  # so it still completes while that process is unable to handle any message.
+  test "increment succeeds while the owning process cannot serve requests", %{clock: clock} do
+    set_time(clock, 3)
+    owner = Process.whereis(Metrics)
+    :sys.suspend(owner)
+
+    task = Task.async(fn -> Metrics.increment(:direct, 4) end)
+    outcome = Task.yield(task, 2_000)
+    :sys.resume(owner)
+
+    assert {:ok, :ok} = outcome
+    assert Metrics.count(:direct) == 4
+  end
+
+  # Concurrent writers must not need the owning process either.
+  test "concurrent increments still land while the owner is suspended", %{clock: clock} do
+    set_time(clock, 11)
+    owner = Process.whereis(Metrics)
+    :sys.suspend(owner)
+
+    tasks = Enum.map(1..20, fn _ -> Task.async(fn -> Metrics.increment(:busy, 2) end) end)
+    outcomes = Task.yield_many(tasks, 2_000)
+    :sys.resume(owner)
+
+    assert Enum.all?(outcomes, fn {_task, result} -> result == {:ok, :ok} end)
+    assert Metrics.count(:busy) == 40
+  end
+
+  # The table the owner creates must be public and named, which is what lets the
+  # hot path write to it without going through the owner.
+  test "the owned table is public and named" do
+    owner = Process.whereis(Metrics)
+
+    owned =
+      Enum.filter(:ets.all(), fn table ->
+        :ets.info(table, :owner) == owner
+      end)
+
+    assert Enum.any?(owned, fn table ->
+             :ets.info(table, :protection) == :public and
+               :ets.info(table, :named_table) == true
+           end)
+  end
 end
 ```

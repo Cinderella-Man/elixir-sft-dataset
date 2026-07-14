@@ -204,4 +204,82 @@ defmodule LRUCacheTest do
     assert :miss = LRUCache.get(c1, :a)
     assert {:ok, :from_c2} = LRUCache.get(c2, :a)
   end
+
+  # -------------------------------------------------------
+  # Start-up option contract
+  # -------------------------------------------------------
+
+  # A fresh cache name that cannot collide with any other test or OS process.
+  defp unique_name do
+    :"lru_opts_#{System.pid()}_#{System.unique_integer([:positive])}"
+  end
+
+  # Start a cache that is expected to fail, and return the exception struct
+  # behind the failure. A bad option may surface either as an exception raised
+  # in the caller or as an initialisation failure of the started process
+  # (`{:error, {exception, stacktrace}}`, or an exit carrying the same shape);
+  # all of those are accepted, and only the exception type is inspected.
+  defp start_error(opts) do
+    Process.flag(:trap_exit, true)
+
+    outcome =
+      try do
+        LRUCache.start_link(opts)
+      rescue
+        exception -> {:raised, exception}
+      catch
+        :exit, reason -> {:exited, reason}
+      end
+
+    flush_exits()
+    Process.flag(:trap_exit, false)
+
+    case outcome do
+      {:raised, exception} -> exception
+      {:exited, reason} -> exception_from(reason)
+      {:error, reason} -> exception_from(reason)
+      {:ok, _pid} -> flunk("starting the cache with invalid options should have failed")
+    end
+  end
+
+  defp exception_from({exception, stacktrace}) when is_list(stacktrace), do: exception
+  defp exception_from(%{__exception__: true} = exception), do: exception
+  defp exception_from(other), do: flunk("start failed without an exception: #{inspect(other)}")
+
+  defp flush_exits do
+    receive do
+      {:EXIT, _pid, _reason} -> flush_exits()
+    after
+      0 -> :ok
+    end
+  end
+
+  test "a max_size of zero is rejected at start-up" do
+    assert %ArgumentError{} = start_error(name: unique_name(), max_size: 0)
+  end
+
+  test "a negative max_size is rejected at start-up" do
+    assert %ArgumentError{} = start_error(name: unique_name(), max_size: -1)
+  end
+
+  test "a non-integer max_size is rejected at start-up" do
+    assert %ArgumentError{} = start_error(name: unique_name(), max_size: 3.0)
+    assert %ArgumentError{} = start_error(name: unique_name(), max_size: :three)
+  end
+
+  test "a missing max_size is a KeyError-style start-up failure" do
+    assert %KeyError{} = start_error(name: unique_name())
+  end
+
+  test "a missing name is a KeyError-style start-up failure" do
+    assert %KeyError{} = start_error(max_size: 3)
+  end
+
+  test "a max_size of one is a legal start-up option" do
+    name = unique_name()
+    assert {:ok, pid} = LRUCache.start_link(name: name, max_size: 1)
+    assert is_pid(pid)
+    assert :ok = LRUCache.put(name, :a, 1)
+    assert {:ok, 1} = LRUCache.get(name, :a)
+  end
 end

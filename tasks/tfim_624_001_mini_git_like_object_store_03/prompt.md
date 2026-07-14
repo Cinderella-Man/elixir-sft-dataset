@@ -505,5 +505,51 @@ defmodule ObjectStoreTest do
     assert {:ok, _} = ObjectStore.retrieve(s, c1)
     assert {:ok, _} = ObjectStore.retrieve(s, c2)
   end
+
+  # -------------------------------------------------------
+  # Process registration via the :name option
+  # -------------------------------------------------------
+
+  defp unique_name(prefix) do
+    :"#{prefix}_#{System.pid()}_#{System.unique_integer([:positive])}"
+  end
+
+  test "start_link registers the process under the given :name" do
+    name = unique_name("object_store_registered")
+    {:ok, pid} = ObjectStore.start_link(name: name)
+
+    assert Process.whereis(name) == pid
+  end
+
+  test "the whole public API can be driven through the registered name" do
+    name = unique_name("object_store_by_name")
+    {:ok, _pid} = ObjectStore.start_link(name: name)
+
+    {:ok, blob} = ObjectStore.store(name, "named blob")
+    assert {:ok, "named blob"} = ObjectStore.retrieve(name, blob)
+
+    {:ok, tree} = ObjectStore.tree(name, [%{name: "f.txt", hash: blob, type: :blob}])
+    {:ok, root} = ObjectStore.commit(name, tree, nil, "first", "alice")
+    {:ok, head} = ObjectStore.commit(name, tree, root, "second", "bob")
+
+    {:ok, log} = ObjectStore.log(name, head)
+    assert Enum.map(log, & &1.hash) == [head, root]
+    assert Enum.map(log, & &1.message) == ["second", "first"]
+
+    assert {:error, :not_found} =
+             ObjectStore.retrieve(name, "1111111111111111111111111111111111111111")
+  end
+
+  test "each named store keeps its own independent object map" do
+    name_a = unique_name("object_store_a")
+    name_b = unique_name("object_store_b")
+    {:ok, _a} = ObjectStore.start_link(name: name_a)
+    {:ok, _b} = ObjectStore.start_link(name: name_b)
+
+    {:ok, hash} = ObjectStore.store(name_a, "only in a")
+
+    assert {:ok, "only in a"} = ObjectStore.retrieve(name_a, hash)
+    assert {:error, :not_found} = ObjectStore.retrieve(name_b, hash)
+  end
 end
 ```

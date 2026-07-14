@@ -286,6 +286,60 @@ defmodule RetryDedupTest do
     assert d3 >= d2
   end
 
+  test "retry delay never exceeds :max_delay_ms", %{rd: rd} do
+    {:ok, timestamps} = Agent.start_link(fn -> [] end)
+
+    func = fn ->
+      Agent.update(timestamps, fn ts -> ts ++ [System.monotonic_time(:millisecond)] end)
+      {:error, :nope}
+    end
+
+    assert {:error, :nope} =
+             RetryDedup.execute(rd, "capped", func,
+               max_retries: 3,
+               base_delay_ms: 500,
+               max_delay_ms: 40
+             )
+
+    ts = Agent.get(timestamps, & &1)
+    assert length(ts) == 4
+
+    delays =
+      ts
+      |> Enum.chunk_every(2, 1, :discard)
+      |> Enum.map(fn [a, b] -> b - a end)
+
+    # min(500 * 2^(attempt - 1), 40) == 40 for every retry here; without the cap
+    # the gaps would be 500, 1000 and 2000 ms.
+    assert Enum.all?(delays, &(&1 < 300))
+  end
+
+  # -------------------------------------------------------
+  # Default options
+  # -------------------------------------------------------
+
+  test "defaults to 3 retries with a 100 ms base delay", %{rd: rd} do
+    {:ok, attempt_counter} = Agent.start_link(fn -> 0 end)
+
+    func = fn ->
+      Agent.update(attempt_counter, &(&1 + 1))
+      {:error, :always_fails}
+    end
+
+    {elapsed_us, result} =
+      :timer.tc(fn -> RetryDedup.execute(rd, "defaulted", func) end)
+
+    assert result == {:error, :always_fails}
+    # default max_retries of 3: initial + 3 retries = 4 total calls
+    assert Agent.get(attempt_counter, & &1) == 4
+
+    # default base_delay_ms of 100 gives gaps of 100 + 200 + 400 = 700 ms,
+    # well under the 5000 ms default cap
+    elapsed_ms = div(elapsed_us, 1_000)
+    assert elapsed_ms >= 650
+    assert elapsed_ms < 3_000
+  end
+
   # -------------------------------------------------------
   # GenServer responsiveness
   # -------------------------------------------------------

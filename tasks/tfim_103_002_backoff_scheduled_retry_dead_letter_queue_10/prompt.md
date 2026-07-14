@@ -330,5 +330,54 @@ defmodule BackoffDLQTest do
     assert [eb] = BackoffDLQ.peek(dlq, "b", 10)
     assert eb.retry_count == 0
   end
+
+  test "a handler returning {:ok, term} is a success that removes the message", %{dlq: dlq} do
+    {:ok, id} = BackoffDLQ.push(dlq, "q", :m, :boom, %{})
+
+    # {:ok, term} is a success: :ok is returned, nothing is left behind, and no
+    # retry was counted or backoff scheduled (which a failure classification would do).
+    assert :ok = BackoffDLQ.retry(dlq, "q", id, fn _ -> {:ok, :delivered} end)
+    assert BackoffDLQ.peek(dlq, "q", 10) == []
+    assert BackoffDLQ.ready(dlq, "q", 10) == []
+    assert {:error, :not_found} = BackoffDLQ.retry(dlq, "q", id, fn _ -> :ok end)
+  end
+
+  test "peek returns at most count entries, oldest-first", %{dlq: dlq} do
+    {:ok, a} = BackoffDLQ.push(dlq, "q", :first, :err, %{})
+    Clock.advance(10)
+    {:ok, b} = BackoffDLQ.push(dlq, "q", :second, :err, %{})
+    Clock.advance(10)
+    {:ok, c} = BackoffDLQ.push(dlq, "q", :third, :err, %{})
+
+    # count caps the result and the oldest push comes first
+    assert [e1, e2] = BackoffDLQ.peek(dlq, "q", 2)
+    assert e1.id == a
+    assert e1.message == :first
+    assert e2.id == b
+    assert e2.message == :second
+
+    # a count larger than the queue yields every entry, still oldest-first
+    assert Enum.map(BackoffDLQ.peek(dlq, "q", 10), & &1.id) == [a, b, c]
+  end
+
+  test "ready returns at most count due entries, oldest-first, skipping not-yet-due ones", %{
+    dlq: dlq
+  } do
+    {:ok, a} = BackoffDLQ.push(dlq, "q", :first, :err, %{})
+    Clock.advance(10)
+    {:ok, b} = BackoffDLQ.push(dlq, "q", :second, :err, %{})
+    Clock.advance(10)
+    {:ok, c} = BackoffDLQ.push(dlq, "q", :third, :err, %{})
+
+    # all three are immediately due: count caps the result, oldest-first
+    assert Enum.map(BackoffDLQ.ready(dlq, "q", 10), & &1.id) == [a, b, c]
+    assert [r1, r2] = BackoffDLQ.ready(dlq, "q", 2)
+    assert r1.id == a
+    assert r2.id == b
+
+    # failing the oldest pushes it past its backoff, so the next two due entries fill the count
+    assert {:error, :boom} = BackoffDLQ.retry(dlq, "q", a, fn _ -> {:error, :boom} end)
+    assert Enum.map(BackoffDLQ.ready(dlq, "q", 2), & &1.id) == [b, c]
+  end
 end
 ```

@@ -729,5 +729,49 @@ defmodule InvertedIndexTest do
     # splitting on ~r/[^a-z0-9]+/ yields exactly ["hello", "world"]
     assert InvertedIndex.stats(idx).term_count == 2
   end
+
+  # -------------------------------------------------------
+  # Disjunctive retrieval across query terms
+  # -------------------------------------------------------
+
+  test "a document matching only one of several query terms is still returned", %{idx: idx} do
+    :ok = InvertedIndex.index(idx, "doc1", %{body: "alpha kappa lambda"})
+    :ok = InvertedIndex.index(idx, "doc2", %{body: "beta kappa sigma"})
+    :ok = InvertedIndex.index(idx, "doc3", %{body: "gamma delta epsilon"})
+
+    # search finds all documents containing at least one query term: doc1 has
+    # only "alpha", doc2 has only "beta", and no document contains both
+    results = InvertedIndex.search(idx, "alpha beta")
+    assert results |> Enum.map(& &1.id) |> Enum.sort() == ["doc1", "doc2"]
+  end
+
+  # -------------------------------------------------------
+  # Cross-term score summation
+  # -------------------------------------------------------
+
+  test "scores of matching query terms are summed per document", %{idx: idx} do
+    :ok = InvertedIndex.index(idx, "doc1", %{body: "alpha beta gamma"})
+    :ok = InvertedIndex.index(idx, "doc2", %{body: "alpha delta epsilon"})
+    :ok = InvertedIndex.index(idx, "doc3", %{body: "zeta kappa sigma"})
+
+    combined = InvertedIndex.search(idx, "alpha beta")
+    assert Enum.map(combined, & &1.id) == ["doc1", "doc2"]
+
+    doc1 = Enum.find(combined, &(&1.id == "doc1"))
+    doc2 = Enum.find(combined, &(&1.id == "doc2"))
+
+    # doc1 matches both terms: alpha has tf = 1/3 and idf = log(3/2), beta has
+    # tf = 1/3 and idf = log(3/1); the two term scores add together
+    assert_in_delta doc1.score, :math.log(3 / 2) / 3 + :math.log(3) / 3, 1.0e-9
+
+    # the same sum, stated against the single-term scores of the same document
+    alpha_only = Enum.find(InvertedIndex.search(idx, "alpha"), &(&1.id == "doc1")).score
+    beta_only = Enum.find(InvertedIndex.search(idx, "beta"), &(&1.id == "doc1")).score
+    assert_in_delta doc1.score, alpha_only + beta_only, 1.0e-9
+
+    # doc2 matches only "alpha" and keeps exactly that one term's score
+    assert_in_delta doc2.score, :math.log(3 / 2) / 3, 1.0e-9
+    assert doc1.score > doc2.score
+  end
 end
 ```
