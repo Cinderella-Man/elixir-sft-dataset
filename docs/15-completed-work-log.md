@@ -9,6 +9,31 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-14 — T2.2-T HIGHS PHASE CLOSED 13/13** (same day the batch
+  measured them). Two gold defects hand-fixed with full cascades (095_003
+  negative-split money bug — floored division, prompt precision, bugfix
+  children delete+reminted; 031_002 whole-number floats accepted per the
+  spec its gold argued against). One prompt contradiction hand-fixed
+  (040_001 tuples-vs-lists + the lying lock comment; fim gold re-carved;
+  blind GREEN). Ten gap families closed by the new findings-seeded
+  `close_gaps.exs` (strengthen mold; gold/prompt findings ride as
+  context-only): 021_002 q-semantics (+5 tests, 0.89→0.94 — attempt 1's
+  blind RED was the solver ignoring documented q ordering, the exact gap
+  under repair), 015_001 real-timer scheduling via reporting check fns,
+  105_003 max-wait discrimination via refute_receive pacing (no sleeps
+  added anywhere), 043_001 cross-process + racing-submit atomicity
+  (+0.07), 079_002 saturation trio (+0.07), 034_003 duplicate-key +
+  nil-key corners (7 tests), 031_001 true multi-error field, 092_004 rank
+  :mean override + :min_votes threading, 011_002 discriminating
+  starvation-promotion ordering + documented defaults, and 100_004
+  hand-applied after two more blind-compile solver defects — its FIFTH
+  code-quality failure, SAME signature as the morning (`&&&` with no
+  import Bitwise ×2), triage row appended; 36/40 ceiling held with the
+  :window/:name gaps closed. Freshness gate now reads close_gaps.jsonl as
+  S6 evidence (the F9 ledger lesson applied same-day); 332/332 fresh.
+  Every added test traced to a verbatim prompt promise; kill rates held or
+  rose in all 13 families.
+
 - **2026-07-14 — T2.2 MEASUREMENT DONE: the stratified 60-root semantic
   review batch ran to completion (89 confirmed findings; 88% of roots carry
   at least one).** Tool: `scripts/semantic_review.exs` — one full-context

@@ -429,6 +429,79 @@ defmodule TOTPVaultTest do
     assert TOTPVault.consume(v, "alice", far_past, time: t) == {:error, :invalid}
   end
 
+  # -------------------------------------------------------------------
+  # consume — the :window option itself
+  # -------------------------------------------------------------------
+
+  test "window: 0 narrows acceptance to the base step alone", %{vault: v} do
+    {:ok, _} = TOTPVault.register(v, "alice")
+
+    # The neighbouring codes must be rejected purely for sitting outside a
+    # zero-width window, so pick a base where neither equals the base code.
+    t =
+      Enum.find(1..5, fn candidate ->
+        [_, prev, current, next, _] = codes_around(v, "alice", candidate * 90_000)
+        current not in [prev, next]
+      end) * 90_000
+
+    [_, prev, current, next, _] = codes_around(v, "alice", t)
+
+    assert TOTPVault.consume(v, "alice", next, time: t, window: 0) == {:error, :invalid}
+    assert TOTPVault.consume(v, "alice", prev, time: t, window: 0) == {:error, :invalid}
+    assert TOTPVault.consume(v, "alice", current, time: t, window: 0) == :ok
+  end
+
+  test "window: 2 widens acceptance to steps base-2 and base+2", %{vault: v} do
+    {:ok, _} = TOTPVault.register(v, "ahead")
+    {:ok, _} = TOTPVault.register(v, "behind")
+    t = 90_000
+
+    {:ok, ahead} = TOTPVault.current_code(v, "ahead", time: t + 60)
+    {:ok, behind} = TOTPVault.current_code(v, "behind", time: t - 60)
+
+    # Separate accounts: consuming one step must not replay-block the other.
+    assert TOTPVault.consume(v, "ahead", ahead, time: t, window: 2) == :ok
+    assert TOTPVault.consume(v, "behind", behind, time: t, window: 2) == :ok
+  end
+
+  test "window: 3 near the epoch still refuses a code from a step below zero", %{vault: v} do
+    # At time 0 the base step is 0, so a window of 3 spans steps 0..3 only:
+    # negative steps are never considered, however far the window reaches back.
+    n =
+      Enum.find(1..5, fn n ->
+        {:ok, secret} = TOTPVault.register(v, "clamp#{n}")
+        in_window = for step <- 0..3, do: rfc6238_code(secret, step * 30)
+        rfc6238_code(secret, -30) not in in_window
+      end)
+
+    account = "clamp#{n}"
+    {:ok, secret} = TOTPVault.secret(v, account)
+    below_epoch = rfc6238_code(secret, -30)
+
+    result = TOTPVault.consume(v, account, below_epoch, time: 0, window: 3)
+    assert result == {:error, :invalid}
+  end
+
+  # -------------------------------------------------------------------
+  # start_link — :name registration
+  # -------------------------------------------------------------------
+
+  test "start_link/1 registers the process under :name and serves calls through it" do
+    name = :"totp_vault_#{System.pid()}_#{System.unique_integer([:positive])}"
+
+    assert {:ok, pid} = TOTPVault.start_link(name: name)
+    on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
+
+    assert Process.whereis(name) == pid
+
+    # The registered name is a usable server reference for the whole API.
+    assert {:ok, secret} = TOTPVault.register(name, "alice")
+    assert {:ok, ^secret} = TOTPVault.secret(name, "alice")
+    assert {:ok, code} = TOTPVault.current_code(name, "alice", time: 90_000)
+    assert TOTPVault.consume(name, "alice", code, time: 90_000) == :ok
+    assert TOTPVault.consume(name, "alice", code, time: 90_000) == {:error, :replayed}
+  end
+
   # Codes for steps base-2..base+2 at `time`, via the read-only public API.
   defp codes_around(vault, account, time) do
     for offset <- -2..2 do

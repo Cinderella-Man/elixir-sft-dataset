@@ -563,6 +563,61 @@ defmodule PriorityWorkerPoolTest do
     assert_receive {:executed, :fresh_normal}, 1_000
   end
 
+  test "an aged low task is dispatched before a normal task queued after the promotion",
+       %{pool: pool} do
+    collector = self()
+    gate = self()
+
+    # Occupy both workers so nothing can be dispatched from the queue.
+    {:ok, _} = PriorityWorkerPool.submit(pool, blocking_task(gate))
+    {:ok, _} = PriorityWorkerPool.submit(pool, blocking_task(gate))
+
+    assert_receive {:ready, w1}, 1_000
+    assert_receive {:ready, w2}, 1_000
+
+    # This low task blocks once it starts, so a single freed worker can run
+    # exactly one queued task and no more.
+    {:ok, _} =
+      PriorityWorkerPool.submit(
+        pool,
+        fn ->
+          send(collector, {:executed, :aged_low, self()})
+
+          receive do
+            :proceed -> :aged_low
+          end
+        end,
+        :low
+      )
+
+    # Both workers stay busy while the 500ms promotion interval from setup
+    # elapses, so the low task ages in the queue without executing.
+    refute_receive {:executed, :aged_low, _}, 900
+
+    # Submitted after the promotion tick, so it is strictly newer than the
+    # aged task and sits behind it at the same (promoted) priority level.
+    {:ok, _} =
+      PriorityWorkerPool.submit(
+        pool,
+        fn ->
+          send(collector, {:executed, :fresh_normal})
+          :fresh_normal
+        end,
+        :normal
+      )
+
+    # Free exactly one worker: it must choose the aged, promoted task over the
+    # newer normal one. The other worker stays blocked, so a solution that
+    # still ranks the task as :low would run :fresh_normal here instead.
+    release(w1)
+
+    assert_receive {:executed, :aged_low, aged_worker}, 1_000
+    refute_receive {:executed, :fresh_normal}, 300
+
+    release(aged_worker)
+    release(w2)
+  end
+
   # -------------------------------------------------------
   # Worker crash recovery
   # -------------------------------------------------------
@@ -613,6 +668,45 @@ defmodule PriorityWorkerPoolTest do
 
     status = PriorityWorkerPool.status(pool)
     assert status.idle_workers + status.busy_workers == 2
+  end
+
+  # -------------------------------------------------------
+  # Defaults
+  # -------------------------------------------------------
+
+  test "omitting :pool_size starts three workers", _context do
+    name = :"pool_default_size_#{System.pid()}_#{System.unique_integer([:positive])}"
+    pool = start_supervised!({PriorityWorkerPool, name: name}, id: :default_size)
+
+    status = PriorityWorkerPool.status(pool)
+    assert status.idle_workers == 3
+    assert status.busy_workers == 0
+    assert status.total_queue_length == 0
+  end
+
+  test "omitting :max_queue allows ten pending tasks and rejects the eleventh", _context do
+    name = :"pool_default_queue_#{System.pid()}_#{System.unique_integer([:positive])}"
+    pool = start_supervised!({PriorityWorkerPool, name: name}, id: :default_queue)
+
+    gate = self()
+
+    # With the default pool of three workers, three blocking tasks leave the
+    # pool fully busy so every further submission has to be queued.
+    blocked =
+      for _ <- 1..3 do
+        {:ok, _} = PriorityWorkerPool.submit(pool, blocking_task(gate))
+        assert_receive {:ready, worker}, 1_000
+        worker
+      end
+
+    for _ <- 1..10 do
+      {:ok, _} = PriorityWorkerPool.submit(pool, quick_task(:filler), :normal)
+    end
+
+    assert PriorityWorkerPool.status(pool).total_queue_length == 10
+    assert {:error, :queue_full} = PriorityWorkerPool.submit(pool, quick_task(:over), :high)
+
+    Enum.each(blocked, &release/1)
   end
 
   # -------------------------------------------------------

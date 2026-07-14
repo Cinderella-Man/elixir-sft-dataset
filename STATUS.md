@@ -13,18 +13,9 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**DETACHED (2026-07-14): T2.2-T highs fleet — close_gaps over the 9
-remaining high-gap families** (021_002 pilot APPLIED on retry: +5 q-tests,
-rate 0.89→0.94, blind GREEN, diff reviewed — first attempt's blind RED was
-the SOLVER ignoring documented q ordering, the exact gap under repair).
-Log `logs/close_gaps_highs.log`; ledger `logs/close_gaps.jsonl`; candidates
-archived. Idempotent relaunch: `scripts/run_detached.sh
-logs/close_gaps_highs.log mix run scripts/close_gaps.exs -- --go
---high-only`. In parallel (isolated paths): 040_001 hand-fix staged (prompt
-tuple/list contradiction + lying lock comment + fim _02 re-carve) — its
-blind re-screen runs alongside; wt copy + bugfix remint + gates + commit
-AFTER the fleet exits (single corpus-wide writer rule). DONE so far:
-095_003, 031_002, 021_002 (3 of 13 highs).
+**Nothing.** (T2.2-T highs phase CLOSED 13/13 on 2026-07-14 — docs/15.
+Next in T2.2-T: the 10 remaining gold_defect mediums by hand, then the 39
+medium gap families via `close_gaps.exs -- --go`.)
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-14 morning)
