@@ -1,10 +1,34 @@
-# Fill in the middle: implement the blanked test
+# Fix the bug
 
-Below is a module and its ExUnit test harness with the body of ONE `test` removed
-(marked `# TODO`). The test's name states what it must verify. Implement just that one
-test so the harness passes for a correct implementation of the module.
+The module below was written for the task that follows, but ONE behavior bug
+slipped in. The test suite (not shown) fails with the report at the bottom.
+Find the bug and fix it — change as little as possible; do not restructure
+working code. Reply with the complete corrected module.
 
-## Module under test
+## The task the module implements
+
+Write me an Elixir module called `Factory` that generates test data similarly to ExMachina, but simpler and self-contained.
+
+I need these functions in the public API:
+
+- `Factory.build(factory_name)` — returns a struct for the named factory without touching the database.
+- `Factory.build(factory_name, overrides)` — same as above but merges a keyword list of field overrides into the returned struct.
+- `Factory.insert(factory_name)` — builds the struct and inserts it into the database via `Repo.insert!`, returning the persisted struct.
+- `Factory.insert(factory_name, overrides)` — same as above with field overrides.
+- `Factory.sequence(name, formatter_fn)` — returns the next value for a named sequence by calling `formatter_fn.(n)` where `n` is a monotonically increasing integer starting at 1. Each call to `sequence/2` with the same `name` increments its own independent counter.
+
+Factory definitions should be declared inside the `Factory` module using a `define/2` macro or a `def factory(:name)` convention — pick whichever feels idiomatic. At minimum, define factories for `:user` (fields: `name`, `email`) and `:post` (fields: `title`, `body`, `user_id`). The `:post` factory must automatically call `Factory.insert(:user)` to create its association and populate `user_id` — associations should be built eagerly on `Factory.build/1` only if they are embedded structs, but inserted (via `insert`) when they require a database ID.
+
+Sequence counters must be stored in a named `Agent` that is started once (e.g., in `Factory.start/0` or automatically on first use via a lazy init). Sequences must be unique across the entire test run even if tests run concurrently (`async: true`).
+
+Use only the Elixir standard library and assume `Repo` is available as `MyApp.Repo`. Deliver everything in a single file.
+
+## Additional interface contract
+
+- Passing an explicit `user_id` override to `build(:post, ...)`/`insert(:post, ...)` suppresses the automatic `Factory.insert(:user)` association call entirely: `insert(:post, user_id: existing_id)` inserts exactly one record (the post itself) and creates no extra user.
+- Conversely, `build(:post)` without a `user_id` override resolves the association eagerly at build time: it calls `Factory.insert(:user)`, persisting exactly one user record to the repo, and populates the built post's `user_id` with that user's integer id — even though the built post itself is not persisted.
+
+## The buggy module
 
 ```elixir
 defmodule Factory do
@@ -71,7 +95,7 @@ defmodule Factory do
 
     n =
       Agent.get_and_update(@agent, fn counters ->
-        next = Map.get(counters, name, 0) + 1
+        next = Map.get(counters, name, 0) - 1
         {next, Map.put(counters, name, next)}
       end)
 
@@ -195,176 +219,16 @@ defmodule Factory do
 end
 ```
 
-## Test harness — implement the `# TODO` test
+## Failing test report
 
-```elixir
-# ---------------------------------------------------------------------------
-# Schema structs — stand-ins for what would be Ecto schemas in a real app.
-# ---------------------------------------------------------------------------
+```
+1 of 14 test(s) failed:
 
-defmodule MyApp.User do
-  defstruct [:id, :name, :email]
-end
-
-defmodule MyApp.Post do
-  defstruct [:id, :title, :body, :user_id]
-end
-
-# ---------------------------------------------------------------------------
-# FakeRepo — an in-memory repo that satisfies the MyApp.Repo.insert!/1
-# contract without touching a real database.
-# ---------------------------------------------------------------------------
-
-defmodule FakeRepo do
-  use Agent
-
-  def start_link(_),
-    do: Agent.start_link(fn -> %{next_id: 1, records: []} end, name: __MODULE__)
-
-  def insert!(struct) do
-    Agent.get_and_update(__MODULE__, fn %{next_id: id, records: records} = state ->
-      record = Map.put(struct, :id, id)
-      {record, %{state | next_id: id + 1, records: [record | records]}}
-    end)
-  end
-
-  def all, do: Agent.get(__MODULE__, & &1.records)
-end
-
-# ---------------------------------------------------------------------------
-# MyApp.Repo — the module Factory calls. Delegates to FakeRepo in tests;
-# in a real app this would be your Ecto.Repo.
-# ---------------------------------------------------------------------------
-
-defmodule MyApp.Repo do
-  defdelegate insert!(struct), to: FakeRepo
-end
-
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
-
-defmodule FactoryTest do
-  use ExUnit.Case, async: false
-
-  setup_all do
-    FakeRepo.start_link([])
-    Factory.start()
-    :ok
-  end
-
-  # build/1 — no DB side effects
-
-  test "build/1 returns a struct with default fields" do
-    user = Factory.build(:user)
-    assert %{name: name, email: email} = user
-    assert is_binary(name) and name != ""
-    assert is_binary(email) and email != ""
-  end
-
-  test "build/1 does not insert into the database" do
-    before_count = length(FakeRepo.all())
-    Factory.build(:user)
-    assert length(FakeRepo.all()) == before_count
-  end
-
-  # build/2 — overrides
-
-  test "build/2 merges overrides into the struct" do
-    user = Factory.build(:user, name: "Ada Lovelace", email: "ada@example.com")
-    assert user.name == "Ada Lovelace"
-    assert user.email == "ada@example.com"
-  end
-
-  test "build/2 only overrides specified fields, leaves others as defaults" do
-    user = Factory.build(:user, name: "Grace Hopper")
-    assert user.name == "Grace Hopper"
-    assert is_binary(user.email) and user.email != ""
-  end
-
-  # insert/1 and insert/2
-
-  test "insert/1 returns a struct with an id" do
-    user = Factory.insert(:user)
-    assert is_integer(user.id) and user.id > 0
-  end
-
-  test "insert/2 persists the override values" do
-    user = Factory.insert(:user, name: "Linus Torvalds")
-    assert user.name == "Linus Torvalds"
-    assert is_integer(user.id)
-  end
-
-  test "insert/1 actually adds a record to the repo" do
-    before_count = length(FakeRepo.all())
-    Factory.insert(:user)
-    assert length(FakeRepo.all()) == before_count + 1
-  end
-
-  # sequence/2 — uniqueness
-
-  test "sequence/2 returns distinct values on consecutive calls" do
-    # TODO
-  end
-
-  test "different sequence names are independent counters" do
-    a1 = Factory.sequence(:seq_a, fn n -> "a-#{n}" end)
-    b1 = Factory.sequence(:seq_b, fn n -> "b-#{n}" end)
-    a2 = Factory.sequence(:seq_a, fn n -> "a-#{n}" end)
-    b2 = Factory.sequence(:seq_b, fn n -> "b-#{n}" end)
-
-    assert a1 == "a-1"
-    assert b1 == "b-1"
-    assert a2 == "a-2"
-    assert b2 == "b-2"
-  end
-
-  test "email fields generated by default use sequences and are unique" do
-    users = for _ <- 1..5, do: Factory.build(:user)
-    emails = Enum.map(users, & &1.email)
-    assert length(Enum.uniq(emails)) == 5
-  end
-
-  # Associations — :post auto-creates a :user
-
-  test "build(:post) populates user_id via an inserted user" do
-    before_count = length(FakeRepo.all())
-    post = Factory.build(:post)
-
-    assert is_integer(post.user_id) and post.user_id > 0
-    assert length(FakeRepo.all()) == before_count + 1
-  end
-
-  test "insert(:post) inserts both the post and its user" do
-    before_count = length(FakeRepo.all())
-    post = Factory.insert(:post)
-
-    assert is_integer(post.id)
-    assert is_integer(post.user_id)
-    assert length(FakeRepo.all()) >= before_count + 2
-  end
-
-  test "insert(:post, user_id: id) respects user_id override and skips auto-association" do
-    existing_user = Factory.insert(:user)
-    before_count = length(FakeRepo.all())
-
-    post = Factory.insert(:post, user_id: existing_user.id)
-    assert post.user_id == existing_user.id
-    assert length(FakeRepo.all()) == before_count + 1
-  end
-
-  # Concurrent safety
-
-  test "sequences are safe under concurrent access" do
-    tasks =
-      for _ <- 1..50 do
-        Task.async(fn ->
-          Factory.sequence(:concurrent_seq, fn n -> n end)
-        end)
-      end
-
-    results = Task.await_many(tasks)
-    assert length(Enum.uniq(results)) == 50
-  end
-end
+  * test different sequence names are independent counters
+      
+      
+      Assertion with == failed
+      code:  assert a1 == "a-1"
+      left:  "a--1"
+      right: "a-1"
 ```
