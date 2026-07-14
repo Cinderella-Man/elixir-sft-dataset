@@ -1,0 +1,317 @@
+defmodule CommandGeneratorsTest do
+  use ExUnit.Case, async: false
+  use ExUnitProperties
+
+  # -------------------------------------------------------
+  # Reference model executors (used only to *verify* generated programs)
+  # -------------------------------------------------------
+
+  defp stack_valid?(cmds) do
+    Enum.reduce_while(cmds, 0, fn cmd, size ->
+      case cmd do
+        {:push, v} when is_integer(v) -> {:cont, size + 1}
+        :pop -> if size > 0, do: {:cont, size - 1}, else: {:halt, :invalid}
+        :peek -> if size > 0, do: {:cont, size}, else: {:halt, :invalid}
+        :clear -> {:cont, 0}
+        _ -> {:halt, :invalid}
+      end
+    end) != :invalid
+  end
+
+  defp account_valid?(cmds) do
+    Enum.reduce_while(cmds, 0, fn cmd, bal ->
+      case cmd do
+        {:deposit, a} when is_integer(a) and a >= 1 and a <= 1000 ->
+          {:cont, bal + a}
+
+        {:withdraw, a} when is_integer(a) and a >= 1 and a <= bal ->
+          {:cont, bal - a}
+
+        _ ->
+          {:halt, :invalid}
+      end
+    end) != :invalid
+  end
+
+  # -------------------------------------------------------
+  # CommandGenerators.stack_program/0,1
+  # -------------------------------------------------------
+
+  describe "CommandGenerators.stack_program" do
+    property "always produces a valid stack program" do
+      check all(cmds <- CommandGenerators.stack_program()) do
+        assert is_list(cmds)
+        assert stack_valid?(cmds)
+      end
+    end
+
+    property "respects the length bound" do
+      check all(cmds <- CommandGenerators.stack_program(10)) do
+        assert length(cmds) <= 10
+      end
+    end
+
+    property "every command is drawn from the allowed command set" do
+      check all(cmds <- CommandGenerators.stack_program()) do
+        for cmd <- cmds do
+          case cmd do
+            {:push, v} -> assert is_integer(v)
+            other -> assert other in [:pop, :peek, :clear]
+          end
+        end
+      end
+    end
+
+    property "never pops or peeks an empty stack (prefix check)" do
+      check all(cmds <- CommandGenerators.stack_program()) do
+        # Every prefix must also be valid, which follows from validity of the
+        # whole sequence, but we assert it explicitly for good measure.
+        for n <- 0..length(cmds) do
+          assert stack_valid?(Enum.take(cmds, n))
+        end
+      end
+    end
+
+    property "produces both pushes and pops across many samples" do
+      commands =
+        Enum.flat_map(1..300, fn _ ->
+          [cmds] = Enum.take(CommandGenerators.stack_program(), 1)
+          cmds
+        end)
+
+      assert Enum.any?(commands, &match?({:push, _}, &1))
+      assert :pop in commands
+    end
+  end
+
+  # -------------------------------------------------------
+  # CommandGenerators.account_program/0,1
+  # -------------------------------------------------------
+
+  describe "CommandGenerators.account_program" do
+    property "always produces a valid account program (balance never negative)" do
+      check all(cmds <- CommandGenerators.account_program()) do
+        assert is_list(cmds)
+        assert account_valid?(cmds)
+      end
+    end
+
+    property "respects the length bound" do
+      check all(cmds <- CommandGenerators.account_program(12)) do
+        assert length(cmds) <= 12
+      end
+    end
+
+    property "deposit amounts are within 1..1000 and withdrawals are positive" do
+      check all(cmds <- CommandGenerators.account_program()) do
+        for cmd <- cmds do
+          case cmd do
+            {:deposit, a} ->
+              assert a >= 1 and a <= 1000
+
+            {:withdraw, a} ->
+              assert a >= 1
+
+            other ->
+              flunk("unexpected command: #{inspect(other)}")
+          end
+        end
+      end
+    end
+
+    property "no withdrawal ever exceeds the modeled balance at that point" do
+      check all(cmds <- CommandGenerators.account_program()) do
+        Enum.reduce(cmds, 0, fn
+          {:deposit, a}, bal ->
+            bal + a
+
+          {:withdraw, a}, bal ->
+            assert a <= bal
+            bal - a
+        end)
+      end
+    end
+
+    property "produces both deposits and withdrawals across many samples" do
+      commands =
+        Enum.flat_map(1..300, fn _ ->
+          [cmds] = Enum.take(CommandGenerators.account_program(), 1)
+          cmds
+        end)
+
+      assert Enum.any?(commands, &match?({:deposit, _}, &1))
+      assert Enum.any?(commands, &match?({:withdraw, _}, &1))
+    end
+  end
+
+  # -------------------------------------------------------
+  # Composability
+  # -------------------------------------------------------
+
+  describe "composability with StreamData" do
+    property "programs can be filtered to a minimum length without breaking validity" do
+      gen = StreamData.filter(CommandGenerators.stack_program(), &(length(&1) >= 1))
+
+      check all(cmds <- gen) do
+        assert length(cmds) >= 1
+        assert stack_valid?(cmds)
+      end
+    end
+
+    property "account programs can be mapped to their final balance" do
+      gen =
+        StreamData.map(CommandGenerators.account_program(), fn cmds ->
+          Enum.reduce(cmds, 0, fn
+            {:deposit, a}, bal -> bal + a
+            {:withdraw, a}, bal -> bal - a
+          end)
+        end)
+
+      check all(balance <- gen) do
+        assert is_integer(balance)
+        assert balance >= 0
+      end
+    end
+  end
+
+  # -------------------------------------------------------
+  # Documented bounds and endpoints, via deterministic seeded sampling
+  # (StreamData.check_all/3 with a fixed :initial_seed)
+  # -------------------------------------------------------
+
+  test "stack_program/0 defaults to max_length 20: lengths in 0..20, both endpoints occur" do
+    Process.put(:stack_lengths, [])
+
+    {:ok, _} =
+      StreamData.check_all(
+        CommandGenerators.stack_program(),
+        [initial_seed: {11, 22, 33}, max_runs: 600],
+        fn cmds ->
+          Process.put(:stack_lengths, [length(cmds) | Process.get(:stack_lengths)])
+          {:ok, cmds}
+        end
+      )
+
+    lengths = Process.get(:stack_lengths)
+    assert Enum.all?(lengths, &(&1 in 0..20))
+    assert 0 in lengths, "the empty program (0 commands) was never generated"
+    assert 20 in lengths, "the documented default maximum of 20 commands was never attained"
+  end
+
+  test "account_program/0 defaults to max_length 20: lengths in 0..20, both endpoints occur" do
+    Process.put(:account_lengths, [])
+
+    {:ok, _} =
+      StreamData.check_all(
+        CommandGenerators.account_program(),
+        [initial_seed: {44, 55, 66}, max_runs: 600],
+        fn cmds ->
+          Process.put(:account_lengths, [length(cmds) | Process.get(:account_lengths)])
+          {:ok, cmds}
+        end
+      )
+
+    lengths = Process.get(:account_lengths)
+    assert Enum.all?(lengths, &(&1 in 0..20))
+    assert 0 in lengths, "the empty program (0 commands) was never generated"
+    assert 20 in lengths, "the documented default maximum of 20 commands was never attained"
+  end
+
+  test "max_length 0 is a valid argument and produces only the empty program" do
+    stack_gen = CommandGenerators.stack_program(0)
+    account_gen = CommandGenerators.account_program(0)
+
+    assert match?(%StreamData{}, stack_gen)
+    assert match?(%StreamData{}, account_gen)
+
+    for {gen, seed} <- [{stack_gen, {1, 2, 3}}, {account_gen, {4, 5, 6}}] do
+      {:ok, _} =
+        StreamData.check_all(gen, [initial_seed: seed, max_runs: 50], fn cmds ->
+          if cmds == [], do: {:ok, cmds}, else: {:error, cmds}
+        end)
+    end
+  end
+
+  test "deposit amounts respect the documented 1..1000 range and attain both endpoints" do
+    Process.put(:deposit_amounts, [])
+
+    {:ok, _} =
+      StreamData.check_all(
+        CommandGenerators.account_program(),
+        [initial_seed: {7, 8, 9}, max_runs: 1500],
+        fn cmds ->
+          amounts = for {:deposit, a} <- cmds, do: a
+          Process.put(:deposit_amounts, amounts ++ Process.get(:deposit_amounts))
+          {:ok, cmds}
+        end
+      )
+
+    amounts = Process.get(:deposit_amounts)
+    assert amounts != []
+    assert Enum.all?(amounts, &(&1 in 1..1000))
+    assert 1 in amounts, "the deposit lower endpoint 1 was never generated"
+    assert 1000 in amounts, "the deposit upper endpoint 1000 was never generated"
+  end
+
+  test "pop/peek stay available at the non-empty boundary, including states reached via pops" do
+    # The precondition is exactly non-emptiness: :pop/:peek must be offered on a
+    # one-element modeled stack, also when that state was reached after earlier
+    # pops (i.e. the threaded model tracks the real stack, not an approximation).
+    Process.put(:stack_boundary_hit, false)
+
+    {:ok, _} =
+      StreamData.check_all(
+        CommandGenerators.stack_program(),
+        [initial_seed: {11, 22, 33}, max_runs: 600],
+        fn cmds ->
+          Enum.reduce(cmds, {0, 0}, fn cmd, {size, pops} ->
+            case cmd do
+              {:push, _} ->
+                {size + 1, pops}
+
+              :clear ->
+                {0, 0}
+
+              op when op in [:pop, :peek] ->
+                if size == 1 and pops >= 1, do: Process.put(:stack_boundary_hit, true)
+                if op == :pop, do: {size - 1, pops + 1}, else: {size, pops}
+            end
+          end)
+
+          {:ok, cmds}
+        end
+      )
+
+    assert Process.get(:stack_boundary_hit),
+           "no :pop/:peek was ever generated on a one-element modeled stack reached " <>
+             "after an earlier :pop (since the last :clear) across 600 seeded samples"
+  end
+
+  test "withdraw stays available at the positive-balance boundary (balance exactly 1)" do
+    # A positive balance is the documented precondition, so a withdrawal must be
+    # possible when the modeled balance is exactly 1.
+    Process.put(:withdraw_at_one, false)
+
+    {:ok, _} =
+      StreamData.check_all(
+        CommandGenerators.account_program(),
+        [initial_seed: {101, 102, 103}, max_runs: 4000],
+        fn cmds ->
+          Enum.reduce(cmds, 0, fn
+            {:deposit, a}, bal ->
+              bal + a
+
+            {:withdraw, a}, bal ->
+              if bal == 1, do: Process.put(:withdraw_at_one, true)
+              bal - a
+          end)
+
+          {:ok, cmds}
+        end
+      )
+
+    assert Process.get(:withdraw_at_one),
+           "no :withdraw was ever generated at a modeled balance of exactly 1 " <>
+             "across 4000 seeded samples"
+  end
+end

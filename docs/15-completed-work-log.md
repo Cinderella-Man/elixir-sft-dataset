@@ -9,6 +9,33 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-14 (late) — TD.1 CLOSED: the `:adapt` shape is live and the
+  corpus grew 249 units (5,898 → 6,147 dirs; export 5,881 → 6,130 rows),
+  zero LLM calls.** Brownfield adaptation pairs (docs/13 §2.1): prompt =
+  the family BASE's verified gold framed as the starting point + the
+  variation's spec verbatim; gold = the variation's solution; gate = a
+  byte-copy of the variation's harness; minted ONLY where the base gold
+  grades RED under that harness. Machinery (commit 61c7de6a): GenTask.Adapt
+  (mint + sha-keyed RED-gate cache in `logs/adapt_redgate.jsonl` — now a
+  TRACKED ledger), `:adapt` Work-registry entry (+GEN_SKIP_ADAPT), shape
+  detection through Discovery/CLI/Runner, exporter mapping (gold =
+  solution.ex, weight 0.5, family = the same `a` as both parents so split
+  atomicity contains the leak automatically), docs/16 §2.1/§4 rows,
+  `resync_adapt_embeds.exs` standing drift gate wired into CI + pre-push
+  and bite-proven on a planted edit, 10 unit tests (319 green — one caught
+  a real crash on harness-less fixture seeds during development). Rule-9
+  pilots (adapt_001_002 + adapt_016_002, the latter proving bundle-base
+  embedding) detail-reviewed before the fleet. Full mint via the standard
+  backfill loop: 247/247 ACCEPTED in one pass, ~25 min, of which **77
+  pairs re-measured their RED gate live** because T2.2-T's 07-14
+  harness/gold repairs had drifted their shas (the rule-7 cache doing
+  exactly its job; all 77 still RED — no pair lost mintability). Verified
+  after: perfect-score sweep **249/249 ALL PERFECT**, resync gate 249
+  unchanged, corpus format clean, export selfcheck 8/8 + round-trip OK
+  (val 282 → 294, only whole families). Repair-mint tail during backfill:
+  745 chains / 100 mintable pairs — TD.2's raw material; fresh snapshot
+  `logs/attempts_archive_20260714b` taken.
+
 - **2026-07-14 (late) — F10-A CLOSED: 018_003's `archived_at` gap is
   pinned, bite-proven both ways.** The one T2.2 finding the batch fleet
   missed (it was the pilot CONTROL — `close_gaps` skips `:`-prefixed task

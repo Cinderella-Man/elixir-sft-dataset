@@ -1,0 +1,227 @@
+# Adapt existing code to a new specification
+
+Below is a complete, working, tested Elixir solution to a related task. Do not
+start from scratch: treat it as the codebase you have been asked to change.
+Modify it to satisfy the new specification that follows — keep whatever carries
+over, and change, add, or remove whatever the new specification requires.
+
+Where the existing code and the new specification disagree (module name, public
+API, behavior, constraints, output format), the new specification wins. Give me
+the complete final result.
+
+## Existing code (your starting point)
+
+```elixir
+defmodule Workflow do
+  @moduledoc """
+  A finite state machine for the lifecycle of an order.
+
+  An order record is a plain map that always carries a `:state` key holding the
+  current state atom. It moves through the following states:
+
+      draft → submitted → approved → in_progress → completed
+
+  with two side branches:
+
+      submitted → rejected
+      in_progress → cancelled
+
+  The states `:completed`, `:rejected`, and `:cancelled` are terminal — no event
+  can move an order out of them.
+
+  This module is purely functional: it neither spawns nor relies on any
+  processes, and it uses only the Elixir/OTP standard library.
+  """
+
+  @states [
+    :draft,
+    :submitted,
+    :approved,
+    :in_progress,
+    :completed,
+    :rejected,
+    :cancelled
+  ]
+
+  # event => {from, to}
+  @transitions %{
+    submit: {:draft, :submitted},
+    approve: {:submitted, :approved},
+    reject: {:submitted, :rejected},
+    start: {:approved, :in_progress},
+    complete: {:in_progress, :completed},
+    cancel: {:in_progress, :cancelled}
+  }
+
+  @doc """
+  Build a new record.
+
+  Returns `attrs` merged with `%{state: :draft}`. Any `:state` provided in
+  `attrs` is overridden — a new record always starts in `:draft`.
+  """
+  @spec new(map()) :: map()
+  def new(attrs \\ %{}) when is_map(attrs) do
+    Map.put(attrs, :state, :draft)
+  end
+
+  @doc """
+  Return the list of all seven state atoms.
+  """
+  @spec states() :: [atom()]
+  def states, do: @states
+
+  @doc """
+  Attempt to apply `event` to `record`.
+
+    * On success, returns `{:ok, updated_record}` with the `:state` field
+      replaced by the destination state and all other fields preserved.
+    * If `event` is not a valid transition out of the current state (including
+      any event fired from a terminal state, or an unknown event), returns
+      `{:error, :invalid_transition, current_state, event}`.
+    * If the event is a valid edge but its guard rejects the record, returns
+      `{:error, :guard_failed, current_state, event}`.
+  """
+  @spec transition(map(), atom()) ::
+          {:ok, map()}
+          | {:error, :invalid_transition, atom(), atom()}
+          | {:error, :guard_failed, atom(), atom()}
+  def transition(%{state: current} = record, event) do
+    case Map.fetch(@transitions, event) do
+      {:ok, {^current, to}} ->
+        if guard(event, record) do
+          {:ok, Map.put(record, :state, to)}
+        else
+          {:error, :guard_failed, current, event}
+        end
+
+      _ ->
+        {:error, :invalid_transition, current, event}
+    end
+  end
+
+  @doc """
+  Return `true` if `transition(record, event)` would succeed, otherwise `false`.
+  """
+  @spec can?(map(), atom()) :: boolean()
+  def can?(record, event) do
+    match?({:ok, _}, transition(record, event))
+  end
+
+  # Guards: return true when the transition is permitted.
+
+  defp guard(:submit, %{items: items}) when is_list(items) and items != [], do: true
+  defp guard(:submit, _record), do: false
+
+  defp guard(:approve, %{approved_by: approved_by})
+       when is_binary(approved_by) and approved_by != "",
+       do: true
+
+  defp guard(:approve, _record), do: false
+
+  # All other transitions have no guard and always pass.
+  defp guard(_event, _record), do: true
+end
+```
+
+## New specification
+
+# Effectful Workflow with Event Payloads
+
+Write me an Elixir module called `Workflow` that enforces the order lifecycle
+state machine **and threads an event payload through each transition**, so that
+guards can inspect the payload and transitions can apply *effects* that stamp
+domain data onto the record.
+
+## States
+
+```
+draft → submitted → approved → in_progress → completed
+```
+
+with two side branches:
+
+```
+submitted → rejected
+in_progress → cancelled
+```
+
+The full set of states is:
+
+`:draft`, `:submitted`, `:approved`, `:in_progress`, `:completed`,
+`:rejected`, `:cancelled`.
+
+`:completed`, `:rejected`, and `:cancelled` are **terminal** — no event can move
+an order out of them.
+
+## Transition table
+
+| event       | from          | to            |
+|-------------|---------------|---------------|
+| `:submit`   | `:draft`      | `:submitted`  |
+| `:approve`  | `:submitted`  | `:approved`   |
+| `:reject`   | `:submitted`  | `:rejected`   |
+| `:start`    | `:approved`   | `:in_progress`|
+| `:complete` | `:in_progress`| `:completed`  |
+| `:cancel`   | `:in_progress`| `:cancelled`  |
+
+## The record
+
+A *record* is a plain map that always contains a `:state` key holding the
+current state atom, plus any additional domain fields. Fields not touched by an
+effect must be preserved across a transition.
+
+## Public API
+
+- `Workflow.new(attrs \\ %{})` — build a new record. Returns `attrs` merged with
+  `%{state: :draft}` (any `:state` in `attrs` is overridden). `attrs` is a map
+  with atom keys.
+
+- `Workflow.states/0` — return the list of all seven state atoms.
+
+- `Workflow.transition(record, event, payload \\ %{})` — attempt to apply
+  `event` with an accompanying `payload` map.
+  - On success, return `{:ok, updated_record}` where `:state` is replaced by the
+    destination **and** the event's effect (if any) has been applied. Fields not
+    written by the effect are preserved.
+  - If `event` is not a valid transition out of the current state (terminal
+    state, wrong stage, or unknown event), return
+    `{:error, :invalid_transition, current_state, event}`.
+  - If the event is a valid edge but its guard rejects the record/payload,
+    return `{:error, :guard_failed, current_state, event}` and leave the record
+    unchanged. `:invalid_transition` takes precedence over the guard check.
+
+- `Workflow.can?(record, event, payload \\ %{})` — return `true` if
+  `Workflow.transition(record, event, payload)` would succeed, otherwise
+  `false`.
+
+## Guards
+
+Encode exactly these guards; all other transitions always pass:
+
+- **`:submit`** (`:draft → :submitted`): passes only when the **record's**
+  `:items` field is a non-empty list. (Record-based, ignores the payload.)
+
+- **`:approve`** (`:submitted → :approved`): passes only when the **payload's**
+  `:approver` key is a non-empty binary (string). A missing key, `nil`, the
+  empty string, or a non-binary all fail.
+
+- **`:reject`** (`:submitted → :rejected`): passes only when the **payload's**
+  `:reason` key is a non-empty binary (string). Same failure rules as above.
+
+## Effects
+
+On a successful transition, after the state is updated, the event's effect (if
+any) writes payload-derived data into the record:
+
+- **`:approve`**: set `:approved_by` to the payload's `:approver`.
+- **`:reject`**: set `:rejection_reason` to the payload's `:reason`.
+- **`:complete`**: set `:completed` to `true` (payload ignored).
+- **`:cancel`**: if the payload has a binary `:reason`, set `:cancelled_reason`
+  to it; otherwise leave the record's fields unchanged (cancel has no guard).
+- All other events (`:submit`, `:start`): no effect beyond the state change.
+
+## Constraints
+
+- Single file, module named `Workflow`.
+- Use only the Elixir/OTP standard library — no external dependencies.
+- No processes are required; this is a pure functional module.

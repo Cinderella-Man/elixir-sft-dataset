@@ -1,0 +1,180 @@
+defmodule CoalescingPaymentsTest do
+  use ExUnit.Case, async: false
+
+  defmodule Clock do
+    use Agent
+    def start_link(initial \\ 0), do: Agent.start_link(fn -> initial end, name: __MODULE__)
+    def now, do: Agent.get(__MODULE__, & &1)
+    def advance(ms), do: Agent.update(__MODULE__, &(&1 + ms))
+  end
+
+  defmodule Calls do
+    use Agent
+    def start_link(_ \\ nil), do: Agent.start_link(fn -> 0 end, name: __MODULE__)
+    def bump, do: Agent.update(__MODULE__, &(&1 + 1))
+    def count, do: Agent.get(__MODULE__, & &1)
+  end
+
+  @valid %{amount: 5000, currency: "USD", recipient: "merchant_42"}
+
+  setup do
+    start_supervised!({Clock, 0})
+    start_supervised!({Calls, nil})
+
+    processor = fn _params ->
+      Calls.bump()
+      Process.sleep(150)
+      :ok
+    end
+
+    {:ok, pid} =
+      CoalescingPayments.start_link(
+        clock: &Clock.now/0,
+        ttl_ms: 10_000,
+        cleanup_interval_ms: :infinity,
+        processor: processor
+      )
+
+    %{pid: pid}
+  end
+
+  test "processes a payment and returns a response", %{pid: pid} do
+    assert {:ok, resp} = CoalescingPayments.process_payment(pid, @valid)
+    assert resp.amount == 5000
+    assert resp.currency == "USD"
+    assert resp.recipient == "merchant_42"
+    assert resp.status == "completed"
+    assert is_binary(resp.id)
+    assert is_integer(resp.created_at)
+    assert Calls.count() == 1
+  end
+
+  test "concurrent requests with same key coalesce into one processing", %{pid: pid} do
+    tasks =
+      for _ <- 1..10 do
+        Task.async(fn -> CoalescingPayments.process_payment(pid, @valid, "same-key") end)
+      end
+
+    results = Task.await_many(tasks, 5000)
+
+    # All ten callers received the identical shared result
+    assert Enum.uniq(results) |> length() == 1
+    assert [{:ok, _}] = Enum.uniq(results)
+
+    # Processor ran exactly once, and exactly one payment record was created
+    assert Calls.count() == 1
+    assert length(CoalescingPayments.get_payments(pid)) == 1
+  end
+
+  test "in_flight_count reflects pending work", %{pid: pid} do
+    parent = self()
+
+    spawn(fn ->
+      send(parent, {:done, CoalescingPayments.process_payment(pid, @valid, "slow")})
+    end)
+
+    Process.sleep(50)
+    assert CoalescingPayments.in_flight_count(pid) == 1
+
+    assert_receive {:done, {:ok, _}}, 2000
+    assert CoalescingPayments.in_flight_count(pid) == 0
+  end
+
+  test "completed key returns cached result without re-running processor", %{pid: pid} do
+    {:ok, first} = CoalescingPayments.process_payment(pid, @valid, "k")
+    {:ok, second} = CoalescingPayments.process_payment(pid, @valid, "k")
+
+    assert first == second
+    assert Calls.count() == 1
+    assert length(CoalescingPayments.get_payments(pid)) == 1
+  end
+
+  test "requests without idempotency key always create new records", %{pid: pid} do
+    tasks =
+      for _ <- 1..5 do
+        Task.async(fn -> CoalescingPayments.process_payment(pid, @valid) end)
+      end
+
+    results = Task.await_many(tasks, 5000)
+    ids = Enum.map(results, fn {:ok, r} -> r.id end)
+
+    assert length(Enum.uniq(ids)) == 5
+    assert Calls.count() == 5
+    assert length(CoalescingPayments.get_payments(pid)) == 5
+  end
+
+  test "different idempotency keys create separate records", %{pid: pid} do
+    {:ok, r1} = CoalescingPayments.process_payment(pid, @valid, "key-1")
+    {:ok, r2} = CoalescingPayments.process_payment(pid, @valid, "key-2")
+
+    assert r1.id != r2.id
+    assert length(CoalescingPayments.get_payments(pid)) == 2
+  end
+
+  test "expired idempotency key allows reprocessing", %{pid: pid} do
+    {:ok, first} = CoalescingPayments.process_payment(pid, @valid, "ttl")
+    Clock.advance(10_001)
+    {:ok, second} = CoalescingPayments.process_payment(pid, @valid, "ttl")
+
+    assert first.id != second.id
+    assert length(CoalescingPayments.get_payments(pid)) == 2
+  end
+
+  test "returns error for missing required fields without calling processor", %{pid: pid} do
+    assert {:error, :invalid_params} = CoalescingPayments.process_payment(pid, %{amount: 100})
+    assert Calls.count() == 0
+  end
+
+  test "processor errors are cached under the idempotency key", %{} do
+    {:ok, decline_pid} =
+      CoalescingPayments.start_link(
+        clock: &Clock.now/0,
+        ttl_ms: 10_000,
+        cleanup_interval_ms: :infinity,
+        processor: fn _ -> {:error, :gateway_declined} end
+      )
+
+    r1 = CoalescingPayments.process_payment(decline_pid, @valid, "bad")
+    r2 = CoalescingPayments.process_payment(decline_pid, @valid, "bad")
+
+    assert r1 == {:error, :gateway_declined}
+    assert r2 == {:error, :gateway_declined}
+    assert CoalescingPayments.get_payments(decline_pid) == []
+  end
+
+  test "get_payment retrieves and reports not found", %{pid: pid} do
+    {:ok, resp} = CoalescingPayments.process_payment(pid, @valid)
+    assert {:ok, found} = CoalescingPayments.get_payment(pid, resp.id)
+    assert found.id == resp.id
+    assert {:error, :not_found} = CoalescingPayments.get_payment(pid, "pay_nope")
+  end
+
+  test "cleanup removes expired idempotency entries but keeps payment records", %{pid: pid} do
+    for i <- 1..20 do
+      CoalescingPayments.process_payment(pid, @valid, "batch-#{i}")
+    end
+
+    assert length(CoalescingPayments.get_payments(pid)) == 20
+
+    Clock.advance(10_001)
+    send(pid, :cleanup)
+
+    # A synchronous call cannot be answered until the cleanup message ahead of it
+    # has been handled, and it shows that no work is left in flight.
+    assert CoalescingPayments.in_flight_count(pid) == 0
+
+    assert length(CoalescingPayments.get_payments(pid)) == 20
+
+    # The expired key no longer short-circuits: the payment is processed again.
+    {:ok, _} = CoalescingPayments.process_payment(pid, @valid, "batch-1")
+    assert length(CoalescingPayments.get_payments(pid)) == 21
+  end
+
+  test "payment IDs are unique and sequential", %{pid: pid} do
+    {:ok, r1} = CoalescingPayments.process_payment(pid, @valid)
+    {:ok, r2} = CoalescingPayments.process_payment(pid, @valid)
+    {:ok, r3} = CoalescingPayments.process_payment(pid, @valid)
+    ids = [r1.id, r2.id, r3.id]
+    assert ids == Enum.uniq(ids)
+  end
+end

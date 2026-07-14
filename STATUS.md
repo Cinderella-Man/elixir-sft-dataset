@@ -13,21 +13,9 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**TD.1: full adapt-pair mint via the standard backfill loop** (launched
-2026-07-15 ~00:40 UTC, right after the machinery commit).
-- pid: `logs/adapt_mint.pid` · log: `logs/adapt_mint.log` · rows →
-  `logs/runs.jsonl` (kind `adapt`) + fresh RED-gate rows in
-  `logs/adapt_redgate.jsonl` where T2.2-T sha drift forces re-measurement
-- command: `GEN_ONLY=backfill scripts/run_detached.sh logs/adapt_mint.log
-  mix run scripts/generate.exs` — idempotent (registry counts only missing
-  units; 2 pilot dirs already minted: adapt_001_002, adapt_016_002)
-- expected: ~247 more `adapt_*` dirs, every one green vs its harness copy,
-  zero LLM calls (deterministic; only CPU evals: RED gate re-measure +
-  green confirm per pair). A `green_not_mintable` skip is legitimate —
-  it means a T2.2-T-repaired base gold now passes the variation harness;
-  such pairs are correctly NOT minted (ledger row proves why).
-- after exit: validate a sample (perfect + shape detection), run
-  resync_adapt_embeds + format + export selfcheck/check, batch-commit dirs.
+**Nothing.** (Last run: TD.1 full adapt mint, 2026-07-14 ~22:35–23:0x UTC —
+249/249 minted and ALL PERFECT; closed → docs/15. Fresh attempts snapshot
+taken: `logs/attempts_archive_20260714b`.)
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-14 evening)
@@ -38,8 +26,7 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 2. Ready now, no decision needed, paid: **T2.4** rubric judge over passing
    tasks.
 3. **T1.4** template upgrades land WITH the Phase 3 restart, not before.
-4. Bigger builds: **TD.1** adapt pairs (deterministic, zero LLM, 249/249
-   measured mintable), then the TD.2–TD.4 decisions.
+4. Bigger builds: the **TD.2–TD.4** decisions (TD.1 closed — docs/15).
 
 ## 📋 QUALITY TODO REGISTER (2026-07-13 — why / what / how / cost per item)
 
@@ -139,15 +126,14 @@ when a training run is planned.)*
 
 ### Data extension (docs/13 §2 — build order after Tier 1)
 
-**TD.1 — `:adapt` registry entry + runner (adaptation pairs). IN PROGRESS
-2026-07-15: machinery LANDED (GenTask.Adapt + registry + :adapt shape +
-resync_adapt_embeds gate in CI/pre-push + exporter mapping w=0.5 + tests,
-319 green; 2 pilots minted & detail-reviewed), full mint RUNNING (see
-running row).** RED-gate measured 2026-07-13: 249/249 mintable — but
-T2.2-T's harness/gold repairs drifted some shas since; the runner
-re-measures those pairs itself (sha-keyed ledger). Design: docs/13 §2.1.
-**TD.2 — Multi-turn repair-dialogue exporter** (86 chains, PERISHABLE — snapshot
-`logs/attempts/` before any big run; archive from 2026-07-12 exists). docs/13 §2.2.
+**TD.2 — Multi-turn repair-dialogue exporter** (PERISHABLE raw material —
+snapshot `logs/attempts/` before any big run; archives exist from
+2026-07-12 AND 2026-07-14b, the latter taken right after the TD.1 mint;
+the backfill's repair-mint tail now reads 745 chains / 100 mintable
+rejected→accepted pairs). docs/13 §2.2.
+
+*(TD.1 adapt pairs: CLOSED 2026-07-14 late — 249/249 minted, ALL PERFECT;
+docs/15.)*
 **TD.3 — dedoc** (blocked on T1.6 Dialyzer). docs/13 §2.3.
 **TD.4 — style-repair pairs (207) + cap lifts (~1,900 free tfim)** — decide
 against docs/16 §4's advisory weights (test_fim already down-weighted to
