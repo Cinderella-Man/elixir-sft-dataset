@@ -156,6 +156,13 @@ defmodule TTLCacheTest do
     %{cache: pid}
   end
 
+  # A synchronous read on an unused key: its reply proves the cache has already
+  # handled every message sent to it beforehand (such as `:sweep`).
+  defp sync(cache) do
+    assert :miss = TTLCache.get(cache, "__sync_probe__")
+    :ok
+  end
+
   # -------------------------------------------------------
   # Basic put / get
   # -------------------------------------------------------
@@ -303,12 +310,17 @@ defmodule TTLCacheTest do
 
     Clock.advance(200)
 
-    # Trigger sweep manually
+    # Trigger sweep manually, then wait for the cache to finish handling it
     send(cache, :sweep)
-    :sys.get_state(cache)
+    sync(cache)
 
-    state = :sys.get_state(cache)
-    assert map_size(state.entries) == 0
+    # Rewind the clock to a moment when every entry was still live. Entries the
+    # sweep dropped stay gone; entries it left behind would read as hits again.
+    Clock.set(0)
+
+    for i <- 1..100 do
+      assert :miss = TTLCache.get(cache, "key:#{i}")
+    end
   end
 
   test "sweep preserves entries that have not yet expired", %{cache: cache} do
@@ -318,13 +330,16 @@ defmodule TTLCacheTest do
     Clock.advance(200)
 
     send(cache, :sweep)
-    :sys.get_state(cache)
+    sync(cache)
 
     assert :miss = TTLCache.get(cache, "short")
     assert {:ok, "stays"} = TTLCache.get(cache, "long")
 
-    state = :sys.get_state(cache)
-    assert map_size(state.entries) == 1
+    # Back at a time when both entries were live: only "long" survived the sweep,
+    # so only "long" can still be read.
+    Clock.set(0)
+    assert :miss = TTLCache.get(cache, "short")
+    assert {:ok, "stays"} = TTLCache.get(cache, "long")
   end
 
   test "sweep does not break subsequent put/get operations", %{cache: cache} do
@@ -332,7 +347,7 @@ defmodule TTLCacheTest do
     Clock.advance(200)
 
     send(cache, :sweep)
-    :sys.get_state(cache)
+    sync(cache)
 
     TTLCache.put(cache, "k", "new", 1_000)
     assert {:ok, "new"} = TTLCache.get(cache, "k")

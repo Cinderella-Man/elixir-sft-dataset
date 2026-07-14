@@ -383,47 +383,54 @@ defmodule LeakyBucketTest do
   # -------------------------------------------------------
 
   test "stale buckets are cleaned up and don't accumulate", %{lb: lb} do
-    # Create entries for 100 different buckets
+    # A refill rate of 0.001 tokens/sec means barely anything refills over the
+    # TTL window, so a bucket that is still tracked stays empty while an evicted
+    # one comes back brand new and full at capacity.
     for i <- 1..100 do
-      LeakyBucket.acquire(lb, "bucket:#{i}", 5, 1)
+      assert {:ok, 0} = LeakyBucket.acquire(lb, "bucket:#{i}", 1, 0.001)
     end
 
     # Advance past the default cleanup TTL (300_000ms = 5 minutes)
     Clock.advance(300_001)
 
-    # Trigger cleanup manually via a message
+    # Trigger cleanup via a message
     send(lb, :cleanup)
-    # Give it a moment to process
-    :sys.get_state(lb)
 
-    # Internal state should have no bucket entries
-    state = :sys.get_state(lb)
-    assert map_size(state.buckets) == 0
+    # A synchronous request is handled after the queued cleanup message, so once
+    # it returns the sweep has already happened.
+    assert {:ok, _} = LeakyBucket.acquire(lb, "probe", 5, 1)
 
-    # New request for a cleaned-up bucket should start fresh at capacity
-    assert {:ok, 4} = LeakyBucket.acquire(lb, "bucket:1", 5, 1)
+    # Every stale bucket was dropped: each one is brand new again, starting full
+    # at capacity rather than remaining empty from the earlier drain.
+    for i <- 1..100 do
+      assert {:ok, 0} = LeakyBucket.acquire(lb, "bucket:#{i}", 1, 0.001)
+    end
   end
 
   test "recently accessed buckets survive cleanup", %{lb: lb} do
-    LeakyBucket.acquire(lb, "active", 5, 1)
-    LeakyBucket.acquire(lb, "stale", 5, 1)
+    # Capacity 2 with a negligible refill rate: the tokens drained here stay
+    # drained for as long as the bucket is tracked.
+    assert {:ok, 1} = LeakyBucket.acquire(lb, "active", 2, 0.001)
+    assert {:ok, 1} = LeakyBucket.acquire(lb, "stale", 2, 0.001)
 
     # Advance 200 seconds
     Clock.advance(200_000)
 
     # Touch "active" again so its last-access is recent
-    LeakyBucket.acquire(lb, "active", 5, 1)
+    assert {:ok, 0} = LeakyBucket.acquire(lb, "active", 2, 0.001)
 
     # Advance another 150 seconds (total 350s for "stale", 150s for "active")
     Clock.advance(150_000)
 
     # Trigger cleanup (TTL is 300_000ms)
     send(lb, :cleanup)
-    :sys.get_state(lb)
 
-    state = :sys.get_state(lb)
-    assert Map.has_key?(state.buckets, "active")
-    refute Map.has_key?(state.buckets, "stale")
+    # "active" was accessed within the TTL, so it keeps its drained balance and
+    # cannot hand out another token.
+    assert {:error, :empty, _} = LeakyBucket.acquire(lb, "active", 2, 0.001)
+
+    # "stale" was idle past the TTL, so it was evicted and starts full again.
+    assert {:ok, 1} = LeakyBucket.acquire(lb, "stale", 2, 0.001)
   end
 end
 ```

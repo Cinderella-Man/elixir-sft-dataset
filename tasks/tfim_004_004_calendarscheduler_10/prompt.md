@@ -329,9 +329,11 @@ defmodule CalendarSchedulerTest do
     %{cs: pid}
   end
 
+  # Delivers a tick, then issues a synchronous public-API call.  Because the
+  # scheduler handles messages in order, the reply proves the tick is done.
   defp tick(pid) do
     send(pid, :tick)
-    _ = :sys.get_state(pid)
+    _ = CalendarScheduler.jobs(pid)
     :ok
   end
 

@@ -13,17 +13,23 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**DETACHED (launched 2026-07-14): T2.1 FLEET — rewrite_reachins over the 23
-remaining reach-in families** (pilot 004_001 APPLIED + committed, rule-9
-review clean — see docs/15 when closed). ~2-3 LLM calls/family, sequential;
-blind-gate INCONCLUSIVE rejections are expected solver noise — relaunching
-the same command retries every non-applied family (resume = applied-sha
-skip). Log: `logs/rewrite_reachins_fleet.log`; ledger:
-`logs/rewrite_reachins.jsonl` (git-tracked); candidates archived in
-`logs/rewrite_candidates/`. On exit: review EVERY applied diff + parked
-re-carves (`--report`), then gates + commit per family batch. Idempotent
-relaunch: `scripts/run_detached.sh logs/rewrite_reachins_fleet.log mix run
-scripts/rewrite_reachins.exs -- --go`. PID: see session. Plan: add-only harness tests — (1) independent RFC 6238
+**T2.1 fleet pass 1 DONE (15/24 applied + committed; all diffs reviewed,
+all gates green). 9 families remain in three classes:**
+1. **Tool contradiction (4, deterministic — fix the tool first):** 005_002,
+   006_003, 006_004, 023_002 rejected by the min-test-count lint (harness
+   has fewer tests than today's ≥#public-functions floor — pre-existing
+   debt the rewrite cannot fix under the name-set-unchanged rule). Fix:
+   skip THAT one shortfall when the test-name set is unchanged, flag the
+   count debt in the ledger row (it is T1.4/strengthen scope, not T2.1).
+2. **Blind-gate solver noise (3 — relaunch retries them):** 004_002
+   (candidate did not compile), 005_001, 007_001 (failed only UNTOUCHED
+   tests). Relaunch: `scripts/run_detached.sh logs/rewrite_reachins_fleet.log
+   mix run scripts/rewrite_reachins.exs -- --go`.
+3. **Blind fails REWRITTEN tests (2 — rule-10 HAND TRIAGE before retry):**
+   005_003 ("cleanup drops topics with empty history and no subscribers"),
+   007_002 ("larger period grows max_period and retains more history" — its
+   2 tfim golds also still carry reach-ins, resolve together). Candidates
+   archived in `logs/rewrite_candidates/`. Plan: add-only harness tests — (1) independent RFC 6238
 reference computation (base32 decode + HMAC-SHA1 + dynamic truncation are all
 verbatim in the prompt) swept over 300 steps, (2) secret-shape test (160 bits
 = 32 unpadded base32 chars, documented), (3) window-default=1 probe (base±2

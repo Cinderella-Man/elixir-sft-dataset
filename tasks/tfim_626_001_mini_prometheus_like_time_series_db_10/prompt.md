@@ -619,10 +619,12 @@ defmodule TSDBTest do
     # Insert at t=5000 → chunk_start=5000, expires when now > 5000 + 1000 + 10_000 = 16_000
     :ok = TSDB.insert(db, "m", %{}, 5000, 2)
 
+    # Both chunks are still within retention before the clock moves
+    assert [{_labels, [{100, 1}, {5000, 2}]}] = TSDB.query(db, "m", %{}, {0, 20_000})
+
     # At time 12_000, the first chunk is expired but the second is not
     Clock.set(12_000)
     send(db, :cleanup)
-    :sys.get_state(db)
 
     result = TSDB.query(db, "m", %{}, {0, 20_000})
     [{_labels, points}] = result
@@ -632,17 +634,20 @@ defmodule TSDBTest do
   test "cleanup removes series with no remaining chunks", %{db: db} do
     :ok = TSDB.insert(db, "m", %{"host" => "a"}, 100, 1)
 
+    # The series is queryable before its only chunk expires
+    assert [{%{"host" => "a"}, [{100, 1}]}] =
+             TSDB.query(db, "m", %{"host" => "a"}, {0, 200_000})
+
     # Advance well past retention
     Clock.set(100_000)
     send(db, :cleanup)
-    :sys.get_state(db)
 
     # Series should be gone entirely
     assert [] = TSDB.query(db, "m", %{"host" => "a"}, {0, 200_000})
 
-    # Verify internal state is clean
-    state = :sys.get_state(db)
-    assert map_size(state.series) == 0
+    # No series at all remains under this metric, for any matcher or aggregation
+    assert [] = TSDB.query(db, "m", %{}, {0, 200_000})
+    assert [] = TSDB.query_agg(db, "m", %{}, {0, 200_000}, :sum, 1_000)
   end
 
   # -------------------------------------------------------

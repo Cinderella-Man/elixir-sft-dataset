@@ -272,7 +272,6 @@ defmodule RetrySchedulerTest do
   # Programmable job that consults an Agent counter to decide whether to
   # succeed on this attempt. Useful for "fail N times, then succeed" tests.
   defmodule Flaky do
-    # <--- ADDED THIS LINE TO FIX THE child_spec ERROR
     use Agent
 
     def start_link(fail_n) do
@@ -357,9 +356,12 @@ defmodule RetrySchedulerTest do
     %{rs: pid}
   end
 
+  # Delivers a tick, then issues a synchronous public-API read. Because the
+  # server handles messages in order, the read cannot be answered until the
+  # tick has been fully processed, so it acts as a barrier.
   defp tick(pid) do
     send(pid, :tick)
-    _ = :sys.get_state(pid)
+    _ = RetryScheduler.jobs(pid)
     :ok
   end
 

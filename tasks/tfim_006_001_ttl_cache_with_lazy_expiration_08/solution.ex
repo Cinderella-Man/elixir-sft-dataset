@@ -5,7 +5,13 @@
     # Read triggers lazy deletion
     assert :miss = TTLCache.get(cache, "k")
 
-    # Verify internal state no longer holds the key
-    state = :sys.get_state(cache)
-    refute Map.has_key?(state.entries, "k")
+    # Rewinding the clock to well before the expiry cannot resurrect the value:
+    # a merely-expired-but-still-stored entry would become readable again, while
+    # a lazily deleted one stays a miss forever.
+    Clock.set(10)
+    assert :miss = TTLCache.get(cache, "k")
+
+    # The key behaves exactly like one that was never written.
+    assert :ok = TTLCache.delete(cache, "k")
+    assert :miss = TTLCache.get(cache, "k")
   end

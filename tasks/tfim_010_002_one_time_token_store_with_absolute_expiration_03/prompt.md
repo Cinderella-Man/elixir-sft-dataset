@@ -485,10 +485,9 @@ defmodule OneTimeTokenStoreTest do
     Clock.advance(1_100)
 
     send(store, :cleanup)
-    :sys.get_state(store)
 
-    state = :sys.get_state(store)
-    assert map_size(state.tokens) == 0
+    # The call both waits for the sweep to be processed and shows no token survived.
+    assert OneTimeTokenStore.active_count(store) == 0
 
     for id <- ids do
       assert {:error, :not_found} = OneTimeTokenStore.verify(store, id)
@@ -504,7 +503,9 @@ defmodule OneTimeTokenStoreTest do
     Clock.advance(101)
 
     send(store, :cleanup)
-    :sys.get_state(store)
+
+    # Only the still-valid token survives the sweep.
+    assert OneTimeTokenStore.active_count(store) == 1
 
     assert {:error, :not_found} = OneTimeTokenStore.verify(store, old_id)
     assert {:ok, %{user: "new"}} = OneTimeTokenStore.verify(store, new_id)

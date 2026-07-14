@@ -544,10 +544,13 @@ defmodule LeaseManagerTest do
     Clock.advance(1_100)
 
     send(mgr, :cleanup)
-    :sys.get_state(mgr)
+    LeaseManager.holder(mgr, :barrier)
 
-    state = :sys.get_state(mgr)
-    assert map_size(state.leases) == 0
+    # Every swept resource is free again, and can be leased by a new owner.
+    for i <- 1..100 do
+      assert {:error, :available} = LeaseManager.holder(mgr, "resource_#{i}")
+      assert {:ok, _} = LeaseManager.acquire(mgr, "resource_#{i}", :next_owner)
+    end
   end
 
   test "cleanup only removes expired leases, keeps active ones", %{mgr: mgr} do
@@ -559,7 +562,7 @@ defmodule LeaseManagerTest do
     Clock.advance(101)
 
     send(mgr, :cleanup)
-    :sys.get_state(mgr)
+    LeaseManager.holder(mgr, :barrier)
 
     assert {:error, :available} = LeaseManager.holder(mgr, :old_resource)
     assert {:ok, :bob, _} = LeaseManager.holder(mgr, :new_resource)

@@ -453,9 +453,11 @@ defmodule SharedPoolBucketTest do
 
   test "key_level for unknown bucket returns capacity", %{sp: sp} do
     assert {:ok, 7} = SharedPoolBucket.key_level(sp, "never_seen", 7, 1.0)
-    # Must not have created the bucket
-    state = :sys.get_state(sp)
-    refute Map.has_key?(state.buckets, "never_seen")
+
+    # Querying does not define the bucket: asking again with a different
+    # capacity still reports a fresh, full bucket at that capacity (a bucket
+    # created by the first query would have been pinned at 7 tokens).
+    assert {:ok, 100} = SharedPoolBucket.key_level(sp, "never_seen", 100, 1.0)
   end
 
   # -------------------------------------------------------
@@ -470,13 +472,17 @@ defmodule SharedPoolBucketTest do
     Clock.advance(10_000)
 
     send(sp, :cleanup)
-    :sys.get_state(sp)
 
-    state = :sys.get_state(sp)
-    assert map_size(state.buckets) == 0
-
-    # Global pool is still present — and should have refilled to capacity
+    # Global pool survives the sweep and has refilled to capacity.  This
+    # synchronous read also waits until the sweep has been processed.
     assert {:ok, 10} = SharedPoolBucket.global_level(sp)
+
+    # Every swept bucket is gone: re-querying under a larger capacity reports a
+    # fresh, full bucket instead of the 2-token balance a retained bucket
+    # would still carry.
+    for i <- 1..50 do
+      assert {:ok, 50} = SharedPoolBucket.key_level(sp, "k:#{i}", 50, 1.0)
+    end
   end
 
   # -------------------------------------------------------

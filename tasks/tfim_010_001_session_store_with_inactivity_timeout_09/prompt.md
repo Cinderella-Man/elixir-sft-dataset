@@ -337,6 +337,15 @@ defmodule SessionStoreTest do
     %{store: pid}
   end
 
+  # A synchronous read on an id that was never created: it returns
+  # {:error, :not_found} without touching any session, and because the server
+  # handles messages in order, it only replies once the preceding :cleanup
+  # message has been fully processed.
+  defp await_cleanup(store) do
+    assert {:error, :not_found} = SessionStore.get(store, "no-such-session")
+    :ok
+  end
+
   # -------------------------------------------------------
   # Basic create / get / destroy
   # -------------------------------------------------------
@@ -532,13 +541,9 @@ defmodule SessionStoreTest do
 
     # Trigger cleanup
     send(store, :cleanup)
-    :sys.get_state(store)
+    await_cleanup(store)
 
-    # Internal state should be empty
-    state = :sys.get_state(store)
-    assert map_size(state.sessions) == 0
-
-    # Confirm all sessions are gone
+    # Every swept session is unreachable through the public API
     for id <- ids do
       assert {:error, :not_found} = SessionStore.get(store, id)
     end
@@ -554,7 +559,7 @@ defmodule SessionStoreTest do
     Clock.advance(101)
 
     send(store, :cleanup)
-    :sys.get_state(store)
+    await_cleanup(store)
 
     assert {:error, :not_found} = SessionStore.get(store, old_id)
     assert {:ok, %{user: "new"}} = SessionStore.get(store, new_id)
