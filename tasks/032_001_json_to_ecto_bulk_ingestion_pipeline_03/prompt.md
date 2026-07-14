@@ -77,7 +77,7 @@ defmodule DataIngestion do
 
   @default_batch_size 500
   @default_on_conflict :replace_all
-  @default_conflict_target :nothing
+  @default_conflict_target []
   @default_returning true
 
   # Tolerance window (seconds) used to tell a fresh INSERT from an UPDATE when
@@ -106,9 +106,13 @@ defmodule DataIngestion do
     - `{:error, :file_not_found}` – The file does not exist or is unreadable.
     - `{:error, :invalid_json}`   – The file contents are not valid JSON.
     - `{:error, :not_a_list}`     – The JSON root value is not an array.
+    - `{:error, :conflict_target_required}` – `on_conflict` is the default
+      `:replace_all` but no `:conflict_target` was given (Ecto requires the
+      conflict columns to build an upsert).
   """
   @spec ingest(repo(), schema(), file_path(), ingest_opts()) ::
-          {:ok, stats()} | {:error, :file_not_found | :invalid_json | :not_a_list}
+          {:ok, stats()}
+          | {:error, :file_not_found | :invalid_json | :not_a_list | :conflict_target_required}
   def ingest(repo, schema, file_path, opts \\ []) do
     batch_size = Keyword.get(opts, :batch_size, @default_batch_size)
     on_conflict = Keyword.get(opts, :on_conflict, @default_on_conflict)
@@ -117,7 +121,8 @@ defmodule DataIngestion do
 
     with {:ok, raw} <- read_file(file_path),
          {:ok, parsed} <- parse_json(raw),
-         {:ok, records} <- validate_list(parsed) do
+         {:ok, records} <- validate_list(parsed),
+         :ok <- validate_conflict_opts(records, on_conflict, conflict_target) do
       cfg = %{
         batch_size: batch_size,
         on_conflict: on_conflict,
@@ -239,10 +244,6 @@ defmodule DataIngestion do
     |> MapSet.new()
   end
 
-  # Converts a list of string-keyed JSON maps into the atom-keyed maps that
-  # `insert_all` expects, filtering to only the columns the schema knows about
-  # and injecting `inserted_at` / `updated_at` when the schema declares them.
-  @spec prepare_rows(list(map()), MapSet.t(String.t())) :: list(map())
   defp prepare_rows(raw_rows, schema_keys) do
     # TODO
   end
@@ -260,12 +261,31 @@ defmodule DataIngestion do
   # Helpers
   # ---------------------------------------------------------------------------
 
+  # `:replace_all` cannot be built without knowing which columns identify the
+  # conflict — surfaced as one caller error before any batch is attempted,
+  # rather than one opaque Ecto raise per batch. File/JSON problems are
+  # reported first, and an empty array has no upsert to build, so both keep
+  # their own documented results.
+  @spec validate_conflict_opts([map()], atom() | keyword(), atom() | [atom()]) ::
+          :ok | {:error, :conflict_target_required}
+  defp validate_conflict_opts([], _on_conflict, _target), do: :ok
+
+  defp validate_conflict_opts([_ | _], :replace_all, []),
+    do: {:error, :conflict_target_required}
+
+  defp validate_conflict_opts(_records, _on_conflict, _target), do: :ok
+
   @spec build_insert_opts(map()) :: keyword()
   defp build_insert_opts(cfg) do
-    base = [
-      on_conflict: cfg.on_conflict,
-      conflict_target: cfg.conflict_target
-    ]
+    # An empty conflict_target means "none": the option is omitted rather
+    # than passed — Ecto accepts only column lists / fragments there, and
+    # on_conflict values like :raise or :nothing need no target at all.
+    base =
+      if cfg.conflict_target == [] do
+        [on_conflict: cfg.on_conflict]
+      else
+        [on_conflict: cfg.on_conflict, conflict_target: cfg.conflict_target]
+      end
 
     if cfg.returning, do: Keyword.put(base, :returning, true), else: base
   end

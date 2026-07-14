@@ -19,9 +19,15 @@ I need these functions in the public API:
       `insert_all` call
     - `:on_conflict` (atom or keyword, default `:replace_all`) — passed
       directly to `Repo.insert_all` as the `on_conflict:` option
-    - `:conflict_target` (atom or list, default `:nothing`) — passed as
-      `conflict_target:` so callers can specify which columns identify a
-      duplicate (e.g. `[:external_id]`)
+    - `:conflict_target` (atom or list, default `[]`) — the columns that
+      identify a duplicate (e.g. `[:external_id]`). Passed as
+      `conflict_target:` when non-empty and omitted entirely when `[]`.
+      Ecto cannot build a `:replace_all` upsert without the conflict
+      columns, so when there are records to insert, `on_conflict` is the
+      default `:replace_all`, and no `:conflict_target` was given, `ingest`
+      returns `{:error, :conflict_target_required}` before attempting any
+      batch (file and JSON errors are still reported first, and an empty
+      array still returns the zeroed stats)
     - `:returning` (boolean, default `true`) — when `true`, use
       `returning: true` in `insert_all` so you can distinguish inserts from
       updates by inspecting the returned rows

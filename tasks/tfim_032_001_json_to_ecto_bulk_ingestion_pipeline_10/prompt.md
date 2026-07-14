@@ -523,7 +523,8 @@ defmodule DataIngestionTest do
   # ---------------------------------------------------------------------------
 
   test "returns {:error, :file_not_found} for missing file" do
-    # TODO
+    assert {:error, :file_not_found} =
+             DataIngestion.ingest(TestRepo, Widget, "/no/such/file.json")
   end
 
   # ---------------------------------------------------------------------------
@@ -615,13 +616,7 @@ defmodule DataIngestionTest do
   # ---------------------------------------------------------------------------
 
   test "default options without a conflict_target are rejected up front" do
-    path = tmp_path("defaults_no_target.json")
-    write_json!(path, [%{"external_id" => "nt-1", "name" => "a", "value" => 1}])
-
-    assert {:error, :conflict_target_required} =
-             DataIngestion.ingest(TestRepo, Widget, path)
-
-    assert all_widgets() == []
+    # TODO
   end
 
   test "on_conflict: :nothing needs no conflict_target and skips duplicates" do

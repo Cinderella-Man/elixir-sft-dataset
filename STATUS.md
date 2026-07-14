@@ -13,25 +13,9 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**DETACHED (2026-07-14 evening): T2.2-T final queue — close_gaps fleet over
-the ~39 medium gap families** (the 8 gold-medium fixes landed first so the
-7 overlap families are coherent; resume skips the 10 high families). Log
-`logs/close_gaps_mediums.log`; ledger `logs/close_gaps.jsonl`. Expected:
-mostly applied; blind-noise rejections retry via relaunch; chronic families
-fall to the hand-apply recipe. Idempotent relaunch: `scripts/run_detached.sh
-logs/close_gaps_mediums.log mix run scripts/close_gaps.exs -- --go`.
-
-**PARKED (needs a design decision): 032_001 prompt_defect** — the
-documented defaults (`on_conflict: :replace_all` + `conflict_target:
-:nothing`) are invalid at the Ecto/Postgres level, so a default-options
-ingest fails every row into :failed; every harness insert test passes the
-options explicitly. A coherent fix changes documented defaults on a
-tier-B family — decide the default pair (e.g. `on_conflict: :raise` +
-no target, or require an explicit target for replace_all), then prompt +
-gold + tests + re-screen together.
-
-**Gold mediums: 8 of 9 DONE** (5 doc contracts, 2 behavioral, 1
-documented-and-pinned; 23 bugfix children reminted; docs/15).
+**Nothing.** (T2.2-T CLOSED in full 2026-07-14 night — all 89 batch
+findings resolved: every gap family closed, all 12 gold defects + 3 prompt
+defects fixed incl. the formerly parked 032_001. Record in docs/15.)
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-14 morning)
@@ -128,19 +112,6 @@ change; then FREE (PLT build + weekly CI)]**
 
 ### Tier 2 — raise EXISTING corpus quality (evidence says more is there)
 
-**T2.2-T — Triage the 60-root batch's 89 confirmed findings
-(logs/semantic_review.jsonl; measurement itself DONE — docs/15).
-[hand triage + strengthen-mold fix runs; 10/10 hand-checked real so far]**
-- ORDER: (1) the 13 HIGH-severity (2 gold: 095_003 negative-split money
-  bug, 031_002 whole-number-float three-way incoherence — both hand-
-  CONFIRMED; 10 harness gaps; 1 prompt contradiction 040_001); (2) the 12
-  gold_defects (wrong training targets); (3) the 74 harness_gaps — mostly
-  ONE class: promise-coverage debt (documented defaults/options/edge
-  directions never exercised) — fix via a strengthen-mold add-only run
-  seeded by the findings, blind-gated, cascaded; (4) the 3 prompt_defects.
-- Every fix follows rule 7: data fix + (where a class) generator gate.
-  Class-level Task B is T1.4's per-promise harness checklist — the batch
-  is its evidence base now.
 
 **T2.4 — Rubric LLM-judge pass over PASSING tasks (sampled). [PAID; round-#2
 candidate]** — WHY: our judge only ever sees failures; judge filtering adds

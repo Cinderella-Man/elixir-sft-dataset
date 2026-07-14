@@ -9,6 +9,31 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-14 (night) — T2.2-T CLOSED IN FULL: all 89 confirmed findings
+  from the 60-root review resolved, same day they were measured.** Final
+  ledger: 46 gap families closed by `close_gaps.exs` (43 tool-applied over
+  three passes incl. retries; 3 hand-applied after repeated solver-defect
+  blind REDs: 110_001, 020_004, and 104_002 — whose candidate repeated a
+  dead-waiter test-design flaw and got its three waiter spawns hand-parked
+  in receives so stats observe a LIVE holder, 9/9 after), plus 100_004 and
+  110_004 closed by hand earlier. ~120 tests added corpus-wide; NO family's
+  kill rate dropped; standouts 037_003 0.67→1.00, 035_002 0.63→0.92,
+  011_002 0.79→0.96, 107_001 0.53→0.76. All 12 gold defects and all 3
+  prompt defects fixed — the last being the formerly PARKED 032_001: the
+  invalid `conflict_target: :nothing` default replaced by a coherent
+  contract (default stays `:replace_all`; empty target is omitted from
+  insert_all; records-present + replace_all + no target →
+  `{:error, :conflict_target_required}` up front, file/JSON errors first,
+  empty array still zeroed-ok), gold 10/10 incl. two new conflict-option
+  tests, first design draft REVERSED by the harness's own evidence (4
+  existing tests rely on the replace_all default — the intent is
+  upsert-by-default). En route: 110_004's fresh blind RED exposed a real
+  prompt under-specification (total_weight's emptiness rule) — clarified,
+  re-screened GREEN. Chronic-keep triage rows appended for 020_004 (4th
+  solver failure), 110_001 (3rd), 032_001 (2nd, six days apart, same
+  documented timestamp-classification rule). Freshness 332/332 with 75
+  roots now proven via tool-ledger blind evidence.
+
 - **2026-07-14 — T2.2-T HIGHS PHASE CLOSED 13/13** (same day the batch
   measured them). Two gold defects hand-fixed with full cascades (095_003
   negative-split money bug — floored division, prompt precision, bugfix
