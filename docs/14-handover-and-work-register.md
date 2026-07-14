@@ -70,6 +70,14 @@ tfim rejects blocking 7 mintable units.
    (`while kill -0 $PID; do sleep 30; done`). This cost ~100 minutes of dead time.
 3. **Launch long jobs with `scripts/run_detached.sh`** (it `setsid`s). A bare
    `nohup … &` inside a tool call does not reliably survive.
+4. **RUNTIME warnings in improvement-tool logs (e.g. `Range.new/2 … step of
+   -1`, tagged `/tmp/gaps_*.ex` or `/tmp/strn_*.ex`) come from DELIBERATELY
+   BROKEN staged code** — semantic mutants and blind-solver candidates being
+   graded — not from the corpus. The runtime sibling of the 2026-07-12
+   compile-spill finding. The corpus itself is warning-free (the perfect
+   gate proves it); verify with one scoped eval before chasing them, and do
+   NOT silence them in the evaluator — that edit changes the gate sha and
+   invalidates every gate-sha-keyed measurement row (rule-7 corollary).
 
 ### Where the evidence lives
 
