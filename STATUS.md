@@ -30,8 +30,9 @@ re-measure + survivor classification, wt_/tfim cascade, blind re-screen
 
 1. **Kamil's four decisions** (section below) — they gate Phase 3, T1.1,
    T1.6 (and TD.3 behind it), and the nightly timer. Nothing else blocks them.
-2. Ready now, no decision needed: **T2.1** S9 debt — design the re-carve
-   path FIRST (docs/14 §5.0b caveat), then the 11 reach-in families.
+2. Ready now, no decision needed: **T2.1** S9 debt — design DONE
+   (docs/13 §1.7); next: build `rewrite_reachins.exs`, pilot on 004_001,
+   then the remaining families.
 3. Paid review passes once 2 is drained: **T2.2** scaled semantic review
    (stratified 60-root batch, then decide on full), **T2.4** rubric judge
    over passing tasks.
@@ -111,18 +112,23 @@ change; then FREE (PLT build + weekly CI)]**
 
 ### Tier 2 — raise EXISTING corpus quality (evidence says more is there)
 
-**T2.1 — Clear the S9 grandfathered debt: 52 harnesses with `:sys.get_state`
-reach-ins (11 April-era families), 142 with `Process.sleep`. [~2 calls/family
-where LLM-assisted; some hand work]**
+**T2.1 — Clear the S9 grandfathered reach-in debt. DESIGN DONE 2026-07-14
+(docs/13 §1.7) — build + pilot next. [measured: 24 root harnesses / 11 base
+ideas / 24 wt_ copies / 7 tfim golds carrying the pattern as training
+targets; ~24 rewrite calls + ~24 blind re-screens]**
 - WHY: proven 2026-07-13 that it actively corrupts future work — the
   strengthener imitated the existing reach-ins on 101_001 three times.
-  Reach-in tests are also weaker tests.
-- WHAT: ledgered rewrite tool in the strengthen mold (observable-behavior
-  equivalents; blind gate; restore-on-failure).
-- HOW: CAUTION — modifying existing test blocks orphans their carved tfim
-  golds (the add-only rule exists for this); the tool needs the re-carve path
-  (docs/14 §5.0b caveat). Start with the 11 reach-in families; sleeps only on
-  flake-ledger evidence (docs/12 §4.2.6).
+  Reach-in tests are also weaker tests. Task B is already live (reach-ins are
+  a HARD accept-path shortfall), so this is pure Task A over old data.
+- WHAT: `scripts/rewrite_reachins.exs` — ledgered rewrite tool in the
+  strengthen mold per docs/13 §1.7 (block-level rewrite, name-preserving;
+  perfect + mutants + semantic-no-drop + blind gates; restore-on-failure;
+  re-carve path for the 7 affected tfim golds via the carver's own gold
+  production + isolation-kill; orphaned children PARKED for Kamil, never
+  deleted unilaterally).
+- HOW: pilot on ONE family with zero affected tfim children (004_001) per
+  rule 9, line-by-line review, then the fleet. `Process.sleep` (146) stays
+  out of scope — flake-ledger evidence only (docs/12 §4.2.6).
 
 **T2.2 — Scaled semantic review. [PAID: ~3.5M tokens for a stratified 60-root
 batch; full ~330 roots ≈ 20M]**

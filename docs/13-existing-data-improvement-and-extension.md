@@ -316,6 +316,70 @@ kill rate forever). All are gated or fixed at the source.
 `scripts/strengthen_harnesses.exs` (30 weak-harness families, gated
 strengthening incl. the blind gate). Both dry-run verified, paid runs on go.
 
+### 1.7 T2.1 design — the reach-in rewrite + re-carve path (2026-07-14)
+
+**Goal.** Purge `:sys.get_state`/`:sys.replace_state` from every grandfathered
+harness — they are weaker tests AND actively corrupting: the strengthener
+imitated 101_001's reach-ins three times (F4), and 7 tfim GOLDS carry the
+pattern as *training targets* today. Task B is already done: reach-ins are a
+HARD shortfall in the accept path (`Evaluator.add_harness_shortfalls`), so the
+class cannot regrow — this is pure Task A over old data.
+
+**Measured scope (2026-07-14; STATUS's "52/11" estimate corrected).**
+24 root harnesses across 11 base ideas (001_003; 003_001–4; 004_001–4;
+005_001–3; 006_001/3/4; 007_001/2; 010_001–3; 023_002; 101_001; 107_003;
+626_001), 24 wt_ byte-copies (fixed by resync), and **7 tfim golds whose
+carved block contains the reach-in**: tfim_001_003_10, tfim_003_002_11,
+tfim_006_001_08, tfim_007_002_07, tfim_007_002_08, tfim_101_001_11,
+tfim_107_003_11. `Process.sleep` (146 harnesses) is EXPLICITLY out of scope —
+flake-ledger evidence only (docs/12 §4.2.6).
+
+**Why re-carve is the hard part (docs/14 §5.0b).** A tfim gold is NOT a copy
+of its parent block: golds are fragment-formatted and ≤98-column-gated while
+parents are not. So a parent-block rewrite CANNOT be blanket-propagated into
+the child; the gold must be re-produced by the carver's own path.
+
+**The tool: `scripts/rewrite_reachins.exs` (strengthen mold; ledger
+`logs/rewrite_reachins.jsonl`, rows keyed by family +
+`harness_sha_before`, gate-sha-stamped per rule-7 corollary;
+restore-on-failure). Per family:**
+
+1. Locate offending blocks via `TestFim.test_blocks/1` + reach-in regex —
+   the BLOCK is the rewrite unit, keyed by `TestFim.qual/1` name.
+2. One LLM call rewrites ONLY those blocks: same qualified test name (HARD —
+   validated mechanically after), observable behavior through the public API,
+   S9 bans + do-not-imitate + S10 chatter rule stated in the prompt.
+3. Mechanical validation: test-name set unchanged, zero reach-ins left in the
+   file, canonical format, parseable.
+4. Perfect gate (reference green, 0 warnings) — the 013_003/100_004 lesson:
+   the broken-rewrite catcher.
+5. Mutant gates: whole-solution + per-function still kill; semantic
+   re-measure **must not drop below the family's pre-rewrite rate** (a
+   reach-in pins internals; its replacement must pin at least as much
+   observable behavior) — else reject + restore.
+6. Cascade: `resync_embeds --wt-all --apply`; `resync_tfim_embeds --apply`;
+   then **re-carve** each affected child in place: take the rewritten block,
+   run the carver's gold production (fragment format, ≤98 head/lines) and the
+   isolation-kill gate (`TestFim.gate_ok?`-equivalent: block alone is green
+   AND kills ≥1 raise-mutant);
+   - PASS → write the new gold, resync that child's prompt embed;
+   - FAIL → the child is ORPHANED. **Do not delete unilaterally** — append a
+     ledger row (`recarve: :orphaned`) and park the dir on a Kamil decision
+     list (retire-and-refill from the pool vs. keep-and-redesign). The old
+     gold must NOT survive either way — it teaches the banned pattern.
+   Bugfix children embed the parent SPEC (prompt), not the harness →
+   unaffected. `repair_` dirs are frozen evidence → excluded.
+7. S6: blind re-screen per rewritten family (detached; RED → rule-10 hand
+   triage before anything ships).
+8. One commit per family (rule 10); STATUS updated as each lands.
+
+**Pilot (rule 9).** ONE family with ZERO affected tfim children (e.g.
+004_001) so the pilot never touches the destructive branch; review the
+rewritten blocks line by line + every gate output before the fleet run.
+
+**Cost.** ~24 rewrite calls + ~24 blind re-screens (+ retries); the re-carve
+itself is deterministic and free.
+
 ## 2. DESIGNED, READY TO BUILD (ranked; volumes measured)
 
 ### 2.1 Adaptation pairs — base gold + variation spec → variation gold (score 8)
