@@ -13,13 +13,18 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**IN PROGRESS (2026-07-14): T2.2-T phase 1 — 2 of 13 highs DONE (both
-gold defects: 095_003 + 031_002, committed 763ed80c/ed393462, blind GREEN,
-all gates green, bugfix children delete+reminted coherently).** Next: the
-10 high harness gaps + 040_001 prompt contradiction — plan: hand-triage
-each against its prompt, then close the gap class efficiently with a
-findings-SEEDED strengthen run (the strengthen mold, seeded by the review
-ledger instead of mutant survivors) so the 74 mediums ride the same tool.
+**DETACHED (2026-07-14): T2.2-T highs fleet — close_gaps over the 9
+remaining high-gap families** (021_002 pilot APPLIED on retry: +5 q-tests,
+rate 0.89→0.94, blind GREEN, diff reviewed — first attempt's blind RED was
+the SOLVER ignoring documented q ordering, the exact gap under repair).
+Log `logs/close_gaps_highs.log`; ledger `logs/close_gaps.jsonl`; candidates
+archived. Idempotent relaunch: `scripts/run_detached.sh
+logs/close_gaps_highs.log mix run scripts/close_gaps.exs -- --go
+--high-only`. In parallel (isolated paths): 040_001 hand-fix staged (prompt
+tuple/list contradiction + lying lock comment + fim _02 re-carve) — its
+blind re-screen runs alongside; wt copy + bugfix remint + gates + commit
+AFTER the fleet exits (single corpus-wide writer rule). DONE so far:
+095_003, 031_002, 021_002 (3 of 13 highs).
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-14 morning)
