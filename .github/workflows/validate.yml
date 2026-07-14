@@ -68,6 +68,13 @@ jobs:
           out=$(mix run scripts/resync_bugfix_embeds.exs)
           echo "$out"
           echo "$out" | grep -q "would_resync\|error" && exit 1 || true
+      # adapt_ dirs are deterministic projections of (base gold, variation
+      # prompt/gold/harness) — docs/13 §2.1. Editing any parent must propagate,
+      # or the pair teaches a stale starting point or grades against a stale gate.
+      - run: |
+          out=$(mix run scripts/resync_adapt_embeds.exs)
+          echo "$out"
+          echo "$out" | grep -q "would_resync\|error" && exit 1 || true
       # Harnesses must not share a temp path across parallel evals: the validator
       # runs one BEAM per task, and System.unique_integer is unique only WITHIN a
       # BEAM, so two evals can open the same SQLite file (flaky 1-in-3 failures in
@@ -82,7 +89,7 @@ jobs:
       # The export contract (docs/16): 91.7% within-family text overlap means a
       # naive split leaks train->val and makes every eval a memorisation score.
       # The exporter is the ONLY sanctioned path to training data; --selfcheck
-      # proves the gate bites (5 planted violations), --check validates the
+      # proves the gate bites (8 planted violations), --check validates the
       # export re-derived from the current corpus. No LLM, no eval: cheap.
       - run: mix run scripts/export_dataset.exs -- --selfcheck
       - run: |

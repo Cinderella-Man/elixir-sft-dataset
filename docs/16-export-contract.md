@@ -22,6 +22,8 @@ defect — it is what the derived shapes ARE:
   one-token-mutated copy of its module.
 - `016_001_..._03` (a code-FIM child) embeds the module with one function
   blanked.
+- `adapt_016_002`'s prompt embeds `016_001`'s entire gold as the starting
+  point *and* `016_002`'s entire spec; its gold is `016_002`'s gold verbatim.
 
 A random 95/5 split therefore puts near-copies of the same module on both
 sides of the line. The val score you would read is a memorisation score, and
@@ -79,6 +81,7 @@ One JSONL row per task directory, chat-shaped:
 | `write_test` | **`test_harness.exs`** | the whole ExUnit harness |
 | `test_fim` | `solution.ex` | the ONE `test` block the prompt blanked |
 | `bugfix` | `solution.ex` | the repaired module |
+| `adapt` | `solution.ex` | the variation's module, produced by modifying the embedded base gold |
 
 `write_test` is the one shape whose gold is NOT `solution.ex` (its
 `solution.ex` is the *input* module, embedded in the prompt). Getting this
@@ -143,6 +146,7 @@ training time, never by dropping rows:
 | `write_test` | 1.0 | distinct skill (authoring tests), one per family |
 | `fim` | 0.5 | shares the parent module verbatim |
 | `bugfix` | 0.5 | shares the parent spec + a near-copy module |
+| `adapt` | 0.5 | distinct skill (brownfield editing) but shares the base gold verbatim and the variation's gold+spec |
 | `test_fim` | 0.25 | 3,267 units sharing parent module AND harness text |
 
 These numbers are a starting point, deliberately written down so the first

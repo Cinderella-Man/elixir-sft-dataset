@@ -13,9 +13,21 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**Nothing.** (Machine idle; last run: F10-A close_gaps on 018_003,
-`applied` 2026-07-14 evening, bite-proven — docs/15. Training runs are
-unblocked.)
+**TD.1: full adapt-pair mint via the standard backfill loop** (launched
+2026-07-15 ~00:40 UTC, right after the machinery commit).
+- pid: `logs/adapt_mint.pid` · log: `logs/adapt_mint.log` · rows →
+  `logs/runs.jsonl` (kind `adapt`) + fresh RED-gate rows in
+  `logs/adapt_redgate.jsonl` where T2.2-T sha drift forces re-measurement
+- command: `GEN_ONLY=backfill scripts/run_detached.sh logs/adapt_mint.log
+  mix run scripts/generate.exs` — idempotent (registry counts only missing
+  units; 2 pilot dirs already minted: adapt_001_002, adapt_016_002)
+- expected: ~247 more `adapt_*` dirs, every one green vs its harness copy,
+  zero LLM calls (deterministic; only CPU evals: RED gate re-measure +
+  green confirm per pair). A `green_not_mintable` skip is legitimate —
+  it means a T2.2-T-repaired base gold now passes the variation harness;
+  such pairs are correctly NOT minted (ledger row proves why).
+- after exit: validate a sample (perfect + shape detection), run
+  resync_adapt_embeds + format + export selfcheck/check, batch-commit dirs.
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-14 evening)
@@ -127,9 +139,13 @@ when a training run is planned.)*
 
 ### Data extension (docs/13 §2 — build order after Tier 1)
 
-**TD.1 — `:adapt` registry entry + runner (adaptation pairs).** RED-gate
-measured 2026-07-13: **249/249 pairs mintable** (`logs/adapt_redgate.jsonl`).
-Deterministic, zero LLM. Design: docs/13 §2.1.
+**TD.1 — `:adapt` registry entry + runner (adaptation pairs). IN PROGRESS
+2026-07-15: machinery LANDED (GenTask.Adapt + registry + :adapt shape +
+resync_adapt_embeds gate in CI/pre-push + exporter mapping w=0.5 + tests,
+319 green; 2 pilots minted & detail-reviewed), full mint RUNNING (see
+running row).** RED-gate measured 2026-07-13: 249/249 mintable — but
+T2.2-T's harness/gold repairs drifted some shas since; the runner
+re-measures those pairs itself (sha-keyed ledger). Design: docs/13 §2.1.
 **TD.2 — Multi-turn repair-dialogue exporter** (86 chains, PERISHABLE — snapshot
 `logs/attempts/` before any big run; archive from 2026-07-12 exists). docs/13 §2.2.
 **TD.3 — dedoc** (blocked on T1.6 Dialyzer). docs/13 §2.3.

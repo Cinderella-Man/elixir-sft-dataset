@@ -9,7 +9,7 @@ defmodule EvalTask.Discovery do
   @type task :: %{
           name: String.t(),
           dir: String.t(),
-          shape: :single | :fim | :multifile | :write_test | :test_fim | :bugfix,
+          shape: :single | :fim | :multifile | :write_test | :test_fim | :bugfix | :adapt,
           solution: String.t(),
           found: boolean()
         }
@@ -45,6 +45,11 @@ defmodule EvalTask.Discovery do
       # Bug-repair pairs: full corrected module graded vs the parent harness.
       String.starts_with?(base, "bugfix_") ->
         task(dir, :bugfix, sol, found)
+
+      # Adaptation pairs: base gold → variation spec; the dir carries its own
+      # harness (a copy of the variation's) and grades like single/multifile.
+      String.starts_with?(base, "adapt_") ->
+        task(dir, :adapt, sol, found)
 
       # No harness of its own → a FIM subtask (parent _01 has the harness).
       not has_harness ->

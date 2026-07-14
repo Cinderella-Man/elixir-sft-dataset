@@ -368,6 +368,21 @@ defmodule EvalTask.Runner do
   end
 
   @doc """
+  Run an `adapt` task (`adapt_<a>_<b>_<slug>/`): grade the adapted module
+  (`solution.ex`, plain or `<file>` bundle) against the dir's own `test_harness.exs`
+  (a copy of the variation's). Structurally identical to `:single`/`:multifile`,
+  dispatched by the module's content — the `wt_` pattern.
+  """
+  def run_adapt(task_dir, sol_file) do
+    result =
+      if Bundle.bundle?(File.read!(sol_file)),
+        do: run_multifile(task_dir, sol_file),
+        else: run_single(task_dir, sol_file)
+
+    Map.put(result, :shape, :adapt)
+  end
+
+  @doc """
   Run a `tfim` task (`tfim_<a>_<b>_<slug>_0N/`): splice the candidate test block into
   the harness skeleton from `prompt.md`, then run the reconstructed harness against the
   PARENT `_01`'s reference module (`solution.ex`, plain or bundle). Green ⇔ the completed

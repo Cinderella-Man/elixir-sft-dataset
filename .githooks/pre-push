@@ -25,7 +25,7 @@ git rev-parse --abbrev-ref '@{upstream}' >/dev/null 2>&1 || range="HEAD~10..HEAD
 # bugfix mint) it closes the pipe early, sort dies of SIGPIPE, and pipefail
 # kills the whole hook with no output (found live 2026-07-13).
 all_families=$(git diff --name-only "$range" -- tasks/ 2>/dev/null |
-  sed -E 's#^tasks/(wt_|tfim_|bugfix_|repair_)?([0-9]+_[0-9]+).*#\2#' | sort -u)
+  sed -E 's#^tasks/(wt_|tfim_|bugfix_|repair_|adapt_)?([0-9]+_[0-9]+).*#\2#' | sort -u)
 families=$(printf '%s\n' "$all_families" | head -20)
 
 if [ -n "$families" ]; then
@@ -65,6 +65,15 @@ if [ -n "$families" ]; then
   if echo "$resync_out" | grep -q "would_resync\|error"; then
     echo "[pre-push] FAIL: tfim prompt embeds drifted from their parents —" \
       "run: mix run scripts/resync_tfim_embeds.exs -- --only \"$globs\" --apply"
+    exit 1
+  fi
+
+  echo "[pre-push] adapt_ embed staleness check on touched families"
+  adapt_out=$(mix run scripts/resync_adapt_embeds.exs -- --only "$globs")
+  echo "$adapt_out" | tail -1
+  if echo "$adapt_out" | grep -q "would_resync\|error"; then
+    echo "[pre-push] FAIL: adapt_ dirs drifted from their parents —" \
+      "run: mix run scripts/resync_adapt_embeds.exs -- --only \"$globs\" --apply"
     exit 1
   fi
 else

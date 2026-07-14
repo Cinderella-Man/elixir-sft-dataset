@@ -96,6 +96,15 @@ defmodule GenTask.Work do
         skip?: & &1.skip_bugfix,
         missing: &missing_bugfix/2,
         runner: {GenTask.Bugfix, :run}
+      },
+      %{
+        key: :adapt,
+        desc: "brownfield adaptation pair per variation: base gold → variation spec (adapt_…)",
+        llm?: false,
+        stage: :derived,
+        skip?: & &1.skip_adapt,
+        missing: &missing_adapt/2,
+        runner: {GenTask.Adapt, :run}
       }
       # Future work types slot in here, e.g.:
       # %{key: :dedoc, desc: "docs-stripped 'add specs and docs' pair per _01",
@@ -194,8 +203,10 @@ defmodule GenTask.Work do
 
   # A seed counts as "applicable and complete" when the work type could apply to it
   # (not structurally excluded) and nothing is missing. Structural exclusions:
-  # variations apply only to bases; fim/wtest/tfim never apply to gradable-skip seeds.
+  # variations apply only to bases; adapt only to variations; fim/wtest/tfim never
+  # apply to gradable-skip seeds.
   defp complete?(%{key: :variations}, seed, _cfg), do: seed.base?
+  defp complete?(%{key: :adapt}, seed, _cfg), do: not seed.base? and not seed.skip?
   defp complete?(_entry, seed, _cfg), do: not seed.skip?
 
   # ---------------------------------------------------------------------------
@@ -248,6 +259,14 @@ defmodule GenTask.Work do
   # ledger-rejected); bundle parents count 0 in v1.
   defp missing_bugfix(%Catalog.Seed{} = seed, cfg) do
     GenTask.Bugfix.missing_units(seed, cfg)
+  end
+
+  # Delegated to the minter (same honesty rule): a variation counts 1 only while
+  # mintable — base seeds, gradable-skips, existing adapt_ dirs, and variations
+  # whose CURRENT sha pair carries a `green_not_mintable` RED-gate verdict all
+  # count 0 (the gate-expensive RED measurement itself lives in the runner).
+  defp missing_adapt(%Catalog.Seed{} = seed, cfg) do
+    GenTask.Adapt.missing_units(seed, cfg)
   end
 
   defp a(%Catalog.Seed{num: num}), do: Catalog.pad3(num)

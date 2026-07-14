@@ -36,6 +36,7 @@ defmodule ExportDataset do
     fim: "solution.ex",
     test_fim: "solution.ex",
     bugfix: "solution.ex",
+    adapt: "solution.ex",
     write_test: "test_harness.exs"
   }
 
@@ -45,6 +46,7 @@ defmodule ExportDataset do
     write_test: 1.0,
     fim: 0.5,
     bugfix: 0.5,
+    adapt: 0.5,
     test_fim: 0.25
   }
 
@@ -118,11 +120,13 @@ defmodule ExportDataset do
   defp fence(gold), do: "```elixir\n" <> String.trim_trailing(gold, "\n") <> "\n```"
 
   # Family = the base idea `a`: the first 3-digit group after any shape prefix.
-  # tfim_016_001_07, wt_016_001, bugfix_016_002_01 and 016_003_x_01 are ALL
-  # family "016" — they share module and prose text (docs/16 §1).
+  # tfim_016_001_07, wt_016_001, bugfix_016_002_01, adapt_016_002 and
+  # 016_003_x_01 are ALL family "016" — they share module and prose text
+  # (docs/16 §1). An adapt pair embeds BOTH its base's gold and its variation's
+  # spec, and both live in the same family `a` — atomicity contains the leak.
   @doc false
   def family_of(name) do
-    case Regex.run(~r/^(?:repair_|bugfix_|tfim_|wt_)?(\d{3})_/, name) do
+    case Regex.run(~r/^(?:repair_|bugfix_|tfim_|wt_|adapt_)?(\d{3})_/, name) do
       [_, a] -> a
       _ -> raise "cannot derive family from #{inspect(name)} — naming convention broken"
     end
