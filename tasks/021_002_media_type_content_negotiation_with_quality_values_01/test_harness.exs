@@ -90,6 +90,65 @@ defmodule MediaVersionApi.RouterTest do
     assert content_type(conn) =~ "v1"
   end
 
+  # A range without q carries q=1.0, so it outranks any explicit lower q no
+  # matter where it appears in the header.
+  test "missing q defaults to 1.0 and outranks an explicit lower q" do
+    conn =
+      call("/api/users/1", [
+        {"accept", "application/vnd.acme.v1+json, application/vnd.acme.v2+json;q=0.9"}
+      ])
+
+    assert conn.status == 200
+    assert content_type(conn) =~ "v1"
+    assert json_body(conn)["name"] == "Alice Smith"
+
+    later =
+      call("/api/users/1", [
+        {"accept", "application/vnd.acme.v2+json;q=0.9, application/vnd.acme.v1+json"}
+      ])
+
+    assert later.status == 200
+    assert content_type(later) =~ "v1"
+  end
+
+  # -------------------------------------------------------
+  # q <= 0 discards the range
+  # -------------------------------------------------------
+
+  test "supported vendor range with q=0 is discarded and yields 406" do
+    conn = call("/api/users/1", [{"accept", "application/vnd.acme.v1+json;q=0"}])
+
+    assert conn.status == 406
+    body = json_body(conn)
+    assert body["error"] =~ "unsupported"
+    assert "v1" in body["supported"]
+    assert "v2" in body["supported"]
+    assert content_type(conn) =~ "application/json"
+  end
+
+  test "range with negative q is discarded and yields 406" do
+    conn = call("/api/users/1", [{"accept", "application/vnd.acme.v2+json;q=-0.5"}])
+
+    assert conn.status == 406
+  end
+
+  test "wildcard with q=0 does not resolve to the default version" do
+    conn = call("/api/users/1", [{"accept", "*/*;q=0"}])
+
+    assert conn.status == 406
+  end
+
+  # A discarded q=0 range cannot win a tie against another q=0 range either:
+  # both are gone, so nothing acceptable remains.
+  test "all ranges at q=0 leave nothing acceptable" do
+    conn =
+      call("/api/users/1", [
+        {"accept", "application/vnd.acme.v1+json;q=0, application/vnd.acme.v2+json;q=0"}
+      ])
+
+    assert conn.status == 406
+  end
+
   # -------------------------------------------------------
   # Wildcards and generic json map to default
   # -------------------------------------------------------

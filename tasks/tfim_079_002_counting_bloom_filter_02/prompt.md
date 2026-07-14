@@ -363,5 +363,66 @@ defmodule CountingBloomFilterTest do
     assert CountingBloomFilter.member?(m1, "only-1")
     assert CountingBloomFilter.member?(m2, "only-2")
   end
+
+  # -------------------------------------------------------
+  # Saturation at 255
+  # -------------------------------------------------------
+
+  test "add/2 saturates counters at 255 and never overflows past it" do
+    empty = CountingBloomFilter.new(50, 0.01)
+
+    filter =
+      Enum.reduce(1..400, empty, fn _i, f -> CountingBloomFilter.add(f, "hot") end)
+
+    counters = Tuple.to_list(filter.counters)
+
+    # The only item added is "hot", so its slots carry the largest counters:
+    # they must have stopped climbing exactly at the 255 ceiling.
+    assert Enum.max(counters) == 255
+    assert Enum.all?(counters, fn c -> c <= 255 end)
+    assert CountingBloomFilter.member?(filter, "hot")
+  end
+
+  test "remove/2 never decrements a saturated counter" do
+    empty = CountingBloomFilter.new(50, 0.01)
+
+    saturated =
+      Enum.reduce(1..400, empty, fn _i, f -> CountingBloomFilter.add(f, "hot") end)
+
+    frozen = saturated.counters
+    assert Enum.max(Tuple.to_list(frozen)) == 255
+
+    # A single removal must leave the saturated slots at 255, not 254.
+    once = CountingBloomFilter.remove(saturated, "hot")
+    assert once.counters == frozen
+
+    # Draining far past the number of inserts must still not touch them, so the
+    # item stays a member: a saturated counter can never produce a false negative.
+    drained =
+      Enum.reduce(1..400, saturated, fn _i, f -> CountingBloomFilter.remove(f, "hot") end)
+
+    assert drained.counters == frozen
+    assert CountingBloomFilter.member?(drained, "hot")
+  end
+
+  test "merge/2 clamps summed counters at 255" do
+    build = fn item ->
+      Enum.reduce(1..200, CountingBloomFilter.new(50, 0.01), fn _i, f ->
+        CountingBloomFilter.add(f, item)
+      end)
+    end
+
+    f1 = build.("shared")
+    f2 = build.("shared")
+
+    merged = CountingBloomFilter.merge(f1, f2)
+    counters = Tuple.to_list(merged.counters)
+
+    # Element-wise sums would reach 400 for the shared slots; they must clamp.
+    assert Enum.all?(counters, fn c -> c <= 255 end)
+    assert Enum.max(counters) == 255
+    assert CountingBloomFilter.member?(merged, "shared")
+    assert CountingBloomFilter.count(merged) == 400
+  end
 end
 ```

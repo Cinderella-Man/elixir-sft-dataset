@@ -99,6 +99,93 @@ defmodule TolerantReconcilerTest do
   end
 
   # ---------------------------------------------------------------------------
+  # Duplicate keys within one list
+  # ---------------------------------------------------------------------------
+
+  test "a repeated key within one list keeps only the last record with that key" do
+    config = config!(key_fields: [:id])
+
+    left = [%{id: 1, name: "first"}, %{id: 1, name: "last"}]
+    right = [%{id: 1, name: "last"}]
+
+    report = TolerantReconciler.run(config, left, right)
+
+    [entry] = report.matched
+    assert entry.left == %{id: 1, name: "last"}
+    assert entry.differences == %{}
+    assert report.only_in_left == []
+    assert report.only_in_right == []
+  end
+
+  test "a repeated key on the right side also keeps only the last record" do
+    config = config!(key_fields: [:id])
+
+    left = [%{id: 1, name: "last"}]
+    right = [%{id: 1, name: "first"}, %{id: 1, name: "last"}]
+
+    report = TolerantReconciler.run(config, left, right)
+
+    [entry] = report.matched
+    assert entry.right == %{id: 1, name: "last"}
+    assert entry.differences == %{}
+  end
+
+  test "a repeated composite key collapses to one matched pair" do
+    config = config!(key_fields: [:org_id, :user_id])
+
+    left = [
+      %{org_id: 1, user_id: 10, score: 1},
+      %{org_id: 1, user_id: 10, score: 2},
+      %{org_id: 1, user_id: 20, score: 3}
+    ]
+
+    right = [%{org_id: 1, user_id: 10, score: 2}, %{org_id: 1, user_id: 20, score: 3}]
+
+    report = TolerantReconciler.run(config, left, right)
+
+    assert length(report.matched) == 2
+    assert Enum.all?(report.matched, &(&1.differences == %{}))
+  end
+
+  # ---------------------------------------------------------------------------
+  # Missing key fields
+  # ---------------------------------------------------------------------------
+
+  test "a record missing a key field is keyed as nil and matches an explicit nil key" do
+    config = config!(key_fields: [:id])
+
+    report = TolerantReconciler.run(config, [%{value: 7}], [%{id: nil, value: 7}])
+
+    assert length(report.matched) == 1
+    [entry] = report.matched
+    assert entry.left == %{value: 7}
+    assert entry.right == %{id: nil, value: 7}
+    assert entry.differences == %{}
+  end
+
+  test "a nil key does not match a present key" do
+    config = config!(key_fields: [:id])
+
+    report = TolerantReconciler.run(config, [%{value: 7}], [%{id: 1, value: 7}])
+
+    assert report.matched == []
+    assert report.only_in_left == [%{value: 7}]
+    assert report.only_in_right == [%{id: 1, value: 7}]
+  end
+
+  test "composite keys treat an absent key field as nil on both sides" do
+    config = config!(key_fields: [:org_id, :user_id])
+
+    left = [%{org_id: 1, note: "l"}]
+    right = [%{org_id: 1, user_id: nil, note: "r"}]
+
+    report = TolerantReconciler.run(config, left, right)
+
+    [entry] = report.matched
+    assert entry.differences == %{note: %{left: "l", right: "r", rule: :exact}}
+  end
+
+  # ---------------------------------------------------------------------------
   # Exact rule (default)
   # ---------------------------------------------------------------------------
 
@@ -340,6 +427,19 @@ defmodule TolerantReconcilerTest do
     dirty = Enum.find(report.matched, &(&1.left.txn_id == 2))
     assert dirty.differences == %{amount: %{left: 50.00, right: 55.00, rule: {:numeric, 0.01}}}
 
+    assert TolerantReconciler.field_summary(report) == %{amount: 1}
+  end
+
+  test "the last duplicate record supplies the values compared under the rules" do
+    config = config!(key_fields: [:id], rules: [amount: {:numeric, 0.01}])
+
+    left = [%{id: 1, amount: 10.0}, %{id: 1, amount: 99.0}]
+    right = [%{id: 1, amount: 10.0}]
+
+    report = TolerantReconciler.run(config, left, right)
+
+    [entry] = report.matched
+    assert entry.differences == %{amount: %{left: 99.0, right: 10.0, rule: {:numeric, 0.01}}}
     assert TolerantReconciler.field_summary(report) == %{amount: 1}
   end
 end

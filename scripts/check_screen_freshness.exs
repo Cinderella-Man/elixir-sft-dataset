@@ -32,6 +32,7 @@ defmodule CheckScreenFreshness do
   @screen "logs/screen_blind.jsonl"
   @strengthen "logs/strengthen_harnesses.jsonl"
   @rewrite "logs/rewrite_reachins.jsonl"
+  @close_gaps "logs/close_gaps.jsonl"
 
   def main(argv) do
     argv = Enum.drop_while(argv, &(&1 == "--"))
@@ -166,7 +167,7 @@ defmodule CheckScreenFreshness do
   # graded against exactly the harness they apply), so a success row in either
   # ledger is S6 evidence for that harness sha — same class, same treatment.
   defp strengthen_success_shas do
-    [@strengthen, @rewrite]
+    [@strengthen, @rewrite, @close_gaps]
     |> Enum.flat_map(&rows/1)
     |> Enum.filter(&(&1["verdict"] in ["applied", "applied_wt_divergent"]))
     |> Enum.map(& &1["harness_sha_after"])

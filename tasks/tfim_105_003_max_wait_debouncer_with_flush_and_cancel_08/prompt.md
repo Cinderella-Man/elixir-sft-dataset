@@ -242,5 +242,40 @@ defmodule MaxWaitDebouncerTest do
     assert_receive :zero, 400
     refute_receive :zero, 200
   end
+
+  # -------------------------------------------------------
+  # Max-wait deadline is anchored to the burst's first call
+  # -------------------------------------------------------
+
+  test "the max-wait fire lands near first_call + max_ms, not last_call + delay" do
+    # delay=200, max=250. Calls land at roughly t=0, t=80, t=165, each one
+    # resetting the delay timer. A debouncer that only honours delay_ms would
+    # fire at ~165 + 200 = ~365; the max-wait bound pins the fire at ~250,
+    # i.e. within ~85ms of the final call. The window below expires at ~305,
+    # so only an implementation that respects max_ms can satisfy it.
+    MaxWaitDebouncer.call("k", 200, 250, notify(:fired))
+    refute_receive :fired, 80
+    MaxWaitDebouncer.call("k", 200, 250, notify(:fired))
+    refute_receive :fired, 80
+    MaxWaitDebouncer.call("k", 200, 250, notify(:fired))
+
+    assert_receive :fired, 140
+  end
+
+  # -------------------------------------------------------
+  # start_link/1 registration
+  # -------------------------------------------------------
+
+  test "start_link/1 registers the process under a custom :name" do
+    # The default name is already covered by the suite's setup; here the
+    # :name option must actually drive registration.
+    name = :"max_wait_debouncer_#{System.pid()}_#{System.unique_integer([:positive])}"
+
+    assert {:ok, pid} = MaxWaitDebouncer.start_link(name: name)
+    on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
+
+    assert Process.alive?(pid)
+    assert Process.whereis(name) == pid
+  end
 end
 ```

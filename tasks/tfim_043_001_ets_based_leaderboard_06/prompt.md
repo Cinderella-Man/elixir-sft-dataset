@@ -141,7 +141,7 @@ end
 
 ```elixir
 defmodule LeaderboardTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   # -------------------------------------------------------
   # Setup
@@ -319,6 +319,92 @@ defmodule LeaderboardTest do
 
     assert {:ok, 1, 1_000} = Leaderboard.rank(board, "player:1000")
     assert {:ok, 1_000, 1} = Leaderboard.rank(board, "player:1")
+  end
+
+  # -------------------------------------------------------
+  # Cross-process access (the board is public)
+  # -------------------------------------------------------
+
+  test "a process other than the creator can submit scores", %{board: board} do
+    # A :private or :protected table would make this write fail in the
+    # non-owning process, so the write must be attempted from a foreign one.
+    writer = Task.async(fn -> Leaderboard.submit_score(board, "remote_writer", 150) end)
+
+    assert :ok = Task.await(writer, 5_000)
+    assert {:ok, 1, 150} = Leaderboard.rank(board, "remote_writer")
+
+    # The highest-score rule must also hold across process boundaries.
+    lower = Task.async(fn -> Leaderboard.submit_score(board, "remote_writer", 20) end)
+    assert :ok = Task.await(lower, 5_000)
+    assert {:ok, 1, 150} = Leaderboard.rank(board, "remote_writer")
+  end
+
+  test "a process other than the creator can read top and rank", %{board: board} do
+    Leaderboard.submit_score(board, "alice", 300)
+    Leaderboard.submit_score(board, "bob", 100)
+
+    reader =
+      Task.async(fn ->
+        {Leaderboard.top(board, 2), Leaderboard.rank(board, "bob"),
+         Leaderboard.rank(board, "ghost")}
+      end)
+
+    assert {[{"alice", 300}, {"bob", 100}], {:ok, 2, 100}, {:error, :not_found}} =
+             Task.await(reader, 5_000)
+  end
+
+  test "writes from a foreign process are visible to a third process", %{board: board} do
+    writer = Task.async(fn -> Leaderboard.submit_score(board, "carol", 77) end)
+    assert :ok = Task.await(writer, 5_000)
+
+    reader = Task.async(fn -> Leaderboard.rank(board, "carol") end)
+    assert {:ok, 1, 77} = Task.await(reader, 5_000)
+  end
+
+  # -------------------------------------------------------
+  # Concurrent operations
+  # -------------------------------------------------------
+
+  test "concurrent submits from many processes all land on the board", %{board: board} do
+    players = for i <- 1..50, do: "concurrent:#{i}"
+
+    players
+    |> Enum.map(fn player ->
+      Task.async(fn -> Leaderboard.submit_score(board, player, 10) end)
+    end)
+    |> Enum.each(fn task -> assert :ok = Task.await(task, 10_000) end)
+
+    assert length(Leaderboard.top(board, 100)) == 50
+
+    for player <- players do
+      assert {:ok, rank, 10} = Leaderboard.rank(board, player)
+      assert is_integer(rank) and rank >= 1
+    end
+  end
+
+  test "racing submits for one player still keep the all-time highest", %{board: board} do
+    # Interleaved submissions of the same score set from several processes:
+    # a lost update (read-then-write without atomicity) would leave a score
+    # lower than the maximum ever submitted.
+    players = ["racer_a", "racer_b", "racer_c"]
+    scores = Enum.to_list(1..200)
+
+    for player <- players, _writer <- 1..6 do
+      Task.async(fn ->
+        for score <- Enum.shuffle(scores) do
+          Leaderboard.submit_score(board, player, score)
+        end
+
+        :done
+      end)
+    end
+    |> Enum.each(fn task -> assert :done = Task.await(task, 60_000) end)
+
+    for player <- players do
+      assert {:ok, 1, 200} = Leaderboard.rank(board, player)
+    end
+
+    assert length(Leaderboard.top(board, 10)) == 3
   end
 end
 ```

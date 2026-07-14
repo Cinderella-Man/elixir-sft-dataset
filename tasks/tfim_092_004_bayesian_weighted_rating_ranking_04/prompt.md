@@ -183,6 +183,37 @@ defmodule RankingTest do
     assert_in_delta Ranking.score(a, mean: 12.0), 9.0 * (100 / 125) + 12.0 * (25 / 125), 1.0e-9
   end
 
+  test "rank scores with a caller-supplied :mean that differs from the corpus mean" do
+    a = item(id: :a, rating: 9.0, vote_count: 100)
+    b = item(id: :b, rating: 9.5, vote_count: 3)
+
+    # Corpus mean = (9.0 + 9.5) / 2 = 9.25, m = 25:
+    #   a -> (100/125)*9.0 + (25/125)*9.25  = 9.05
+    #   b -> (3/28)*9.5   + (25/28)*9.25    = 9.2767...  => b outranks a.
+    assert ids(Ranking.rank([a, b])) == [:b, :a]
+
+    # With C = 0.0 supplied verbatim, the 3-vote item is crushed toward 0:
+    #   a -> (100/125)*9.0 = 7.2
+    #   b -> (3/28)*9.5    = 1.0178...      => a outranks b.
+    assert ids(Ranking.rank([a, b], mean: 0.0)) == [:a, :b]
+    assert ids(Ranking.rank([b, a], mean: 0.0)) == [:a, :b]
+  end
+
+  test "rank threads a non-default :min_votes through to every score" do
+    p = item(id: :p, rating: 9.5, vote_count: 10)
+    q = item(id: :q, rating: 9.0, vote_count: 100)
+    r = item(id: :r, rating: 3.0, vote_count: 1000)
+
+    # corpus mean = (9.5 + 9.0 + 3.0) / 3 = 7.1666...
+    # m = 25 (default): p -> 7.8333..., q -> 8.6333... => q ahead of p.
+    assert ids(Ranking.rank([p, q, r])) == [:q, :p, :r]
+
+    # m = 1: barely any smoothing, so the raw ratings decide:
+    #   p -> (10/11)*9.5 + (1/11)*7.1666... = 9.2878...
+    #   q -> (100/101)*9.0 + (1/101)*7.1666... = 8.9818...  => p ahead of q.
+    assert ids(Ranking.rank([p, q, r], min_votes: 1)) == [:p, :q, :r]
+  end
+
   test "rank returns the item maps unchanged" do
     a = item(id: :a, rating: 8.0, vote_count: 40)
     b = item(id: :b, rating: 6.0, vote_count: 5)

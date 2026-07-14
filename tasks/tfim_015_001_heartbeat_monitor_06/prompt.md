@@ -662,5 +662,68 @@ defmodule MonitorTest do
 
     assert [{"svc", :final_issue}] = Notifications.all()
   end
+
+  # -------------------------------------------------------
+  # Real timer-driven scheduling (no injected check messages)
+  # -------------------------------------------------------
+
+  # Builds a check function that reports every invocation to the test
+  # process, so timer-driven checks can be observed without injecting
+  # any messages into the monitor.
+  defp reporting_check(service_name, result) do
+    parent = self()
+
+    fn ->
+      send(parent, {:checked, service_name})
+      result
+    end
+  end
+
+  # Consumes any check reports already sitting in the mailbox.
+  defp drain_checks do
+    receive do
+      {:checked, _name} -> drain_checks()
+    after
+      0 -> :ok
+    end
+  end
+
+  test "the monitor itself runs the first check only after interval_ms elapses", %{mon: mon} do
+    check = reporting_check("timed", :ok)
+    assert :ok = Monitor.register(mon, "timed", check, 300)
+
+    # Registration alone must not run the check; it is scheduled for later.
+    refute_receive {:checked, "timed"}, 100
+
+    # Once the interval passes, the monitor's own timer runs the check.
+    assert_receive {:checked, "timed"}, 2_000
+
+    assert {:ok, %{status: :up}} = Monitor.status(mon, "timed")
+  end
+
+  test "the monitor re-arms its timer so checks repeat every interval", %{mon: mon} do
+    check = reporting_check("repeating", :ok)
+    assert :ok = Monitor.register(mon, "repeating", check, 20)
+
+    # Each completed check schedules the next one, so reports keep arriving
+    # without any help from the test.
+    assert_receive {:checked, "repeating"}, 2_000
+    assert_receive {:checked, "repeating"}, 2_000
+    assert_receive {:checked, "repeating"}, 2_000
+  end
+
+  test "deregistering stops timer-driven checks from running", %{mon: mon} do
+    check = reporting_check("cancelled", :ok)
+    assert :ok = Monitor.register(mon, "cancelled", check, 20)
+
+    assert_receive {:checked, "cancelled"}, 2_000
+
+    assert :ok = Monitor.deregister(mon, "cancelled")
+    drain_checks()
+
+    # No pending or future check for a deregistered service may run its
+    # check function, even though several intervals go by.
+    refute_receive {:checked, "cancelled"}, 300
+  end
 end
 ```
