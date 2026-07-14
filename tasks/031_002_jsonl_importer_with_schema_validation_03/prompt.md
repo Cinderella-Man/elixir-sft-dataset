@@ -108,7 +108,6 @@ defmodule JsonlImporter do
   defp strip_bom(<<0xEF, 0xBB, 0xBF, rest::binary>>), do: rest
   defp strip_bom(other), do: other
 
-  # Process all non-blank lines and validate each against the schema.
   defp process_lines(lines, schema) do
     # TODO
   end
@@ -177,10 +176,10 @@ defmodule JsonlImporter do
   defp check_type(value, :integer, _name) when is_integer(value), do: []
 
   defp check_type(value, :integer, name) when is_float(value) do
-    if value == Float.round(value, 0) and value == trunc(value) * 1.0 do
-      # e.g., 42.0 is technically a float in JSON but has no fractional part
-      # We still reject it — JSON integers should not have decimal points
-      [{name, "must be a valid integer"}]
+    # A JSON number that is a whole number is a valid :integer — 42.0 counts;
+    # only a fractional part makes it a type error.
+    if value == trunc(value) * 1.0 do
+      []
     else
       [{name, "must be a valid integer"}]
     end
