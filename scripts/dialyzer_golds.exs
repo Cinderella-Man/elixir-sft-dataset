@@ -205,10 +205,11 @@ defmodule DialyzerGolds do
     counts =
       todo
       |> Enum.with_index(1)
-      |> Enum.reduce(%{clean: 0, warnings: 0, error: 0}, fn {dir, i}, acc ->
+      |> Enum.reduce(%{clean: 0, warnings: 0, error: 0, waived: 0}, fn {dir, i}, acc ->
         base = Path.basename(dir)
         source = File.read!(Path.join(dir, "solution.ex"))
-        {outcome, detail} = analyze_source(base, source, plt)
+        {outcome, detail} = analyze_source(base, source, plt, harness_modules(dir))
+        {outcome, detail} = apply_waiver(outcome, detail, base, source)
 
         append_row(ledger, %{
           ts: DateTime.utc_now() |> DateTime.to_iso8601(),
@@ -227,7 +228,8 @@ defmodule DialyzerGolds do
       end)
 
     IO.puts(
-      "\ndone: #{counts.clean} clean, #{counts.warnings} with warnings, #{counts.error} errors"
+      "\ndone: #{counts.clean} clean, #{counts.warnings} with warnings, " <>
+        "#{counts.waived} waived (see scripts/dialyzer_waivers.jsonl), #{counts.error} errors"
     )
 
     if counts.warnings > 0,
@@ -244,7 +246,7 @@ defmodule DialyzerGolds do
   end
 
   # ── stage → compile → analyze one gold ──────────────────────────────────────
-  defp analyze_source(name, source, plt) do
+  defp analyze_source(name, source, plt, harness_mods \\ []) do
     stage = Path.join([System.tmp_dir!(), "dialyzer_golds_#{System.pid()}", name])
     ebin = Path.join(stage, "ebin")
     File.rm_rf!(stage)
@@ -254,7 +256,7 @@ defmodule DialyzerGolds do
       mods = Code.compile_string(source, "#{name}/solution.ex")
       for {mod, bin} <- mods, do: File.write!(Path.join(ebin, "#{mod}.beam"), bin)
 
-      result = dialyze(ebin, plt, Map.new(mods))
+      result = dialyze(ebin, plt, Map.new(mods), harness_mods)
 
       for {mod, _} <- mods do
         :code.purge(mod)
@@ -275,7 +277,7 @@ defmodule DialyzerGolds do
   # the path and cannot decode Elixir debug_info — caught by --self-test on the
   # gate's first run). Structured warnings carry {M, F, A}, which is what lets
   # the overspecs filter below be precise instead of text-scraped.
-  defp dialyze(ebin, plt, mods_map) do
+  defp dialyze(ebin, plt, mods_map, harness_mods) do
     task =
       Task.async(fn ->
         :dialyzer.run(
@@ -291,7 +293,9 @@ defmodule DialyzerGolds do
     case Task.yield(task, @dialyzer_timeout_ms) || Task.shutdown(task, :brutal_kill) do
       {:ok, warns} ->
         {kept, dropped} =
-          Enum.split_with(warns, fn w -> not private_subtype_noise?(w, mods_map) end)
+          Enum.split_with(warns, fn w ->
+            not (private_subtype_noise?(w, mods_map) or known_fp_class?(w, harness_mods))
+          end)
 
         note =
           if dropped == [],
@@ -346,6 +350,25 @@ defmodule DialyzerGolds do
   end
 
   defp private_subtype_noise?(_warning, _mods_map), do: false
+
+  # Warning classes proven false-positive on the first full pass (2026-07-16):
+  #
+  # :warn_opaque — Elixir's opaque structs (MapSet et al.) flowing through
+  # higher-order accumulators (Enum.reduce visited-sets) lose opacity in
+  # dialyzer's eyes; 9 idiomatic graph/DAG golds false-flagged, zero true
+  # positives. Known Elixir<->dialyzer impedance; reach-in style crimes are
+  # covered by the S9 lints and semantic review instead.
+  #
+  # :warn_unknown for HARNESS-DEFINED modules — factory-style golds call
+  # modules (MyApp.Repo) that the task's test_harness.exs defines; the staged
+  # analysis sees only the gold. Unknowns for any OTHER module are kept —
+  # they catch real typos in remote calls.
+  defp known_fp_class?({:warn_opaque, _loc, _msg}, _harness_mods), do: true
+
+  defp known_fp_class?({:warn_unknown, _loc, {:unknown_function, {m, _f, _a}}}, harness_mods),
+    do: m in harness_mods
+
+  defp known_fp_class?(_warning, _harness_mods), do: false
 
   # Does the success typing's return mention a variant tag the spec's return
   # (aliases expanded from the beam typespecs) does not cover? On any failure to
@@ -439,7 +462,11 @@ defmodule DialyzerGolds do
          {:ok, types} <- Code.Typespec.fetch_types(Map.get(mods_map, owner, owner)),
          [ast | _] <-
            for({_kind, {^name, ast, vars}} <- types, length(vars) == length(args), do: ast) do
-      collect_atoms(ast, ctx, d - 1, MapSet.put(seen, key), mods_map) ++
+      # Resolve the fetched definition against its OWNER: Plug.Conn's t() refers
+      # to Plug.Conn's own state()/scheme() user types — resolving them against
+      # the gold module silently expanded to nothing (bit live: 5 Plug roots
+      # false-flagged on the first full pass, 2026-07-16).
+      collect_atoms(ast, owner, d - 1, MapSet.put(seen, key), mods_map) ++
         Enum.flat_map(args, &collect_atoms(&1, ctx, d - 1, seen, mods_map))
     else
       _ -> Enum.flat_map(args, &collect_atoms(&1, ctx, d - 1, seen, mods_map))
@@ -451,6 +478,49 @@ defmodule DialyzerGolds do
   rescue
     _ -> inspect(w, limit: 20)
   end
+
+  # Modules the task's harness defines (available at eval time, invisible to
+  # the staged analysis).
+  defp harness_modules(dir) do
+    case File.read(Path.join(dir, "test_harness.exs")) do
+      {:ok, body} ->
+        for [_, name] <- Regex.scan(~r/^\s*defmodule\s+([\w.]+)/m, body),
+            do: Module.concat([name])
+
+      _ ->
+        []
+    end
+  end
+
+  # Committed waiver rows (scripts/dialyzer_waivers.jsonl): a human-triaged
+  # verdict that a specific (task, solution sha) warning set is a dialyzer
+  # limitation, not a spec lie. Sha-keyed, so ANY gold edit auto-expires the
+  # waiver (rule-7 corollary). Waived rows count as clean for the exit code but
+  # are ledgered as `waived` with the reason attached.
+  @waivers_file Path.join(__DIR__, "dialyzer_waivers.jsonl")
+
+  defp apply_waiver(:warnings, detail, task, source) do
+    sol_sha = sha(source)
+
+    waiver =
+      case File.read(@waivers_file) do
+        {:ok, body} ->
+          body
+          |> String.split("\n", trim: true)
+          |> Enum.map(&Jason.decode!/1)
+          |> Enum.find(&(&1["task"] == task and &1["solution_sha"] == sol_sha))
+
+        _ ->
+          nil
+      end
+
+    case waiver do
+      nil -> {:warnings, detail}
+      %{"reason" => reason} -> {:waived, "WAIVED: #{reason}\n#{detail}"}
+    end
+  end
+
+  defp apply_waiver(outcome, detail, _task, _source), do: {outcome, detail}
 
   # ── plumbing ────────────────────────────────────────────────────────────────
   defp default_plt do

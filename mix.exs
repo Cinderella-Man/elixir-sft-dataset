@@ -9,7 +9,11 @@ defmodule ElixirBenchmark.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
-      deps: deps()
+      deps: deps(),
+      # T1.6: golds legitimately call ExUnit helpers (074_003's assertion
+      # helpers use ExUnit.Assertions.flunk/1); without :ex_unit in the PLT
+      # those calls read as unknown functions.
+      dialyzer: [plt_add_apps: [:ex_unit]]
     ]
   end
 

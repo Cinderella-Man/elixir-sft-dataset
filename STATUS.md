@@ -94,11 +94,24 @@ F17-1..10, candidate gates G-A..G-E). Remaining, in order:
         scripts/dialyzer_golds.exs -- --tasks
         /home/kamil/projects/elixir-sft-dataset/tasks --ledger
         /home/kamil/projects/elixir-sft-dataset/logs/dialyzer_golds.jsonl"`.
-        AFTER the retro audit finishes: re-run (audit-changed golds have
-        fresh shas), then Task-A-fix every warnings row (solution edits →
-        full cascade + bugfix remints, LLM). Worktree deleted at the §7.2
-        line. Semantic-floor NUMBER stays at default 0.6 (tune only on
-        evidence).
+        FIRST FULL PASS DONE + TRIAGED (v1.0, ~35 min): 299 clean / 27
+        flagged / 0 errors. Triage of all 27 (each row read): 8 REAL spec
+        lies, 19 false positives in four proven classes — all four now
+        filtered by gate v1.1 (owner-module alias resolution fixed the 5
+        Plug roots; :warn_opaque dropped for the 8 MapSet-accumulator
+        roots; harness-defined modules exempt from unknown-function for
+        the 4 factory roots; :ex_unit added to the PLT for 074_003) — plus
+        a sha-keyed WAIVER mechanism (`scripts/dialyzer_waivers.jsonl`,
+        committed, auto-expires on gold edit) seeded with 016_004 (ets
+        option-dependent return; the spec is truthful). v1.1 RE-PASS
+        RUNNING: pid 3811314, same log/ledger/relaunch as above; expected
+        ~8 warnings + 1 waived.
+        **TASK-A QUEUE (post-retro-audit, LLM cascade): 015_001 (F20),
+        102_002 (F21), 032_002 parse_csv return shape, 044_004 +
+        077_004 + 100_002 + 625_003 float-leaking arithmetic specs,
+        073_003 missing {:error,_} variant.**
+        Worktree deleted at the §7.2 line. Semantic-floor NUMBER stays at
+        default 0.6 (tune only on evidence).
   - [ ] On close: move T1.9/T1.10 record to docs/15; keep `--force` + GateLog
         + PromiseAudit as permanent loop features.
 ---

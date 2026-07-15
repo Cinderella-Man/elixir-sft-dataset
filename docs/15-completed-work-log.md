@@ -9,6 +9,27 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-16 — T1.6 first full pass + triage + gate v1.1.** Full pass
+  v1.0: 326 roots in ~35 min, 299 clean / 27 flagged / 0 errors. All 27
+  rows read and classified: **8 real spec lies** (015_001/F20,
+  102_002/F21, 032_002's parse_csv returning a tuple where the spec says
+  list — no overlap; float-leaking arithmetic specs in 044_004, 077_004,
+  100_002, 625_003; 073_003 omitting its {:error,_} variant) and **19 FPs
+  in exactly four mechanical classes**, each now filtered in v1.1: (a) a
+  real driver bug — nested user types resolved against the gold module
+  instead of the type's OWNER, so Plug.Conn.t()'s internal unions expanded
+  to nothing (5 Plug roots); (b) :warn_opaque dropped — Elixir opaque
+  structs through Enum.reduce accumulators, 8 idiomatic DAG/graph roots,
+  zero true positives; (c) unknown-function exempted for modules the
+  task's own harness defines (4 factory roots calling MyApp.Repo); (d)
+  :ex_unit added to the PLT (074_003's flunk/1). Plus a committed
+  sha-keyed waiver file (`scripts/dialyzer_waivers.jsonl`, auto-expires on
+  gold edit) for human-triaged dialyzer limitations, seeded with 016_004
+  (unnamed-table tid() spec is truthful; ets.new's contract can't express
+  option-dependence). v1.1 verified: all four FP classes clean, both real
+  exemplars still flag, planted 038 regression still bites, self-test 5/5.
+  Task-A fixes queued in STATUS behind the retro-audit sweep.
+
 - **2026-07-16 — T1.6 Dialyzer gate BUILT, CALIBRATED, LANDED (last of the
   four delegated decisions; F12-B's @spec half → F12 fully CLOSED).**
   dialyxir in mix.exs; one-time deps PLT (1,184 modules, ~1 min); driver
