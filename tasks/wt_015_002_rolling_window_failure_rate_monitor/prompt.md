@@ -15,27 +15,138 @@ Requirements for the harness:
 
 ## Original specification
 
-Write me an Elixir GenServer module called `RateMonitor` that monitors registered services using a rolling-window failure rate instead of consecutive failure counts.
+# Rolling-Window Failure-Rate Monitor
 
-I need these functions in the public API:
+Implement an Elixir `GenServer` module called `RateMonitor` that supervises
+registered services by running each service's health-check function on its own
+periodic interval. Unlike a consecutive-failure monitor, service health is judged by
+the **failure rate over a rolling window** of the most recent checks. Use only the
+OTP standard library — no external dependencies — and deliver the complete module in
+a single file.
 
-- `RateMonitor.start_link(opts)` to start the process. It should accept a `:clock` option which is a zero-arity function returning the current time in milliseconds. If not provided, default to `fn -> System.monotonic_time(:millisecond) end`. It should also accept a `:name` option for process registration and a `:notify` option which is a function of the form `fn service_name, failure_rate -> ... end` that gets called when a service transitions to `:down`.
+## Starting the monitor
 
-- `RateMonitor.register(server, service_name, check_func, interval_ms, opts \\ [])` which registers a service to be monitored. `check_func` is a zero-arity function that returns `:ok` or `{:error, reason}`. `interval_ms` is how often to run the check. `opts` accepts `:window_size` (number of recent checks to consider, default 5) and `:threshold` (failure rate as a float 0.0–1.0 at which the service is marked `:down`, default 0.6). Return `:ok` if registered successfully, or `{:error, :already_registered}` if a service with that name is already registered.
+`RateMonitor.start_link(opts \\ [])` starts and links the process and returns the
+usual `GenServer.on_start()` result. `opts` is a keyword list:
 
-- `RateMonitor.status(server, service_name)` which returns the current status of a single service as `{:ok, status_info}` where `status_info` is a map containing at least `:status` (one of `:up`, `:down`, or `:pending`), `:last_check_at` (timestamp or `nil`), `:failure_rate` (float 0.0–1.0 computed from the window, or `0.0` if no checks yet), and `:checks_in_window` (integer count of checks recorded so far, up to `:window_size`). Return `{:error, :not_found}` if the service isn't registered.
+- `:clock` — a zero-arity function returning the current time in milliseconds, used
+  to timestamp checks. Defaults to `fn -> System.monotonic_time(:millisecond) end`.
+- `:notify` — a two-arity function `notify.(service_name, failure_rate)` invoked
+  when a service transitions to `:down` (rules below). Defaults to no notification.
 
-- `RateMonitor.statuses(server)` which returns a map of all registered service names to their `status_info` maps.
+Every public function below takes the server (pid) as its first argument.
 
-- `RateMonitor.deregister(server, service_name)` which removes a service from monitoring and cancels its scheduled checks. Return `:ok` regardless of whether the service existed.
+## Registering services
 
-Each service should start in `:pending` status immediately after registration with an empty check history. The first check should be scheduled to run after `interval_ms` milliseconds using `Process.send_after`. After each check, the next one is scheduled the same way. The check result (`:ok` or `:error`) is appended to a bounded list of the last `window_size` results. The failure rate is computed as `number_of_errors / length(history)`. If the failure rate is `>= threshold` AND the history contains at least `window_size` entries, the status becomes `:down`. If the failure rate drops below the threshold, the status becomes `:up`. While fewer than `window_size` checks have been recorded, the service cannot transition to `:down` — it stays `:pending` or `:up`.
+`RateMonitor.register(server, service_name, check_func, interval_ms, opts \\ [])`
 
-When a service transitions to `:down` (was not `:down` before), the notification function is called exactly once with `(service_name, failure_rate)`. If the service is already `:down` and stays `:down`, do not call the notification function again. If a `:down` service's failure rate drops below the threshold, it transitions back to `:up`, and a subsequent failure-rate breach should trigger the notification again.
+- `service_name` is any term and identifies the service.
+- `check_func` is a zero-arity function returning `:ok` (healthy) or
+  `{:error, reason}` (unhealthy).
+- `interval_ms` is the number of milliseconds between that service's checks.
+- `opts` is a keyword list:
+  - `:window_size` — how many recent checks the rolling window holds. Defaults
+    to `5`.
+  - `:threshold` — the failure rate (a float in `0.0..1.0`) at or above which the
+    service is marked `:down`. Defaults to `0.6`.
 
-Checks should be executed inside the GenServer process (just call the function directly). Use tagged `Process.send_after` messages so that each service's timer can be identified, for example `{:check, service_name}`. Make sure deregistering a service prevents any pending check message for that service from having an effect.
+Returns `:ok` on success, or `{:error, :already_registered}` if a service with that
+name is already registered — an existing registration is never replaced or altered
+by a second `register` call.
 
-Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
+On registration:
+
+- The service starts in status `:pending` with an empty check history
+  (`checks_in_window` is `0`, `failure_rate` is `0.0`, `last_check_at` is `nil`).
+- Registration itself does not run the check. The first check is scheduled to run
+  `interval_ms` milliseconds later using `Process.send_after`, and after each
+  completed check the next one is scheduled the same way, so checks repeat every
+  `interval_ms` indefinitely. The timer message for a service MUST be exactly
+  `{:check, service_name}` — this message shape is part of the contract (see
+  "Triggering a check manually" below).
+
+## Performing a check
+
+Each check invokes the service's `check_func` inside the server process and then
+updates the service:
+
+- `last_check_at` is set to the current `:clock` time for every completed check.
+- The check's outcome (`:ok` or error) is appended to the service's history, which
+  is bounded: only the most recent `window_size` outcomes are kept, so the oldest
+  entry is evicted once the window is full, and `checks_in_window` never exceeds
+  `window_size`.
+- The failure rate is recomputed as `number_of_errors / length(history)` over the
+  current window (it is `0.0` while the history is empty).
+- The status is then re-evaluated:
+  - **Full window** (`window_size` outcomes recorded): the service is `:down` when
+    the failure rate is **greater than or equal to** the threshold — an
+    exact-threshold rate counts as a breach — and `:up` otherwise.
+  - **Partial window** (fewer than `window_size` outcomes): the service can never
+    be `:down`. With zero errors recorded so far it is `:up`. With at least one
+    error in the partial window: a `:pending` service becomes `:up` only when this
+    check succeeded (otherwise it stays `:pending`), and a service that is already
+    `:up` stays `:up`.
+- Recovery is rate-driven, not event-driven: a `:down` service becomes `:up` only
+  when enough new outcomes shift the full window's failure rate below the
+  threshold — a single success is not sufficient while the window is still
+  dominated by failures.
+
+Notifications:
+
+- When a service transitions to `:down` (it was not `:down` before), the `:notify`
+  function is called exactly once as `notify.(service_name, failure_rate)`, with
+  the failure rate that caused the transition.
+- While a service is already `:down` and stays `:down`, `notify` is NOT called
+  again.
+- After a recovery to `:up`, the notification is re-armed: a later breach that
+  transitions the service to `:down` again calls `notify` exactly once more.
+
+## Triggering a check manually
+
+Sending the server the message `{:check, service_name}` performs one check for that
+service immediately — exactly the same work a timer-driven check performs. Because a
+`GenServer` processes its mailbox in order, sending `{:check, service_name}` and
+then calling `RateMonitor.status/2` observes the state produced by that completed
+check. A `{:check, name}` message for a name that is not registered is ignored. This
+documented message is how checks can be driven deterministically in tests.
+
+## Querying
+
+- `RateMonitor.status(server, service_name)` returns `{:ok, status_info}` for a
+  registered service, or `{:error, :not_found}` otherwise. `status_info` is a map
+  containing at least:
+  - `:status` — one of `:pending`, `:up`, or `:down`;
+  - `:last_check_at` — the `:clock` time of the most recent completed check, or
+    `nil` if none yet;
+  - `:failure_rate` — the current window's failure rate (a float in `0.0..1.0`,
+    `0.0` with no checks yet);
+  - `:checks_in_window` — how many outcomes the window currently holds (an
+    integer, at most `window_size`).
+- `RateMonitor.statuses(server)` returns a map of every registered service name to
+  its `status_info` map.
+
+## Deregistering — lifecycle rule (important)
+
+`RateMonitor.deregister(server, service_name)` removes a service from monitoring
+and always returns `:ok`, whether or not the service was registered. Deregistering
+is final for that registration's schedule:
+
+- After `deregister` returns, the service no longer appears in `statuses/1` and
+  `status/2` returns `{:error, :not_found}`.
+- The registration's scheduled checks never run again: any pending or future timer
+  message for that service must have no effect — it must not run the check
+  function, must not fire `notify`, and must not resurrect any state.
+- The same name may be registered again afterwards; the new registration starts
+  fresh in `:pending` with an empty window, and the OLD registration's leftover
+  timers must not drive the new one.
+
+## Robustness
+
+Unexpected messages sent to the server must be ignored — they must not crash the
+process or alter any service's state.
+
+Services are independent: one service's failures never affect another service's
+window, rate, or status.
 
 ## Module under test
 
