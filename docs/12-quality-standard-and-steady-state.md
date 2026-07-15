@@ -501,11 +501,11 @@ safety net is the cutover acceptance test at the bottom.
 | 7 | temp-path collision rule (`System.pid()` — the 102_002 flake class) | ENFORCED at accept (2026-07-15, `quality_shortfall`) | — |
 | 8 | S6 blind solve, variations | ENFORCED (R4b in-loop) | — |
 | 9 | S6 blind solve, attempt-1 bases | ENFORCED by construction (Step B never sees the harness) | — |
-| 10 | S6 blind RE-screen, repaired bases (6/22 shipped gaps) | **BUILT DARK** (T1.1, `GEN_BLIND_RESCREEN`) | Kamil sign-off flips the flag |
+| 10 | S6 blind RE-screen, repaired bases (6/22 shipped gaps) | **BUILT DARK** (T1.1, `GEN_BLIND_RESCREEN`; scope extended to repaired VARIATIONS 2026-07-15 — F17-9, docs/17) | Kamil sign-off flips the flag |
 | 11 | entailment judge on repair-time harness DIFFS (§5.2.2) | **MISSING** | decide at the T1.1 sign-off |
 | 12 | semantic-mutant kill FLOOR (S8) | BUILT behind `GEN_SEMANTIC_FLOOR` (2026-07-15; off) | Kamil sets the number at the sign-off |
-| 13 | promise-coverage (T2.2's dominant class: ~74 gaps + F10 — documented options/defaults/modes never exercised) | **NOT enforced**; T1.4's checklist raises what gets AUTHORED (soft) | T1.4 lands WITH Phase 3; optional hard version = an accept-time coverage judge (~1 call/task — Kamil decides) |
-| 14 | gold/prompt semantic defects on PASSING tasks (12 gold + 3 prompt in the 60-root batch) | **NOT enforced** (no judge ever sees accepts) | periodic `rubric_judge`/`semantic_review` audit cadence over NEW accepts (sampled, cheap) — see acceptance test below |
+| 13 | promise-coverage (T2.2's dominant class: ~74 gaps + F10 — documented options/defaults/modes never exercised) | **BUILT DARK** (T1.10, 2026-07-15: `GEN_PROMISE_AUDIT` — accept-time promise audit on roots; add-only bite-proven tests, close_gaps' flow in-loop; docs/17 §5) | pilot on a `--force` family re-probe, then Kamil flips the flag; T1.4's checklist still raises what gets AUTHORED |
+| 14 | gold/prompt semantic defects on PASSING tasks (12 gold + 3 prompt in the 60-root batch) | **BUILT DARK** (T1.10, same gate: an anchored audit test that FAILS vs the gold machine-proves the defect — evidence-or-drop, F6-proof — and feeds the repair loop; observable-defect half of this row) | same pilot + flip; the periodic `rubric_judge`/`semantic_review` cadence over NEW accepts remains the backstop for unobservable/prompt-side defects — see acceptance test below |
 | 15 | @spec truth (019_001/038_001 class) | **MISSING** | T1.6 Dialyzer (one mix.exs change, Kamil) |
 | 16 | @doc prose claims vs behavior (F12 class: "cancels any pending check" that doesn't) | **MISSING** | T1.4 checklist item + rows 13/14's instruments |
 | 17 | degenerate-input robustness (duplicate list entries, match-spec-significant atoms, cancel_timer races — T2.4-T's three) | **NOT enforced** | T1.4 edge-case clause in templates + row 14 cadence |

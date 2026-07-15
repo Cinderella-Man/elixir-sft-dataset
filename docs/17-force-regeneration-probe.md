@@ -368,3 +368,33 @@ catches the leak at accept time (repair fixes it) or the judge's probe does.
 If a re-probe still ships a semantic defect, the cutover instruments
 (semantic_review + rubric_judge, G-E) remain the backstop — but the loop
 should now pass them on batch one, which is the "no second month" contract.
+
+### 5.5 BUILD NOTE (2026-07-15 evening, T1.10 LANDED DARK — one stage, not two)
+
+Mechanisms #1 and #2 collapsed into ONE gate during implementation:
+`GenTask.PromiseAudit` behind `GEN_PROMISE_AUDIT` (default off). The insight:
+"find bugs the tests miss" and "test the untested promises" are the same ask —
+every observable defect IS a missing test that fails against the gold. One
+auditor call per root returns anchored test blocks; the machine then decides
+what each one is:
+
+    anchor quote must appear verbatim in prompt.md (≥25 chars, ws-normalized)
+      → else dropped (a test may only pin PROMISED behavior)
+    staged alone vs the gold:
+      green → must bite (kill ≥1 raise-mutant in isolation — the tfim gate,
+              siblings AST-stripped) → kept as COVERAGE, else dropped vacuous
+      red   → kept as MACHINE-PROVEN DEFECT (evidence-or-drop; a hallucinated
+              claim can never act — F6-proof by construction)
+    kept blocks merged (anchors stripped — S10 chatter rule) → the grown
+    triplet re-runs the FULL shared cycle: a proven defect forces the fixer
+    to repair the module against a failing test it cannot delete; the grown
+    harness re-proves green + house style + mutation + stability.
+
+Also landed with it: the blind re-screen now covers repaired VARIATIONS
+(F17-9 scope fix, same dark flag), and the `:quarantined` outcome no longer
+crashes the console printer (a latent T1.1 defect found by code reading).
+The audit re-cycle logs attempts under `<id>_audit`, so the original attempt
+chain (repair-mint raw material) is preserved. 385 tests green, including two
+end-to-end audit paths against the real evaluator: a coverage candidate
+vetted+merged, and a planted identity-promise violation machine-proven and
+repaired by the cycle. Rows 13/14 of the parity table now read BUILT DARK.

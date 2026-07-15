@@ -34,6 +34,8 @@ defmodule GenTask.Config do
           skip_variation_blind: boolean(),
           blind_rescreen: boolean(),
           semantic_floor: float() | nil,
+          promise_audit: boolean(),
+          audit_max_tests: pos_integer(),
           tfim_max_per_task: pos_integer(),
           max_turns: pos_integer(),
           limit: pos_integer() | nil,
@@ -81,6 +83,11 @@ defmodule GenTask.Config do
             # §4.2 sign-off (S8 was measured at 0.714 corpus-wide, observable
             # basis; the three-way survivor framework is docs/13 §1.5.1b).
             semantic_floor: nil,
+            # T1.10 (docs/17 §5): the accept-time promise audit for ROOTS — the
+            # in-loop replica of the manual close_gaps + probe-proven review flow.
+            # OFF (dark) until piloted; see GenTask.PromiseAudit.
+            promise_audit: false,
+            audit_max_tests: 6,
             tfim_max_per_task: 10,
             max_turns: 2,
             limit: nil,
@@ -132,6 +139,8 @@ defmodule GenTask.Config do
       skip_variation_blind: env_bool(env_fun, "GEN_SKIP_VARIATION_BLIND"),
       blind_rescreen: env_bool(env_fun, "GEN_BLIND_RESCREEN"),
       semantic_floor: env_floor(env_fun, "GEN_SEMANTIC_FLOOR"),
+      promise_audit: env_bool(env_fun, "GEN_PROMISE_AUDIT"),
+      audit_max_tests: env_int(env_fun, "GEN_AUDIT_MAX_TESTS", 6),
       tfim_max_per_task: env_int(env_fun, "GEN_TFIM_MAX_PER_TASK", 10),
       max_turns: env_int(env_fun, "GEN_MAX_TURNS", 2),
       limit: env_int(env_fun, "GEN_LIMIT", nil),

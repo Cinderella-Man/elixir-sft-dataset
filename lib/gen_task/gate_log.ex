@@ -40,6 +40,9 @@ defmodule GenTask.GateLog do
       {:mutation, "raise-mutant coverage (each public function; whole-module for bundles)"},
       {:stability, "stability re-grade at a derived nonzero ExUnit seed (flake filter)"},
       {:semantic_floor, "semantic-mutant kill floor (GEN_SEMANTIC_FLOOR)"},
+      {:promise_audit,
+       "promise audit — bite-proven tests for uncovered prompt promises; failing tests " <>
+         "machine-prove defects (GEN_PROMISE_AUDIT)"},
       {:blind_rescreen, "accept-time blind re-screen of repaired accepts (GEN_BLIND_RESCREEN)"},
       {:promote_guard, "promotion safety (refuse if the target dir exists; path containment)"}
     ],
@@ -52,6 +55,12 @@ defmodule GenTask.GateLog do
       {:mutation, "raise-mutant coverage (each public function; whole-module for bundles)"},
       {:stability, "stability re-grade at a derived nonzero ExUnit seed (flake filter)"},
       {:semantic_floor, "semantic-mutant kill floor (GEN_SEMANTIC_FLOOR)"},
+      {:promise_audit,
+       "promise audit — bite-proven tests for uncovered prompt promises; failing tests " <>
+         "machine-prove defects (GEN_PROMISE_AUDIT)"},
+      {:blind_rescreen,
+       "accept-time blind re-screen of repaired accepts (GEN_BLIND_RESCREEN; " <>
+         "variations included — F17-9)"},
       {:promote_guard, "promotion safety (refuse if the target dir exists; path containment)"}
     ],
     fim: [

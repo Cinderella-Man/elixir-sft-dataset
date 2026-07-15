@@ -18,28 +18,27 @@ Builds (a) verbose gate logging and (b) `generate.exs <n> --force` are DONE →
 docs/15 on close. Probe (c) RAN TO COMPLETION (75 units, ~50 min, 27 calls,
 all free instruments green) and the analysis is in **docs/17** (findings
 F17-1..10, candidate gates G-A..G-E). Remaining, in order:
-  - [ ] **KAMIL: read docs/17 + inspect the live diff** (`git status` shows
-        the old family deleted + new family untracked; the regenerated family
-        is also archived at `logs/probe_015_regenerated_2026-07-15.tar.gz`).
-  - [ ] **RESTORE the retrofitted family before any export/training use**
-        (probe data carries the probe-proven F17-1 leak):
-        `git checkout -- tasks tasks/tasks.md` (then `git status` must be
-        clean). docs/17 §4 records the disposition.
-  - [ ] **T1.10 — BUILD DARK (docs/17 §5.2, designs ready; T1.1/T1.8
-        precedent): the two in-loop replicas of the manual quality process.**
-        (a) `GEN_COVERAGE_CLOSE` — close_gaps' flow at accept time: propose
-        add-only tests for uncovered prompt promises, each bite-proven
-        (fails vs a targeted break, passes vs gold) before the harness
-        grows; (b) `GEN_SEMANTIC_JUDGE` — review judge whose every finding
-        must compile to a failing probe test vs the gold (evidence-or-drop,
-        F6-proof), findings feed the existing repair loop. Roots only
-        (~25% call-cost growth per family). Then RE-RUN this probe
-        (`--force 15` again) — prediction in docs/17 §5.4.
-  - [ ] **Sign-offs folded in:** flip GEN_SEMANTIC_FLOOR + GEN_BLIND_RESCREEN
-        (extend rescreen to repaired variations first — F17-9); G-B lifecycle
-        clause + exemplar rotation land with T1.4.
-  - [ ] On close: move T1.9 record to docs/15; keep `--force` + GateLog as
-        permanent loop features (documented in scripts/generate.exs header).
+  - [x] T1.10 BUILT DARK (2026-07-15 evening; docs/17 §5.5; 385 tests green):
+        ONE unified gate `GenTask.PromiseAudit` behind `GEN_PROMISE_AUDIT` —
+        anchored audit tests; green→bite-proven coverage, red→machine-proven
+        defect feeding the repair loop; + F17-9 rescreen now covers repaired
+        variations; + `:quarantined` console crash fixed (latent T1.1 defect).
+        Parity rows 13/14 → BUILT DARK.
+  - [ ] **AUDITED RE-PROBE (docs/17 §5.4's prediction, running when this
+        line was written): retrofitted family restored (probe #1 preserved in
+        `logs/probe_015_regenerated_2026-07-15.tar.gz` + analyzed in docs/17),
+        then `GEN_PROMISE_AUDIT=1 … generate.exs 15 --force` detached →
+        `logs/force_015_audited.log`.** Success = the audit forces
+        lifecycle/promise tests into existence and no F17-1-class defect
+        ships; findings → docs/17 §6. AFTER analysis: restore again
+        (`git checkout -- tasks tasks/tasks.md`) — probe families never
+        train/export.
+  - [ ] **KAMIL sign-offs (unchanged set, now with pilot evidence en route):**
+        flip GEN_PROMISE_AUDIT + GEN_BLIND_RESCREEN + GEN_SEMANTIC_FLOOR
+        (number needed); G-B lifecycle clause + exemplar rotation land with
+        T1.4; T1.6 Dialyzer (mix.exs) still the @spec-truth carrier.
+  - [ ] On close: move T1.9/T1.10 record to docs/15; keep `--force` + GateLog
+        + PromiseAudit as permanent loop features.
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-15 early morning)

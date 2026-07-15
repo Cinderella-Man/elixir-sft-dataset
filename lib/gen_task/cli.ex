@@ -425,6 +425,12 @@ defmodule GenTask.CLI do
   defp status_text(%{status: :skipped} = o), do: "SKIPPED (#{o.reason})"
   defp status_text(%{status: :error} = o), do: "ERROR (#{o.reason})"
 
+  # The blind re-screen's RED verdict (T1.1). Without this clause a quarantined
+  # unit crashed record_and_print (FunctionClauseError swallowed by the item
+  # rescue) — found by code reading while extending the re-screen to variations,
+  # BEFORE the flag was ever flipped.
+  defp status_text(%{status: :quarantined} = o), do: "QUARANTINED (#{o.reason})"
+
   # Honest console note for the accepted mutation mode (docs/12 §5.1 item 5): a wt_ mint
   # inherits coverage and a tfim-bundle passes only a static check — neither runs a
   # mutant, so "mutant survived?" (the old `mutant_failed == false` text) was misleading.

@@ -190,6 +190,14 @@ defmodule GenTask.Reply do
     end
   end
 
+  @doc """
+  Validate a promise-audit reply (T1.10): a non-empty `added_tests.exs`. The body
+  may be the literal `# NOTHING TO ADD` sentinel — emptiness of FINDINGS is a valid
+  outcome; an empty/missing FILE is a contract violation.
+  """
+  @spec validate_audit(files()) :: :ok | {:error, String.t()}
+  def validate_audit(files), do: require_nonempty(files, "added_tests.exs")
+
   # ---------------------------------------------------------------------------
   # shared checks
   # ---------------------------------------------------------------------------

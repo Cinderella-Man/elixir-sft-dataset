@@ -92,26 +92,39 @@ defmodule GenTask.Base do
       }
 
       result = Cycle.run(files, ctx, cfg)
-      stats = Cycle.grade_stats(result.grade)
 
       if result.status == :accepted do
-        case blind_rescreen(idea, result, cfg) do
-          :promote ->
-            _ = Cycle.promote(cfg, idea.task_id, result.files, :base)
-            base_outcome(idea, :accepted, result, stats, seed(idea, result.files))
+        # T1.10 (docs/17 §5): the promise audit may GROW the harness (and repair
+        # the solution against a machine-proven defect), so it runs before the
+        # blind re-screen — the re-screen must see the final files.
+        case GenTask.PromiseAudit.run(result, idea.task_id, :base, cfg) do
+          {:ok, result} ->
+            stats = Cycle.grade_stats(result.grade)
 
-          {:quarantine, why} ->
-            base_outcome(idea, :quarantined, result, stats, nil, why)
+            case blind_rescreen(idea, result, cfg) do
+              :promote ->
+                _ = Cycle.promote(cfg, idea.task_id, result.files, :base)
+                base_outcome(idea, :accepted, result, stats, seed(idea, result.files))
+
+              {:quarantine, why} ->
+                base_outcome(idea, :quarantined, result, stats, nil, why)
+
+              {:error, reason} ->
+                base_outcome(idea, :error, result, stats, nil, reason)
+            end
+
+          {:rejected, why, result} ->
+            base_outcome(idea, :rejected, result, Cycle.grade_stats(result.grade), nil, why)
 
           {:error, reason} ->
-            base_outcome(idea, :error, result, stats, nil, reason)
+            base_outcome(idea, :error, result, Cycle.grade_stats(result.grade), nil, reason)
         end
       else
         base_outcome(
           idea,
           :rejected,
           result,
-          stats,
+          Cycle.grade_stats(result.grade),
           nil,
           result.reason || Cycle.reason_for(result.grade)
         )
@@ -181,13 +194,34 @@ defmodule GenTask.Base do
   def rescreen?(%Config{blind_rescreen: false}, _attempts), do: false
   def rescreen?(%Config{}, attempts), do: attempts > 1
 
-  defp blind_rescreen(idea, result, cfg) do
+  defp blind_rescreen(idea, result, cfg),
+    do: rescreen_gate(cfg, idea.task_id, result.files, result.attempts, :base)
+
+  @doc """
+  The accept-time blind re-screen GATE for any repaired ROOT accept — bases AND
+  variations (the F17-9 scope fix: a variation's blind evidence is its attempt-0
+  solve, and repairs happen after it, so a repaired variation needs the re-screen
+  exactly as a repaired base does). Lives here (not in Cycle) because it shares
+  the quarantine/evidence plumbing below.
+
+  Returns `:promote`, `{:quarantine, why}` (RED — the triplet is quarantined and
+  must be triaged), or `{:error, reason}` (environmental — no verdict, the F7
+  rule; the caller errors the unit so a later run retries).
+  """
+  @spec rescreen_gate(
+          Config.t(),
+          String.t(),
+          %{String.t() => String.t()},
+          pos_integer(),
+          GateLog.shape()
+        ) :: :promote | {:quarantine, String.t()} | {:error, String.t()}
+  def rescreen_gate(cfg, task_id, files, attempts, shape) do
     cond do
       not cfg.blind_rescreen ->
         GateLog.skip(
           cfg,
-          idea.task_id,
-          :base,
+          task_id,
+          shape,
           :blind_rescreen,
           "GEN_BLIND_RESCREEN=0 — gate DARK (T1.1 built, awaiting Kamil's sign-off; " <>
             "docs/12 §5.5 row 10)"
@@ -195,11 +229,11 @@ defmodule GenTask.Base do
 
         :promote
 
-      result.attempts == 1 ->
+      attempts == 1 ->
         GateLog.pass(
           cfg,
-          idea.task_id,
-          :base,
+          task_id,
+          shape,
           :blind_rescreen,
           "not required — an attempt-1 accept is blind by construction " <>
             "(the solver never saw the harness)"
@@ -210,32 +244,32 @@ defmodule GenTask.Base do
       true ->
         GateLog.applying(
           cfg,
-          idea.task_id,
-          :base,
+          task_id,
+          shape,
           :blind_rescreen,
-          "accepted after #{result.attempts} attempts — one independent prompt-only solve"
+          "accepted after #{attempts} attempts — one independent prompt-only solve"
         )
 
-        outcome = run_rescreen(idea, result, cfg)
+        outcome = run_rescreen(cfg, task_id, files)
 
         case outcome do
           :promote ->
             GateLog.pass(
               cfg,
-              idea.task_id,
-              :base,
+              task_id,
+              shape,
               :blind_rescreen,
               "independent blind solve went green against the final harness"
             )
 
           {:quarantine, why} ->
-            GateLog.fail(cfg, idea.task_id, :base, :blind_rescreen, why)
+            GateLog.fail(cfg, task_id, shape, :blind_rescreen, why)
 
           {:error, reason} ->
             GateLog.skip(
               cfg,
-              idea.task_id,
-              :base,
+              task_id,
+              shape,
               :blind_rescreen,
               "environmental failure, no verdict (F7 rule): " <> reason
             )
@@ -245,31 +279,31 @@ defmodule GenTask.Base do
     end
   end
 
-  defp run_rescreen(idea, result, cfg) do
-    prompt = result.files["prompt.md"]
-    harness = result.files["test_harness.exs"]
+  defp run_rescreen(cfg, task_id, files) do
+    prompt = files["prompt.md"]
+    harness = files["test_harness.exs"]
 
-    case Variations.blind_solution(idea.task_id, prompt, cfg, "base_blind_rescreen") do
+    case Variations.blind_solution(task_id, prompt, cfg, "base_blind_rescreen") do
       {:ok, blind_src} ->
         dir =
-          Evaluator.stage!(Path.join(cfg.staging_dir, idea.task_id <> "_rescreen"), %{
+          Evaluator.stage!(Path.join(cfg.staging_dir, task_id <> "_rescreen"), %{
             "prompt.md" => prompt,
             "test_harness.exs" => harness,
             "solution.ex" => blind_src
           })
 
         grade = Evaluator.grade(dir, cfg)
-        row = screen_row(idea.task_id, prompt, harness, grade, cfg.model)
+        row = screen_row(task_id, prompt, harness, grade, cfg.model)
         append_screen_row(cfg, row)
 
         case row do
           %{green: true} ->
-            Logger.info("BASE #{idea.task_id}: accept-time blind re-screen GREEN")
+            Logger.info("#{task_id}: accept-time blind re-screen GREEN")
             :promote
 
           %{green: nil} ->
             # F7: an environmental failure says nothing about the prompt — it
-            # must never become a verdict. The base errors and re-runs later.
+            # must never become a verdict. The unit errors and re-runs later.
             {:error, "blind re-screen environmental: " <> (row[:error] || "unknown")}
 
           %{green: false} ->
@@ -277,13 +311,13 @@ defmodule GenTask.Base do
               "accept-time blind re-screen RED: " <>
                 (row[:first_failure] || "blind solve failed the final harness")
 
-            quarantine!(cfg, idea.task_id, result.files, blind_src, grade, why)
+            quarantine!(cfg, task_id, files, blind_src, grade, why)
             {:quarantine, why}
         end
 
       {:error, reason} ->
         # The transport already rode out token windows and retried transients;
-        # a hard failure here errors the base (idea re-runs on a later pass).
+        # a hard failure here errors the unit (it re-runs on a later pass).
         {:error, "blind re-screen call failed: " <> inspect(reason)}
     end
   end

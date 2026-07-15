@@ -454,6 +454,85 @@ defmodule GenTask.Prompts do
     {@solver_persona, user}
   end
 
+  # ---------------------------------------------------------------------------
+  # Promise audit (T1.10, docs/17 §5) — accept-time close_gaps + defect probe
+  # ---------------------------------------------------------------------------
+
+  @auditor_persona """
+  You are an expert Elixir reviewer auditing an accepted training task. You are
+  ruthless about one thing: every behavioral promise the task prompt makes must be
+  exercised by a test, and any behavior of the module that VIOLATES a prompt promise
+  must be exposed by a test. You follow the requested output format exactly and emit
+  nothing outside the requested file blocks.
+  """
+
+  @doc """
+  Prompts for the accept-time promise audit of a ROOT triplet (base/variation).
+
+  The auditor sees all three files and must return ONLY new ExUnit test blocks in
+  `added_tests.exs`, each preceded by a `# PROMISE: "<verbatim prompt sentence>"`
+  anchor line. Two kinds of finding share one shape:
+
+    * an UNCOVERED promise → a test that passes against a correct module (grows
+      the harness after it is bite-proven);
+    * a SUSPECTED defect → a test pinning the PROMISED behavior (it fails against
+      the current module, machine-proving the defect; the repair loop then fixes
+      the module against it).
+
+  `max` bounds the number of blocks (`cfg.audit_max_tests`).
+  """
+  @spec promise_audit(%{String.t() => String.t()}, pos_integer()) :: {String.t(), String.t()}
+  def promise_audit(files, max) do
+    user = """
+    Below is an Elixir training task that already passed compilation, its full test
+    suite, house style, and mutation-coverage gates. Audit it for PROMISE COVERAGE.
+
+    1. Read prompt.md as a contract. List (mentally) every behavioral promise it
+       makes: lifecycle rules (registering/replacing/deregistering/cancelling
+       scheduled work — old timers must really stop), option defaults, "exactly
+       once" claims, documented edge cases, guard clauses, "never"/"always"
+       sentences, and stated robustness rules.
+    2. For each promise that NO existing test exercises, write ONE new ExUnit test
+       that pins it through the PUBLIC API.
+    3. Also read solution.ex skeptically. If you believe some behavior VIOLATES a
+       prompt sentence (e.g. a replaced registration leaving the old timer chain
+       alive), write a test that pins the PROMISED behavior — it will fail against
+       this module and prove the defect. Judge the code only against prompt.md,
+       never against your own taste.
+
+    Rules for every test block you return:
+    - Precede it with EXACTLY one anchor comment line:
+      # PROMISE: "<a sentence copied VERBATIM from prompt.md>"
+      The quote must be long enough to be unambiguous (a full clause, not a word).
+    - Drive the PUBLIC API only — never `:sys.get_state`, internal messages, or
+      option values prompt.md does not document.
+    - Deterministic: no bare `Process.sleep` waits; use the harness's existing
+      helpers (they stay defined — do NOT redefine them), scripted functions, and
+      bounded `assert_receive`/`refute_receive`.
+    - Zero compile warnings; every line ≤ 98 columns.
+    - The test NAME must not duplicate any existing test name.
+    - At most #{max} test blocks, most important first. Top-level `test` blocks
+      only (no `describe` wrappers).
+
+    If every promise is covered and you find no violation, return the file
+    containing exactly this single comment line:
+    # NOTHING TO ADD
+
+    ----- prompt.md (the contract) -----
+    #{files["prompt.md"]}
+
+    ----- test_harness.exs (the existing suite) -----
+    #{files["test_harness.exs"]}
+
+    ----- solution.ex (the module under audit) -----
+    #{files["solution.ex"]}
+
+    #{output_contract([{"added_tests.exs", "ONLY the new test blocks (with their # PROMISE anchors), or # NOTHING TO ADD"}])}
+    """
+
+    {@auditor_persona, user}
+  end
+
   defp render_files(blocks) do
     blocks
     |> Enum.reject(fn {_label, body} -> is_nil(body) end)

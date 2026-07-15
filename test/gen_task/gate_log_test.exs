@@ -23,15 +23,17 @@ defmodule GenTask.GateLogTest do
       end
     end
 
-    test "the base and variation manifests carry the two dark gates and the shared cycle gates" do
+    test "the base and variation manifests carry the dark gates and the shared cycle gates" do
       base_keys = for {k, _} <- GateLog.manifest(:base), do: k
       variation_keys = for {k, _} <- GateLog.manifest(:variation), do: k
 
-      assert :semantic_floor in base_keys
-      assert :blind_rescreen in base_keys
-      assert :semantic_floor in variation_keys
-      # The variation blind evidence is its own :blind_solve gate, not a re-screen.
-      refute :blind_rescreen in variation_keys
+      for k <- [:semantic_floor, :promise_audit, :blind_rescreen] do
+        assert k in base_keys, "#{k} missing from :base"
+        # F17-9: repaired VARIATIONS re-screen too, and the promise audit covers
+        # every root shape — both dark gates appear in both root manifests.
+        assert k in variation_keys, "#{k} missing from :variation"
+      end
+
       assert :blind_solve in variation_keys
       assert :distinctness in variation_keys
 
@@ -48,7 +50,7 @@ defmodule GenTask.GateLogTest do
           GateLog.pass(cfg(tmp), "015_001_x_01", :base, :green, "compiled, 5/5 tests passed")
         end)
 
-      assert out =~ "gate [2/8]"
+      assert out =~ "gate [2/9]"
       assert out =~ "perfect raw invariants"
       assert out =~ "PASS — compiled, 5/5 tests passed"
     end
@@ -59,7 +61,7 @@ defmodule GenTask.GateLogTest do
           GateLog.skip(cfg(tmp), "id", :base, :semantic_floor, "GEN_SEMANTIC_FLOOR unset")
         end)
 
-      assert out =~ "gate [6/8]"
+      assert out =~ "gate [6/9]"
       assert out =~ "SKIPPED — GEN_SEMANTIC_FLOOR unset"
     end
 

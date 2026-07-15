@@ -338,22 +338,86 @@ defmodule GenTask.Variations do
         }
 
         result = Cycle.run(triplet, ctx, cfg)
-        stats = Cycle.grade_stats(result.grade)
 
         if result.status == :accepted do
-          _ = Cycle.promote(cfg, vtask_id, result.files, :variation)
-          _ = Catalog.insert_variation!(cfg, base.num, "V#{vnum}", vname, vdesc)
+          # T1.10 + F17-9: the promise audit may grow/repair the files, so it
+          # runs first; the blind re-screen (shared with Base — repaired
+          # VARIATIONS need it exactly as repaired bases do) sees final files.
+          case GenTask.PromiseAudit.run(result, vtask_id, :variation, cfg) do
+            {:ok, result} ->
+              stats = Cycle.grade_stats(result.grade)
 
-          seed = %{
-            num: base.num,
-            name: vname,
-            slug: vslug,
-            b: b,
-            task_id: vtask_id,
-            files: result.files
-          }
+              case GenTask.Base.rescreen_gate(
+                     cfg,
+                     vtask_id,
+                     result.files,
+                     result.attempts,
+                     :variation
+                   ) do
+                :promote ->
+                  _ = Cycle.promote(cfg, vtask_id, result.files, :variation)
+                  _ = Catalog.insert_variation!(cfg, base.num, "V#{vnum}", vname, vdesc)
 
-          variation_outcome(vtask_id, base.num, vname, :accepted, result, stats, seed, nil)
+                  seed = %{
+                    num: base.num,
+                    name: vname,
+                    slug: vslug,
+                    b: b,
+                    task_id: vtask_id,
+                    files: result.files
+                  }
+
+                  variation_outcome(
+                    vtask_id,
+                    base.num,
+                    vname,
+                    :accepted,
+                    result,
+                    stats,
+                    seed,
+                    nil
+                  )
+
+                {:quarantine, why} ->
+                  variation_outcome(
+                    vtask_id,
+                    base.num,
+                    vname,
+                    :quarantined,
+                    result,
+                    stats,
+                    nil,
+                    why
+                  )
+
+                {:error, reason} ->
+                  variation_outcome(vtask_id, base.num, vname, :error, result, stats, nil, reason)
+              end
+
+            {:rejected, why, result} ->
+              variation_outcome(
+                vtask_id,
+                base.num,
+                vname,
+                :rejected,
+                result,
+                Cycle.grade_stats(result.grade),
+                nil,
+                why
+              )
+
+            {:error, reason} ->
+              variation_outcome(
+                vtask_id,
+                base.num,
+                vname,
+                :error,
+                result,
+                Cycle.grade_stats(result.grade),
+                nil,
+                reason
+              )
+          end
         else
           variation_outcome(
             vtask_id,
@@ -361,7 +425,7 @@ defmodule GenTask.Variations do
             vname,
             :rejected,
             result,
-            stats,
+            Cycle.grade_stats(result.grade),
             nil,
             result.reason || Cycle.reason_for(result.grade)
           )

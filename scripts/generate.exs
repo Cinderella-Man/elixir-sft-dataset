@@ -16,6 +16,11 @@
 #   GEN_LIMIT=5 mix run scripts/generate.exs
 #   GEN_DRY_RUN=1 mix run scripts/generate.exs 80
 #
+#   GEN_PROMISE_AUDIT=1 mix run scripts/generate.exs   # + the accept-time promise
+#     audit on every root (T1.10, docs/17 §5.5): one auditor call proposes anchored
+#     tests; green ones must bite (isolation mutant) and grow the harness, failing
+#     ones machine-prove defects and force a repair. DARK by default until piloted.
+#
 #   mix run scripts/generate.exs 15 --force # DELETE idea 15's whole family first
 #     (base + variations + FIM dirs, wt_/tfim_/bugfix_/adapt_/repair_ children, its
 #     tasks.md variation entries, its logs/errors + logs/quarantine blockers), then
