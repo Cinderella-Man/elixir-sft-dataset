@@ -9,6 +9,26 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-15 (evening) — T2.6 PILOT: the whole 015 family's prompts raised
+  to contract precision + F18 CLOSED (a latent gold bug found by writing
+  exact prompts).** All four root prompts hand-rewritten to describe the
+  EXISTING tested contracts exactly (promises = tested behavior: untested
+  `:name` options dropped, `{:check, name}`-style trigger messages promoted
+  from "such as" suggestions to documented deterministic seams, explicit
+  deregister/maintenance lifecycle sections); each verified by a blind
+  screen (4/4 GREEN — the FIRST 015_001 attempt screened RED and proved the
+  seam rule matters), every child embed cascaded via the standing resync
+  gates. **F18** (found while tracing 015_004's timer paths for the prompt):
+  re-entering maintenance never retired the old expiry, so EXTENDING a
+  window ended at the old deadline with a spurious `:maintenance_ended` —
+  probe-proven, fixed with the file's own tracked-ref + cancel + drain
+  pattern (re-entry AND manual resume), add-only test bite-proven both ways
+  (29/30 → 30/30), 3 invalidated bugfix pairs reminted (audit 3/3 PASS),
+  family validate/mutants/format/embeds all green. Task B for the class had
+  landed the same day (template LIFECYCLE RULE + promise audit). Pilot
+  economics for T2.6 proper: ~1 screen call per root; 1 latent gold bug per
+  4 roots examined. Commits 988495c5..f824c202.
+
 - **2026-07-15 (afternoon/evening) — THE LOOP NOW GENERATES AT THE
   RETROFITTED BAR (T1.9 + T1.10 + T1.4 + default-on policy; full story
   docs/17).** In one arc: (1) gate transparency — every accept-path gate

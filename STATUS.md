@@ -52,30 +52,13 @@ F17-1..10, candidate gates G-A..G-E). Remaining, in order:
         every prompt+harness, base probe-proven leak-free. Free-instrument
         sweep running (`logs/verify_015_probe4.log`) — verdict appended to
         §6.4 when done.
-  - [ ] **T2.6-PILOT IN FLIGHT (Kamil approved: all four 015 roots).**
-        Retrofitted family restored (probe #4 stashed + tarballed:
-        `logs/probe_015_4_full_standard_2026-07-15.tar.gz`). State:
-        - 015_001 prompt upgraded, screen GREEN, 4 children cascaded,
-          COMMITTED (988495c5). Lesson: the `{:check, name}` tag must be a
-          documented seam, not a "such as" (first screen was RED).
-        - **NEW BUG F18, probe-proven + FIXED (Kamil approved): 015_004's
-          gold ended an EXTENDED maintenance window at the OLD deadline**
-          (uncancelled maintenance_end timer — the F12 class in the
-          maintenance path; existing test only checked fake-clock
-          bookkeeping). Fix: tracked ref + cancel + drain (maintenance
-          re-entry AND manual resume); add-only test bite-proven both ways
-          (old gold 29/30, fixed 30/30). Task B was already landed today
-          (LIFECYCLE RULE + audit).
-        - 015_002/003/004 prompts rewritten to contract precision —
-          blind screens RUNNING (`logs/rescreen_015_variations.log`).
-        - All embed cascades APPLIED + gates clean (fim/wt/tfim/bugfix/
-          adapt; fim child _04 hand-fixed per the tool's fix_child_gold
-          worklist). bugfix_015_004_x3 were invalidated by the gold
-          redesign (299-line diffs, audit_bugfix FAIL) → deleted, REMINT
-          RUNNING (`logs/remint_bugfix_015_004.log`, LLM-free miner).
-        - REMAINING: screens green → family-wide validate sweep →
-          audit_bugfix on reminted pairs → per-root commits. If a screen
-          is RED: fix that prompt (never the harness) and re-screen.
+  - [x] T2.6-PILOT DONE (2026-07-15 evening → docs/15): all four 015 root
+        prompts at contract precision, 4/4 blind screens GREEN, F18 found +
+        probe-proven + FIXED en route, every cascade applied and gate-clean,
+        pushed. Open decision for Kamil: extend the prompt-precision round
+        corpus-wide (T2.6 proper — the pilot measured ~1 screen call/root and
+        found 1 latent gold bug in 4 roots; at that hit rate the remaining
+        ~299 roots hide more F18s).
   - [ ] **NEW BUILD ITEM (from §6.3): in-loop quarantine-triage path** — the
         loop can quarantine but has no "hard-task KEEP" verdict (the retro
         screen had 49 keeps). Phase 3 needs: triage judge over
