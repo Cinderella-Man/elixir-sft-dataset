@@ -59,15 +59,19 @@ F17-1..10, candidate gates G-A..G-E). Remaining, in order:
         corpus-wide (T2.6 proper — the pilot measured ~1 screen call/root and
         found 1 latent gold bug in 4 roots; at that hit rate the remaining
         ~299 roots hide more F18s).
-  - [ ] **T1.11 IN FLIGHT (Kamil 2026-07-15 late: "DO IT" — everything):**
-        (a) audit taxonomy checklist into the auditor prompt (gap 3);
-        (b) `scripts/retro_audit.exs` — the promise audit + blind-verify as a
-        RETRO sweep over existing roots (gap 1: the improvement round as a
-        command; ledger `logs/retro_audit.jsonl`, sha+gate keyed, resumable,
-        backup-before-write, cascade via standing resyncs), pilot 3 roots →
-        detailed review → full run detached. THEN (next session if tokens
-        run out): T2.6 prompt-precision tool reusing the same skeleton —
-        do NOT run both over the same roots concurrently.
+  - [ ] **T1.11 FULL RETRO-AUDIT RUNNING (Kamil "DO IT"): pid 3468644,
+        `logs/retro_audit_full.log`, ledger `logs/retro_audit.jsonl`
+        (sha+gate keyed — fully resumable; idempotent relaunch:
+        `scripts/run_detached.sh logs/retro_audit_full.log mix run
+        scripts/retro_audit.exs`).** ~323 roots to go (pilot did 3: F19
+        found+fixed in 001_003, 001_001 harness +6 tests, 001_002 refused —
+        needs_triage, real-clock class; tool's evidence-row bug fixed after
+        the pre-push gate caught it). AFTER the run: follow the log's
+        cascade instructions (resyncs + audit_bugfix on solution-changed
+        families + remint invalidated pairs via `generate.exs <n>`), triage
+        the needs_triage ledger rows (likely T2.6 prompt material), commit
+        per family batch. THEN: T2.6 prompt-precision tool (same skeleton) —
+        never concurrently with this run.
   - [ ] **NEW BUILD ITEM (from §6.3): in-loop quarantine-triage path** — the
         loop can quarantine but has no "hard-task KEEP" verdict (the retro
         screen had 49 keeps). Phase 3 needs: triage judge over
