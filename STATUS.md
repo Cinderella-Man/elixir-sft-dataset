@@ -30,11 +30,12 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
   artifacts (docs/14 rule 10) before ANY edit; findings become two-tier
   STATUS items (rule 7).
 
-**ALSO RUNNING: full-corpus perfect sweep** (all 6,147 dirs — the
-weekly-CI-equivalent assurance after tonight's +249 adapt and 018_003
-strengthening). pid `logs/full_sweep.pid` · log `logs/full_sweep.log`.
-Relaunch: `scripts/run_detached.sh logs/full_sweep.log elixir scripts/validate.exs`.
-CPU-only; expected well under an hour at concurrency 16.
+*(Full-corpus sweep DONE 2026-07-15 ~01:5x UTC: 6,147 dirs, ALL PERFECT.
+The single reported failure was 017_001 — the only `db: :postgres` task —
+because the local DB container was down; that loud-RED is by design
+(runner.ex "goes RED, not skipped"). `docker compose up -d db` was run per
+the documented remedy — the `elixir_benchmark_pg` container is now UP on
+this machine — and 017_001 re-graded 23/23 green, 0 warnings.)*
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-14 evening)
