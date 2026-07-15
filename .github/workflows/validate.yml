@@ -57,6 +57,7 @@ jobs:
       # tfim prompt embeds must match their parents (docs/10 §5.14 / docs/11 §1a):
       # the dry run must report 0 errors and 0 would_resync, else prompts have
       # drifted from the parent files they display.
+      - run: mix run scripts/resync_tfim_embeds.exs -- --self-test
       - run: |
           out=$(mix run scripts/resync_tfim_embeds.exs)
           echo "$out"
@@ -64,6 +65,7 @@ jobs:
       # bugfix_ prompts embed the parent task spec verbatim (docs/13 §1.1): a
       # parent-prompt edit must propagate, or 959 debugging tasks teach a stale
       # spec alongside a real bug.
+      - run: mix run scripts/resync_bugfix_embeds.exs -- --self-test
       - run: |
           out=$(mix run scripts/resync_bugfix_embeds.exs)
           echo "$out"

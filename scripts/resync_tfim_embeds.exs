@@ -29,7 +29,15 @@ defmodule ResyncTfimEmbeds do
     # OptionParser treats it as an end-of-options terminator — silently unscoping the
     # run. Accept both invocations by dropping a leading `--`.
     argv = Enum.drop_while(argv, &(&1 == "--"))
-    {opts, _, _} = OptionParser.parse(argv, strict: [only: :string, apply: :boolean])
+
+    {opts, _, _} =
+      OptionParser.parse(argv, strict: [only: :string, apply: :boolean, self_test: :boolean])
+
+    if opts[:self_test] do
+      self_test()
+      System.halt(0)
+    end
+
     apply? = opts[:apply] || false
 
     globs =
@@ -39,7 +47,7 @@ defmodule ResyncTfimEmbeds do
       end
 
     dirs =
-      Path.wildcard("tasks/tfim_*")
+      Path.wildcard("#{tasks_root()}/tfim_*")
       |> Enum.filter(&File.dir?/1)
       |> Enum.filter(fn d ->
         base = Path.basename(d)
@@ -120,6 +128,60 @@ defmodule ResyncTfimEmbeds do
     re = glob |> Regex.escape() |> String.replace("\\*", ".*")
     Regex.match?(~r/^#{re}$/, name)
   end
+
+  # Env-overridable so the self-test (and tests) can sandbox the corpus root.
+  defp tasks_root, do: System.get_env("RESYNC_TASKS_DIR") || "tasks"
+
+  # Proves the gate is not vacuous (docs/12 §5.5 row 19): one REAL family is
+  # copied into a sandbox, must pass clean; a planted prompt edit must be
+  # detected; --apply must heal it byte-for-byte.
+  defp self_test do
+    root = Path.join(System.tmp_dir!(), "resync_tfim_st_#{System.unique_integer([:positive])}")
+    sandbox = Path.join(root, "tasks")
+    File.mkdir_p!(sandbox)
+
+    child = "tasks/tfim_*" |> Path.wildcard() |> Enum.sort() |> List.first()
+    parent = EvalTask.Fim.test_fim_parent_dir(child)
+    for d <- [parent, child], do: File.cp_r!(d, Path.join(sandbox, Path.basename(d)))
+
+    sandbox_child = Path.join(sandbox, Path.basename(child))
+    prev = System.get_env("RESYNC_TASKS_DIR")
+    System.put_env("RESYNC_TASKS_DIR", sandbox)
+
+    checks =
+      try do
+        [
+          {"a clean copied family passes", resync(sandbox_child, false) == :unchanged},
+          {"a planted prompt edit is detected",
+           (
+             File.write!(Path.join(sandbox_child, "prompt.md"), "DRIFTED\n")
+             resync(sandbox_child, false) == :would_resync
+           )},
+          {"--apply heals it byte-for-byte", resync(sandbox_child, true) == :resynced},
+          {"the healed dir passes again", resync(sandbox_child, false) == :unchanged}
+        ]
+      after
+        if prev,
+          do: System.put_env("RESYNC_TASKS_DIR", prev),
+          else: System.delete_env("RESYNC_TASKS_DIR")
+
+        File.rm_rf!(root)
+      end
+
+    for {label, ok?} <- checks,
+        do: IO.puts("  #{if ok?, do: "caught ✓", else: "MISSED ✗"}  #{label}")
+
+    if Enum.all?(checks, &elem(&1, 1)) do
+      IO.puts(
+        "\ntfim-embed self-test: OK ✓ (all #{length(checks)} checks pass; family: #{Path.basename(child)})"
+      )
+    else
+      IO.puts("\ntfim-embed SELF-TEST FAILED")
+      System.halt(1)
+    end
+  end
 end
 
-ResyncTfimEmbeds.main(System.argv())
+# test/scripts/* load this file with SCRIPTS_NO_AUTORUN=1 to unit-test the
+# module without executing the CLI.
+unless System.get_env("SCRIPTS_NO_AUTORUN"), do: ResyncTfimEmbeds.main(System.argv())

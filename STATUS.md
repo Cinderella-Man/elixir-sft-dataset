@@ -107,10 +107,13 @@ and a CI check refusing accepts lacking the evidence row.]**
 - HOW: all in `lib/gen_task/prompts.ex`; rationale in docs/12 §5.3.
 
 
-**T-gates — self-tests for the three remaining resync drift gates
-(tfim/bugfix/wt). [FREE — docs/12 §5.5 row 19]** The adapt gate got the
-plant-detect-heal `--self-test` (in CI); the other three are trusted
-without one. Same pattern each.
+**T-gates — remaining sliver: an argumentless plant-detect-heal
+`--self-test` for the wt gate. [FREE — docs/12 §5.5 row 19]** tfim +
+bugfix + adapt gates now have sandbox self-tests wired into CI
+(2026-07-15); `resync_embeds.exs` has only its older `--self-test <dir>`
+heal-verifier, which needs a flagged dir and cannot run argumentless in
+CI. Port the adapt pattern (copy one real wt_ family + parent to a
+sandbox, clean → plant → detect → heal).
 
 **T1.6 — Dialyzer gate over the golds. [NEEDS KAMIL: one mix.exs/lockfile
 change; then FREE (PLT build + weekly CI)]**
