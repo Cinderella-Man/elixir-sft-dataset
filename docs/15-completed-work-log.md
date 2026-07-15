@@ -9,6 +9,15 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-15 (late morning) — T-gates CLOSED: all four resync drift
+  gates (tfim / bugfix / wt / adapt) now prove themselves non-vacuous in
+  CI on every push** (parity row 19 fully ENFORCED). Pattern per gate:
+  copy one REAL family into a sandbox, must pass clean, must catch a
+  planted edit (bugfix and wt plant the sharper direction — a PARENT
+  edit detected in the child), `--apply` must heal byte-for-byte, then
+  clean again. wt's is `--self-test-auto` (its older `--self-test <dir>`
+  healer stays for hand triage); tfim/bugfix/adapt use `--self-test`.
+
 - **2026-07-15 (morning block, Kamil's green light) — T2.4-T CLOSED, F12
   CLOSED, parity rows 7+12 built, scripts under test.** The condensed
   ledger (full detail in commits 3f801b7e..97d6e7b4 and the two scars):
