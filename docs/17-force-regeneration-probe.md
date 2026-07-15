@@ -533,3 +533,56 @@ G-E), the quarantine-triage path (§6.3), T1.4's full template upgrade, and
 T1.6 Dialyzer. Probe #4's family stays on disk (uncommitted) for Kamil's
 inspection; it must still be restored (stash) before any export — probe
 data never ships without the cutover instruments having run.
+
+### 6.5 Hand review of probe #4's four roots vs the retrofitted family
+### (full read of every root triplet; the manual cutover-instrument pass)
+
+**Correctness: no defect found in any root.** All four solve scheduled-work
+cancellation correctly (generation refs / token-tagged ticks / map-identity
+checks); the quorum logic calls every endpoint exactly once and keeps the
+notify asymmetry (up→down only); the hysteresis streak machine matches its
+own spec clause-for-clause including the alternating-flapping suppression;
+015_002's three-level escalation thresholds, reason semantics
+(escalation → that check's reason, recovery → nil) and guard contracts all
+hold. The base is probe-proven leak-free. Nothing here would have been a
+triage-grade finding in the T2.2 sense.
+
+**Harness depth: comparable per promise, lower in raw count** (16/20/17/19
+vs the old 21/22/19/29 — the old counts cover richer APIs plus a month of
+hand additions). The new harnesses pin the load-bearing classes the retro
+campaign paid for (lifecycle kills, exactly-once callbacks, threshold
+boundaries, flapping suppression, deferred first check, independence,
+robustness) AND two classes the old family never had: argument-guard tests
+and term-typed-name tests. S9-clean, deterministic-first throughout.
+
+**Residual improvement opportunities (all generator-side, none blocking):**
+
+1. **The `:name`-override promise is template prose with zero tests, 4/4
+   roots.** Every prompt says "a `:name` option may override the registered
+   name" — none tests it, and the singleton design makes it near-vestigial.
+   Fix in the template: drop the sentence or demand its test (G-F).
+2. **Singleton monoculture, 4/4 roots** — the old family passed `server`
+   args (supports multi-instance tests); the new one inherited the base's
+   singleton style everywhere. Template nudge: prefer server-argument APIs
+   unless the idea demands a singleton (G-F).
+3. **The concurrency axis went missing.** The old family's hardest unit
+   (async checks in spawned Tasks + timeout + stale-ref discipline) has no
+   analog: all four new roots run checks synchronously in-server. T1.4's
+   variation-axis rotation should explicitly request one cross-process
+   concurrency variation per family (G-G — this is the difficulty-drift
+   lever, now with concrete evidence).
+4. **Callback-safety silence** — all four prompts leave "what if
+   `on_change`/`notify` raises?" unspecified; the callbacks run unprotected
+   in the server. Contract-silent, so not a defect; a T1.4 edge-case-clause
+   candidate (G-H).
+5. Minor per-root coverage nits: 015_002's "probe_now does not touch the
+   periodic timer" promise is untested; the base's three floor survivors
+   are boundary flips of the spec-ceiling kind.
+
+**Bottom line of the hand review:** probe #4's family meets the retrofitted
+bar on every dimension the catch-up campaign fought for (correctness,
+promise coverage, lifecycle pins, style, determinism) and exceeds it on
+guards and prompt precision; it trails only on API richness/concurrency
+spread — a template-diversity question (T1.4), not a gate question. The
+family is fit to keep IF the G-E instruments agree; the improvement list
+above goes to the template work, not to this data.
