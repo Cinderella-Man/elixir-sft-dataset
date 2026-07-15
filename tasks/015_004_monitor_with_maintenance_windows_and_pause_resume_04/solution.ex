@@ -44,7 +44,7 @@
         {:noreply, state}
 
       {:ok, %{mode: :maintenance} = service} ->
-        new_service = %{service | mode: :active, maintenance_ends_at: nil}
+        new_service = %{service | mode: :active, maintenance_ends_at: nil, maintenance_timer: nil}
 
         fire_notify(state.notify, name, :maintenance_ended, nil)
 

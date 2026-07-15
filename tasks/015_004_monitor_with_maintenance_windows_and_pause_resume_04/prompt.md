@@ -70,7 +70,8 @@ defmodule ManagedMonitor do
            last_check_at: integer() | nil,
            consecutive_failures: non_neg_integer(),
            notified_down: boolean(),
-           maintenance_ends_at: integer() | nil
+           maintenance_ends_at: integer() | nil,
+           maintenance_timer: reference() | nil
          }
 
   # ---------------------------------------------------------------------------
@@ -88,6 +89,7 @@ defmodule ManagedMonitor do
     GenServer.start_link(__MODULE__, opts, gen_opts ++ name_opt)
   end
 
+  @doc "Registers `service_name` with `check_func` every `interval_ms`. Returns `:ok`."
   @spec register(
           GenServer.server(),
           service_name(),
@@ -158,7 +160,8 @@ defmodule ManagedMonitor do
         last_check_at: nil,
         consecutive_failures: 0,
         notified_down: false,
-        maintenance_ends_at: nil
+        maintenance_ends_at: nil,
+        maintenance_timer: nil
       }
 
       schedule_check(name, interval_ms)
@@ -200,6 +203,11 @@ defmodule ManagedMonitor do
         {:reply, {:error, :not_found}, state}
 
       {:ok, %{mode: mode} = service} when mode in [:paused, :maintenance] ->
+        # A manual resume from maintenance must kill the pending expiry, or a
+        # LATER maintenance session would be ended early by this session's
+        # leftover timer (same resurrection class as deregister's — see
+        # handle_call({:deregister, ...})).
+        service = cancel_maintenance_timer(service, name)
         new_service = %{service | mode: :active, maintenance_ends_at: nil}
         {:reply, :ok, put_in(state.services[name], new_service)}
 
@@ -217,9 +225,21 @@ defmodule ManagedMonitor do
         now = state.clock.()
         ends_at = now + duration_ms
 
-        Process.send_after(self(), {:maintenance_end, name}, duration_ms)
+        # Re-entering maintenance REPLACES the duration: the previous session's
+        # expiry must never fire, or extending a window (say 100ms -> 10s)
+        # would end at the OLD deadline with a spurious :maintenance_ended
+        # (probe-proven 2026-07-15). Cancel the tracked timer AND drain an
+        # already-queued expiry before arming the new one.
+        service = cancel_maintenance_timer(service, name)
+        timer = Process.send_after(self(), {:maintenance_end, name}, duration_ms)
 
-        new_service = %{service | mode: :maintenance, maintenance_ends_at: ends_at}
+        new_service = %{
+          service
+          | mode: :maintenance,
+            maintenance_ends_at: ends_at,
+            maintenance_timer: timer
+        }
+
         new_state = put_in(state.services[name], new_service)
 
         fire_notify(state.notify, name, :maintenance_started, duration_ms)
@@ -228,8 +248,7 @@ defmodule ManagedMonitor do
     end
   end
 
-  @impl GenServer
-  def handle_info(msg, state) do
+  def handle_info({:check, name}, state) do
     # TODO
   end
 
@@ -296,6 +315,27 @@ defmodule ManagedMonitor do
   end
 
   @spec schedule_check(service_name(), pos_integer()) :: reference()
+  # Cancel a service's pending maintenance-expiry timer AND drain an
+  # already-queued {:maintenance_end, name} for it. Cancelling alone is not
+  # enough: a timer that fired before the cancel has its message queued BEHIND
+  # the current call, and it would end the wrong (newer) maintenance session
+  # (`after 0` cannot block: the message is either queued by now or was never
+  # sent — the same argument as deregister's drain).
+  @spec cancel_maintenance_timer(service(), service_name()) :: service()
+  defp cancel_maintenance_timer(%{maintenance_timer: nil} = service, _name), do: service
+
+  defp cancel_maintenance_timer(%{maintenance_timer: timer} = service, name) do
+    Process.cancel_timer(timer)
+
+    receive do
+      {:maintenance_end, ^name} -> :ok
+    after
+      0 -> :ok
+    end
+
+    %{service | maintenance_timer: nil}
+  end
+
   defp schedule_check(name, interval_ms) do
     Process.send_after(self(), {:check, name}, interval_ms)
   end
