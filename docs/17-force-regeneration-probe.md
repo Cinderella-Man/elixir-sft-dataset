@@ -109,6 +109,66 @@ prove that, which is the point.)
 
 ---
 
+## 1b. File-by-file: retrofitted 015_001 (git HEAD) vs regenerated (working tree)
+
+Same task id, same catalog idea, one day apart. `git diff -- tasks/015_001_heartbeat_monitor_01`.
+
+### prompt.md — 18 lines → 104 lines. The loop's biggest genuine improvement.
+
+| dimension | OLD (born ~07-05 era, enriched in catch-up) | NEW (today's loop) |
+|---|---|---|
+| register | "Write me an Elixir GenServer module called `Monitor`…" | IDENTICAL opener (row 21 — monoculture survives regeneration verbatim) |
+| structure | one paragraph per function, no headings | titled + 5 sections (Public API / Running a check / Transitions / Manual trigger / Robustness), bulleted contracts |
+| behavioral precision | prose; edge cases implied | near-formal: transition rules given as (status, count, threshold) case analysis; "exactly once per transition", consecutive-reset worked example |
+| determinism seam | injected `:clock` (used only for `last_check_at` — scheduling still real timers); `{:check, name}` tagged sends implied | documented `{:check, name}` manual trigger + `:infinity` intervals — the S9 documents-or-removes rule made constructive |
+| API surface | RICHER: `deregister/2`, `:pending` initial state, `status_info` map (`last_check_at`, `consecutive_failures`), `{:error, :already_registered}` duplicate rule | SIMPLER: binary `:up`/`:down`, replace-on-re-register, `:threshold`/`:notify` in opts, no deregister at all |
+
+The precision jump is real good news: the blind Step-B solve graded green on
+the first attempt, and the harness needed no prompt-side repair. The API
+simplification is content variance, not a gate failure — the catalog idea
+mandates neither `deregister` nor `:pending` — but it shows the loop renders
+the EASIER reading of an idea when nothing pushes difficulty (T1.4(d)
+difficulty metadata / template push is the lever).
+
+### solution.ex — 292 lines → 197. Timer hygiene regressed to pre-F12 state.
+
+The OLD module (post-F12) tracks every service's live timer ref, cancels it on
+deregister AND drains the already-queued `{:check, name}` message, and replaces
+the ref on every fire — with comments explaining exactly the resurrection bug
+that forced it. The NEW module discards the `Process.send_after/3` ref
+entirely (`schedule/2`'s return value is ignored by every caller), so nothing
+can ever be cancelled; its replace-on-re-register semantics leak the previous
+chain (F17-1, probe-proven 2.1× check rate). One family, one day: the retrofit
+knows WHY (its comments carry the scar), the regeneration doesn't (no gate
+carries the knowledge — rule 7's whole argument).
+
+Both are house-style clean (@moduledoc/@doc/@spec everywhere, zero chatter);
+the new one even adds @typedoc. Style gates cannot see semantics.
+
+### test_harness.exs — 464 lines / 21 tests → 239 lines / 12 tests.
+
+Techniques are comparably good — the OLD uses three named Agent helpers
+(fake Clock, notification collector, controllable check fn); the NEW's
+`script/1` sequenced check function is arguably cleaner. Both are S9-clean,
+sleep-free (bounded `assert_receive`/`refute_receive` only), deterministic-first.
+
+The decisive difference is the retrofit's fingerprint — the OLD harness ends
+with a "Real timer-driven scheduling" section (first check only AFTER the
+interval; timer re-arms so checks repeat; deregistering stops timer-driven
+checks) plus stale-message and re-register-after-deregister tests. Those are
+exactly the close_gaps/F12-era pins, and they are exactly the tests whose NEW
+analogs are missing (F17-2 items 3–5). The one NEW automatic-timer test
+(threshold 1, 20 ms interval) cannot distinguish "fires once" from "repeats",
+nor "immediately" from "after one interval". A NEW-harness analog of the OLD
+timer trio would have caught F17-1 at accept time.
+
+Net: the loop TODAY writes better prompts than the July-era loop, equally
+styled solutions and harnesses, and ~60% of the retrofitted harness depth —
+with the missing 40% concentrated precisely in the scheduling/lifecycle pins
+the catch-up campaign paid a month to learn matter.
+
+---
+
 ## 2. Variations / FIM / derived shapes — PENDING
 
 The run continues past the base (variations → FIM → wt/tfim/bugfix/adapt +
