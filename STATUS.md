@@ -13,36 +13,25 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**T1.9 (Kamil 2026-07-15 midday): gate transparency + `--force` regeneration
-probe on family 015.** Three parts, in order:
-  - [x] (a) BUILD (done, committed, 376 tests green): verbose gate logging — every accept-path gate prints
-        "gate [k/N] <name> ... PASS/FAIL/SKIPPED (<detail>)" for every shape
-        (base/variation/fim/wtest/tfim/bugfix/adapt), house-style sub-checks
-        listed one by one, dark gates (GEN_BLIND_RESCREEN, GEN_SEMANTIC_FLOOR)
-        print SKIPPED so missing enforcement is visible in every run; each
-        verdict also ledgered to `logs/gates.jsonl`.
-  - [x] (b) BUILD (done, committed; unit + throwaway-git tests): `scripts/generate.exs <n> --force` — deletes family `n`
-        (base+variations+FIM dirs, `wt_/tfim_/bugfix_/adapt_/repair_` children,
-        the family's `### Task n - Vx` entries in tasks.md, its
-        `logs/errors/` + `logs/quarantine/` blockers), refusing unless every
-        target is git-clean (recoverability), then lets the normal loop
-        regenerate. GEN_DRY_RUN=1 prints the deletion list without deleting.
-  - [ ] (c) EXPERIMENT — **RUNNING since 2026-07-15 ~midday: pid 2778624,
-        log `logs/force_015.log`** (gate verdicts also in `logs/gates.jsonl`,
-        per-unit logs `logs/015_*.log`, ledger `logs/runs.jsonl`). Expected
-        result: family 15 fully regenerated (base + 3 variations + FIM +
-        wt/tfim/bugfix/adapt) with every gate verdict printed and ledgered.
-        The wipe already happened (75 dirs + 3 tasks.md entries — old family
-        recoverable via `git checkout -- tasks tasks/tasks.md`). Then:
-        `--force` family 15 (Heartbeat Monitor — freshest
-        retrofit, F12 closed 07-15), detached + monitored; then read the git
-        diff old-vs-new in detail and map every quality delta to a parity-table
-        row (docs/12 §5.5) → new gate work items per rule 7. The regenerated
-        family is a PROBE: after analysis, restore the retrofitted family
-        (`git checkout -- tasks/ logs/…`) unless Kamil decides otherwise.
-        Relaunch command: `scripts/run_detached.sh logs/force_015.log mix run
-        scripts/generate.exs 15 --force` (idempotent: force wipe is a no-op
-        once dirs are gone; the loop resumes missing units).
+**T1.9 (Kamil 2026-07-15): gate transparency + `--force` regeneration probe.**
+Builds (a) verbose gate logging and (b) `generate.exs <n> --force` are DONE →
+docs/15 on close. Probe (c) RAN TO COMPLETION (75 units, ~50 min, 27 calls,
+all free instruments green) and the analysis is in **docs/17** (findings
+F17-1..10, candidate gates G-A..G-E). Remaining, in order:
+  - [ ] **KAMIL: read docs/17 + inspect the live diff** (`git status` shows
+        the old family deleted + new family untracked; the regenerated family
+        is also archived at `logs/probe_015_regenerated_2026-07-15.tar.gz`).
+  - [ ] **RESTORE the retrofitted family before any export/training use**
+        (probe data carries the probe-proven F17-1 leak):
+        `git checkout -- tasks tasks/tasks.md` (then `git status` must be
+        clean). docs/17 §4 records the disposition.
+  - [ ] **Rule-7 Task-B decisions (docs/17 §3):** G-A promise-coverage judge
+        (build? report-only first?), G-B lifecycle checklist item (T1.4),
+        G-C = T1.4 as designed, G-D = the two dark-flag sign-offs already in
+        "WAITING ON KAMIL" (+ scope: rescreen bases only vs any repaired
+        accept — F17-9), G-E cutover instruments unchanged.
+  - [ ] On close: move T1.9 record to docs/15; keep `--force` + GateLog as
+        permanent loop features (documented in scripts/generate.exs header).
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-15 early morning)

@@ -226,30 +226,84 @@ whether the re-screen covers "bases only" or "any repaired accept" — the
 §5.2.2 entailment judge over repair-time harness diffs (row 11) is the other
 instrument aimed at this window.
 
-## 2b. FIM / derived shapes — PENDING
+## 2b. FIM / derived shapes — COMPLETE (run finished 13:57, ~50 min wall)
 
-Findings land here when the run exits.
+Full-run totals (this run's `runs.jsonl` window; every verdict also in
+`logs/gates.jsonl`, 339 rows): **75 accepted** — 1 base + 3 variations +
+12 fim + 40 tfim + 4 wtest + 12 bugfix + 3 adapt — with 8 in-flight
+rejections (3 tfim, 5 bugfix), 27 Opus calls, ~152k output tokens. The family
+converged to EXACTLY the old family's shape counts (16/4/40/12/3) — the caps
+drive corpus shape, as designed. Repair minting correctly declined to mint
+from this run's one repair chain (a style-only fix is not a bug→fix pair).
 
-## 3. Candidate generator gates (rule 7 Task-B list — to be finalized)
+Spot checks (rule 8, by eye): the bugfix pairs carry real captured failing
+reports that match their seeded one-line bugs; adapt pairs embed the base
+gold verbatim and pass the RED gate (base gold red under every variation
+harness); wt/tfim embeds match their parents byte-for-byte.
 
-From the base unit alone:
+### F17-10 (the cascade in numbers): one bad root became 20 defective-context children.
 
-- **G-A (from F17-1/F17-2): accept-time promise-coverage judge** — one LLM
-  call per accepted base/variation: "list every behavioral promise in
-  prompt.md; for each, name the harness test that exercises it; output the
-  uncovered ones". Uncovered ≠ auto-reject necessarily — start report-only,
-  then decide a threshold. This is the hard version of parity row 13, and it
-  would have flagged the exact hole F17-1 shipped through (re-registration
-  documented, untested).
-- **G-B (from F17-1): a timer/resource-hygiene checklist item in T1.4's
-  harness-rule constant** — any prompt promising replace/cancel/deregister
-  semantics for scheduled work must carry a test that pins the old schedule
-  is dead (the F12/F17-1 class, now seen twice in one family).
-- **G-C (from F17-3/F17-4): T1.4 template upgrades** (exemplar rotation,
-  doctest+property request) — already designed in docs/12 §5.3, this probe
-  adds fresh evidence they're load-bearing.
-- **G-D: flip decisions** — rows 10/12 are BUILT and dark; the probe shows
-  what "dark" costs in the accept log itself. Kamil's sign-off is the only
-  remaining step for both.
+The base's leaky module is now embedded verbatim in: 3 fim children (as the
+skeleton context), 10 tfim children (module under test), 1 wt gold
+(module-to-test), 3 bugfix golds (the "fixed" side STILL carries the
+unrelated latent leak), and 3 adapt starting points. None of the derived
+gates re-judge parent semantics (by design — they inherit); so root quality
+is a MULTIPLIER: every semantic defect that slips the root gates ships ~20
+training artifacts. The accept path for roots is where all marginal gate
+budget should go.
 
-*(This list is finalized in §4 after the full family lands.)*
+### The free instruments all pass the regenerated family — and that is the point.
+
+`validate` (perfect) / `--mutants` / `--fim`: exit 0 across all 75 units.
+Format gate: 0 deviating. tfim/bugfix/adapt embed-drift dry runs: clean
+(row 19 holds for fresh mints). The deterministic suite is honest AND
+insufficient: everything it checks, the loop already produces; everything
+this probe caught (F17-1, F17-2, F17-7, F17-8), it structurally cannot see.
+The docs/12 §5.5 cutover instruments (semantic_review + rubric_judge on new
+roots) are the only listed checks that could have flagged the leak — they
+are exactly the two rows (13/14) still reading NOT ENFORCED.
+
+## 3. Final candidate generator gates (rule 7 Task-B list)
+
+Ranked by (evidence strength × cheapness):
+
+- **G-A — accept-time promise-coverage judge (rows 13/16; from F17-1/2/7).**
+  One LLM call per accepted ROOT (base/variation only — F17-10 says roots are
+  the multiplier): "extract every behavioral promise from prompt.md; name the
+  harness test exercising each; list the uncovered". Start report-only into a
+  ledger; flip to reject-on-uncovered once the false-positive rate is known.
+  Would have caught the exact holes F17-1 and F17-7 shipped through. Cost:
+  ~1 call/root ≈ the blind re-screen's budget.
+- **G-B — lifecycle/timer checklist item in T1.4's shared harness rule
+  (row 17; from F17-1/6).** Any prompt promising replace/cancel/deregister
+  semantics over scheduled work must require a test pinning the old schedule
+  dead. Free, template-side; raises the hit rate G-A then enforces.
+- **G-C — T1.4 as designed (rows 21 + doctests; from F17-3/4).** Exemplar
+  rotation + doctest/property request + difficulty push (F17-5/8's drift is
+  the new evidence for §5.3(d)).
+- **G-D — flip the two dark flags (rows 10/12).** Built, tested, SKIPPED
+  lines now visible in every accept log. Sign-off is the only remaining step.
+  T1.1 scope question from F17-9: bases only, or any repaired accept
+  (variations included)?
+- **G-E — cutover acceptance test unchanged (docs/12 §5.5 bottom).** This
+  probe ran only the free half. The first REAL Phase-3 batch still needs the
+  LLM instruments (semantic_review every root + rubric_judge two-family) —
+  the probe demonstrates they are load-bearing, not ceremonial.
+
+## 4. Bottom line
+
+At today's bar the loop produces: better prompts than the retrofitted era
+(near-formal contracts, documented determinism seams, blind-solvable
+attempt-1), equally styled code, fully enforced deterministic gates (every
+row 1–9/18/19 verdict printed and ledgered) — and **semantic quality that is
+still luck**: 1 probe-proven lifecycle bug in 4 roots, a template promise
+that is never tested (4/4), and a measurable difficulty drift toward easier
+designs. Phase 3 at "no second month" quality needs G-A/G-B/G-C landed and
+G-D flipped BEFORE the throttle opens; the parity table's remaining rows are
+precisely where the probe's defects went through.
+
+**Probe disposition:** the regenerated family is archived at
+`logs/probe_015_regenerated_2026-07-15.tar.gz` (237 files). The retrofitted
+family is restored with `git checkout -- tasks tasks/tasks.md` once Kamil has
+finished inspecting the live diff. The probe data must NOT be exported for
+training (F17-1 is known-defective); restore before the next export.
