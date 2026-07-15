@@ -9,6 +9,43 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-15 (morning block, Kamil's green light) — T2.4-T CLOSED, F12
+  CLOSED, parity rows 7+12 built, scripts under test.** The condensed
+  ledger (full detail in commits 3f801b7e..97d6e7b4 and the two scars):
+  - **T2.4-T (all 5 sonnet rubric flags resolved).** Gold defects fixed &
+    probe-proven: 037_003 (duplicate fields broke the lossless round trip
+    → `Enum.uniq`), 043_001 (raw player_id in a match-spec head → `:_`
+    matched as a wildcard and select_replace raised badarg → bind + `=:=`
+    guard + key-var rebuild; the probe caught that select_replace demands
+    a provably-unchanged key), 105_002 (unguarded `cancel_timer` → stale
+    trailing fire → per-burst token match). Harness pins applied through
+    close_gaps' full gate suite: 104_003 zero-timeout (0.72→0.78),
+    043_001 ties + special-atom ids, 037_003 duplicate-fields — the last
+    after TWO independent blind solvers proved the unconditional promise
+    alone doesn't elicit dedup, so the prompt now STATES the rule
+    (re-screen GREEN; S6 arbitration working exactly as designed). All 9+3
+    bugfix children of the fixed golds deleted + reminted ACCEPTED.
+  - **F12-A (015_001):** deregister's @doc promised "cancels any pending
+    check" while the code only discarded-if-absent — re-registration
+    resurrected the old timer chain (double cadence, doubled failure
+    counting). Fixed with tracked timer refs + cancel + `after 0` drain;
+    probe-proven; full cascade. F12-B (doc claims need pins) = T1.4
+    evidence.
+  - **Loop parity (CONTEXT rule 0, docs/12 §5.5):** row 7 ENFORCED — the
+    temp-path rule is now an accept-time gate in quality_shortfall; row 12
+    BUILT — accept-time semantic kill floor behind `GEN_SEMANTIC_FLOOR`
+    (nil=off; ledgers every measurement; repair report NAMES survivors).
+  - **Scripts under test (Kamil's ask):** load-guard pattern + 17 unit
+    tests (exporter split/family/shape-totality, rubric_judge agreement/
+    contract/resume, close_gaps resume keys), adapt drift gate
+    `--self-test` in CI, keep-vs-delete disposition table in docs/14.
+    close_gaps resume re-keyed to (harness sha, findings digest) — a
+    live defect: re-seeded families read DONE forever. close_gaps +
+    strengthen now cascade adapt_ harness copies (hole caught by the
+    pre-push drift gate). Suite 327 → **352 green**. Scars 12 (wrapper-pid
+    false-negative) and 13 (no factory edits while a mix-run tool is in
+    flight) recorded in docs/14.
+
 - **2026-07-15 (early) — T2.4 MEASUREMENT CLOSED: two-family rubric judge
   over 40 stratified passing roots — ZERO both-family triage findings.**
   Tool: `scripts/rubric_judge.exs` (docs/12 §6.4 OpenCodeInstruct rubric —

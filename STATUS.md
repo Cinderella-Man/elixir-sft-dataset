@@ -13,18 +13,9 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**T2.4-T tail: 037_003 duplicate-fields harness pin, attempt 4** (launched
-2026-07-15 ~07:1x UTC; 043_001 + 104_003 already CLOSED & pushed).
-- pid `logs/close_gaps_t24t4.pid` · log `logs/close_gaps_t24t4.log`
-- history: attempts 1-2 blind-REJECTED (two independent solvers missed the
-  duplicate-fields inference → prompt now STATES the rule, re-screen
-  GREEN); attempt 3 passed ALL gates but reverted at apply because lib/
-  was being edited mid-run (docs/14 scar 13 — new). This attempt runs on a
-  clean compiled tree.
-- idempotent relaunch:
-  `scripts/run_detached.sh logs/close_gaps_t24t4.log mix run scripts/close_gaps.exs -- --go --only "037_003*"`
-- ⚠️ NEVER unscoped; ⚠️ NO lib/scripts edits while it runs (scar 13).
-(Docker note: `elixir_benchmark_pg` is UP on this machine since the sweep.)
+**Nothing.** (Morning block closed T2.4-T in full, F12, parity rows 7+12,
+and put the scripts under test — docs/15. Registry reads 0 pending
+everywhere. Docker note: `elixir_benchmark_pg` is UP on this machine.)
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-15 early morning)
@@ -32,12 +23,13 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 1. **Kamil's five decisions** (section below) — they gate Phase 3, T1.1,
    T1.6 (and TD.3 behind it), the nightly timer, and the T2.2 full-pass
    question. Nothing else blocks them.
-2. **T2.4-T** — hand-triage the 5 sonnet-only rubric flags (register below;
-   FREE, careful reading, rule 10).
+2. **T-gates** — self-tests for the three remaining resync drift gates
+   (tfim/bugfix/wt; the adapt gate has one). FREE, register below.
 3. **T1.4** template upgrades land WITH the Phase 3 restart, not before.
 4. Bigger builds: the **TD.2–TD.4** decisions (TD.1 closed — docs/15).
 
-*(F10-A closed 07-14 late; T2.4 measurement closed 07-15 — docs/15.)*
+*(F10-A + T2.4 measurement + T2.4-T (all 5 flags) + F12 + T1.7 + T1.8
+closed 07-14/15 — docs/15.)*
 
 ## 📋 QUALITY TODO REGISTER (2026-07-13 — why / what / how / cost per item)
 
@@ -53,28 +45,11 @@ committed immediately (one solved item = one commit).
 
 ### 🔎 OPEN FINDINGS — two tasks each
 
-**F12 — 015_001 gold defect, VERIFIED REAL 2026-07-15 (from T2.4-T's
-sonnet flag; rule-10 hand-checked against the code): `deregister/2`'s
-@doc promises "cancels any pending check", but the implementation only
-discards-if-absent (solution.ex L167-172 comment claims discarding
-suffices). Re-registering the same service name before the stale
-`{:check, name}` arrives RESURRECTS the old timer chain: handle_info
-finds the NEW service, checks it early, and re-arms — TWO permanent
-check chains per service, 2× failure counting, premature :down. The
-lying-@doc class (038_001/019_001 precedent).**
-- F12-A (fix data): store the timer ref per service; `deregister` calls
-  `Process.cancel_timer(ref)` AND drains a possibly-queued
-  `{:check, name}` with a `receive ... after 0` (safe inside the
-  handler — the message, if fired, is already behind this call);
-  handle_info re-arm stores the fresh ref each cycle. Public API and the
-  `{:check, name}` message shape unchanged. Then the full cascade
-  (fim/tfim/wt/adapt/bugfix — the 037_003/043_001/105_002 playbook,
-  see those commits) + an add-only deregister→re-register test seeded
-  through close_gaps. DEFERRED to fresh eyes: the fix touches the
-  hot handle_info path and deserves an unhurried review.
-- F12-B (gate generator): third live case for T1.4's checklist — docs
-  must be machine-checkable against behavior (with T1.6 Dialyzer as the
-  spec half; @doc claims like "cancels" need a harness pin).
+**F12 — 015_001 lying deregister @doc + resurrectable check chain.**
+- F12-A (fix data): DONE → docs/15 (07-15: tracked timer refs + cancel +
+  drain, probe-proven, full cascade, bugfix children reminted).
+- F12-B (gate generator): doc-prose claims need harness pins — T1.4
+  checklist evidence (with T1.6 Dialyzer as the @spec half). OPEN.
 
 **F10 — 018_003 harness gap: prompt L20 promises `archived_at` is "a
 `DateTime` in UTC truncated to the second"; the harness pinned neither
@@ -132,18 +107,6 @@ and a CI check refusing accepts lacking the evidence row.]**
 - HOW: all in `lib/gen_task/prompts.ex`; rationale in docs/12 §5.3.
 
 
-**T1.7 — Port the temp-path collision rule into the ACCEPT path. [FREE, no
-decision — docs/12 §5.5 row 7]** Today `lint_temp_paths` runs only in
-CI/pre-push: the loop can accept a harness with the 102_002 flake class and
-CI catches it AFTER. Add the same check to `Evaluator.quality_shortfall`
-(where the other S9 lints already live) + a unit test.
-
-**T1.8 — Semantic-mutant kill FLOOR in the accept path, behind a flag.
-[FREE build; Kamil sets the number — docs/12 §5.5 row 12, §6.6 says
-promotion from report to floor is justified now the tail is fixed]**
-Observable-mutant basis (the S8 three-way framework); `GEN_SEMANTIC_FLOOR=
-0.5` style knob, default off until the sign-off.
-
 **T-gates — self-tests for the three remaining resync drift gates
 (tfim/bugfix/wt). [FREE — docs/12 §5.5 row 19]** The adapt gate got the
 plant-detect-heal `--self-test` (in CI); the other three are trusted
@@ -159,25 +122,6 @@ change; then FREE (PLT build + weekly CI)]**
 
 
 ### Tier 2 — raise EXISTING corpus quality (evidence says more is there)
-
-
-**T2.4-T — hand-triage the 5 sonnet-only rubric flags (rule 10: verify
-against the artifacts before ANY edit). [FREE, careful reading; the
-measurement itself is CLOSED → docs/15 with ZERO both-family triage
-roots.]** Sonnet (the stricter family) scored ≤3 where opus scored ≥4 on:
-- 015_001 (stale `{:check, name}` timer vs re-registration race — claims
-  the old registration's timer can misfire against the new one)
-- 037_003 (fold over `fields` re-reads mutated `rec` → duplicate field
-  atoms double-tokenize; global reverse map not scoped per field)
-- 043_001 (raw `player_id` term embedded in an ETS match spec head; tie
-  ranks never tested with actual ties)
-- 104_003 (`timeout: 0` immediate-return branch never separately pinned)
-- 105_002 (`:fire` carries key without timer ref; `cancel_timer` return
-  unchecked → stale-fire race)
-Each claim cites concrete mechanics — exactly the tier rule 10 exists for:
-an LLM verdict is a hypothesis. If any verifies REAL, it becomes a two-tier
-finding (rule 7).
-
 
 
 **T2.6 — Prompt-register monotony rewrite (improvement round #2 — do NOT
