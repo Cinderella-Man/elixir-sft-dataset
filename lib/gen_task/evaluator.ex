@@ -448,6 +448,12 @@ defmodule GenTask.Evaluator do
       "test_harness.exs pins an exact exception message in `assert_raise Mod, \"…\"` " <>
         "(#{exact_raise}) — assert the exception TYPE only, not the message text"
     )
+    |> add_if(
+      shared_temp_violation?(harness),
+      "test_harness.exs builds a path in a SHARED temp directory without `System.pid()` — " <>
+        "parallel evals run one BEAM per task and `System.unique_integer/1` alone is unique " <>
+        "only within one BEAM (the 102_002 flake class); include `System.pid()` in the path"
+    )
     # Documents-or-removes advisories — fire only when the prompt does not document
     # them. The repair contract forbids prompt.md edits, so in-loop the reachable fix
     # is removing the hidden dependency; an author who WANTS the contract must write it
@@ -466,6 +472,20 @@ defmodule GenTask.Evaluator do
         "documents — rework the harness to drive that behavior through the documented " <>
         "public API instead; prompt.md may not be edited during repair"
     )
+  end
+
+  # Shared-temp-path rule (docs/14 §5.0b; docs/12 §5.5 row 7): any harness path
+  # under System.tmp_dir!()/"/tmp" must be unique per OS PROCESS. Deliberately-
+  # missing paths are exempt (a collision is harmless) unless a SQLite/db file
+  # is involved. Mirrors scripts/lint_temp_paths.exs, the corpus-wide CI gate —
+  # this copy makes the rule an ACCEPT-time gate so the loop can never ship the
+  # class in the first place.
+  defp shared_temp_violation?(harness) do
+    sqlite? = String.contains?(harness, ".sqlite") or String.contains?(harness, ".db")
+
+    Regex.match?(~r/System\.tmp_dir!?\(\)|"\/tmp/, harness) and
+      not (Regex.match?(~r/does_not_exist|no_such|missing_file/, harness) and not sqlite?) and
+      not String.contains?(harness, "System.pid()")
   end
 
   defp count(harness, re), do: length(Regex.scan(re, harness))

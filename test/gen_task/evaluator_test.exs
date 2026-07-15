@@ -120,6 +120,24 @@ defmodule GenTask.EvaluatorTest do
       assert Evaluator.quality_shortfall(@full) == nil
     end
 
+    test "flags a shared temp path without System.pid() (the 102_002 flake class)" do
+      harness = ~s|path = Path.join(System.tmp_dir!(), "f_#{System.unique_integer([:positive])}")|
+      shortfall = Evaluator.quality_shortfall(@full, %{"test_harness.exs" => harness})
+      assert shortfall =~ "SHARED temp directory"
+
+      with_pid = harness <> ~s| <> System.pid()|
+      assert Evaluator.quality_shortfall(@full, %{"test_harness.exs" => with_pid}) == nil
+    end
+
+    test "deliberately-missing temp paths are exempt — unless a db file is involved" do
+      missing = ~s|path = "/tmp/does_not_exist_#{:rand.uniform(999)}.csv"|
+      assert Evaluator.quality_shortfall(@full, %{"test_harness.exs" => missing}) == nil
+
+      sqlite = ~s|db = "/tmp/does_not_exist_#{:rand.uniform(999)}.sqlite3"|
+      shortfall = Evaluator.quality_shortfall(@full, %{"test_harness.exs" => sqlite})
+      assert shortfall =~ "SHARED temp directory"
+    end
+
     test "flags a harness with fewer than max(3, public_fn_count) tests (docs/12 item 3)" do
       # 2 tests, 4 public functions → floor is max(3, 4) = 4.
       json =
