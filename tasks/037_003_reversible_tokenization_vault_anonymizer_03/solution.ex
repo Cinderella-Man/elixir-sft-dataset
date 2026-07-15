@@ -1,4 +1,9 @@
   def tokenize(records, fields) when is_list(records) and is_list(fields) do
+    # A duplicate field atom must behave like a single mention: a second pass
+    # over an already-tokenized field would tokenize the token itself, and the
+    # round trip through detokenize/2 would no longer be lossless.
+    fields = Enum.uniq(fields)
+
     {reversed, vault} =
       Enum.reduce(records, {[], new_vault()}, fn record, {acc, vault} ->
         {record2, vault2} =
