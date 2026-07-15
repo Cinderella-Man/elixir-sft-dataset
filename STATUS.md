@@ -13,10 +13,13 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**Nothing.** (Overnight 07-14→15: TD.1 closed, T1.1 dark-built, T2.4
-measurement closed, full-corpus sweep ALL PERFECT — docs/15. Note: the
-`elixir_benchmark_pg` Docker container was started per the documented
-remedy and is UP on this machine.)
+**Bugfix remint after the T2.4-T gold fixes** (launched 2026-07-15
+~04:4x UTC): 6 bugfix children of 037_003 + 043_001 were deleted because
+their golds must be ≡ the (now fixed) parent golds; the standard backfill
+remints them deterministically. pid `logs/remint_bugfix.pid` · log
+`logs/remint_bugfix.log`. Relaunch:
+`GEN_ONLY=backfill scripts/run_detached.sh logs/remint_bugfix.log mix run scripts/generate.exs`.
+(Docker note: `elixir_benchmark_pg` is UP on this machine since the sweep.)
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-15 early morning)
