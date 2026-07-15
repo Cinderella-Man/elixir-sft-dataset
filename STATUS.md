@@ -13,13 +13,17 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**Bugfix remint after the T2.4-T gold fixes** (launched 2026-07-15
-~04:4x UTC): 6 bugfix children of 037_003 + 043_001 were deleted because
-their golds must be ≡ the (now fixed) parent golds; the standard backfill
-remints them deterministically. pid `logs/remint_bugfix.pid` · log
-`logs/remint_bugfix.log`. Relaunch:
-`GEN_ONLY=backfill scripts/run_detached.sh logs/remint_bugfix.log mix run scripts/generate.exs`.
-(Docker note: `elixir_benchmark_pg` is UP on this machine since the sweep.)
+**T2.4-T close_gaps run: 3 hand-seeded harness gaps** (launched 2026-07-15
+~05:4x UTC — 037_003 duplicate-fields round trip, 043_001 ties +
+special-atom ids, 104_003 zero-timeout; all hand-verified, golds already
+fixed & committed).
+- pid `logs/close_gaps_t24t.pid` · log `logs/close_gaps_t24t.log` · rows →
+  `logs/close_gaps.jsonl`
+- idempotent relaunch (resume now keyed to harness sha + findings digest):
+  `scripts/run_detached.sh logs/close_gaps_t24t.log mix run scripts/close_gaps.exs -- --go --only "037_003*,043_001*,104_003*"`
+- ⚠️ still NEVER unscoped (hand-closed phantoms — tool header).
+(All 9 bugfix children of the three fixed golds reminted ACCEPTED.
+Docker note: `elixir_benchmark_pg` is UP on this machine since the sweep.)
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-15 early morning)
