@@ -476,6 +476,15 @@ defmodule CloseGaps do
 
     fam = id |> String.split("_") |> Enum.take(2) |> Enum.join("_")
 
+    # adapt_ dirs copy a VARIATION's harness — a variation's harness edit must
+    # cascade there too (the pre-push drift gate caught this hole 2026-07-15).
+    {_out, _} =
+      System.cmd(
+        "mix",
+        ["run", "scripts/resync_adapt_embeds.exs", "--", "--only", "*#{fam}*", "--apply"],
+        stderr_to_stdout: true
+      )
+
     {out, status} =
       System.cmd(
         "mix",
