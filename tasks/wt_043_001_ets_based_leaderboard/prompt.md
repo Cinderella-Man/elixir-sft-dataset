@@ -114,12 +114,17 @@ defmodule Leaderboard do
         # on the ETS level, so no GenServer is needed.
         match_spec = [
           {
-            # Match pattern: {player_id, OldScore}
-            {player_id, :"$1"},
-            # Guard: new score > existing score
-            [{:>, score, :"$1"}],
-            # Action: replace the whole object with the new record
-            [{:const, {player_id, score}}]
+            # Match pattern: bind key and score as variables. Embedding the raw
+            # player_id in the head would let match-spec-significant atoms
+            # (:_, :"$1", …) match as wildcards instead of as themselves — and
+            # the contract allows ANY term as a player id.
+            {:"$1", :"$2"},
+            # Guard: exactly this key (as a literal term) AND a higher score.
+            [{:andalso, {:"=:=", :"$1", {:const, player_id}}, {:>, score, :"$2"}}],
+            # Action: rebuild the record around the BOUND key variable —
+            # select_replace statically requires the key position to be
+            # provably unchanged, so :"$1" (not a literal copy) must stay.
+            [{{:"$1", {:const, score}}}]
           }
         ]
 
