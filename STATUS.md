@@ -198,8 +198,6 @@ against docs/16 §4's advisory weights (test_fim already down-weighted to
 1. *(resolved 07-15 by Kamil's default-on directive: the blind re-screen
    and promise audit run always; the semantic floor runs at 0.6 — tune the
    NUMBER if you want a different bar.)*
-2. **docs/12 §4.2 sign-offs, remaining halves** — spot-review scope and
-   prompt-monotony scope (the semantic-floor half is now the 0.6 default).
 3. **Nightly-sweep systemd timer install** — 4 commands, docs/12 §4.1.10.
 4. **T1.6 Dialyzer** — one `mix.exs` + lockfile change. (Two more live
    would-have-caught cases from today's T2.2 batch: 038_001's undocumented
@@ -210,7 +208,10 @@ against docs/16 §4's advisory weights (test_fim already down-weighted to
 
 New base generation is **paused**. Remaining exit conditions for this round:
 
-- [ ] §4.2 / §5.2 decisions signed off (above)
+- [x] §4.2 / §5.2 decisions signed off (last two halves 2026-07-16 via
+      Kamil's "do everything" delegation — annotations in docs/12 §4.2
+      items 2 and 4; execution of the ~20-seed spot-review tranche is
+      queued AFTER the retro-audit sweep)
 - [ ] **LOOP PARITY (docs/12 §5.5 — Kamil 2026-07-15: "new data must be
       born at the bar we are retrofitting"): every row of the parity table
       reads ENFORCED or is explicitly waived by Kamil.** Free builds toward

@@ -227,6 +227,12 @@ everything else can run in parallel with it (Kamil's call, as agreed in docs/11)
    concentrated in the April era. Recommendation: run one more tranche of
    ~20 April-era seeds after §4.1.3/4.1.4 land (the leaked-chatter grep will
    have cleared the mechanical part; the review then targets meaning).
+   **✍️ SIGNED OFF 2026-07-16 (Kamil delegated: "do everything"): scope =
+   one ~20-seed April-era tranche, run AFTER the T1.11 retro-audit sweep
+   completes — stratify it against the sweep's ledger (prefer roots whose
+   audit found nothing, so the tranche probes what the machinery can NOT
+   see, per §5.5's row-14 backstop role). This tranche doubles as the T2.2
+   residue check.**
 3. **Weak-assertion tail, tranche 2** (population #3): the 19 families below
    0.5 family-level semantic kill, using the R10 method (audit survivors, add
    discriminating tests, never weaken, cascade, re-screen). ~$50–100 estimated.
@@ -237,6 +243,11 @@ everything else can run in parallel with it (Kamil's call, as agreed in docs/11)
    (§7.4), because it touches 2,700 prompts and deserves its own tool + ledger
    + screen protocol. Decide now only whether Phase 3 generation should start
    varying registers for NEW tasks (cheap template change, §5.3 item 3).
+   **✍️ SIGNED OFF 2026-07-16 (Kamil delegated: "do everything"): as
+   recommended — T2.6 proper is improvement round #2, strictly after steady
+   state. The Phase-3 half is already LANDED (T1.4c vary-the-register +
+   3-exemplar rotation, 2026-07-15), so new generation stops growing the
+   debt now.**
 5. **`:sys.get_state` residue** (population #5): 52 harnesses, 23/26 families
    blind-screen green. Recommendation: leave as evidence-deprioritized debt
    EXCEPT the family-001 uniformity fix (§4.1.4) — but require S9 for all new

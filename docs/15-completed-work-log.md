@@ -9,6 +9,16 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-16 — §4.2 sign-offs COMPLETE (last two halves; same "do
+  everything" delegation).** Spot-review scope: one ~20-seed April-era
+  tranche, run after the retro-audit sweep, stratified against the sweep's
+  ledger toward roots the machinery found clean (probing what automation
+  cannot see); doubles as the T2.2 residue check. Prompt-monotony scope: as
+  recommended — T2.6 proper is improvement round #2 after steady state; the
+  Phase-3 template half already landed 07-15 (T1.4c), so the debt stopped
+  growing. Annotations in docs/12 §4.2 items 2 and 4. With these, ALL of
+  §4.2 is decided; the §4.2/§5.2 exit-condition box is ticked.
+
 - **2026-07-16 — T2.2 full-pass DECISION CLOSED (Kamil delegated all four
   standing decisions: "do everything"; executed with the doc-recommended
   option).** Decision: do NOT pay the remaining ~272-root semantic review
