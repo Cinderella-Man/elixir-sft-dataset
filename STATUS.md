@@ -131,6 +131,23 @@ and a CI check refusing accepts lacking the evidence row.]**
 - HOW: all in `lib/gen_task/prompts.ex`; rationale in docs/12 §5.3.
 
 
+**T1.7 — Port the temp-path collision rule into the ACCEPT path. [FREE, no
+decision — docs/12 §5.5 row 7]** Today `lint_temp_paths` runs only in
+CI/pre-push: the loop can accept a harness with the 102_002 flake class and
+CI catches it AFTER. Add the same check to `Evaluator.quality_shortfall`
+(where the other S9 lints already live) + a unit test.
+
+**T1.8 — Semantic-mutant kill FLOOR in the accept path, behind a flag.
+[FREE build; Kamil sets the number — docs/12 §5.5 row 12, §6.6 says
+promotion from report to floor is justified now the tail is fixed]**
+Observable-mutant basis (the S8 three-way framework); `GEN_SEMANTIC_FLOOR=
+0.5` style knob, default off until the sign-off.
+
+**T-gates — self-tests for the three remaining resync drift gates
+(tfim/bugfix/wt). [FREE — docs/12 §5.5 row 19]** The adapt gate got the
+plant-detect-heal `--self-test` (in CI); the other three are trusted
+without one. Same pattern each.
+
 **T1.6 — Dialyzer gate over the golds. [NEEDS KAMIL: one mix.exs/lockfile
 change; then FREE (PLT build + weekly CI)]**
 - WHY: 019_001 shipped a `@spec` contradicting its own code; specs must be
@@ -218,12 +235,21 @@ against docs/16 §4's advisory weights (test_fim already down-weighted to
 New base generation is **paused**. Remaining exit conditions for this round:
 
 - [ ] §4.2 / §5.2 decisions signed off (above)
-- [ ] Phase 3: new generation resumed (490 queued bases) and first batch
-      validated clean under the full gate suite
+- [ ] **LOOP PARITY (docs/12 §5.5 — Kamil 2026-07-15: "new data must be
+      born at the bar we are retrofitting"): every row of the parity table
+      reads ENFORCED or is explicitly waived by Kamil.** Free builds toward
+      it: T1.7 + T1.8 + T-gates below; decision rows ride the sign-offs.
+- [ ] Phase 3: new generation resumed (490 queued bases) and the first
+      batch passes the **cutover acceptance test** (docs/12 §5.5 bottom):
+      full semantic_review of every new root + a rubric_judge two-family
+      pass + all sweeps — ZERO triage-grade findings, else stop and fix
+      the GENERATOR, never the data
 - [ ] The line drawn (docs/12 §7.2): delete catch-up tooling
-      (`resync_embeds.exs`, `rescreen_repaired.exs`, `strengthen_harnesses.exs`,
-      `enrich_prompts.exs`, `quality_chain*.sh`, `reverify_rejects.exs` et al.
-      per the §7.2 table), remove the backfill vocabulary, flip this file to
+      (`rescreen_repaired.exs`, `strengthen_harnesses.exs`,
+      `enrich_prompts.exs`, `quality_chain*.sh`, `close_gaps.exs`,
+      `survey_adapt_redgate.exs` et al. per the §7.2 table and the docs/14
+      disposition table; the four resync DRIFT GATES and the standing
+      audits stay), remove the backfill vocabulary, flip this file to
       STEADY STATE
 
 Everything previously listed as done in this round: `docs/15-completed-work-log.md`.
