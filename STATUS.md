@@ -18,7 +18,10 @@ Builds (a) verbose gate logging and (b) `generate.exs <n> --force` are DONE →
 docs/15 on close. Probe (c) RAN TO COMPLETION (75 units, ~50 min, 27 calls,
 all free instruments green) and the analysis is in **docs/17** (findings
 F17-1..10, candidate gates G-A..G-E). Remaining, in order:
-  - [x] T1.10 BUILT DARK (2026-07-15 evening; docs/17 §5.5; 385 tests green):
+  - [x] T1.10 BUILT DARK — i.e. fully built + tested but OFF by default
+        behind an env-var switch; zero behavior change until the switch is
+        set (glossary: docs/11). (2026-07-15 evening; docs/17 §5.5; 385
+        tests green):
         ONE unified gate `GenTask.PromiseAudit` behind `GEN_PROMISE_AUDIT` —
         anchored audit tests; green→bite-proven coverage, red→machine-proven
         defect feeding the repair loop; + F17-9 rescreen now covers repaired

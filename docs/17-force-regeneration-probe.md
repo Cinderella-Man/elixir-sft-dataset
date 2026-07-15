@@ -100,6 +100,10 @@ FLOOR; the retrofitted corpus average is the real bar (docs/12 rule 0).
 
 ### Dark gates demonstrated in the output
 
+*("Dark" = fully built and wired into the loop but switched OFF by default via
+an environment variable, so behavior is unchanged until Kamil turns the switch
+on — see the glossary in docs/11.)*
+
 Rows 10 and 12 didn't just fail to run — the accept LOG now says so
 (`SKIPPED — … DARK`). Note this accept was a repaired accept (attempts = 2),
 i.e. precisely the class T1.1's blind re-screen exists for; it promoted with

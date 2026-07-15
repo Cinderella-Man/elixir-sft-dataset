@@ -110,3 +110,32 @@ detached runner. This is where new dataset content starts again.
 - **seed**: an accepted base/variation task that derivatives are built from.
 - **backfill**: generating missing derivatives for existing seeds (no new
   ideas).
+- **root**: a base or variation task — the tasks all child exercises (FIM,
+  tfim, wt_, bugfix, adapt) are derived from. A defect in a root is copied
+  into every child, so root-level checks matter most.
+- **built dark / dark flag**: a quality check that is fully built, tested,
+  and wired into the generation loop but SWITCHED OFF by default via an
+  environment variable (e.g. `GEN_PROMISE_AUDIT=1`,
+  `GEN_BLIND_RESCREEN=1`, `GEN_SEMANTIC_FLOOR=0.6`). With the switch off the
+  loop behaves exactly as before, except the run log prints a
+  `SKIPPED — … DARK` line so the inactive check stays visible. New checks
+  land this way so they can be piloted first and only start affecting
+  accept/reject decisions on Kamil's explicit go.
+- **flipping a flag**: turning such a switch on permanently (usually by
+  adding the variable to the standard run command).
+- **promise audit** (`GEN_PROMISE_AUDIT`): the accept-time check that reads
+  the prompt as a list of promises, has a reviewer model write a test for
+  each promise no existing test covers, and machine-verifies every proposed
+  test before it counts (see "bite-proven" and "evidence-or-drop").
+- **bite-proven**: a newly added test only ships if it demonstrably "bites" —
+  it must FAIL when the behavior it claims to pin is deliberately broken
+  (and pass against the correct solution). A test that cannot fail proves
+  nothing and is dropped.
+- **evidence-or-drop**: the rule that a reviewer model's claim ("this code
+  violates the prompt") only counts if it comes with a test that actually
+  fails against the current solution; a claim whose test passes is treated
+  as a hallucination and silently dropped.
+- **probe / probe-proven**: a small throwaway script or test written to
+  demonstrate a suspected bug on the real code before acting on it; a
+  finding is "probe-proven" once that demonstration failed/succeeded as
+  predicted.
