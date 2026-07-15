@@ -74,14 +74,16 @@ defmodule EdgeDebouncer do
       nil ->
         # First call of a new burst: leading edges fire immediately.
         if edge in [:leading, :both], do: run(func)
-        ref = Process.send_after(self(), {:fire, key}, delay_ms)
-        entry = %{timer: ref, edge: edge, calls: 1, last_func: func}
+        entry = Map.merge(arm(key, delay_ms), %{edge: edge, calls: 1, last_func: func})
         {:noreply, Map.put(state, key, entry)}
 
       %{timer: ref} = entry ->
+        # cancel_timer/1 can return false with the old {:fire, …} already
+        # sitting in the mailbox — the fresh token below makes that stale
+        # message a no-op instead of an early trailing fire.
         Process.cancel_timer(ref)
-        new_ref = Process.send_after(self(), {:fire, key}, delay_ms)
-        entry = %{entry | timer: new_ref, calls: entry.calls + 1, last_func: func}
+        entry = %{entry | calls: entry.calls + 1, last_func: func}
+        entry = Map.merge(entry, arm(key, delay_ms))
         {:noreply, Map.put(state, key, entry)}
     end
   end
@@ -89,6 +91,13 @@ defmodule EdgeDebouncer do
   @impl true
   def handle_info({:fire, key}, state) do
     # TODO
+  end
+
+  # Arm the burst's timer under a fresh token; {:fire, key, token} only acts
+  # while the entry still carries this exact token.
+  defp arm(key, delay_ms) do
+    token = make_ref()
+    %{timer: Process.send_after(self(), {:fire, key, token}, delay_ms), token: token}
   end
 
   # Run the func off the server's reduction path.

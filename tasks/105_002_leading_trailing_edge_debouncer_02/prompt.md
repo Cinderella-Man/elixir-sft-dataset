@@ -81,20 +81,29 @@ defmodule EdgeDebouncer do
   end
 
   @impl true
-  def handle_info({:fire, key}, state) do
-    case Map.pop(state, key) do
-      {nil, new_state} ->
-        {:noreply, new_state}
-
-      {entry, new_state} ->
+  def handle_info({:fire, key, token}, state) do
+    case Map.get(state, key) do
+      # Only the CURRENT burst's token may fire; a stale timer message from a
+      # superseded burst (its cancel arrived too late) is discarded.
+      %{token: ^token} = entry ->
         cond do
           entry.edge == :trailing -> run(entry.last_func)
           entry.edge == :both and entry.calls > 1 -> run(entry.last_func)
           true -> :ok
         end
 
-        {:noreply, new_state}
+        {:noreply, Map.delete(state, key)}
+
+      _ ->
+        {:noreply, state}
     end
+  end
+
+  # Arm the burst's timer under a fresh token; {:fire, key, token} only acts
+  # while the entry still carries this exact token.
+  defp arm(key, delay_ms) do
+    token = make_ref()
+    %{timer: Process.send_after(self(), {:fire, key, token}, delay_ms), token: token}
   end
 
   # Run the func off the server's reduction path.
