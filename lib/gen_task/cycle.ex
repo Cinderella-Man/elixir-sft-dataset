@@ -160,6 +160,11 @@ defmodule GenTask.Cycle do
   def reason_text({:warnings, n}), do: "compile warnings: #{n}"
   def reason_text({:flaky, seed}), do: "stability confirmation failed (seed #{seed})"
 
+  def reason_text({:semantic_floor, rate, survivors}),
+    do:
+      "semantic floor: kill rate #{Float.round(rate, 2)} with #{length(survivors)} " <>
+        "surviving behavior mutant(s)"
+
   def reason_text({:failed, grade}) do
     s = grade_stats(grade)
 
@@ -197,11 +202,84 @@ defmodule GenTask.Cycle do
 
           :killed ->
             case confirm_stability(ctx, cfg) do
-              :ok -> {:accept, Mutation.base_mode(files["solution.ex"], cfg)}
-              {:flaky, seed} -> {:reject, {:flaky, seed}}
+              :ok ->
+                case semantic_floor_gate(ctx, files, cfg) do
+                  :ok -> {:accept, Mutation.base_mode(files["solution.ex"], cfg)}
+                  {:below, rate, survivors} -> {:reject, {:semantic_floor, rate, survivors}}
+                end
+
+              {:flaky, seed} ->
+                {:reject, {:flaky, seed}}
             end
         end
     end
+  end
+
+  # T1.8 (docs/12 §5.5 row 12): the accept-time semantic-mutant kill floor.
+  # nil floor = off (report-only era behavior). Runs LAST — it is the most
+  # expensive gate (up to @semantic_sample eval subprocesses) and must only
+  # spend that on candidates every cheaper gate already accepted. Every
+  # measurement is ledgered to semantic_mutants.jsonl with content + gate shas
+  # (rule-7 corollary), pass or fail.
+  @semantic_sample 40
+
+  defp semantic_floor_gate(_ctx, _files, %Config{semantic_floor: nil}), do: :ok
+
+  defp semantic_floor_gate(ctx, files, cfg) do
+    mutants = Mutation.semantic_mutants(files["solution.ex"], @semantic_sample)
+
+    {killed, survivors} =
+      Enum.reduce(mutants, {0, []}, fn {label, mutated}, {k, s} ->
+        path =
+          Path.join(
+            System.tmp_dir!(),
+            "floor_#{System.pid()}_#{System.unique_integer([:positive])}.ex"
+          )
+
+        File.write!(path, mutated)
+        grade = Evaluator.grade(ctx.dir, cfg, path)
+        File.rm(path)
+
+        case grade do
+          {:ok, %{"compiled" => true} = json} ->
+            if (json["tests_failed"] || 0) > 0 or (json["tests_errors"] || 0) > 0,
+              do: {k + 1, s},
+              else: {k, [label | s]}
+
+          _ ->
+            {k, s}
+        end
+      end)
+
+    survivors = Enum.reverse(survivors)
+    total = killed + length(survivors)
+    rate = if total > 0, do: killed / total, else: 1.0
+    record_semantic_measurement(cfg, ctx.id, files, killed, total, survivors)
+
+    if rate >= cfg.semantic_floor, do: :ok, else: {:below, rate, survivors}
+  end
+
+  defp record_semantic_measurement(cfg, id, files, killed, total, survivors) do
+    row = %{
+      task: id,
+      killed: killed,
+      total: total,
+      survivors: survivors,
+      dropped: 0,
+      solution_sha: CycleLog.content_sha(files["solution.ex"]),
+      harness_sha: CycleLog.content_sha(files["test_harness.exs"]),
+      gate_sha: CycleLog.gate_sha([Mutation, Evaluator]),
+      source: "accept_floor",
+      ts: DateTime.utc_now() |> DateTime.to_iso8601()
+    }
+
+    File.mkdir_p!(cfg.logs_dir)
+
+    File.write!(
+      Path.join(cfg.logs_dir, "semantic_mutants.jsonl"),
+      Jason.encode!(row) <> "\n",
+      [:append]
+    )
   end
 
   # Stability confirmation (docs/12 §5.1 item 6): re-grade the already-staged, already-

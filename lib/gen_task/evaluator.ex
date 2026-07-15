@@ -616,6 +616,23 @@ defmodule GenTask.Evaluator do
       "unreachable clauses) without changing behavior or weakening test_harness.exs." <> named
   end
 
+  # Scar #4 (docs/14 §6): every criterion a generator is graded by must be
+  # stated in its repair prompt — the survivors are NAMED so the fixer knows
+  # exactly which behaviors are unpinned.
+  def repair_report({:semantic_floor, rate, survivors}) do
+    named = Enum.map_join(Enum.take(survivors, 10), "\n", &("  - " <> to_string(&1)))
+    extra = if length(survivors) > 10, do: "\n  … #{length(survivors) - 10} more", else: ""
+
+    "The files graded green, but the harness kills only " <>
+      "#{round(rate * 100)}% of seeded behavior mutants — each survivor below is a " <>
+      "single behavior change NO test caught:\n" <>
+      named <>
+      extra <>
+      "\nAdd tests that discriminate the DOCUMENTED behavior each survivor touches — " <>
+      "assert through the public API (never internal state), keep every existing test, " <>
+      "and do not weaken the implementation."
+  end
+
   def repair_report({:flaky, seed}) do
     "The files graded green on the pinned test order but FAILED a re-run with ExUnit " <>
       "seed #{seed} (a different test order). That is order-dependence or timing " <>

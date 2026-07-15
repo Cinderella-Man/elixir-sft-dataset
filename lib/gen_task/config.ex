@@ -33,6 +33,7 @@ defmodule GenTask.Config do
           skip_adapt: boolean(),
           skip_variation_blind: boolean(),
           blind_rescreen: boolean(),
+          semantic_floor: float() | nil,
           tfim_max_per_task: pos_integer(),
           max_turns: pos_integer(),
           limit: pos_integer() | nil,
@@ -74,6 +75,11 @@ defmodule GenTask.Config do
             # T1.1 (docs/12 §5.2.1): accept-time blind re-screen for bases accepted
             # after ≥1 repair. OFF until Kamil signs off the policy (STATUS).
             blind_rescreen: false,
+            # T1.8 (docs/12 §5.5 row 12): accept-time semantic-mutant kill FLOOR.
+            # nil = report-only (today's behavior); Kamil sets the number at the
+            # §4.2 sign-off (S8 was measured at 0.714 corpus-wide, observable
+            # basis; the three-way survivor framework is docs/13 §1.5.1b).
+            semantic_floor: nil,
             tfim_max_per_task: 10,
             max_turns: 2,
             limit: nil,
@@ -120,6 +126,7 @@ defmodule GenTask.Config do
       skip_adapt: env_bool(env_fun, "GEN_SKIP_ADAPT"),
       skip_variation_blind: env_bool(env_fun, "GEN_SKIP_VARIATION_BLIND"),
       blind_rescreen: env_bool(env_fun, "GEN_BLIND_RESCREEN"),
+      semantic_floor: env_floor(env_fun, "GEN_SEMANTIC_FLOOR"),
       tfim_max_per_task: env_int(env_fun, "GEN_TFIM_MAX_PER_TASK", 10),
       max_turns: env_int(env_fun, "GEN_MAX_TURNS", 2),
       limit: env_int(env_fun, "GEN_LIMIT", nil),
@@ -198,6 +205,27 @@ defmodule GenTask.Config do
     case env_fun.(key) do
       nil -> false
       v -> String.downcase(String.trim(v)) in ["1", "true", "yes", "on"]
+    end
+  end
+
+  # A kill-rate floor in [0.0, 1.0]; unset/empty means nil (gate off). A typo
+  # must stop the run, not silently disable a quality gate.
+  defp env_floor(env_fun, key) do
+    case env_fun.(key) do
+      nil ->
+        nil
+
+      "" ->
+        nil
+
+      v ->
+        case Float.parse(String.trim(v)) do
+          {f, ""} when f >= 0.0 and f <= 1.0 ->
+            f
+
+          _ ->
+            raise ArgumentError, "#{key}=#{inspect(v)} is not a float in [0.0, 1.0]"
+        end
     end
   end
 
