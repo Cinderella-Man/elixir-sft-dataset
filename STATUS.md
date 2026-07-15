@@ -13,17 +13,18 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**T2.4-T close_gaps run: 3 hand-seeded harness gaps** (launched 2026-07-15
-~05:4x UTC — 037_003 duplicate-fields round trip, 043_001 ties +
-special-atom ids, 104_003 zero-timeout; all hand-verified, golds already
-fixed & committed).
-- pid `logs/close_gaps_t24t.pid` · log `logs/close_gaps_t24t.log` · rows →
-  `logs/close_gaps.jsonl`
-- idempotent relaunch (resume now keyed to harness sha + findings digest):
-  `scripts/run_detached.sh logs/close_gaps_t24t.log mix run scripts/close_gaps.exs -- --go --only "037_003*,043_001*,104_003*"`
-- ⚠️ still NEVER unscoped (hand-closed phantoms — tool header).
-(All 9 bugfix children of the three fixed golds reminted ACCEPTED.
-Docker note: `elixir_benchmark_pg` is UP on this machine since the sweep.)
+**T2.4-T tail: 037_003 duplicate-fields harness pin, attempt 4** (launched
+2026-07-15 ~07:1x UTC; 043_001 + 104_003 already CLOSED & pushed).
+- pid `logs/close_gaps_t24t4.pid` · log `logs/close_gaps_t24t4.log`
+- history: attempts 1-2 blind-REJECTED (two independent solvers missed the
+  duplicate-fields inference → prompt now STATES the rule, re-screen
+  GREEN); attempt 3 passed ALL gates but reverted at apply because lib/
+  was being edited mid-run (docs/14 scar 13 — new). This attempt runs on a
+  clean compiled tree.
+- idempotent relaunch:
+  `scripts/run_detached.sh logs/close_gaps_t24t4.log mix run scripts/close_gaps.exs -- --go --only "037_003*"`
+- ⚠️ NEVER unscoped; ⚠️ NO lib/scripts edits while it runs (scar 13).
+(Docker note: `elixir_benchmark_pg` is UP on this machine since the sweep.)
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-15 early morning)

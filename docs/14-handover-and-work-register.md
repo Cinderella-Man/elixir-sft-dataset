@@ -575,7 +575,16 @@ spec, family-keyed splits, a round-trip validator, and dedup/sampling weights.
     tools that must never self-overlap now take a `/proc`-checked lock file
     (rubric_judge's `acquire_lock!` is the pattern).
 
-13. **Every finding is a TWO-TIER work item (CONTEXT.md hard rule 7): fix the
+13. **Never edit `lib/` or `scripts/` while a ledgered mix-run tool is in
+    flight.** Those tools spawn NESTED `mix run` subprocesses (resync
+    cascades, evals) that recompile the project mid-run; an in-progress edit
+    turns that recompile into a failure inside the tool's apply step
+    (2026-07-15: a fully-gated 037_003 close ended `reverted_tfim_resync_
+    failed` because T1.8's lib edits landed mid-apply). The same class as
+    rule 8's `git add -A` ban: don't mutate the factory while a factory
+    process is alive. Docs and STATUS edits are safe.
+
+14. **Every finding is a TWO-TIER work item (CONTEXT.md hard rule 7): fix the
     existing data AND gate the generation script so the class cannot recur.**
     A finding without its forward gate is not done — fixing existing data
     while generating the same defect again never converges on quality. The
