@@ -40,17 +40,28 @@ F17-1..10, candidate gates G-A..G-E). Remaining, in order:
         defaults 0.6 (Kamil may tune the number; `=off`/`=0` switches are
         debugging overrides only). Parity rows 10/12/13/14 → ENFORCED.
         REMAINING: the full-standard probe below.
-  - [ ] **FULL-STANDARD PROBE running: `generate.exs 15 --force` with ALL
-        gates default-on → `logs/force_015_full.log`** (the earlier
-        audit-only pilot was killed after its base — its partial output is
-        stashed as "T1.10 pilot #1 partial"). Success = whole family born
-        with zero triage-grade findings; findings → docs/17 §6. AFTER
-        analysis: restore the retrofitted family (probe families never
-        train/export); probe #1 is stashed + tarballed, probe #2 partial
-        stashed.
-  - [ ] Kamil decisions still open: T1.4 template upgrades (WITH Phase 3),
-        T1.6 Dialyzer (one mix.exs line), semantic-floor NUMBER tuning
-        (running default 0.6), T2.2 full-pass question.
+  - [x] FULL-STANDARD PROBE #3 (docs/17 §6.3): the system REFUSED to ship —
+        audit repaired the timer leak (3rd occurrence today), then the blind
+        re-screen proved the PROMPT doesn't state the old-chain-stops
+        consequence (independent solver leaked too) → QUARANTINED, nothing
+        promoted. Triage verdict: prompt-TEMPLATE gap → generator fixed
+        (LIFECYCLE RULE now in base+variation templates — G-B landed).
+  - [ ] **PROBE #4 running: template-fixed, all gates on →
+        `logs/force_015_full2.log`, pid in `logs/force_015_full2.pid`.**
+        Success = family born clean end-to-end; verdict → docs/17 §6.4.
+        AFTER analysis: restore the retrofitted family via the stash/
+        checkout (probe data never trains/exports; probes #1–#3 stashed
+        + #1 tarballed).
+  - [ ] **NEW BUILD ITEM (from §6.3): in-loop quarantine-triage path** — the
+        loop can quarantine but has no "hard-task KEEP" verdict (the retro
+        screen had 49 keeps). Phase 3 needs: triage judge over
+        `logs/quarantine/*` + Kamil review + a keep-promotion path writing
+        the evidence row. Until built, quarantines block their idea and
+        surface here.
+  - [ ] Kamil decisions still open: T1.4 template upgrades (WITH Phase 3;
+        G-B lifecycle clause already landed out of necessity), T1.6 Dialyzer
+        (one mix.exs line), semantic-floor NUMBER tuning (running default
+        0.6), T2.2 full-pass question.
   - [ ] On close: move T1.9/T1.10 record to docs/15; keep `--force` + GateLog
         + PromiseAudit as permanent loop features.
 ---

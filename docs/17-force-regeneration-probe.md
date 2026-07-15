@@ -443,3 +443,46 @@ only as debugging overrides and print `SKIPPED — EXPLICITLY DISABLED` when
 used. Parity rows 10/12/13/14 now read ENFORCED. The audit-only pilot was
 stopped after its base (partial output stashed) and relaunched with ALL
 gates on → `logs/force_015_full.log`; its verdict lands here as §6.3.
+
+### 6.3 Full-standard probe: the system REFUSED to ship — and the refusal
+### found the next generator fix.
+
+With every gate on, the fresh base (third generation of idea 15 today) again
+shipped the uncancelled-timer class; the audit again machine-proved it
+("re-registering with a large interval stops the old fast timer" — failed vs
+the gold) and the repair fixed the module. Then gate 8/9, the now-active
+blind re-screen, ran an independent prompt-only solve against the
+strengthened harness — and the blind candidate ALSO leaked the old chain
+(`Map.put` + unconditional schedule, no cancel: the same natural mistake,
+now made by a third independent solver). RED → **QUARANTINED. Nothing was
+promoted.** The `:quarantined` console path fixed earlier printed correctly.
+
+**Triage (quarantine evidence in `logs/quarantine/015_001_heartbeat_monitor_01`):**
+the prompt DOES say re-registration "**replaces** its check function and
+interval and **resets** its status" — but never states the consequence that
+the OLD timer chain stops. Three of four solver draws today made the same
+inference miss, so by the cardinal rule ("a solver reading only prompt.md
+must pass every test") this is a PROMPT-TEMPLATE GAP, not a hard-task keep.
+
+**Generator fix (rule 0: fix the generator, never the data), landed:** the
+base AND variation authoring templates now carry an explicit LIFECYCLE RULE —
+any module scheduling repeating/delayed work must have its prompt state
+outright what happens to already-scheduled work on
+replace/re-register/deregister ("the previous registration's scheduled
+checks never run again"), and its harness must include a test proving the
+old schedule is dead. This is G-B, promoted from checklist-candidate to
+load-bearing by direct evidence: without it, honest gates quarantine every
+GenServer-with-timers family; with it, solvers are TOLD the consequence the
+tests will check.
+
+**Also visible in this probe:** the audit's defect-repair chain
+(`logs/attempts/*_audit/`) minted a legitimate `repair_` pair — the audit
+feeds the repair-pair shape for free.
+
+**Still missing (STATUS item): an in-loop quarantine-triage path.** The
+retro campaign's screen had "hard-task KEEP" verdicts (49 kept corpus-wide);
+the loop currently only quarantines. Phase 3 needs a triage step (LLM judge
++ Kamil review) that can mark a quarantined root as a documented hard-task
+keep and promote it with the evidence row, or route it to prompt repair.
+Probe #4 (template-fixed, all gates on) → `logs/force_015_full2.log`,
+verdict in §6.4.

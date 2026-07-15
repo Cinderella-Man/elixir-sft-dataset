@@ -118,6 +118,15 @@ defmodule GenTask.Prompts do
       solver who reads ONLY prompt.md must be able to pass every test. Never assert
       internal state (`:sys.get_state`), internal message names, or option values
       (e.g. `:infinity` sentinels) that prompt.md does not document.
+    - LIFECYCLE RULE (timers / scheduled work): if the module schedules repeating or
+      delayed work (`Process.send_after`, periodic checks, sweeps), prompt.md MUST
+      state EXPLICITLY what happens to already-scheduled work when its owner is
+      replaced, re-registered, deregistered, or cancelled — e.g. "after
+      re-registration the previous registration's scheduled checks never run again;
+      checks happen only at the new interval". Solvers reliably forget to cancel old
+      timer chains unless the prompt spells this consequence out, and
+      test_harness.exs MUST include a test proving the old schedule is dead (not
+      just that the new one works).
 
     #{output_contract([{"prompt.md", "the standalone task statement"}, {"test_harness.exs", "the ExUnit harness"}])}
     """
@@ -232,9 +241,14 @@ defmodule GenTask.Prompts do
     internal state via `:sys.get_state`/`:sys.replace_state`, never
     `assert inspect(...)`, never send undocumented internal messages, never pass
     undocumented `:infinity` sentinels — observe behavior only through the public
-    API and documented injected hooks. The BASE harness below may itself violate
-    these rules (grandfathered debt): do NOT imitate it — your harnesses are held
-    to the rules above).#{already}#{taken_apis}
+    API and documented injected hooks. LIFECYCLE RULE: if a variation schedules
+    repeating or delayed work, its prompt.md MUST state explicitly what happens to
+    already-scheduled work on replace/re-register/deregister/cancel — e.g. "the
+    previous registration's scheduled checks never run again" — and its harness MUST
+    include a test proving the old schedule is dead; solvers reliably forget to
+    cancel old timer chains unless the prompt spells this out. The BASE harness
+    below may itself violate these rules (grandfathered debt): do NOT imitate it —
+    your harnesses are held to the rules above).#{already}#{taken_apis}
 
     Also, for each variation, produce a one-line catalog entry in the exact tasks.md
     format — its `idea.md` file must contain a `### Task #{num} - Vn - <Name>` header on
