@@ -86,9 +86,45 @@ defmodule CloseGaps do
     |> Enum.sort()
   end
 
-  defp dry(opts) do
-    done = success_shas()
+  # A family is done only when an applied row covers BOTH the current harness
+  # and the current findings: a new review/seed row for an already-closed
+  # harness re-opens it (found live 2026-07-15 — three hand-seeded gaps read
+  # DONE because the resume key was the harness sha alone). Old rows carry no
+  # gaps_sha; they count only for findings that existed when they were written.
+  defp done?(task, confirmed) do
+    dir = Path.join("tasks", task)
+    current = harness_sha(dir)
+    digest = gaps_sha(confirmed)
 
+    Enum.any?(success_rows(), fn row ->
+      row["harness_sha_after"] == current and
+        (row["gaps_sha"] == digest or
+           (row["gaps_sha"] == nil and row["ts"] >= latest_review_ts(task)))
+    end)
+  end
+
+  @doc false
+  def gaps_sha(confirmed) do
+    confirmed
+    |> Enum.filter(&(&1["class"] == "harness_gap"))
+    |> Enum.map(&(&1["evidence"] <> "|" <> &1["why"]))
+    |> Enum.sort()
+    |> Enum.join("\n")
+    |> CycleLog.content_sha()
+  end
+
+  defp latest_review_ts(task) do
+    @review_ledger
+    |> File.stream!()
+    |> Enum.reduce("", fn line, acc ->
+      case Jason.decode(line) do
+        {:ok, %{"task" => ^task, "ts" => ts}} -> ts
+        _ -> acc
+      end
+    end)
+  end
+
+  defp dry(opts) do
     IO.puts("Gap-closing work list (confirmed harness_gap findings per family):\n")
 
     families = gap_families(opts)
@@ -97,8 +133,7 @@ defmodule CloseGaps do
       gaps = Enum.count(confirmed, &(&1["class"] == "harness_gap"))
       other = length(confirmed) - gaps
       high = Enum.any?(confirmed, &(&1["severity"] == "high"))
-      sha = harness_sha(Path.join("tasks", task))
-      status = if MapSet.member?(done, sha), do: "DONE", else: "todo"
+      status = if done?(task, confirmed), do: "DONE", else: "todo"
 
       IO.puts(
         "  #{task}: #{gaps} gap(s)#{if other > 0, do: " (+#{other} gold/prompt finding(s), hand scope)", else: ""}" <>
@@ -114,14 +149,11 @@ defmodule CloseGaps do
   defp go(opts) do
     refuse_if_generate_alive!()
     cfg = Config.new([])
-    done = success_shas()
 
     todo =
       gap_families(opts)
       |> Enum.filter(fn {task, _} -> match_only?(task, opts[:only]) end)
-      |> Enum.reject(fn {task, _} ->
-        MapSet.member?(done, harness_sha(Path.join("tasks", task)))
-      end)
+      |> Enum.reject(fn {task, confirmed} -> done?(task, confirmed) end)
 
     IO.puts("closing gaps in #{length(todo)} family(ies), sequential, ledger #{@ledger}\n")
 
@@ -145,6 +177,7 @@ defmodule CloseGaps do
     base = %{
       family: id,
       harness_sha_before: CycleLog.content_sha(harness0),
+      gaps_sha: gaps_sha(confirmed),
       gate_sha: gate_sha(),
       ts: now()
     }
@@ -546,24 +579,24 @@ defmodule CloseGaps do
     File.write!(@ledger, Jason.encode!(row) <> "\n", [:append])
   end
 
-  defp success_shas do
+  defp success_rows do
     case File.read(@ledger) do
       {:ok, body} ->
         body
         |> String.split("\n", trim: true)
-        |> Enum.reduce(MapSet.new(), fn line, acc ->
+        |> Enum.flat_map(fn line ->
           case Jason.decode(line) do
-            {:ok, %{"verdict" => v, "harness_sha_after" => sha}}
+            {:ok, %{"verdict" => v, "harness_sha_after" => sha} = row}
             when v in ["applied", "applied_wt_divergent"] and is_binary(sha) ->
-              MapSet.put(acc, sha)
+              [row]
 
             _ ->
-              acc
+              []
           end
         end)
 
       _ ->
-        MapSet.new()
+        []
     end
   end
 
