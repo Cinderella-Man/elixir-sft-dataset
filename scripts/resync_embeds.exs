@@ -58,10 +58,21 @@ defmodule ResyncEmbeds do
 
     {opts, _, _} =
       OptionParser.parse(argv,
-        strict: [dirs_file: :string, apply: :boolean, self_test: :string, wt_all: :boolean]
+        strict: [
+          dirs_file: :string,
+          apply: :boolean,
+          self_test: :string,
+          self_test_auto: :boolean,
+          wt_all: :boolean
+        ]
       )
 
     cond do
+      # Argumentless plant-detect-heal self-test (docs/12 §5.5 row 19) — the
+      # CI-wireable sibling of the older `--self-test <flagged dir>` healer.
+      opts[:self_test_auto] ->
+        self_test_auto()
+
       opts[:self_test] ->
         self_test(opts[:self_test])
 
@@ -444,6 +455,56 @@ defmodule ResyncEmbeds do
         end
     end
   end
+
+  # One REAL wt_ family copied to a sandbox: must pass clean, a planted PARENT
+  # prompt edit must be detected (the spec half that rotted silently until
+  # 2026-07-13), --apply must heal byte-for-byte, then clean again.
+  defp self_test_auto do
+    root = Path.join(System.tmp_dir!(), "resync_wt_st_#{System.unique_integer([:positive])}")
+    sandbox = Path.join(root, "tasks")
+    File.mkdir_p!(sandbox)
+
+    child = "tasks/wt_*" |> Path.wildcard() |> Enum.sort() |> List.first()
+    parent = parent_dir(:wt, child, "tasks")
+    for d <- [parent, child], do: File.cp_r!(d, Path.join(sandbox, Path.basename(d)))
+
+    copy = Path.join(sandbox, Path.basename(child))
+    sandbox_parent = Path.join(sandbox, Path.basename(parent))
+
+    checks =
+      try do
+        [
+          {"a clean copied family passes", resync(copy, sandbox, false) == :unchanged},
+          {"a planted PARENT prompt edit is detected in the child",
+           (
+             File.write!(
+               Path.join(sandbox_parent, "prompt.md"),
+               File.read!(Path.join(sandbox_parent, "prompt.md")) <> "\nEDITED SPEC LINE\n"
+             )
+
+             resync(copy, sandbox, false) == :would_resync
+           )},
+          {"--apply heals it byte-for-byte", resync(copy, sandbox, true) == :resynced},
+          {"the healed dir passes again", resync(copy, sandbox, false) == :unchanged}
+        ]
+      after
+        File.rm_rf!(root)
+      end
+
+    for {label, ok?} <- checks,
+        do: IO.puts("  #{if ok?, do: "caught ✓", else: "MISSED ✗"}  #{label}")
+
+    if Enum.all?(checks, &elem(&1, 1)) do
+      IO.puts(
+        "\nwt-embed self-test: OK ✓ (all #{length(checks)} checks pass; family: #{Path.basename(child)})"
+      )
+    else
+      IO.puts("\nwt-embed SELF-TEST FAILED")
+      System.halt(1)
+    end
+  end
 end
 
-ResyncEmbeds.main(System.argv())
+# test/scripts/* load this file with SCRIPTS_NO_AUTORUN=1 to unit-test the
+# module without executing the CLI.
+unless System.get_env("SCRIPTS_NO_AUTORUN"), do: ResyncEmbeds.main(System.argv())

@@ -104,6 +104,7 @@ jobs:
       # that embeds the parent SPEC. check_embeds only sees the module fence, so
       # until 2026-07-13 a parent-prompt or harness edit rotted wt_ silently (it
       # had: 51 stale dirs, incl. 3 stale gold harnesses).
+      - run: mix run scripts/resync_embeds.exs -- --self-test-auto
       - run: |
           out=$(mix run scripts/resync_embeds.exs -- --wt-all)
           echo "$out"
