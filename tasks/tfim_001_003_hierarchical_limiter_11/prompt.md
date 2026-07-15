@@ -312,7 +312,20 @@ defmodule HierarchicalLimiterTest do
   end
 
   test "rejected requests do not consume budget on any tier", %{hl: hl} do
-    # TODO
+    tiers = [{:per_sec, 2, 1_000}, {:per_min, 10, 60_000}]
+
+    assert {:ok, %{per_sec: 1, per_min: 9}} = HierarchicalLimiter.check(hl, "k", tiers)
+    assert {:ok, %{per_sec: 0, per_min: 8}} = HierarchicalLimiter.check(hl, "k", tiers)
+
+    # Blast a bunch of rejections against per_sec.
+    for _ <- 1..10 do
+      assert {:error, :rate_limited, :per_sec, _} = HierarchicalLimiter.check(hl, "k", tiers)
+    end
+
+    # Advance past the per_sec window. per_min must show only 2 consumed,
+    # not 12 — rejections shouldn't count.
+    Clock.advance(1_001)
+    assert {:ok, %{per_min: 7}} = HierarchicalLimiter.check(hl, "k", tiers)
   end
 
   # -------------------------------------------------------
@@ -426,25 +439,7 @@ defmodule HierarchicalLimiterTest do
   end
 
   test "cleanup keeps entries within the widest window ever seen for a key", %{hl: hl} do
-    wide = [{:hour, 5, 3_600_000}]
-    narrow = [{:sec, 5, 1_000}]
-
-    # t=0: record one timestamp while the widest window seen is 1 hour.
-    assert {:ok, %{hour: 4}} = HierarchicalLimiter.check(hl, "k", wide)
-
-    # t=500: a narrow check still sees the t=0 entry (0.5s old) and records another.
-    Clock.advance(500)
-    assert {:ok, %{sec: 3}} = HierarchicalLimiter.check(hl, "k", narrow)
-
-    # t=1600: both entries are ~1s old — far inside the widest window seen (1 hour),
-    # so a cleanup pass must retain them rather than pruning to the 1s window.
-    Clock.advance(1_100)
-    send(hl, :cleanup)
-
-    # The hour tier must still count both retained timestamps: 2 used + 1 new, so
-    # remaining is 5 - 2 - 1 = 2. If cleanup wrongly pruned to the 1s window the
-    # key would be dropped and this would report hour: 4.
-    assert {:ok, %{hour: 2}} = HierarchicalLimiter.check(hl, "k", wide)
+    # TODO
   end
 
   test "check reaches the process through the registered :name" do

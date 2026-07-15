@@ -24,9 +24,10 @@ defmodule HierarchicalLimiter do
   Rejected requests do **not** record a new timestamp, so they don't consume
   budget under any tier.
 
-  Timestamps older than the widest tier window are dropped lazily on every
-  check and aggressively during the periodic cleanup sweep, bounding the
-  per-key state.
+  Timestamps older than the widest tier window ever seen for a key are dropped
+  lazily on every check and aggressively during the periodic cleanup sweep,
+  bounding the per-key state.  The widest window is remembered across checks so
+  that a later narrow check cannot cause a wide tier's history to be discarded.
 
   ## Options
 

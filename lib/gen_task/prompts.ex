@@ -598,7 +598,10 @@ defmodule GenTask.Prompts do
       option values prompt.md does not document.
     - Deterministic: no bare `Process.sleep` waits; use the harness's existing
       helpers (they stay defined — do NOT redefine them), scripted functions, and
-      bounded `assert_receive`/`refute_receive`.
+      bounded `assert_receive`/`refute_receive`. NEVER write a test that depends on
+      the real wall clock (e.g. exercising a documented real-time default clock, or
+      asserting margins around real elapsed time) — such promises are untestable
+      deterministically; skip them.
     - Zero compile warnings; every line ≤ 98 columns.
     - The test NAME must not duplicate any existing test name.
     - At most #{max} test blocks, most important first. Top-level `test` blocks

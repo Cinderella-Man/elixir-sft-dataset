@@ -412,5 +412,89 @@ defmodule RateLimiterTest do
     assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 2_000)
     assert Process.alive?(rl)
   end
+
+  test "check/4 works through the registered name and the pid alike" do
+    name = :rate_limiter_registered_name_test
+
+    {:ok, pid} =
+      RateLimiter.start_link(
+        name: name,
+        clock: &Clock.now/0,
+        cleanup_interval_ms: :infinity
+      )
+
+    # Same process reached two ways: state accumulates across both call styles.
+    assert {:ok, 4} = RateLimiter.check(name, "u", 5, 1_000)
+    assert {:ok, 3} = RateLimiter.check(pid, "u", 5, 1_000)
+  end
+
+  test "repeated denials never postpone when the original entry frees a slot", %{rl: rl} do
+    # One request at time 0 exhausts a limit of 1 per 1000ms.
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 1_000)
+
+    # Hammer the limited key twice while blocked; neither denial records a ts.
+    Clock.advance(500)
+    assert {:error, :rate_limited, 500} = RateLimiter.check(rl, "k", 1, 1_000)
+    Clock.advance(400)
+    assert {:error, :rate_limited, 100} = RateLimiter.check(rl, "k", 1, 1_000)
+
+    # At time 1000 only the time-0 entry mattered; the hammering did not push
+    # its expiry forward, so a slot is free.
+    Clock.advance(100)
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 1_000)
+  end
+
+  test "cleanup reclaims an expired entry before a wider-window check", %{rl: rl} do
+    # Record a request at time 0 under a 1000ms window (stored window = 1000).
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 1_000)
+
+    Clock.advance(1_500)
+
+    # A cleanup pass prunes using the key's last-seen 1000ms window. At time 1500
+    # the time-0 entry is not active for that window (0 > 1500 - 1000 is false),
+    # so the key's active list becomes empty and the key is removed entirely —
+    # exactly the memory-reclamation the cleanup contract mandates.
+    send(rl, :cleanup)
+
+    # The reclaimed key now behaves exactly like a never-seen key: even a wider
+    # 2000ms window starts a fresh window rather than resurrecting the pruned
+    # entry, so the first call must be allowed with remaining = max - 1.
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 2_000)
+  end
+
+  test "cleanup keeps a key that still has an active timestamp", %{rl: rl} do
+    assert {:ok, 1} = RateLimiter.check(rl, "k", 2, 1_000)
+    Clock.advance(600)
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 2, 1_000)
+
+    # Time 1100: the time-0 entry falls out, the time-600 entry stays active.
+    Clock.advance(500)
+    send(rl, :cleanup)
+
+    # The retained (pruned) list still holds the time-600 entry, so a limit of 1
+    # must be denied — a wrongly dropped key would return {:ok, 0} here.
+    assert {:error, :rate_limited, 500} = RateLimiter.check(rl, "k", 1, 1_000)
+  end
+
+  test "an unexpected message leaves tracking state untouched", %{rl: rl} do
+    assert {:ok, 1} = RateLimiter.check(rl, "k", 2, 1_000)
+
+    send(rl, :some_unexpected_message)
+    send(rl, {:weird, :tuple, 123})
+
+    # State unaltered: the earlier request still counts toward the limit.
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 2, 1_000)
+    assert {:error, :rate_limited, _} = RateLimiter.check(rl, "k", 2, 1_000)
+    assert Process.alive?(rl)
+  end
+
+  test "cleanup on a fresh empty state is a harmless no-op", %{rl: rl} do
+    send(rl, :cleanup)
+    send(rl, :cleanup)
+
+    # An untouched key still behaves like a brand-new key after empty sweeps.
+    assert {:ok, 4} = RateLimiter.check(rl, "brand:new", 5, 1_000)
+    assert Process.alive?(rl)
+  end
 end
 ```
