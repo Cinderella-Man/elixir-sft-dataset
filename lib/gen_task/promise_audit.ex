@@ -70,8 +70,8 @@ defmodule GenTask.PromiseAudit do
       id,
       shape,
       :promise_audit,
-      "GEN_PROMISE_AUDIT=0 — gate DARK (T1.10, docs/17 §5; the in-loop close_gaps " <>
-        "+ proven-defect probe)"
+      "EXPLICITLY DISABLED (GEN_PROMISE_AUDIT=0 — debugging only; the loop " <>
+        "default is ON, Kamil 2026-07-15: quality gates are never optional)"
     )
 
     {:ok, result}

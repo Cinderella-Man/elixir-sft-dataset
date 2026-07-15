@@ -137,9 +137,14 @@ defmodule GenTask.Config do
       skip_bugfix: env_bool(env_fun, "GEN_SKIP_BUGFIX"),
       skip_adapt: env_bool(env_fun, "GEN_SKIP_ADAPT"),
       skip_variation_blind: env_bool(env_fun, "GEN_SKIP_VARIATION_BLIND"),
-      blind_rescreen: env_bool(env_fun, "GEN_BLIND_RESCREEN"),
-      semantic_floor: env_floor(env_fun, "GEN_SEMANTIC_FLOOR"),
-      promise_audit: env_bool(env_fun, "GEN_PROMISE_AUDIT"),
+      # Kamil, 2026-07-15: quality gates are NEVER optional — generation always
+      # runs at the maximum standard. These three resolve ON by default; the env
+      # switches are opt-OUT, kept for debugging only (GEN_BLIND_RESCREEN=0,
+      # GEN_SEMANTIC_FLOOR=off, GEN_PROMISE_AUDIT=0). The STRUCT defaults stay
+      # conservative so unit tests exercise gates explicitly, not by surprise.
+      blind_rescreen: env_bool_default(env_fun, "GEN_BLIND_RESCREEN", true),
+      semantic_floor: env_floor(env_fun, "GEN_SEMANTIC_FLOOR", 0.6),
+      promise_audit: env_bool_default(env_fun, "GEN_PROMISE_AUDIT", true),
       audit_max_tests: env_int(env_fun, "GEN_AUDIT_MAX_TESTS", 6),
       tfim_max_per_task: env_int(env_fun, "GEN_TFIM_MAX_PER_TASK", 10),
       max_turns: env_int(env_fun, "GEN_MAX_TURNS", 2),
@@ -223,23 +228,32 @@ defmodule GenTask.Config do
     end
   end
 
-  # A kill-rate floor in [0.0, 1.0]; unset/empty means nil (gate off). A typo
-  # must stop the run, not silently disable a quality gate.
-  defp env_floor(env_fun, key) do
+  # A kill-rate floor in [0.0, 1.0]. Unset/empty resolves to `default` (the gate
+  # is ON by default — Kamil 2026-07-15: quality gates are never optional);
+  # the explicit words "off"/"none" disable it (nil, debugging only). A typo
+  # must stop the run, not silently change a quality gate.
+  defp env_floor(env_fun, key, default) do
     case env_fun.(key) do
       nil ->
-        nil
+        default
 
       "" ->
-        nil
+        default
 
       v ->
-        case Float.parse(String.trim(v)) do
-          {f, ""} when f >= 0.0 and f <= 1.0 ->
-            f
+        case String.downcase(String.trim(v)) do
+          word when word in ["off", "none"] ->
+            nil
 
-          _ ->
-            raise ArgumentError, "#{key}=#{inspect(v)} is not a float in [0.0, 1.0]"
+          trimmed ->
+            case Float.parse(trimmed) do
+              {f, ""} when f >= 0.0 and f <= 1.0 ->
+                f
+
+              _ ->
+                raise ArgumentError,
+                      "#{key}=#{inspect(v)} is not a float in [0.0, 1.0] (or \"off\")"
+            end
         end
     end
   end

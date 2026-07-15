@@ -402,3 +402,44 @@ chain (repair-mint raw material) is preserved. 385 tests green, including two
 end-to-end audit paths against the real evaluator: a coverage candidate
 vetted+merged, and a planted identity-promise violation machine-proven and
 repaired by the cycle. Rows 13/14 of the parity table now read BUILT DARK.
+
+---
+
+## 6. PILOT VERDICT + THE DEFAULT-ON POLICY (2026-07-15, late afternoon)
+
+### 6.1 The §5.4 prediction confirmed VERBATIM on the audit's first outing.
+
+The audited pilot (`GEN_PROMISE_AUDIT=1 … 15 --force`,
+`logs/force_015_audited.log`) regenerated the base; it passed gates 1–6 on
+attempt 0 (12 tests, 8 public functions). Then gate 7/9, the promise audit,
+on its FIRST production call:
+
+    promise test "re-registering with a longer interval stops the old
+                  interval's timer" ... KEPT (defect)     ← the F17-1 class
+    promise test "with auto_check disabled no automatic check runs on its own" ... KEPT (coverage)
+    promise test "auto_check defaults to true when the option is omitted" ... KEPT (coverage)
+    promise test "the other functions may be called with the registered name" ... KEPT (coverage)
+    promise test "an unexpected message does not alter accumulated failure state" ... KEPT (coverage)
+    → re-cycle: 16/17 (the defect test FAILED vs the gold) → repair →
+      17/17 green, all 8 per-function mutants killed, stable →
+    gate [7/9] PASS — harness 12→17 tests; module repaired against the proven defect
+
+The fresh base had AGAIN shipped the uncancelled-timer class — and this time
+it died at accept time, machine-proven and machine-fixed, no human involved.
+The four coverage tests are line-for-line the F17-2 gap list (named
+registration, option default, no-auto-when-disabled, unexpected-message
+robustness). This one trace is the whole probe's thesis demonstrated.
+
+### 6.2 Kamil's standing policy: quality gates are NEVER optional.
+
+Kamil, on being shown "dark flags": *"if there are some things that
+generation could do to increase the quality of the output — it NEEDS to do
+that — I don't see a scenario where I would want to spend my tokens on
+'suboptimal' results."* Encoded immediately (and in the agent's persistent
+memory): `GEN_BLIND_RESCREEN` and `GEN_PROMISE_AUDIT` resolve ON by default;
+`GEN_SEMANTIC_FLOOR` defaults to **0.6** (rejects the measured corpus tail:
+68 families were below 0.6; Kamil may tune the number). The switches remain
+only as debugging overrides and print `SKIPPED — EXPLICITLY DISABLED` when
+used. Parity rows 10/12/13/14 now read ENFORCED. The audit-only pilot was
+stopped after its base (partial output stashed) and relaunched with ALL
+gates on → `logs/force_015_full.log`; its verdict lands here as §6.3.

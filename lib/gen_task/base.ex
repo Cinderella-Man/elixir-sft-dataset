@@ -223,8 +223,8 @@ defmodule GenTask.Base do
           task_id,
           shape,
           :blind_rescreen,
-          "GEN_BLIND_RESCREEN=0 — gate DARK (T1.1 built, awaiting Kamil's sign-off; " <>
-            "docs/12 §5.5 row 10)"
+          "EXPLICITLY DISABLED (GEN_BLIND_RESCREEN=0 — debugging only; the loop " <>
+            "default is ON, Kamil 2026-07-15: quality gates are never optional)"
         )
 
         :promote

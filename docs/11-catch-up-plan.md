@@ -113,16 +113,14 @@ detached runner. This is where new dataset content starts again.
 - **root**: a base or variation task — the tasks all child exercises (FIM,
   tfim, wt_, bugfix, adapt) are derived from. A defect in a root is copied
   into every child, so root-level checks matter most.
-- **built dark / dark flag**: a quality check that is fully built, tested,
-  and wired into the generation loop but SWITCHED OFF by default via an
-  environment variable (e.g. `GEN_PROMISE_AUDIT=1`,
-  `GEN_BLIND_RESCREEN=1`, `GEN_SEMANTIC_FLOOR=0.6`). With the switch off the
-  loop behaves exactly as before, except the run log prints a
-  `SKIPPED — … DARK` line so the inactive check stays visible. New checks
-  land this way so they can be piloted first and only start affecting
-  accept/reject decisions on Kamil's explicit go.
-- **flipping a flag**: turning such a switch on permanently (usually by
-  adding the variable to the standard run command).
+- **built dark / dark flag** (HISTORICAL — policy changed 2026-07-15): a
+  quality check that was fully built and wired in but switched OFF by
+  default, waiting for Kamil's go. Kamil's standing rule since 2026-07-15:
+  **quality gates are never optional — every check that raises output
+  quality runs by default.** The environment switches still exist
+  (`GEN_BLIND_RESCREEN=0`, `GEN_SEMANTIC_FLOOR=off`, `GEN_PROMISE_AUDIT=0`)
+  but only as debugging overrides; disabling one prints a loud
+  `SKIPPED — EXPLICITLY DISABLED` line in the run log.
 - **promise audit** (`GEN_PROMISE_AUDIT`): the accept-time check that reads
   the prompt as a list of promises, has a reviewer model write a test for
   each promise no existing test covers, and machine-verifies every proposed

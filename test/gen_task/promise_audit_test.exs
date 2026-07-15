@@ -220,7 +220,7 @@ defmodule GenTask.PromiseAuditTest do
       capture_io(fn -> send(self(), {:res, PromiseAudit.run(r, "t_audit_off", :base, cfg)}) end)
 
     assert_received {:res, {:ok, ^r}}
-    assert out =~ "SKIPPED — GEN_PROMISE_AUDIT=0"
+    assert out =~ "SKIPPED — EXPLICITLY DISABLED (GEN_PROMISE_AUDIT=0"
   end
 
   test "NOTHING TO ADD passes the gate unchanged", %{tmp: tmp} do

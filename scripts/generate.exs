@@ -16,10 +16,12 @@
 #   GEN_LIMIT=5 mix run scripts/generate.exs
 #   GEN_DRY_RUN=1 mix run scripts/generate.exs 80
 #
-#   GEN_PROMISE_AUDIT=1 mix run scripts/generate.exs   # + the accept-time promise
-#     audit on every root (T1.10, docs/17 §5.5): one auditor call proposes anchored
-#     tests; green ones must bite (isolation mutant) and grow the harness, failing
-#     ones machine-prove defects and force a repair. DARK by default until piloted.
+# Quality gates are ON BY DEFAULT (Kamil 2026-07-15: never optional): the
+# promise audit (GEN_PROMISE_AUDIT, docs/17 §5.5), the blind re-screen of
+# repaired roots (GEN_BLIND_RESCREEN), and the semantic-mutant kill floor
+# (GEN_SEMANTIC_FLOOR, default 0.6). Setting GEN_PROMISE_AUDIT=0,
+# GEN_BLIND_RESCREEN=0 or GEN_SEMANTIC_FLOOR=off disables one — DEBUGGING
+# ONLY; the run log then prints a loud "SKIPPED — EXPLICITLY DISABLED" line.
 #
 #   mix run scripts/generate.exs 15 --force # DELETE idea 15's whole family first
 #     (base + variations + FIM dirs, wt_/tfim_/bugfix_/adapt_/repair_ children, its

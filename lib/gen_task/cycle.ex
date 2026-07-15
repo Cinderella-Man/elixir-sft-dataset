@@ -321,8 +321,8 @@ defmodule GenTask.Cycle do
       ctx.id,
       shape(ctx),
       :semantic_floor,
-      "GEN_SEMANTIC_FLOOR unset — gate DARK (report-only era; docs/12 §5.5 row 12 " <>
-        "awaits Kamil's floor number)"
+      "EXPLICITLY DISABLED (GEN_SEMANTIC_FLOOR=off — debugging only; the loop " <>
+        "default is 0.6, Kamil 2026-07-15: quality gates are never optional)"
     )
 
     :ok

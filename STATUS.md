@@ -27,19 +27,30 @@ F17-1..10, candidate gates G-A..G-E). Remaining, in order:
         defect feeding the repair loop; + F17-9 rescreen now covers repaired
         variations; + `:quarantined` console crash fixed (latent T1.1 defect).
         Parity rows 13/14 → BUILT DARK.
-  - [ ] **AUDITED RE-PROBE (docs/17 §5.4's prediction, running when this
-        line was written): retrofitted family restored (probe #1 preserved in
-        `logs/probe_015_regenerated_2026-07-15.tar.gz` + analyzed in docs/17),
-        then `GEN_PROMISE_AUDIT=1 … generate.exs 15 --force` detached →
-        `logs/force_015_audited.log`.** Success = the audit forces
-        lifecycle/promise tests into existence and no F17-1-class defect
-        ships; findings → docs/17 §6. AFTER analysis: restore again
-        (`git checkout -- tasks tasks/tasks.md`) — probe families never
-        train/export.
-  - [ ] **KAMIL sign-offs (unchanged set, now with pilot evidence en route):**
-        flip GEN_PROMISE_AUDIT + GEN_BLIND_RESCREEN + GEN_SEMANTIC_FLOOR
-        (number needed); G-B lifecycle clause + exemplar rotation land with
-        T1.4; T1.6 Dialyzer (mix.exs) still the @spec-truth carrier.
+  - [x] AUDITED PILOT, first outing (2026-07-15 afternoon, docs/17 §6): the
+        §5.4 prediction confirmed VERBATIM — the audit's first production run
+        machine-proved a timer-leak defect on the fresh base ("re-registering
+        … stops the old interval's timer" failed vs the gold), the repair
+        loop FIXED the module against it, and 4 more promise tests were
+        bite-proven and merged (harness 12→17). The F17-1 class now dies at
+        accept time.
+  - [ ] **QUALITY GATES NOW DEFAULT-ON (Kamil 2026-07-15: "quality gates are
+        never optional — I never want tokens spent on suboptimal results").**
+        GEN_BLIND_RESCREEN + GEN_PROMISE_AUDIT resolve ON, GEN_SEMANTIC_FLOOR
+        defaults 0.6 (Kamil may tune the number; `=off`/`=0` switches are
+        debugging overrides only). Parity rows 10/12/13/14 → ENFORCED.
+        REMAINING: the full-standard probe below.
+  - [ ] **FULL-STANDARD PROBE running: `generate.exs 15 --force` with ALL
+        gates default-on → `logs/force_015_full.log`** (the earlier
+        audit-only pilot was killed after its base — its partial output is
+        stashed as "T1.10 pilot #1 partial"). Success = whole family born
+        with zero triage-grade findings; findings → docs/17 §6. AFTER
+        analysis: restore the retrofitted family (probe families never
+        train/export); probe #1 is stashed + tarballed, probe #2 partial
+        stashed.
+  - [ ] Kamil decisions still open: T1.4 template upgrades (WITH Phase 3),
+        T1.6 Dialyzer (one mix.exs line), semantic-floor NUMBER tuning
+        (running default 0.6), T2.2 full-pass question.
   - [ ] On close: move T1.9/T1.10 record to docs/15; keep `--force` + GateLog
         + PromiseAudit as permanent loop features.
 ---

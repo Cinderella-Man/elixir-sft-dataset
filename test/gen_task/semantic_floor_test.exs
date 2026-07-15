@@ -6,9 +6,16 @@ defmodule GenTask.SemanticFloorTest do
   defp env(map), do: fn key -> map[key] end
 
   describe "GEN_SEMANTIC_FLOOR" do
-    test "unset means nil — the gate stays off (report-only era behavior)" do
-      assert %Config{semantic_floor: nil} = Config.new([], env(%{}))
-      assert %Config{semantic_floor: nil} = Config.new([], env(%{"GEN_SEMANTIC_FLOOR" => ""}))
+    test "unset resolves to the 0.6 default — quality gates are ON by default (Kamil 2026-07-15)" do
+      assert %Config{semantic_floor: 0.6} = Config.new([], env(%{}))
+      assert %Config{semantic_floor: 0.6} = Config.new([], env(%{"GEN_SEMANTIC_FLOOR" => ""}))
+    end
+
+    test "only the explicit word off/none disables it (debugging)" do
+      assert %Config{semantic_floor: nil} = Config.new([], env(%{"GEN_SEMANTIC_FLOOR" => "off"}))
+
+      assert %Config{semantic_floor: nil} =
+               Config.new([], env(%{"GEN_SEMANTIC_FLOOR" => "none"}))
     end
 
     test "a float in [0, 1] arms the gate" do

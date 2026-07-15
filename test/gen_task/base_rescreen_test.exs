@@ -14,9 +14,12 @@ defmodule GenTask.BaseRescreenTest do
   end
 
   describe "GEN_BLIND_RESCREEN" do
-    test "off by default, on with 1" do
-      assert %Config{blind_rescreen: false} = Config.new([], env(%{}))
+    test "ON by default (Kamil 2026-07-15: quality gates are never optional); 0 disables" do
+      assert %Config{blind_rescreen: true} = Config.new([], env(%{}))
       assert %Config{blind_rescreen: true} = Config.new([], env(%{"GEN_BLIND_RESCREEN" => "1"}))
+
+      assert %Config{blind_rescreen: false} =
+               Config.new([], env(%{"GEN_BLIND_RESCREEN" => "0"}))
     end
   end
 
