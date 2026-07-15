@@ -272,6 +272,36 @@ defmodule LeaderboardTest do
   end
 
   # -------------------------------------------------------
+  # Ties: equal scores share a rank
+  # -------------------------------------------------------
+
+  test "players with equal scores share the same rank", %{board: board} do
+    # Two players tied at the top: neither has anyone above, so both are rank 1.
+    Leaderboard.submit_score(board, "alice", 100)
+    Leaderboard.submit_score(board, "bob", 100)
+
+    assert {:ok, rank_a, 100} = Leaderboard.rank(board, "alice")
+    assert {:ok, rank_b, 100} = Leaderboard.rank(board, "bob")
+    assert rank_a == rank_b
+    assert rank_a == 1
+  end
+
+  test "a tie below a leader shares one rank behind that leader", %{board: board} do
+    # Exactly one distinct higher score sits above the tie, so both tied
+    # players occupy the same rank, one behind the leader.
+    Leaderboard.submit_score(board, "leader", 300)
+    Leaderboard.submit_score(board, "alice", 100)
+    Leaderboard.submit_score(board, "bob", 100)
+
+    assert {:ok, 1, 300} = Leaderboard.rank(board, "leader")
+
+    assert {:ok, rank_a, 100} = Leaderboard.rank(board, "alice")
+    assert {:ok, rank_b, 100} = Leaderboard.rank(board, "bob")
+    assert rank_a == rank_b
+    assert rank_a == 2
+  end
+
+  # -------------------------------------------------------
   # Key independence
   # -------------------------------------------------------
 
@@ -283,6 +313,28 @@ defmodule LeaderboardTest do
     assert {:ok, 1, 300} = Leaderboard.rank(board, :one)
     assert {:ok, 2, 200} = Leaderboard.rank(board, 1)
     assert {:ok, 3, 100} = Leaderboard.rank(board, "1")
+  end
+
+  test "match-spec-significant atoms work as ordinary player ids", %{board: board} do
+    # :_ and :"$1" carry special meaning inside ETS match-specifications
+    # (wildcard and binding variable). As player ids they are ordinary terms
+    # and must match only themselves — including on the overwrite path, which
+    # runs after a key already exists.
+    assert :ok = Leaderboard.submit_score(board, :_, 100)
+    assert :ok = Leaderboard.submit_score(board, :"$1", 200)
+
+    assert {:ok, _, 100} = Leaderboard.rank(board, :_)
+    assert {:ok, _, 200} = Leaderboard.rank(board, :"$1")
+
+    # A strictly higher score exercises the update path for such an id.
+    assert :ok = Leaderboard.submit_score(board, :_, 500)
+    assert {:ok, 1, 500} = Leaderboard.rank(board, :_)
+
+    # A lower score is still a no-op for such an id, leaving the best intact,
+    # and must not disturb the unrelated :_ entry.
+    assert :ok = Leaderboard.submit_score(board, :"$1", 10)
+    assert {:ok, _, 200} = Leaderboard.rank(board, :"$1")
+    assert {:ok, 1, 500} = Leaderboard.rank(board, :_)
   end
 
   # -------------------------------------------------------
