@@ -52,6 +52,29 @@ committed immediately (one solved item = one commit).
 
 ### 🔎 OPEN FINDINGS — two tasks each
 
+**F12 — 015_001 gold defect, VERIFIED REAL 2026-07-15 (from T2.4-T's
+sonnet flag; rule-10 hand-checked against the code): `deregister/2`'s
+@doc promises "cancels any pending check", but the implementation only
+discards-if-absent (solution.ex L167-172 comment claims discarding
+suffices). Re-registering the same service name before the stale
+`{:check, name}` arrives RESURRECTS the old timer chain: handle_info
+finds the NEW service, checks it early, and re-arms — TWO permanent
+check chains per service, 2× failure counting, premature :down. The
+lying-@doc class (038_001/019_001 precedent).**
+- F12-A (fix data): store the timer ref per service; `deregister` calls
+  `Process.cancel_timer(ref)` AND drains a possibly-queued
+  `{:check, name}` with a `receive ... after 0` (safe inside the
+  handler — the message, if fired, is already behind this call);
+  handle_info re-arm stores the fresh ref each cycle. Public API and the
+  `{:check, name}` message shape unchanged. Then the full cascade
+  (fim/tfim/wt/adapt/bugfix — the 037_003/043_001/105_002 playbook,
+  see those commits) + an add-only deregister→re-register test seeded
+  through close_gaps. DEFERRED to fresh eyes: the fix touches the
+  hot handle_info path and deserves an unhurried review.
+- F12-B (gate generator): third live case for T1.4's checklist — docs
+  must be machine-checkable against behavior (with T1.6 Dialyzer as the
+  spec half; @doc claims like "cancels" need a harness pin).
+
 **F10 — 018_003 harness gap: prompt L20 promises `archived_at` is "a
 `DateTime` in UTC truncated to the second"; the harness pinned neither
 truncation nor time zone.**
