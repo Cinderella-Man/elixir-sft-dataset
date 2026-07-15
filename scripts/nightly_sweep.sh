@@ -18,6 +18,30 @@
 set -euo pipefail
 cd "$(git -C "$(dirname "$0")/.." rev-parse --show-toplevel)"
 
+# Detached-job guard (2026-07-16). Every scripts/run_detached.sh job (retro
+# audit, generation loop, LLM sweeps) records `pid=<N> cmd=<...>` lines in a
+# logs/<name>.pid sidecar and can legally be alive for DAYS (the transport
+# sleeps out token windows). Sweeping under one is not safe: `mix compile`
+# rewrites _build beams that the job's bare-elixir graders load mid-flight,
+# and a full-corpus grading sweep alongside its evals turns CPU contention
+# into false flake-ledger rows. Skip (exit 0 — a skip, not a failure) while
+# any recorded job is still alive; Persistent=true retries tomorrow.
+for pidfile in logs/*.pid; do
+  [ -e "$pidfile" ] || continue
+  line=$(tail -n 1 "$pidfile")
+  pid=$(printf '%s' "$line" | sed -nE 's/.*pid=([0-9]+).*/\1/p')
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || continue
+  # Recycled-pid check: trust the pid only if the live process's cmdline
+  # still contains the recorded script path. A job whose cmd carries no
+  # scripts/ token (e.g. bash -c wrappers) is treated as alive — the
+  # conservative direction for a gate.
+  script=$(printf '%s' "$line" | grep -oE 'scripts/[A-Za-z0-9_./-]+' | head -1 || true)
+  if [ -z "$script" ] || tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null | grep -qF "$script"; then
+    echo "SKIP nightly sweep: detached job alive (pid $pid — $pidfile: $line)"
+    exit 0
+  fi
+done
+
 mkdir -p logs/nightly
 log="logs/nightly/sweep_$(date +%Y%m%d_%H%M%S).log"
 

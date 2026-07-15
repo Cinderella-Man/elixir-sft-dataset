@@ -198,7 +198,6 @@ against docs/16 §4's advisory weights (test_fim already down-weighted to
 1. *(resolved 07-15 by Kamil's default-on directive: the blind re-screen
    and promise audit run always; the semantic floor runs at 0.6 — tune the
    NUMBER if you want a different bar.)*
-3. **Nightly-sweep systemd timer install** — 4 commands, docs/12 §4.1.10.
 4. **T1.6 Dialyzer** — one `mix.exs` + lockfile change. (Two more live
    would-have-caught cases from today's T2.2 batch: 038_001's undocumented
    `duplicate_ids` return violating its own @spec; 043_001's named-table

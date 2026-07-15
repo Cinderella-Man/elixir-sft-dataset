@@ -9,6 +9,19 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-16 — Nightly-sweep systemd timer INSTALLED (same delegation) +
+  detached-job guard added to the sweep.** The staged units are live:
+  `~/.config/systemd/user/nightly-sweep.{service,timer}`, enabled, next
+  fire 03:00, `Linger=yes` (survives logout; `Persistent=true` replays
+  missed nights). New guard in `scripts/nightly_sweep.sh`: it reads every
+  `logs/*.pid` sidecar that `run_detached.sh` writes and SKIPS (exit 0)
+  while any recorded job is alive — `mix compile` under a live job races
+  its bare-elixir graders on `_build`, and a full grading sweep beside its
+  evals turns CPU contention into false flake rows. Recycled-pid safe (the
+  live cmdline must still contain the recorded script path; wrapper cmds
+  without one are conservatively treated as alive). Live-tested: it caught
+  the running retro audit and skipped.
+
 - **2026-07-16 — §4.2 sign-offs COMPLETE (last two halves; same "do
   everything" delegation).** Spot-review scope: one ~20-seed April-era
   tranche, run after the retro-audit sweep, stratified against the sweep's
