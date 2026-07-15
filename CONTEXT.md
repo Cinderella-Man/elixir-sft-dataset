@@ -39,6 +39,19 @@
 
 ## ⚠️ HOW WE WORK — HARD RULES (Kamil, 2026-07-13; these override everything else)
 
+**0. THE MOST IMPORTANT GOAL (Kamil, 2026-07-15).** At the Phase-3 cutover,
+the generation loop must produce data at THE SAME QUALITY BAR the catch-up
+campaign retrofitted — perfect or very close, with NO second month of
+fixing. The binding contract is **docs/12 §5.5**: (a) the loop-parity table
+— Phase 3 does not start until every check the retro tools ran is ENFORCED
+in the accept path or explicitly waived by Kamil; (b) the cutover
+acceptance test — the first Phase-3 batch is run through the SAME
+instruments that found this month's debt (semantic_review on every new
+root, a two-family rubric_judge pass, all sweeps) and must produce ZERO
+triage-grade findings; any hit means fix the GENERATOR, regenerate, and
+re-test — never fix the data. Rule 7's Task-B half exists for this goal:
+a retro fix without its generator gate moves us NOWHERE.
+
 Reading order for every session: **this section → `STATUS.md` → `docs/14`**.
 These rules exist because token exhaustion happens MANY times per 24h here, and
 losing work is NEVER acceptable. Every rule below was paid for.
