@@ -156,6 +156,7 @@ defmodule RubricJudge do
 
   defp go(opts) do
     refuse_if_generate_alive!()
+    acquire_lock!()
     cfg = Config.new([])
     second = opts[:second_model] || "sonnet"
     {_by_era, picked} = batch(opts[:sample] || @default_sample)
@@ -393,12 +394,34 @@ defmodule RubricJudge do
     File.write!(@ledger, Jason.encode!(row) <> "\n", [:append])
   end
 
+  # Two overlapping --go runs write duplicate rows for the same content (found
+  # live 2026-07-15: a run_detached wrapper pid died, its beam lived on, and a
+  # "relaunch" ran beside it). Rows are append-only audit — the LAST row per
+  # task wins everywhere, and go() now refuses to start beside a live twin.
+  defp acquire_lock!(lock \\ "logs/rubric_judge.lock") do
+    with {:ok, pid} <- File.read(lock),
+         pid = String.trim(pid),
+         true <- File.dir?("/proc/#{pid}") do
+      IO.puts("REFUSING --go: another rubric_judge (OS pid #{pid}) is alive — #{lock}")
+      System.halt(1)
+    else
+      _ ->
+        File.mkdir_p!("logs")
+        File.write!(lock, System.pid() <> "\n")
+    end
+  end
+
   defp report do
     case File.read(@ledger) do
       {:ok, body} ->
-        rows = body |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1)
+        all = body |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1)
+        rows = all |> Map.new(&{&1["task"], &1}) |> Map.values()
+        dups = length(all) - length(rows)
 
-        IO.puts("\n=== RUBRIC JUDGE LEDGER (#{length(rows)} root(s)) ===")
+        IO.puts(
+          "\n=== RUBRIC JUDGE LEDGER (#{length(rows)} root(s)" <>
+            "#{if dups > 0, do: ", latest-per-task over #{length(all)} rows", else: ""}) ==="
+        )
 
         for axis <- @axes do
           {lows, agrees} = axis_stats(rows, axis)

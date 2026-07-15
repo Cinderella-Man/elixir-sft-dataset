@@ -9,6 +9,42 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-15 (early) — T2.4 MEASUREMENT CLOSED: two-family rubric judge
+  over 40 stratified passing roots — ZERO both-family triage findings.**
+  Tool: `scripts/rubric_judge.exs` (docs/12 §6.4 OpenCodeInstruct rubric —
+  requirement_conformance / logical_correctness / edge_case_consideration,
+  1-5, verbatim evidence required for ≤3; PoLL second family = sonnet;
+  deterministic era-stratified batch; sha+rubric-keyed resumable ledger
+  `logs/rubric_judge.jsonl`). Rule-9 instrument proof BEFORE the batch: the
+  pre-fix 095_003 positive control (real money bug reconstructed from git)
+  was caught by BOTH families independently (opus 5/3/3, sonnet 3/3/2,
+  same two defects named; the both-family-low triage rule fires on it and
+  ONLY on it). Batch result over the live corpus: 40/40 roots ≥4 from
+  opus on every axis (114×5, 6×4); sonnet stricter (97×5, 15×4, 6×3, 2×2)
+  but its lows NEVER coincide with an opus low; per-axis agreement 40/40 /
+  36/40 / 37/40. Seven accidentally double-judged roots gave free
+  test-retest data: verdicts wobble ±1 point across independent runs —
+  which is exactly the agreement band, and means a lone 4 (or a lone
+  single-family 3) is noise, not signal. The 5 sonnet-only flags are
+  registered in STATUS as T2.4-T for rule-10 hand-triage. VERDICT for the
+  register: post-catch-up, judge filtering finds NO triage-grade quality
+  debt execution filtering missed — consistent with recommending AGAINST
+  the paid T2.2 full pass. Defects found & fixed in the tool en route:
+  sonnet error_max_turns (judge calls now run max_turns 4), errored rows
+  counting as done (resume re-runs them), duplicate rows from overlapping
+  runs (report is latest-per-task; go() takes a /proc-checked lock —
+  docs/14 scar 12 records the wrapper-pid false-negative that caused the
+  overlap). Cost: ~95 judge calls total incl. pilot + controls + retries.
+
+- **2026-07-15 (early) — Full-corpus assurance sweep: 6,147 dirs ALL
+  PERFECT** (the weekly-CI-equivalent, run locally after the +249 adapt
+  mint and the 018_003 strengthening). The one reported failure was
+  017_001 — the corpus's only `db: :postgres` task — with the local DB
+  container down; that loud-RED is by design (runner.ex: "goes RED, not
+  skipped"). `docker compose up -d db` per the documented remedy, then
+  017_001 re-graded 23/23 green, 0 warnings. The container is now UP on
+  this machine. En route: CI verified green for every overnight push.
+
 - **2026-07-15 (night) — T1.1 BUILD landed dark: the §5.2.1 accept-time
   blind re-screen is wired into the base accept path behind
   `GEN_BLIND_RESCREEN=1` (default OFF — zero behavior change until Kamil's

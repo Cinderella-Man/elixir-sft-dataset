@@ -533,7 +533,18 @@ spec, family-keyed splits, a round-trip validator, and dedup/sampling weights.
     calls (or hand effort) on a below-floor family, fuzz its survivors through
     the public API; extend the classifier's vocabulary when it misfires.
 
-12. **Every finding is a TWO-TIER work item (CONTEXT.md hard rule 7): fix the
+12. **`kill -0` on run_detached's echoed pid can false-negative while the job
+    LIVES ON.** The echoed pid is the wrapper; the beam it launched can outlive
+    it. On 2026-07-15 a rubric batch read as "exited" mid-root, was relaunched,
+    and two instances ran side by side writing duplicate ledger rows (benign —
+    rows are append-only and consumers take the last per task — but noisy, and
+    with a non-idempotent tool it would have been corruption). Before declaring
+    a detached job dead: check the LOG is no longer growing AND `pgrep -af` for
+    its actual command (one-shot, not in a wait loop — rule 9 above). Ledgered
+    tools that must never self-overlap now take a `/proc`-checked lock file
+    (rubric_judge's `acquire_lock!` is the pattern).
+
+13. **Every finding is a TWO-TIER work item (CONTEXT.md hard rule 7): fix the
     existing data AND gate the generation script so the class cannot recur.**
     A finding without its forward gate is not done — fixing existing data
     while generating the same defect again never converges on quality. The

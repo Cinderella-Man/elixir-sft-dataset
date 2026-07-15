@@ -13,40 +13,23 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**T2.4 rubric-judge BATCH: 40 stratified roots × 2 judge families**
-(launched 2026-07-14 ~23:4x UTC; 4 pilot roots already done → ~36 roots /
-~72 calls remaining; expect several hours).
-- pid: `logs/rubric_batch.pid` · log: `logs/rubric_batch.log` · rows →
-  `logs/rubric_judge.jsonl`
-- PILOT + CONTROL PASSED (rule 9): 4 pilot roots clean 5s from BOTH
-  families; the pre-fix 095_003 positive control was caught by BOTH
-  (opus 5/3/3, sonnet 3/3/2 — same two defects independently; the
-  both-judge-low triage rule fires on it). Two tool defects found & fixed
-  en route: sonnet error_max_turns (judge calls now max_turns 4), and
-  errored rows counting as done (resume now re-runs them).
-- idempotent relaunch:
-  `scripts/run_detached.sh logs/rubric_batch.log mix run scripts/rubric_judge.exs -- --go`
-- after exit: `-- --report`; hand-check every TRIAGE root against the
-  artifacts (docs/14 rule 10) before ANY edit; findings become two-tier
-  STATUS items (rule 7).
-
-*(Full-corpus sweep DONE 2026-07-15 ~01:5x UTC: 6,147 dirs, ALL PERFECT.
-The single reported failure was 017_001 — the only `db: :postgres` task —
-because the local DB container was down; that loud-RED is by design
-(runner.ex "goes RED, not skipped"). `docker compose up -d db` was run per
-the documented remedy — the `elixir_benchmark_pg` container is now UP on
-this machine — and 017_001 re-graded 23/23 green, 0 warnings.)*
+**Nothing.** (Overnight 07-14→15: TD.1 closed, T1.1 dark-built, T2.4
+measurement closed, full-corpus sweep ALL PERFECT — docs/15. Note: the
+`elixir_benchmark_pg` Docker container was started per the documented
+remedy and is UP on this machine.)
 ---
 
-## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-14 evening)
+## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-15 early morning)
 
 1. **Kamil's five decisions** (section below) — they gate Phase 3, T1.1,
    T1.6 (and TD.3 behind it), the nightly timer, and the T2.2 full-pass
    question. Nothing else blocks them.
-2. Ready now, no decision needed, paid: **T2.4** rubric judge over passing
-   tasks.
+2. **T2.4-T** — hand-triage the 5 sonnet-only rubric flags (register below;
+   FREE, careful reading, rule 10).
 3. **T1.4** template upgrades land WITH the Phase 3 restart, not before.
 4. Bigger builds: the **TD.2–TD.4** decisions (TD.1 closed — docs/15).
+
+*(F10-A closed 07-14 late; T2.4 measurement closed 07-15 — docs/15.)*
 
 ## 📋 QUALITY TODO REGISTER (2026-07-13 — why / what / how / cost per item)
 
@@ -130,11 +113,22 @@ change; then FREE (PLT build + weekly CI)]**
 ### Tier 2 — raise EXISTING corpus quality (evidence says more is there)
 
 
-**T2.4 — Rubric LLM-judge pass over PASSING tasks (sampled). [PAID; round-#2
-candidate]** — WHY: our judge only ever sees failures; judge filtering adds
-quality beyond execution filtering (docs/12 §6.4). HOW: 3-axis rubric on a
-stratified sample, agreement-logged second judge family (PoLL) — rule 10
-showed single-judge bias is real.
+**T2.4-T — hand-triage the 5 sonnet-only rubric flags (rule 10: verify
+against the artifacts before ANY edit). [FREE, careful reading; the
+measurement itself is CLOSED → docs/15 with ZERO both-family triage
+roots.]** Sonnet (the stricter family) scored ≤3 where opus scored ≥4 on:
+- 015_001 (stale `{:check, name}` timer vs re-registration race — claims
+  the old registration's timer can misfire against the new one)
+- 037_003 (fold over `fields` re-reads mutated `rec` → duplicate field
+  atoms double-tokenize; global reverse map not scoped per field)
+- 043_001 (raw `player_id` term embedded in an ETS match spec head; tie
+  ranks never tested with actual ties)
+- 104_003 (`timeout: 0` immediate-return branch never separately pinned)
+- 105_002 (`:fire` carries key without timer ref; `cancel_timer` return
+  unchecked → stale-fire race)
+Each claim cites concrete mechanics — exactly the tier rule 10 exists for:
+an LLM verdict is a hypothesis. If any verifies REAL, it becomes a two-tier
+finding (rule 7).
 
 
 
