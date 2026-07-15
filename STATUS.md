@@ -46,12 +46,20 @@ F17-1..10, candidate gates G-A..G-E). Remaining, in order:
         consequence (independent solver leaked too) → QUARANTINED, nothing
         promoted. Triage verdict: prompt-TEMPLATE gap → generator fixed
         (LIFECYCLE RULE now in base+variation templates — G-B landed).
-  - [ ] **PROBE #4 running: template-fixed, all gates on →
-        `logs/force_015_full2.log`, pid in `logs/force_015_full2.pid`.**
-        Success = family born clean end-to-end; verdict → docs/17 §6.4.
-        AFTER analysis: restore the retrofitted family via the stash/
-        checkout (probe data never trains/exports; probes #1–#3 stashed
-        + #1 tarballed).
+  - [x] PROBE #4 (docs/17 §6.4): **the family was born at the bar** — 75
+        units, ONE repair call total, zero audit-proven defects, all four
+        re-screens green, floors 0.72–0.93, lifecycle rule propagated into
+        every prompt+harness, base probe-proven leak-free. Free-instrument
+        sweep running (`logs/verify_015_probe4.log`) — verdict appended to
+        §6.4 when done.
+  - [ ] **KAMIL: inspect probe #4's family (on disk now, uncommitted), then
+        decide:** (a) restore the retrofitted family via
+        `git checkout -- tasks tasks/tasks.md` after stashing (default —
+        probe data never exports without the cutover instruments), or
+        (b) run the cutover instruments (semantic_review + rubric_judge)
+        on probe #4's roots and, if zero findings, consider ADOPTING it as
+        the first full-standard family. Probes #1–#3 are stashed (#1 also
+        tarballed).
   - [ ] **NEW BUILD ITEM (from §6.3): in-loop quarantine-triage path** — the
         loop can quarantine but has no "hard-task KEEP" verdict (the retro
         screen had 49 keeps). Phase 3 needs: triage judge over

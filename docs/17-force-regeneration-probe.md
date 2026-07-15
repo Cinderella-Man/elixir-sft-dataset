@@ -486,3 +486,46 @@ the loop currently only quarantines. Phase 3 needs a triage step (LLM judge
 keep and promote it with the evidence row, or route it to prompt repair.
 Probe #4 (template-fixed, all gates on) → `logs/force_015_full2.log`,
 verdict in §6.4.
+
+### 6.4 PROBE #4 VERDICT: the family was born at the bar.
+
+Full family regenerated under the complete standard (~40 min): 75 accepted
+units (1 base + 3 variations + 12 fim + 40 tfim + 4 wt + 12 bugfix +
+3 adapt), 31 LLM calls — and **one single repair call in the whole run**
+(probe #1 spent five). Every quality signal that took a month of hand work
+now holds at birth:
+
+- **Born correct.** ZERO defects proven by the audit on any root (probe #2
+  and #3 each caught one — the template fix removed the class at authoring
+  time). All four roots implement scheduled-work cancellation correctly, in
+  four idioms (generation refs / token-tagged ticks); the base is
+  probe-proven leak-free (9 → 9 checks/500ms across a re-registration;
+  probe #1's base measured 9 → 19).
+- **The lifecycle rule propagated by itself**: every root prompt states
+  "the previous registration's scheduled checks never run again" and every
+  root harness carries a "kills the previous schedule" test (015_002 has
+  two — re-add AND remove).
+- **Coverage grew at accept time**: the audit added 3+3+2+3 bite-proven
+  promise tests (guards, notification-reason accuracy, term-typed names,
+  option defaults) — harnesses 13→16, 17→20, 15→17, 16→19. One proposed
+  test was dropped for a non-verbatim anchor (hallucination containment
+  firing in production).
+- **All four blind re-screens green**: independent prompt-only solvers
+  reproduced full semantics including cancellation — the prompts carry the
+  whole contract now.
+- **Semantic floors: 0.83 / 0.93 / 0.76 / 0.72** vs the 0.6 floor (corpus
+  retro mean was 0.74 — the newborn family sits at or above it).
+- **Design richness recovered too**: escalating-severity, quorum-based
+  cluster, and hysteresis/flapping-suppression monitors — a noticeably
+  harder variation set than probe #1's (the richer base-prompt era plus
+  chance; T1.4's difficulty push remains the systematic lever).
+
+Cost of the full standard vs probe #1: +4 audit calls +4 re-screen calls
+−4 repair calls ≈ **+15% tokens for the month-of-debt not existing**.
+
+Remaining before Phase 3 (unchanged): the cutover acceptance test's LLM
+instruments (semantic_review + rubric_judge over the first REAL batch,
+G-E), the quarantine-triage path (§6.3), T1.4's full template upgrade, and
+T1.6 Dialyzer. Probe #4's family stays on disk (uncommitted) for Kamil's
+inspection; it must still be restored (stash) before any export — probe
+data never ships without the cutover instruments having run.
