@@ -27,7 +27,14 @@ probe on family 015.** Three parts, in order:
         `logs/errors/` + `logs/quarantine/` blockers), refusing unless every
         target is git-clean (recoverability), then lets the normal loop
         regenerate. GEN_DRY_RUN=1 prints the deletion list without deleting.
-  - [ ] (c) EXPERIMENT: `--force` family 15 (Heartbeat Monitor — freshest
+  - [ ] (c) EXPERIMENT — **RUNNING since 2026-07-15 ~midday: pid 2778624,
+        log `logs/force_015.log`** (gate verdicts also in `logs/gates.jsonl`,
+        per-unit logs `logs/015_*.log`, ledger `logs/runs.jsonl`). Expected
+        result: family 15 fully regenerated (base + 3 variations + FIM +
+        wt/tfim/bugfix/adapt) with every gate verdict printed and ledgered.
+        The wipe already happened (75 dirs + 3 tasks.md entries — old family
+        recoverable via `git checkout -- tasks tasks/tasks.md`). Then:
+        `--force` family 15 (Heartbeat Monitor — freshest
         retrofit, F12 closed 07-15), detached + monitored; then read the git
         diff old-vs-new in detail and map every quality delta to a parity-table
         row (docs/12 §5.5) → new gate work items per rule 7. The regenerated
