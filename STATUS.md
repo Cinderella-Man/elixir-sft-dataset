@@ -34,7 +34,7 @@ F17-1..10, candidate gates G-A..G-E). Remaining, in order:
         loop FIXED the module against it, and 4 more promise tests were
         bite-proven and merged (harness 12→17). The F17-1 class now dies at
         accept time.
-  - [ ] **QUALITY GATES NOW DEFAULT-ON (Kamil 2026-07-15: "quality gates are
+  - [x] **QUALITY GATES NOW DEFAULT-ON (Kamil 2026-07-15: "quality gates are
         never optional — I never want tokens spent on suboptimal results").**
         GEN_BLIND_RESCREEN + GEN_PROMISE_AUDIT resolve ON, GEN_SEMANTIC_FLOOR
         defaults 0.6 (Kamil may tune the number; `=off`/`=0` switches are
@@ -66,10 +66,10 @@ F17-1..10, candidate gates G-A..G-E). Remaining, in order:
         `logs/quarantine/*` + Kamil review + a keep-promotion path writing
         the evidence row. Until built, quarantines block their idea and
         surface here.
-  - [ ] Kamil decisions still open: T1.4 template upgrades (WITH Phase 3;
-        G-B lifecycle clause already landed out of necessity), T1.6 Dialyzer
-        (one mix.exs line), semantic-floor NUMBER tuning (running default
-        0.6), T2.2 full-pass question.
+  - [ ] Kamil decisions still open: T1.6 Dialyzer (one mix.exs line),
+        semantic-floor NUMBER tuning (running default 0.6), T2.2 full-pass
+        question, nightly-sweep timer. (T1.4 landed 07-15 evening —
+        docs/15.)
   - [ ] On close: move T1.9/T1.10 record to docs/15; keep `--force` + GateLog
         + PromiseAudit as permanent loop features.
 ---
@@ -79,8 +79,7 @@ F17-1..10, candidate gates G-A..G-E). Remaining, in order:
 1. **Kamil's five decisions** (section below) — they gate Phase 3, T1.1,
    T1.6 (and TD.3 behind it), the nightly timer, and the T2.2 full-pass
    question. Nothing else blocks them.
-2. **T1.4** template upgrades land WITH the Phase 3 restart, not before.
-4. Bigger builds: the **TD.2–TD.4** decisions (TD.1 closed — docs/15).
+2. Bigger builds: the **TD.2–TD.4** decisions (TD.1 closed — docs/15).
 
 *(F10-A + T2.4 measurement + T2.4-T (all 5 flags) + F12 + T1.7 + T1.8
 closed 07-14/15 — docs/15.)*
@@ -102,63 +101,32 @@ committed immediately (one solved item = one commit).
 **F12 — 015_001 lying deregister @doc + resurrectable check chain.**
 - F12-A (fix data): DONE → docs/15 (07-15: tracked timer refs + cancel +
   drain, probe-proven, full cascade, bugfix children reminted).
-- F12-B (gate generator): doc-prose claims need harness pins — T1.4
-  checklist evidence (with T1.6 Dialyzer as the @spec half). OPEN.
+- F12-B (gate generator): prose-claims-need-pins half DONE 07-15 (T1.4
+  COVERAGE/LIFECYCLE/CALLBACK rules + the default-ON promise audit —
+  docs/17). REMAINING: the @spec half = T1.6 Dialyzer (Kamil's mix.exs
+  line).
 
-**F10 — 018_003 harness gap: prompt L20 promises `archived_at` is "a
-`DateTime` in UTC truncated to the second"; the harness pinned neither
-truncation nor time zone.**
-- F10-A (fix data): DONE → docs/15 (07-14 late: +3 add-only tests via
-  close_gaps, bite-proven both ways, wt_ + 10 tfim cascaded).
-- F10-B (gate generator): the class belongs to T1.4's harness checklist
-  (per-promise coverage); reference this finding there as evidence. OPEN —
-  lands WITH Phase 3 (T1.4), like F1-B.
-
-**F1 — repaired accepts shipped prompt↔harness gaps (6 found live).**
-- F1-A (fix data): DONE → docs/15 (6 prompts fixed, cascaded, re-screened GREEN).
-- F1-B (gate generator): **T1.1 accept-time blind re-screen in the loop —
-  PENDING KAMIL'S SIGN-OFF.**
-
-*(Closed with both tiers done — see docs/15: F2 — blind evidence staled by
+*(Closed with both tiers done — see docs/15: F1 — repaired-accept gaps
+(T1.1 re-screen default-ON 07-15); F10 — promise-coverage gap (T1.4
+COVERAGE RULE + default-ON promise audit, 07-15); F2 — blind evidence staled by
 harness edits; F3 — reject rows surviving their gate's repair; F4 — tools imitating grandfathered anti-patterns; F5 —
 generation-process chatter; F6 — LLM-judge hallucinated verdict; F7 —
 environmental failures as verdicts.)*
 
 ### Tier 1 — make every FUTURE generated unit better (loop + gates)
 
-**T1.1 — Wire the §5.2 blind re-screen into the generation loop.
-[BUILD LANDED DARK 2026-07-15 (docs/15) — flag `GEN_BLIND_RESCREEN=1`,
-default OFF, zero behavior change until flipped. NEEDS KAMIL'S SIGN-OFF
-on the policy; then flipping the flag is the whole remaining work.
-Runtime ~1 solver call per repaired accept. Not built (discuss at
-sign-off): the §5.2.2 entailment judge over repair-time harness diffs,
-and a CI check refusing accepts lacking the evidence row.]**
-- WHY: a base/variation accepted after ≥1 repair was fixed by a model that SAW
-  the harness failure report, so acceptance proves nothing about the prompt
-  alone. Not theoretical: 6 of the 22 retro-screened repaired accepts had
-  shipped harnesses asserting things their prompts never said (101_002,
-  102_002/3/4, 626_004, 101_003 — all found+fixed 2026-07-13, see docs/15).
-- WHAT: in the loop, any base/variation accepted with `attempts > 1` gets one
-  independent blind re-solve (prompt only) before promotion; RED → quarantine
-  for triage, never silent promotion. Plus docs/12 §5.2.2: an entailment judge
-  over the harness DIFF made during repair.
-- HOW: post-accept hook in the accept path reusing the `screen_blind_solve`
-  mechanism + ledger; behind `GEN_BLIND_RESCREEN=1`; CI later refuses accepts
-  lacking the evidence row. Design sketch: docs/12 §5.2.1.
+*(T1.1 CLOSED 07-15 — the blind re-screen is default-ON for repaired bases
+AND variations; docs/15. Not built, discuss if post-cutover audits show
+residual leakage: the §5.2.2 entailment judge over repair-time harness
+diffs, and a CI check refusing accepts lacking the evidence row.)*
 
-**T1.4 — Phase 3 template upgrades (docs/12 §5.3 — designed, never landed).
-[FREE, forward-only; land WITH Phase 3, not before]**
-- WHY: measured monoculture — 76% of seed prompts open "Write me", one frozen
-  few-shot exemplar (root cause of the GenServer monoculture), ZERO doctests
-  corpus-wide (26 golds carry `iex>` examples that never execute), harness
-  checklists designed in docs/10 §3.4 but never landed.
-- WHAT: (a) shared harness-rule constant (≥1 negative/error-path test per
-  public function, boundary tests, `describe` grouping, OTP conventions) used
-  by base/variation/write-test templates — triplicated today, drifted once
-  already; (b) request doctests + one property test where apt; (c) rotate 3–5
-  few-shot exemplars of different shapes; (d) record each seed's blind-screen
-  outcome as free difficulty metadata.
-- HOW: all in `lib/gen_task/prompts.ex`; rationale in docs/12 §5.3.
+**T1.4 — Phase 3 template upgrades: LANDED 2026-07-15 (Kamil: "improve
+everything") except sliver (d).** Done → docs/15: (a) ONE shared
+harness-rule block for base+variation templates (COVERAGE / API-SHAPE /
+LIFECYCLE / CALLBACK rules); (b) doctest + property-test request; (c)
+3-exemplar shape rotation + vary-the-register instruction. REMAINING
+sliver: (d) record each seed's blind-screen outcome as difficulty
+metadata (ledger-side, tiny — fold into the export work).
 
 
 **T1.6 — Dialyzer gate over the golds. [NEEDS KAMIL: one mix.exs/lockfile
@@ -202,15 +170,11 @@ against docs/16 §4's advisory weights (test_fim already down-weighted to
 
 ## 🧍 WAITING ON KAMIL (decisions only — nothing else blocks Phase 3)
 
-1. **T1.1 / §5.2 sign-off** — the accept-time blind re-screen (evidence:
-   6 gaps in 22 repaired accepts). The build is already landed DARK
-   behind `GEN_BLIND_RESCREEN=1` — sign-off flips one flag.
-2. **docs/12 §4.2 sign-offs** — spot-review scope, prompt-monotony scope;
-   the semantic-floor half is answered (floor = kill rate among OBSERVABLE
-   mutants; measured, closed — see docs/15). Note S8 now has the complete
-   three-way survivor framework to sign off against: killable / internals /
-   **spec-ceiling** (observable but unpinnable-by-spec — docs/13 §1.5.1b,
-   born from 037_001).
+1. *(resolved 07-15 by Kamil's default-on directive: the blind re-screen
+   and promise audit run always; the semantic floor runs at 0.6 — tune the
+   NUMBER if you want a different bar.)*
+2. **docs/12 §4.2 sign-offs, remaining halves** — spot-review scope and
+   prompt-monotony scope (the semantic-floor half is now the 0.6 default).
 3. **Nightly-sweep systemd timer install** — 4 commands, docs/12 §4.1.10.
 4. **T1.6 Dialyzer** — one `mix.exs` + lockfile change. (Two more live
    would-have-caught cases from today's T2.2 batch: 038_001's undocumented

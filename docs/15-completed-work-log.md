@@ -9,6 +9,31 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-15 (afternoon/evening) — THE LOOP NOW GENERATES AT THE
+  RETROFITTED BAR (T1.9 + T1.10 + T1.4 + default-on policy; full story
+  docs/17).** In one arc: (1) gate transparency — every accept-path gate
+  prints `gate [k/N] … PASS/FAIL/SKIPPED` and ledgers to
+  `logs/gates.jsonl` (`GenTask.GateLog`); (2) `generate.exs <n> --force`
+  family wipe for regeneration probes (git-clean-guarded); (3) four probes
+  on family 15 told the whole story — naked loop shipped a probe-proven
+  timer leak + 5 untested promises; the new PROMISE AUDIT
+  (`GenTask.PromiseAudit`: anchored tests, bite-proven coverage,
+  failing-test = machine-proven defect → repair loop) caught and repaired
+  it; the blind re-screen then quarantined a prompt-template gap; the
+  template LIFECYCLE RULE fixed the generator; probe #4 was born clean —
+  75 units, ONE repair call, zero defects, floors 0.72–0.93, all free
+  instruments green, hand review found nothing triage-grade; (4) Kamil's
+  standing policy: quality gates are NEVER optional — audit + re-screen +
+  0.6 semantic floor all default-ON (env switches = loud debugging
+  overrides); (5) T1.4 landed: ONE shared harness-rule block
+  (COVERAGE/API-SHAPE/LIFECYCLE/CALLBACK + doctest/property), 3-exemplar
+  shape rotation, vary-the-register instruction, cross-process AXIS
+  REQUIREMENT for variations. Closed with it: T1.1 (re-screen default-on,
+  bases AND variations), F1-B, F10-B, F12-B's prose half; parity rows
+  10/12/13/14 ENFORCED, 17 partial, 21 template-side landed. 392 tests
+  green. Probe #4's family on disk pending Kamil's keep-vs-restore call;
+  probes #1–#3 stashed (#1 tarballed).
+
 - **2026-07-15 (late morning) — T-gates CLOSED: all four resync drift
   gates (tfim / bugfix / wt / adapt) now prove themselves non-vacuous in
   CI on every push** (parity row 19 fully ENFORCED). Pattern per gate:

@@ -504,15 +504,15 @@ safety net is the cutover acceptance test at the bottom.
 | 10 | S6 blind RE-screen, repaired bases (6/22 shipped gaps) | ENFORCED (default-ON 2026-07-15, Kamil: quality gates are never optional; covers repaired VARIATIONS too — F17-9; `GEN_BLIND_RESCREEN=0` is a debugging override only) | — |
 | 11 | entailment judge on repair-time harness DIFFS (§5.2.2) | **partially covered**: the default-ON re-screen (row 10) + promise audit (row 13) close most of the window; a dedicated diff judge remains unbuilt | build only if post-cutover audits show residual leakage |
 | 12 | semantic-mutant kill FLOOR (S8) | ENFORCED (default floor **0.6** since 2026-07-15 — rejects the measured corpus tail of 68 families < 0.6; `GEN_SEMANTIC_FLOOR` overrides the number, `=off` disables for debugging) | Kamil may tune the number |
-| 13 | promise-coverage (T2.2's dominant class: ~74 gaps + F10 — documented options/defaults/modes never exercised) | ENFORCED (default-ON 2026-07-15: `GEN_PROMISE_AUDIT` promise audit on roots — add-only bite-proven tests, close_gaps' flow in-loop; first production outing grew the base 12→17 tests; docs/17 §5–6) | T1.4's checklist still raises what gets AUTHORED |
+| 13 | promise-coverage (T2.2's dominant class: ~74 gaps + F10 — documented options/defaults/modes never exercised) | ENFORCED both ends (default-ON `GEN_PROMISE_AUDIT` at accept + the T1.4 COVERAGE RULE in the authoring templates, both 2026-07-15; docs/17 §5–6) | — |
 | 14 | gold/prompt semantic defects on PASSING tasks (12 gold + 3 prompt in the 60-root batch) | ENFORCED for observable defects (default-ON promise audit: an anchored test that FAILS vs the gold machine-proves the defect and forces a repair — proven live on its first outing: the F17-1 timer-leak class caught and repaired at accept time, docs/17 §6) | the periodic `rubric_judge`/`semantic_review` cadence over NEW accepts remains the backstop for unobservable/prompt-side defects — see acceptance test below |
 | 15 | @spec truth (019_001/038_001 class) | **MISSING** | T1.6 Dialyzer (one mix.exs change, Kamil) |
 | 16 | @doc prose claims vs behavior (F12 class: "cancels any pending check" that doesn't) | **MISSING** | T1.4 checklist item + rows 13/14's instruments |
-| 17 | degenerate-input robustness (duplicate list entries, match-spec-significant atoms, cancel_timer races — T2.4-T's three) | **NOT enforced** | T1.4 edge-case clause in templates + row 14 cadence |
+| 17 | degenerate-input robustness (duplicate list entries, match-spec-significant atoms, cancel_timer races — T2.4-T's three) | partially ENFORCED at authoring (T1.4 LIFECYCLE + CALLBACK + COVERAGE rules, 2026-07-15) + the audit catches what a prompt promises; fully generic degenerate-input fuzzing remains row 14's cadence | row 14 cadence |
 | 18 | derived-shape gates (wt inherit-confirm, tfim isolation-kill, bugfix six-property, adapt RED gate) | ENFORCED in the minters | — |
 | 19 | embeds regenerable (invariant 3, all five child kinds) | ENFORCED at mint + CI/pre-push drift gates; all four gates self-test in CI (2026-07-15) | — |
 | 20 | variation distinctness | ENFORCED | — |
-| 21 | prompt-register diversity (76% "Write me", frozen exemplar) | **MISSING** | T1.4 template/exemplar rotation |
+| 21 | prompt-register diversity (76% "Write me", frozen exemplar) | template-side LANDED 2026-07-15 (3-exemplar shape rotation + an explicit vary-the-register instruction; docs/17 §6.5→G-F/G-G) | measure the register distribution after the first real Phase-3 batch |
 
 **The cutover acceptance test (the backstop for everything a gate can't
 prove):** the FIRST Phase-3 batch (~20 bases + their derivatives) is run,

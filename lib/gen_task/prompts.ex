@@ -12,11 +12,33 @@ defmodule GenTask.Prompts do
   base task generation.
   """
 
-  @external_resource "tasks/001_001_rate_limiter_01/prompt.md"
-  @external_resource "tasks/001_001_rate_limiter_01/test_harness.exs"
+  # T1.4(c) exemplar rotation (docs/12 §5.3; landed 2026-07-15 after the probe-4
+  # review found a 4/4 singleton monoculture): three worked examples of DIFFERENT
+  # shapes, rotated deterministically by idea number, so Step A stops imitating one
+  # frozen GenServer template. All three have enriched-register prompts and
+  # campaign-hardened harnesses (018_003 carries the F10 promise pins).
+  @exemplar_dirs [
+    # GenServer + injected clock + timers
+    "tasks/001_001_rate_limiter_01",
+    # pure functional data structure (no processes)
+    "tasks/098_003_attenuable_capability_token_with_chained_caveats_01",
+    # stateful hierarchical store + DateTime handling
+    "tasks/018_003_cascading_archive_tree_with_origin_aware_restore_01"
+  ]
 
-  @example_prompt File.read!("tasks/001_001_rate_limiter_01/prompt.md")
-  @example_harness File.read!("tasks/001_001_rate_limiter_01/test_harness.exs")
+  for dir <- @exemplar_dirs do
+    @external_resource Path.join(dir, "prompt.md")
+    @external_resource Path.join(dir, "test_harness.exs")
+  end
+
+  @exemplars Enum.map(@exemplar_dirs, fn dir ->
+               {File.read!(Path.join(dir, "prompt.md")),
+                File.read!(Path.join(dir, "test_harness.exs"))}
+             end)
+
+  @doc false
+  @spec exemplar_for(pos_integer()) :: {String.t(), String.t()}
+  def exemplar_for(num), do: Enum.at(@exemplars, rem(num, length(@exemplars)))
 
   @author_persona """
   You are an expert Elixir engineer authoring supervised fine-tuning (SFT) data for
@@ -30,6 +52,59 @@ defmodule GenTask.Prompts do
   implement it completely and correctly using only the specified dependencies. You
   write idiomatic, production-quality Elixir with clear @moduledoc/@doc where helpful.
   """
+
+  # T1.4(a): the ONE authoring-rule block shared by the base and variation
+  # templates (it was triplicated and had drifted once already — docs/12 §5.3).
+  # Every rule here is scar tissue: each maps to a class the QA campaign found
+  # shipping (docs/10–17).
+  @harness_rules """
+  Requirements for every prompt.md + test_harness.exs pair you produce:
+  - Define a module `<Module>Test` that does `use ExUnit.Case, async: false`.
+    Do NOT call `ExUnit.start()` — the evaluator starts ExUnit itself.
+  - The harness must be self-contained: any fakes, clock Agents, or helpers are
+    defined inline. It runs as `elixir test_harness.exs` beside a sibling
+    `solution.ex`.
+  - It must compile with ZERO warnings: prefix unused variables with `_`, and match
+    float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
+  - If a test writes temp files, make the path process-unique, e.g.
+    `Path.join(System.tmp_dir!(), "name_\#{System.pid()}_\#{System.unique_integer([:positive])}.ext")` —
+    the corpus is graded with many harnesses running in parallel.
+  - prompt.md must NOT reveal the tests; it is the standalone task statement.
+  - Every assertion in the harness must be justified by an explicit statement in
+    prompt.md — if a behavior is worth testing, state it in the prompt first. A
+    solver who reads ONLY prompt.md must be able to pass every test. Never assert
+    internal state (`:sys.get_state`), internal message names, or option values
+    (e.g. `:infinity` sentinels) that prompt.md does not document.
+  - COVERAGE RULE: every documented option, default value, guard, and behavioral
+    mode in prompt.md must be exercised by at least one test. Do not document an
+    option (for example a `:name` override) that no test exercises — either test
+    it or leave it out of the contract.
+  - API SHAPE: prefer a public API that takes an explicit server/pid/handle
+    argument; design a singleton (module-named process) only when the idea itself
+    demands one.
+  - LIFECYCLE RULE (timers / scheduled work): if the module schedules repeating or
+    delayed work (`Process.send_after`, periodic checks, sweeps), prompt.md MUST
+    state EXPLICITLY what happens to already-scheduled work when its owner is
+    replaced, re-registered, deregistered, or cancelled — e.g. "after
+    re-registration the previous registration's scheduled checks never run again;
+    checks happen only at the new interval". Solvers reliably forget to cancel old
+    timer chains unless the prompt spells this consequence out, and
+    test_harness.exs MUST include a test proving the old schedule is dead (not
+    just that the new one works).
+  - CALLBACK RULE: if the API accepts user-supplied callback functions (notify,
+    on_change, hooks), prompt.md MUST state what happens when a callback raises
+    (does the server crash, or is the callback isolated?), and the harness must
+    include one test pinning that stated behavior.
+  - Where the contract has a crisp input → output example, put it in the
+    solution's `@doc` as an `iex>` doctest AND add `doctest <Module>` to the
+    harness so the examples actually execute. Where an algebraic invariant exists
+    (round-trip, idempotence, monotonicity), consider one property-based test
+    (StreamData is available; `use ExUnitProperties`).
+  """
+
+  @doc false
+  @spec harness_rules() :: String.t()
+  def harness_rules, do: @harness_rules
 
   # House style every reference solution must follow (mirrors the analysis rubric the
   # evaluator scores: @moduledoc/@spec/@doc, ≤98 cols, no TODO, zero compile warnings).
@@ -77,6 +152,8 @@ defmodule GenTask.Prompts do
   @spec base_task(%{num: integer(), name: String.t(), desc: String.t()}) ::
           {String.t(), String.t()}
   def base_task(%{num: num, name: name, desc: desc}) do
+    {example_prompt, example_harness} = exemplar_for(num)
+
     user = """
     I've this idea:
 
@@ -88,46 +165,26 @@ defmodule GenTask.Prompts do
     Convert it into a task prompt I could give to an AI to implement, AND a matching
     ExUnit test harness that verifies a correct implementation.
 
-    Here is a previously generated prompt as a style example:
+    Here is a previously generated prompt as a QUALITY example (imitate its precision,
+    promise coverage, and edge-case statements):
 
     ```
-    #{@example_prompt}
+    #{example_prompt}
     ```
 
     And here is its matching test harness as a template:
 
     ```elixir
-    #{@example_harness}
+    #{example_harness}
     ```
 
-    Requirements for the test harness you generate:
-    - Define a module `<Module>Test` that does `use ExUnit.Case, async: false`.
-    - Do NOT call `ExUnit.start()` — the evaluator starts ExUnit itself.
-    - It must be self-contained: any fakes, clock Agents, or helpers are defined
-      inline (as the template does). It runs as `elixir test_harness.exs` beside a
-      sibling `solution.ex`.
-    - It must compile with ZERO warnings: prefix unused variables with `_`, and match
-      float zero as `+0.0`/`-0.0` (never a bare `0.0`, which warns on OTP 27+).
-    - If a test writes temp files, make the path process-unique, e.g.
-      `Path.join(System.tmp_dir!(), "name_\#{System.pid()}_\#{System.unique_integer([:positive])}.ext")`.
-      The corpus is graded with many harnesses running in parallel, so a path that is
-      not unique per OS process will collide and cause flaky failures.
-    - The prompt.md must NOT reveal the tests; it is the standalone task statement.
-    - Every assertion in the harness must be justified by an explicit statement in
-      prompt.md — if a behavior is worth testing, state it in the prompt first. A
-      solver who reads ONLY prompt.md must be able to pass every test. Never assert
-      internal state (`:sys.get_state`), internal message names, or option values
-      (e.g. `:infinity` sentinels) that prompt.md does not document.
-    - LIFECYCLE RULE (timers / scheduled work): if the module schedules repeating or
-      delayed work (`Process.send_after`, periodic checks, sweeps), prompt.md MUST
-      state EXPLICITLY what happens to already-scheduled work when its owner is
-      replaced, re-registered, deregistered, or cancelled — e.g. "after
-      re-registration the previous registration's scheduled checks never run again;
-      checks happen only at the new interval". Solvers reliably forget to cancel old
-      timer chains unless the prompt spells this consequence out, and
-      test_harness.exs MUST include a test proving the old schedule is dead (not
-      just that the new one works).
+    Vary the rhetorical register: the example shows ONE way a task can read, not THE
+    way. Do not default to opening with "Write me" — a titled specification document,
+    a maintainer's change request, a design brief with sections are all good
+    registers. What must never vary is precision: every behavior the harness checks
+    must be stated in the prompt.
 
+    #{@harness_rules}
     #{output_contract([{"prompt.md", "the standalone task statement"}, {"test_harness.exs", "the ExUnit harness"}])}
     """
 
@@ -232,23 +289,23 @@ defmodule GenTask.Prompts do
     Propose #{count} variation(s), each with a meaningful difference so it stands on its
     own as a distinct problem (not a trivial rename), differing from the base and from
     each other along a real axis (data structure, concurrency model, failure semantics,
-    …). For each variation produce a full triplet (prompt.md, test_harness.exs,
-    solution.ex) following the SAME harness rules as the base (`use ExUnit.Case,
-    async: false`; no `ExUnit.start()`; self-contained; ZERO compile warnings;
-    process-unique temp paths via `System.pid()` + `System.unique_integer/1`; every
-    assertion justified by an explicit statement in that variation's prompt.md — a
-    solver reading ONLY the prompt must be able to pass every test, so never assert
-    internal state via `:sys.get_state`/`:sys.replace_state`, never
-    `assert inspect(...)`, never send undocumented internal messages, never pass
-    undocumented `:infinity` sentinels — observe behavior only through the public
-    API and documented injected hooks. LIFECYCLE RULE: if a variation schedules
-    repeating or delayed work, its prompt.md MUST state explicitly what happens to
-    already-scheduled work on replace/re-register/deregister/cancel — e.g. "the
-    previous registration's scheduled checks never run again" — and its harness MUST
-    include a test proving the old schedule is dead; solvers reliably forget to
-    cancel old timer chains unless the prompt spells this out. The BASE harness
-    below may itself violate these rules (grandfathered debt): do NOT imitate it —
-    your harnesses are held to the rules above).#{already}#{taken_apis}
+    time model, API paradigm, …).
+
+    AXIS REQUIREMENT: when the base performs its work synchronously inside one server
+    process and you are proposing more than one variation, at least ONE variation must
+    move the work across process boundaries — e.g. checks dispatched to spawned Tasks
+    with per-task timeouts, monitored worker processes with stale-result discarding, or
+    a supervised pool — with the coordination rules (timeout handling, stale replies,
+    kill-on-cancel) stated in that variation's prompt and pinned by its tests. The
+    cross-process axis produces the corpus's hardest and most valuable tasks; do not
+    let every variation stay single-process.
+
+    For each variation produce a full triplet (prompt.md, test_harness.exs,
+    solution.ex).
+
+    #{@harness_rules}
+    NOTE: the BASE triplet below may itself violate these rules (grandfathered debt).
+    Do NOT imitate its violations — your triplets are held to the rules above.#{already}#{taken_apis}
 
     Also, for each variation, produce a one-line catalog entry in the exact tasks.md
     format — its `idea.md` file must contain a `### Task #{num} - Vn - <Name>` header on
