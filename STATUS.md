@@ -25,11 +25,19 @@ F17-1..10, candidate gates G-A..G-E). Remaining, in order:
         (probe data carries the probe-proven F17-1 leak):
         `git checkout -- tasks tasks/tasks.md` (then `git status` must be
         clean). docs/17 §4 records the disposition.
-  - [ ] **Rule-7 Task-B decisions (docs/17 §3):** G-A promise-coverage judge
-        (build? report-only first?), G-B lifecycle checklist item (T1.4),
-        G-C = T1.4 as designed, G-D = the two dark-flag sign-offs already in
-        "WAITING ON KAMIL" (+ scope: rescreen bases only vs any repaired
-        accept — F17-9), G-E cutover instruments unchanged.
+  - [ ] **T1.10 — BUILD DARK (docs/17 §5.2, designs ready; T1.1/T1.8
+        precedent): the two in-loop replicas of the manual quality process.**
+        (a) `GEN_COVERAGE_CLOSE` — close_gaps' flow at accept time: propose
+        add-only tests for uncovered prompt promises, each bite-proven
+        (fails vs a targeted break, passes vs gold) before the harness
+        grows; (b) `GEN_SEMANTIC_JUDGE` — review judge whose every finding
+        must compile to a failing probe test vs the gold (evidence-or-drop,
+        F6-proof), findings feed the existing repair loop. Roots only
+        (~25% call-cost growth per family). Then RE-RUN this probe
+        (`--force 15` again) — prediction in docs/17 §5.4.
+  - [ ] **Sign-offs folded in:** flip GEN_SEMANTIC_FLOOR + GEN_BLIND_RESCREEN
+        (extend rescreen to repaired variations first — F17-9); G-B lifecycle
+        clause + exemplar rotation land with T1.4.
   - [ ] On close: move T1.9 record to docs/15; keep `--force` + GateLog as
         permanent loop features (documented in scripts/generate.exs header).
 ---

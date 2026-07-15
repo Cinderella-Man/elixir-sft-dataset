@@ -307,3 +307,64 @@ precisely where the probe's defects went through.
 family is restored with `git checkout -- tasks tasks/tasks.md` once Kamil has
 finished inspecting the live diff. The probe data must NOT be exported for
 training (F17-1 is known-defective); restore before the next export.
+
+---
+
+## 5. THE ANSWER (Kamil's question, direct): is the regenerated family at our
+## standard, and can the manual quality process be replicated in the loop?
+
+### 5.1 Verdict: NO — below standard on exactly three dimensions; at or above
+### standard on everything else.
+
+Below the retrofitted bar:
+
+1. **Lifecycle correctness.** The old base cancels + drains timers
+   (probe-proven, F12); the new base leaks chains on re-registration
+   (probe-proven, F17-1). 1 of 4 new roots carries a real behavior bug.
+2. **Harness depth.** 12 tests vs 21. The missing nine are not random — they
+   are precisely the retrofit's additions: the timer trio (first-check
+   timing, re-arm, cancellation), stale-message, re-register-reset,
+   notification-reason accuracy, timestamp tracking. The floor gate
+   (max(3, public fns)) accepts roughly HALF the depth the campaign
+   established as the bar.
+3. **Design richness.** No deregister, binary status instead of status_info,
+   a sweep that can block forever where the old variation engineered
+   timeouts. The loop takes the easiest valid reading of an idea.
+
+At or above the bar: prompt precision (better than the old era), style,
+formatting, mutation coverage, stability, blind-solvability, derived-shape
+integrity. The deterministic standard IS met; the SEMANTIC standard is not.
+
+### 5.2 How each deficit was fixed MANUALLY — and its in-loop replica.
+
+The catch-up month was not magic; it was four repeatable mechanisms. Each has
+a mechanical equivalent that reuses plumbing the loop already has:
+
+| # | deficit | the manual mechanism that fixed it | the in-loop replica |
+|---|---|---|---|
+| 1 | untested prompt promises (F17-2/7; T2.2's ~74) | `close_gaps.exs`: an LLM read prompt+harness, listed promises with no test, wrote ADD-ONLY tests, and every added test was **bite-proven** (made to fail against a deliberate behavior break, pass against gold) before it shipped | **In-loop coverage closer** (`GEN_COVERAGE_CLOSE`): after today's gates pass on a ROOT, one call proposes the uncovered-promise tests; each proposed test must (a) pass vs the gold and (b) fail vs a targeted break — reusing `Mutation`/eval plumbing and `guard_test_deletion`. Grown harness re-runs the mutation+stability gates. This is close_gaps' exact flow, moved from retro to accept time — the same porting pattern that took lint_harnesses' detectors into `quality_shortfall` (parity row 6). |
+| 2 | semantic defects on green tasks (F12, T2.4-T, F17-1, F17-8) | `semantic_review`/`rubric_judge` flagged suspects; a HUMAN then probe-proved each flag before any edit (rule 8's verify-before-verdict) | **Evidence-or-drop review judge** (`GEN_SEMANTIC_JUDGE`): one call per root — "find behavior bugs the tests miss, doc claims that lie, lifecycle hazards; for EACH claim emit a minimal ExUnit test that should FAIL if the claim is real". Run each test against the gold: fails → the finding is machine-proven → feed it into the EXISTING repair loop as the report; passes → judge hallucination, drop silently (F6-proof). This mechanizes precisely how F17-1 was found in this probe (read → suspect → probe → prove) with zero human in the loop. |
+| 3 | weak-kill harnesses (S8 tail) | `strengthen_harnesses.exs` + survivor naming → added discriminating tests | **ALREADY BUILT DARK** — `GEN_SEMANTIC_FLOOR` + survivor-naming repair reports (scar #4). Flip = sign-off. |
+| 4 | repaired accepts with no blind evidence (6/22) | `rescreen_repaired.exs` retro-screened them | **ALREADY BUILT DARK** — `GEN_BLIND_RESCREEN`; extend scope from bases to any repaired root (F17-9), then flip. |
+| 5 | prompt↔harness API gaps | `lint_harnesses --fix-prompts` + `enrich_prompts` | **ALREADY PORTED** (quality check 17/17) — held in this probe. |
+| 6 | design richness / difficulty | never fixed manually — the old family was BORN richer; the retrofit only deepened harnesses | template-side only: T1.4 exemplar rotation + an explicit lifecycle clause in the base template ("specify AND test register/replace/cancel semantics for any scheduled work" — G-B). The coverage closer (#1) also punishes thin designs indirectly: every promise costs a test. |
+
+### 5.3 Why this is affordable and where it runs
+
+Both new stages run on ROOTS ONLY (F17-10: roots are the ~20× multiplier;
+children inherit). For this family that is 4 units → ~5–8 extra calls +
+~10 evals on top of today's 27 calls (~25% cost growth) for the two
+mechanisms that address every probe finding. Both slot into the existing
+accept path AFTER stability, BEFORE promotion, as GateLog-numbered gates on
+the :base/:variation manifests; both land DARK behind flags first (the
+T1.1/T1.8 precedent), then flip after a pilot family.
+
+### 5.4 The claim to test at cutover
+
+With #1 + #2 landed dark and piloted, and #3 + #4 flipped: re-run THIS probe
+(`generate.exs 15 --force` again, or a fresh family). Prediction: the
+coverage closer forces the re-registration test into existence, which either
+catches the leak at accept time (repair fixes it) or the judge's probe does.
+If a re-probe still ships a semantic defect, the cutover instruments
+(semantic_review + rubric_judge, G-E) remain the backstop — but the loop
+should now pass them on batch one, which is the "no second month" contract.
