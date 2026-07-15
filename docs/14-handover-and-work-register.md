@@ -21,19 +21,26 @@ Everything below was re-run, not remembered.**
 
 ### The machine is idle and healthy
 
-| check | command | expected output (verified) |
+| check | command | expected output (verified 2026-07-15) |
 |---|---|---|
 | nothing running | `pgrep -af "generate.exs\|validate.exs\|screen_blind\|strengthen\|enrich"` | *(no output — your own shell may self-match; ignore the `bash -c` line)* |
 | clean tree, pushed | `git status --porcelain` / `git status -sb` | *(empty)* / `## main...origin/main` in sync |
-| no work owed | `mix run scripts/work_status.exs --counts` | `variations=0 fim=0 write_test=0 test_fim=0 bugfix=0` |
-| factory tests | `mix test` | `296 passed` |
+| no work owed | `mix run scripts/work_status.exs --counts` | `variations=0 fim=0 write_test=0 test_fim=0 bugfix=0 adapt=0/249` |
+| factory tests | `mix test` | `327 passed` |
 | temp-path lint | `mix run scripts/lint_temp_paths.exs` | `60 shared-path harness(es), 0 violations ✓` |
 | corpus format | `elixir scripts/format_corpus.exs --check` | `0 deviating, 0 errors` |
-| tfim embeds | `mix run scripts/resync_tfim_embeds.exs` | `%{unchanged: 3246}` |
+| tfim embeds | `mix run scripts/resync_tfim_embeds.exs` | `%{unchanged: 3267}` |
 | bugfix embeds | `mix run scripts/resync_bugfix_embeds.exs` | `%{unchanged: 960}` |
 | wt_ embeds | `mix run scripts/resync_embeds.exs -- --wt-all` | `%{unchanged: 331}` |
+| adapt embeds | `mix run scripts/resync_adapt_embeds.exs` | `%{unchanged: 249}` |
 | fim/wt_ fences | `elixir scripts/check_embeds.exs` | `1322 clean, 0 reflow, 0 drift` |
+| export contract | `mix run scripts/export_dataset.exs -- --selfcheck` then `--check` | `all 8 planted violations detected` / `export check: OK ✓` |
 | retro §5.2 screen | `mix run scripts/rescreen_repaired.exs -- --report` | `59 PASS / 15 entailed / 0 open / 0 unscreened` |
+
+> Postgres note: `017_001` is the corpus's only `db: :postgres` task and it
+> goes loudly RED (not skipped — by design) when the DB is down. A full sweep
+> on a DB-less machine will always report exactly that one failure; the remedy
+> is `docker compose up -d db`.
 
 **If any of those differ, something changed after this file was written — diagnose
 that before starting new work.** (A resync gate showing `would_resync` means a
@@ -129,10 +136,11 @@ silently — every incident in §6 traces back to one of these:
 | `NNN_00b_slug_01` (roots) | **332** | base tasks + variations | the spec | `solution.ex` |
 | `NNN_00b_slug_0N` (fim) | **991** | code fill-in-the-middle | module with ONE function `# TODO` | that function |
 | `wt_…` | **331** | "write the tests" | module + parent spec | the gold harness |
-| `tfim_…` | **3,231** | test fill-in-the-middle | module + harness with ONE `test`/`property` blanked | that test block |
-| `bugfix_…` | **959** | debugging | spec + a module with ONE bad line + the REAL failing ExUnit output | the correct module |
-| `repair_…` | **16** | repair from a real failed attempt | the original request + the failed code + its report | the accepted fix |
-| **total** | **5,860** | | | |
+| `tfim_…` | **3,267** | test fill-in-the-middle | module + harness with ONE `test`/`property` blanked | that test block |
+| `bugfix_…` | **960** | debugging | spec + a module with ONE bad line + the REAL failing ExUnit output | the correct module |
+| `adapt_…` | **249** | brownfield adaptation (docs/13 §2.1) | the family BASE's gold as starting point + the variation's spec | the variation's module |
+| `repair_…` | **17** | repair from a real failed attempt | the original request + the failed code + its report | the accepted fix |
+| **total** | **6,147** | | | |
 
 `mix run scripts/work_status.exs` prints what each work type still owes, live from
 disk. It is the source of truth for "what is left to generate", not any doc.
@@ -152,7 +160,9 @@ disk. It is the source of truth for "what is left to generate", not any doc.
 | `resync_tfim_embeds.exs` (dry) | tfim prompts drifting from their parent harness |
 | `resync_bugfix_embeds.exs` (dry) | bugfix prompts embedding a stale parent spec |
 | `resync_embeds.exs --wt-all` (dry) | wt_ dirs drifting from their parent (module, harness, spec) |
+| `resync_adapt_embeds.exs` (dry) | adapt_ dirs drifting from their parents (base gold, variation prompt/gold/harness) |
 | `check_embeds.exs` (+ `--self-test`) | fim/wt_ module fences drifting; the self-test proves the checker is not vacuous |
+| `export_dataset.exs --selfcheck` then export + `--check` | a train/val split that leaks families, a write_test gold trap, dropped/duplicated rows, metadata drift (docs/16) |
 | weekly / manual | full `validate.exs` (perfect score) and `--fim` sweeps |
 
 **Pre-push hook (`.githooks/pre-push`, enable with `git config core.hooksPath .githooks`):**
@@ -209,6 +219,22 @@ content sha, so a re-run resumes and never redoes finished work.
 - **`rescreen_repaired.exs`** — retro blind screen of accepts that went through a
   repair loop (see §5.1).
 - **`mint_repairs.exs`** — mints `repair_` units from captured attempt chains.
+- **`close_gaps.exs`** — findings-seeded ADD-ONLY gap closer (strengthen mold);
+  reads confirmed harness_gap findings from `logs/semantic_review.jsonl`.
+  ⚠️ run `--go` SCOPED (`--only`) — six hand-closed families read as phantom
+  todos forever (header comment lists them).
+- **`semantic_review.exs`** — full-context semantic review per root + adversarial
+  verify per finding (T2.2). `--single DIR --as label` runs positive controls.
+- **`rubric_judge.exs`** — T2.4 3-axis rubric (docs/12 §6.4) over PASSING roots,
+  two judge families (PoLL), per-axis agreement logged; deterministic stratified
+  batch; `--single` control mode. Triage = both families ≤3 on the same axis.
+- **`survey_adapt_redgate.exs`** — measures the adapt mint gate standalone (the
+  in-loop runner re-measures drifted pairs itself).
+
+### Export (the only path to training data)
+- **`export_dataset.exs`** — docs/16. Family-atomic deterministic split,
+  per-shape gold mapping, advisory weights, round-trip `--check` + `--selfcheck`
+  (both in CI). Output `results/export/` is a build artifact, never source.
 
 ---
 
@@ -230,6 +256,10 @@ check it.
 | `tfim_rejected.jsonl` / `fim_rejected.jsonl` | 21 / 1 | harness sha / — | permanently-rejected carve targets |
 | `seed_verdicts.jsonl` | 487 | content sha | seed self-check (is the harness vacuous?) |
 | `flaky.jsonl` | 41 | — | harnesses that needed a stability re-run |
+| `semantic_review.jsonl` | 62 | task + 3 content shas + review sha | T2.2 review findings + adversarial verdicts (close_gaps reads `confirmed`) |
+| `close_gaps.jsonl` | ~60 | harness sha before/after + gate sha | one row per gap-close attempt; `applied` rows key resume |
+| `adapt_redgate.jsonl` | 326+ | base-solution sha + variation-harness sha | the adapt mint gate; `green_not_mintable` suppresses the unit, drifted shas re-measure |
+| `rubric_judge.jsonl` | grows | task + 3 content shas + rubric sha | T2.4 two-family rubric verdicts; rows with a judge error re-run on resume |
 
 ---
 
