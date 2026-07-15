@@ -169,10 +169,66 @@ the catch-up campaign paid a month to learn matter.
 
 ---
 
-## 2. Variations / FIM / derived shapes — PENDING
+## 2. Variations — INTERIM (all three ACCEPTED; FIM/derived still running)
 
-The run continues past the base (variations → FIM → wt/tfim/bugfix/adapt +
-repair minting). Findings for those shapes land here when the run exits.
+New set: `015_002_sliding_window_failure_count`, `015_003_dependency_aware_
+cascading`, `015_004_concurrent_sweep` (3, 2, 2 attempts). All distinct from
+the base and from each other (gate 1/9), all graded on a blind Step-B solution
+(gate 2/9, row 8 ENFORCED).
+
+### The enforced gates visibly earned their keep
+
+- The per-function mutation gate REJECTED two first drafts for an uncovered
+  `handle_cast/2` and forced real harness strengthening (015_002, 015_004).
+- The test-floor check rejected two drafts at 12 tests vs 14 public functions.
+- Repair fixed exactly what the report named; nothing else regressed.
+
+### F17-6 (rows 13/14 nuance): the timer-leak class is a COIN FLIP, not a constant.
+
+015_002 and 015_003 both solve the re-registration problem CORRECTLY with
+epoch-tagged ticks (`{:tick, name, epoch}`; stale epochs are dropped and not
+rescheduled — old chains die at their next fire). The base got the same
+problem wrong the same afternoon. Same loop, same templates: whether the
+lifecycle hazard is handled is model luck, per unit. A template hint alone
+would raise the hit rate; only an accept-time check (a lifecycle test
+requirement, or a judge) makes it a floor.
+
+### F17-7 (row 13, systematic): the replace/reset promise is now TEMPLATE
+PROSE — and is never tested.
+
+All four new prompts (base + 3 variations) contain the same sentence pattern:
+"<Registering/Watching/Enrolling> a `name` that already exists replaces its
+configuration and resets it to this initial state." ZERO of the four
+harnesses test it. A promise the template reliably emits and the harness
+reliably skips is the cheapest possible checklist item (T1.4) — and it is the
+exact hole F17-1 shipped through.
+
+### F17-8 (015_004, row 14/16 borderline): "slow probes cannot block one
+another" — but one hung probe blocks the whole sweep forever.
+
+The concurrent-sweep design gathers probe results with a bare `receive` (no
+`after`); `sweep/1` is documented to block until every probe finishes, so a
+never-returning probe hangs the server permanently. Raises/throws ARE handled
+(prompt-promised, shielded). Nothing in the prompt promises tolerance of
+never-returning probes, so this is contract-defensible — but the prompt's
+headline claim is stronger than the semantics, and the OLD async-timeout
+variation existed precisely to engineer this away (`:timeout_ms`, kill the
+task, treat as failure). Difficulty drift, same direction as the base's:
+the regenerated family is systematically EASIER than the retrofitted one.
+
+### F17-9 (row 10 scope note): the dark blind re-screen is BASE-ONLY.
+
+All three variations were repaired accepts. Their attempt-0 solutions were
+blind (row 8), but repairs happen AFTER the blind solve and may edit the
+harness; `GEN_BLIND_RESCREEN` as built (GenTask.Base) would not re-screen a
+repaired VARIATION even once flipped on. T1.1's sign-off should decide
+whether the re-screen covers "bases only" or "any repaired accept" — the
+§5.2.2 entailment judge over repair-time harness diffs (row 11) is the other
+instrument aimed at this window.
+
+## 2b. FIM / derived shapes — PENDING
+
+Findings land here when the run exits.
 
 ## 3. Candidate generator gates (rule 7 Task-B list — to be finalized)
 
