@@ -571,6 +571,25 @@ defmodule GenTask.Prompts do
        this module and prove the defect. Judge the code only against prompt.md,
        never against your own taste.
 
+    Audit SYSTEMATICALLY, not opportunistically — walk these known defect classes
+    (each cost this project real cleanup) before anything else:
+    - SCHEDULED-WORK MATRIX: for every kind of scheduled/delayed work, check every
+      cell of {register, re-register/replace, deregister/remove, pause, resume,
+      re-enter} × {armed timer, already-queued timer message}: who retires the old
+      one? EXTENDING a window/interval must survive the replaced deadline; a
+      retired registration's leftover message must never act. If the prompt
+      promises it and no test drives real time past the OLD deadline, write that
+      test.
+    - EXACTLY-ONCE claims: drive one more event past the claimed point and assert
+      no second effect (bookkeeping fields alone prove nothing — observe the
+      callback/effect itself).
+    - DEFAULTS and GUARDS: every documented default value and every documented
+      guard needs a test that uses it.
+    - STALENESS: any ref/token/generation the prompt implies must be tested with a
+      deliberately stale message.
+    - BOUNDARIES: thresholds at exactly-equal values; empty/one-element windows;
+      duplicate keys compared by value.
+
     Rules for every test block you return:
     - Precede it with EXACTLY one anchor comment line:
       # PROMISE: "<a sentence copied VERBATIM from prompt.md>"

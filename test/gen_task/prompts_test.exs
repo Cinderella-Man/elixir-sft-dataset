@@ -75,6 +75,21 @@ defmodule GenTask.PromptsTest do
     end
   end
 
+  describe "the audit taxonomy checklist (T1.11a)" do
+    test "the auditor prompt enumerates the scheduled-work matrix and exactly-once classes" do
+      {_sys, user} =
+        Prompts.promise_audit(
+          %{"prompt.md" => "p", "solution.ex" => "s", "test_harness.exs" => "h"},
+          6
+        )
+
+      assert user =~ "SCHEDULED-WORK MATRIX"
+      assert user =~ "EXACTLY-ONCE"
+      assert user =~ "STALENESS"
+      assert user =~ "already-queued timer message"
+    end
+  end
+
   describe "the cross-process concurrency axis (G-G)" do
     test "variations are required to move at least one variation across processes" do
       user = variations_user()
