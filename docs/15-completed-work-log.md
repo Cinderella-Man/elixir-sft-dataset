@@ -9,6 +9,21 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-16 — T2.2 full-pass DECISION CLOSED (Kamil delegated all four
+  standing decisions: "do everything"; executed with the doc-recommended
+  option).** Decision: do NOT pay the remaining ~272-root semantic review
+  (~16M tokens). Rationale, strengthened since the recommendation was
+  written: (a) the finding classes from the 60-root batch are known and
+  dominated by promise-coverage debt, whose Task-B gates are now default-ON
+  (T1.4 template rules + promise audit); (b) the T1.11 full retro-audit —
+  RUNNING as this is written — pushes every root through the promise-audit
+  machinery anyway, which directly attacks that dominant class corpus-wide;
+  (c) verification that the class is closed comes free from the Phase-3
+  cutover acceptance test (docs/12 §5.5) plus the §4.2.2 spot-review
+  tranche (signed off separately today). Kamil can reopen if the sweep's
+  needs_triage rows suggest the unobservable-defect residue is larger than
+  the batch predicted.
+
 - **2026-07-15 (evening) — T2.6 PILOT: the whole 015 family's prompts raised
   to contract precision + F18 CLOSED (a latent gold bug found by writing
   exact prompts).** All four root prompts hand-rewritten to describe the

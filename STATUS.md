@@ -78,10 +78,23 @@ F17-1..10, candidate gates G-A..G-E). Remaining, in order:
         `logs/quarantine/*` + Kamil review + a keep-promotion path writing
         the evidence row. Until built, quarantines block their idea and
         surface here.
-  - [ ] Kamil decisions still open: T1.6 Dialyzer (one mix.exs line),
-        semantic-floor NUMBER tuning (running default 0.6), T2.2 full-pass
-        question, nightly-sweep timer. (T1.4 landed 07-15 evening —
-        docs/15.)
+  - [ ] **T1.6 DIALYZER IN PROGRESS (Kamil 2026-07-16: "do everything" —
+        all four standing decisions delegated; retro audit owns the token
+        budget, so T1.6 runs CPU-only in an isolated worktree
+        `../elixir-sft-dataset-t16` and NEVER runs `mix compile` in this
+        tree while the audit lives).** dialyxir added to mix.exs (deps
+        fetched in-tree, fetch-only). PLT build detached: log
+        `logs/t16_dialyzer_plt.log` (pid in `.pid` sidecar); idempotent
+        relaunch: `scripts/run_detached.sh logs/t16_dialyzer_plt.log bash
+        -c "cd ../elixir-sft-dataset-t16 && nice -n10 mix do deps.get +
+        compile + dialyzer --plt"`. THEN: `scripts/dialyzer_golds.exs`
+        driver (sha-keyed ledger `logs/dialyzer_golds.jsonl`, resumable),
+        pilot on 5 families incl. the two live would-have-caught cases
+        (038_001, 043_001 — the pilot must BITE), detailed review, weekly
+        CI job, full-corpus pass detached. Data fixes for whatever it
+        flags are DEFERRED until the retro audit finishes (concurrent gold
+        edits would race the sweep's writes; bugfix remints cost LLM).
+        Semantic-floor NUMBER stays at default 0.6 (tune only on evidence).
   - [ ] On close: move T1.9/T1.10 record to docs/15; keep `--force` + GateLog
         + PromiseAudit as permanent loop features.
 ---
@@ -192,13 +205,6 @@ against docs/16 §4's advisory weights (test_fim already down-weighted to
    would-have-caught cases from today's T2.2 batch: 038_001's undocumented
    `duplicate_ids` return violating its own @spec; 043_001's named-table
    atom vs declared `:ets.tid()` type.)
-5. **T2.2 full-pass decision** — the 60-root batch says 88% of roots carry
-   ≥1 confirmed finding (~1.5/root → ~490 corpus-wide). All 89 batch
-   findings are already FIXED (T2.2-T closed 07-14 — docs/15).
-   RECOMMENDATION: do NOT pay the remaining ~272-root review (~16M
-   tokens) — the classes are known and dominated by promise-coverage debt;
-   spend instead on T1.4's checklist, and re-review a small sample AFTER it
-   lands to verify the class is closed.
 
 ## Current mode: 🔧 CATCHING UP (improvement round #1, 2026-07)
 
