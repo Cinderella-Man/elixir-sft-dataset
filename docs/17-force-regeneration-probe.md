@@ -523,6 +523,10 @@ now holds at birth:
 Cost of the full standard vs probe #1: +4 audit calls +4 re-screen calls
 −4 repair calls ≈ **+15% tokens for the month-of-debt not existing**.
 
+**Free-instrument sweep over the newborn family: ALL GREEN** — perfect-score
+validation, whole-solution mutants, FIM mutation all exit 0; format gate 0
+deviating; all three embed-drift gates clean (`logs/verify_015_probe4.log`).
+
 Remaining before Phase 3 (unchanged): the cutover acceptance test's LLM
 instruments (semantic_review + rubric_judge over the first REAL batch,
 G-E), the quarantine-triage path (§6.3), T1.4's full template upgrade, and
