@@ -19,6 +19,20 @@ defmodule GenTask.ConfigTest do
     end
   end
 
+  describe "--force" do
+    test "parsed from argv alongside the positional idea number" do
+      assert %Config{force: true, only_idea: 15} = Config.new(["15", "--force"], env(%{}))
+      assert %Config{force: true, only_idea: 15} = Config.new(["--force", "15"], env(%{}))
+      assert %Config{force: false, only_idea: 15} = Config.new(["15"], env(%{}))
+      assert %Config{force: false, only_idea: nil} = Config.new([], env(%{}))
+    end
+
+    test "--force alone parses; the wipe itself rejects the missing idea number" do
+      # Config stays a pure snapshot — GenTask.Force.wipe!/2 raises on only_idea: nil.
+      assert %Config{force: true, only_idea: nil} = Config.new(["--force"], env(%{}))
+    end
+  end
+
   describe "GEN_RECONCILE (default-on, opt-out)" do
     test "on by default; explicit 0/false disables" do
       assert %Config{reconcile: true} = Config.new([], env(%{}))

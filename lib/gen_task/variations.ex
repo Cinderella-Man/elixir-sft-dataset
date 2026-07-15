@@ -15,7 +15,7 @@ defmodule GenTask.Variations do
 
   require Logger
 
-  alias GenTask.{Catalog, Config, Cycle, CycleLog, Mutation, Prompts, Reply}
+  alias GenTask.{Catalog, Config, Cycle, CycleLog, GateLog, Mutation, Prompts, Reply}
 
   @variation_header ~r/^###\s+Task\s+\d+\s+-\s+V\d+\s+-\s+(.+?)\s*$/
 
@@ -248,8 +248,24 @@ defmodule GenTask.Variations do
         "VARIATION #{vtask_id}: rejected pre-cycle — not distinct (#{fn_set_str(var_set)})"
       )
 
+      GateLog.fail(
+        cfg,
+        vtask_id,
+        :variation,
+        :distinctness,
+        "public-function set #{fn_set_str(var_set)} matches the base or an accepted sibling"
+      )
+
       not_distinct_outcome(vtask_id, base.num, vname, var_set)
     else
+      GateLog.pass(
+        cfg,
+        vtask_id,
+        :variation,
+        :distinctness,
+        "public-function set differs from the base and every accepted sibling"
+      )
+
       build_variation_cycle(prefix, files, base, cfg, {vtask_id, vname, vdesc, vnum, vslug, b})
     end
   end
@@ -271,11 +287,40 @@ defmodule GenTask.Variations do
         # (cheaper, unscreened) behavior.
         solution =
           if cfg.skip_variation_blind do
+            GateLog.skip(
+              cfg,
+              vtask_id,
+              :variation,
+              :blind_solve,
+              "GEN_SKIP_VARIATION_BLIND=1 — grading the CO-AUTHORED solution " <>
+                "(no independent blind evidence)"
+            )
+
             files[prefix <> "solution.ex"]
           else
+            GateLog.applying(
+              cfg,
+              vtask_id,
+              :variation,
+              :blind_solve,
+              "discarding the co-authored solution; independent solver sees prompt.md only"
+            )
+
             case blind_solution(vtask_id, files[prefix <> "prompt.md"], cfg) do
-              {:ok, sol} -> sol
-              {:error, reason} -> throw({:blind_solve_failed, reason})
+              {:ok, sol} ->
+                GateLog.pass(
+                  cfg,
+                  vtask_id,
+                  :variation,
+                  :blind_solve,
+                  "blind solution obtained — the cycle below grades IT, never the " <>
+                    "co-authored one"
+                )
+
+                sol
+
+              {:error, reason} ->
+                throw({:blind_solve_failed, reason})
             end
           end
 
@@ -288,14 +333,15 @@ defmodule GenTask.Variations do
         ctx = %{
           dir: Path.join(cfg.staging_dir, vtask_id),
           mutant_dir: Path.join(cfg.staging_dir, vtask_id <> "_mut"),
-          id: vtask_id
+          id: vtask_id,
+          shape: :variation
         }
 
         result = Cycle.run(triplet, ctx, cfg)
         stats = Cycle.grade_stats(result.grade)
 
         if result.status == :accepted do
-          _ = Cycle.promote(cfg, vtask_id, result.files)
+          _ = Cycle.promote(cfg, vtask_id, result.files, :variation)
           _ = Catalog.insert_variation!(cfg, base.num, "V#{vnum}", vname, vdesc)
 
           seed = %{

@@ -40,6 +40,7 @@ defmodule GenTask.Config do
           from: pos_integer() | nil,
           to: pos_integer() | nil,
           only_idea: pos_integer() | nil,
+          force: boolean(),
           retry_failed: boolean(),
           skip_variations: boolean(),
           skip_fim: boolean(),
@@ -86,6 +87,7 @@ defmodule GenTask.Config do
             from: nil,
             to: nil,
             only_idea: nil,
+            force: false,
             retry_failed: false,
             exclude_seeds: [],
             skip_variations: false,
@@ -105,7 +107,10 @@ defmodule GenTask.Config do
   Build a config from the process environment and CLI `argv`.
 
   A single positional integer argument (e.g. `mix run scripts/generate.exs 80`)
-  restricts the run to that one base idea (`:only_idea`).
+  restricts the run to that one base idea (`:only_idea`). `--force` (valid ONLY
+  together with such an idea number) makes the run first DELETE that idea's whole
+  task family from `tasks/` + `tasks.md` so the loop regenerates it from scratch —
+  see `GenTask.Force`.
   """
   @spec new([String.t()], (String.t() -> String.t() | nil)) :: t()
   def new(argv \\ [], env_fun \\ &System.get_env/1) do
@@ -133,6 +138,7 @@ defmodule GenTask.Config do
       from: env_int(env_fun, "GEN_FROM", nil),
       to: env_int(env_fun, "GEN_TO", nil),
       only_idea: positional_idea(argv),
+      force: "--force" in argv,
       retry_failed: env_bool(env_fun, "GEN_RETRY_FAILED"),
       exclude_seeds: env_prefixes(env_fun, "GEN_EXCLUDE_SEEDS"),
       skip_variations: env_bool(env_fun, "GEN_SKIP_VARIATIONS"),

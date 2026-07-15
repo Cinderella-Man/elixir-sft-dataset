@@ -19,7 +19,7 @@ defmodule GenTask.WriteTest do
 
   require Logger
 
-  alias GenTask.{Config, Cycle, CycleLog, Evaluator}
+  alias GenTask.{Config, Cycle, CycleLog, Evaluator, GateLog}
 
   @type seed :: %{
           optional(:name) => String.t(),
@@ -66,26 +66,74 @@ defmodule GenTask.WriteTest do
     stage = Path.join(cfg.staging_dir, wt_id)
     Evaluator.stage!(stage, files)
     grade = Evaluator.grade(stage, cfg)
+    stats = Cycle.grade_stats(grade)
 
     cond do
       skipped?(grade) ->
+        GateLog.skip(
+          cfg,
+          wt_id,
+          :wtest,
+          :parent_gradable,
+          "parent grades `skipped` (e.g. requires Postgres) — nothing can be verified here"
+        )
+
         outcome(wt_id, seed, :skipped, reason: "parent grades `skipped` (e.g. requires Postgres)")
 
       # A minted gold harness must compile warning-free (docs/12 §5.1 item 1) — the
       # only zero-LLM raw-invariant that can regress on the copy (the module + harness
       # are inherited, so `@moduledoc`/`@spec` house-style is NOT re-checked here).
       Evaluator.green?(grade) and Evaluator.compile_warnings(grade) > 0 ->
+        GateLog.pass(cfg, wt_id, :wtest, :parent_gradable, "parent grades on this machine")
+
+        GateLog.pass(
+          cfg,
+          wt_id,
+          :wtest,
+          :green_vs_module,
+          "#{stats.tests_passed}/#{stats.tests_total} tests passed"
+        )
+
+        GateLog.fail(
+          cfg,
+          wt_id,
+          :wtest,
+          :zero_warnings,
+          "gold harness compiles with #{Evaluator.compile_warnings(grade)} warning(s)"
+        )
+
         outcome(wt_id, seed, :rejected,
           reason:
             "gold harness compiles with #{Evaluator.compile_warnings(grade)} warning(s) vs the module"
         )
 
       Evaluator.green?(grade) ->
-        _ = Cycle.promote(cfg, wt_id, files)
-        stats = Cycle.grade_stats(grade)
+        GateLog.pass(cfg, wt_id, :wtest, :parent_gradable, "parent grades on this machine")
+
+        GateLog.pass(
+          cfg,
+          wt_id,
+          :wtest,
+          :green_vs_module,
+          "#{stats.tests_passed}/#{stats.tests_total} tests passed " <>
+            "(coverage inherited: the parent _01 passed the per-function mutation gate)"
+        )
+
+        GateLog.pass(cfg, wt_id, :wtest, :zero_warnings, "0 compile warnings")
+        _ = Cycle.promote(cfg, wt_id, files, :wtest)
         outcome(wt_id, seed, :accepted, stats: stats)
 
       true ->
+        GateLog.pass(cfg, wt_id, :wtest, :parent_gradable, "parent grades on this machine")
+
+        GateLog.fail(
+          cfg,
+          wt_id,
+          :wtest,
+          :green_vs_module,
+          "gold harness is not green vs the module: " <> Cycle.reason_for(grade)
+        )
+
         outcome(wt_id, seed, :rejected,
           reason: "gold harness is not green vs the module: " <> Cycle.reason_for(grade)
         )

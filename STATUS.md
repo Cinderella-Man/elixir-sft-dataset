@@ -13,9 +13,29 @@ Reference docs: `docs/14` (full handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**Nothing.** (Morning block closed T2.4-T in full, F12, parity rows 7+12,
-and put the scripts under test — docs/15. Registry reads 0 pending
-everywhere. Docker note: `elixir_benchmark_pg` is UP on this machine.)
+**T1.9 (Kamil 2026-07-15 midday): gate transparency + `--force` regeneration
+probe on family 015.** Three parts, in order:
+  - [x] (a) BUILD (done, committed, 376 tests green): verbose gate logging — every accept-path gate prints
+        "gate [k/N] <name> ... PASS/FAIL/SKIPPED (<detail>)" for every shape
+        (base/variation/fim/wtest/tfim/bugfix/adapt), house-style sub-checks
+        listed one by one, dark gates (GEN_BLIND_RESCREEN, GEN_SEMANTIC_FLOOR)
+        print SKIPPED so missing enforcement is visible in every run; each
+        verdict also ledgered to `logs/gates.jsonl`.
+  - [x] (b) BUILD (done, committed; unit + throwaway-git tests): `scripts/generate.exs <n> --force` — deletes family `n`
+        (base+variations+FIM dirs, `wt_/tfim_/bugfix_/adapt_/repair_` children,
+        the family's `### Task n - Vx` entries in tasks.md, its
+        `logs/errors/` + `logs/quarantine/` blockers), refusing unless every
+        target is git-clean (recoverability), then lets the normal loop
+        regenerate. GEN_DRY_RUN=1 prints the deletion list without deleting.
+  - [ ] (c) EXPERIMENT: `--force` family 15 (Heartbeat Monitor — freshest
+        retrofit, F12 closed 07-15), detached + monitored; then read the git
+        diff old-vs-new in detail and map every quality delta to a parity-table
+        row (docs/12 §5.5) → new gate work items per rule 7. The regenerated
+        family is a PROBE: after analysis, restore the retrofitted family
+        (`git checkout -- tasks/ logs/…`) unless Kamil decides otherwise.
+        Relaunch command: `scripts/run_detached.sh logs/force_015.log mix run
+        scripts/generate.exs 15 --force` (idempotent: force wipe is a no-op
+        once dirs are gone; the loop resumes missing units).
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-15 early morning)

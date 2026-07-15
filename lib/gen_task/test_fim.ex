@@ -20,7 +20,7 @@ defmodule GenTask.TestFim do
 
   require Logger
 
-  alias GenTask.{Config, Cycle, CycleLog, Evaluator, Mutation}
+  alias GenTask.{Config, Cycle, CycleLog, Evaluator, GateLog, Mutation}
 
   @type seed :: %{
           optional(:name) => String.t(),
@@ -148,10 +148,26 @@ defmodule GenTask.TestFim do
         if over_98 > 0 do
           record_rejected(seed, cand, cfg)
 
+          GateLog.fail(
+            cfg,
+            tfim_id,
+            :tfim,
+            :carvable,
+            "carved block has #{over_98} line(s) over 98 columns (perfect-gate rule)"
+          )
+
           {outcome(tfim_id, seed, qual(cand), :rejected,
              reason: "carved block has #{over_98} line(s) over 98 columns (perfect-gate rule)"
            ), false}
         else
+          GateLog.pass(
+            cfg,
+            tfim_id,
+            :tfim,
+            :carvable,
+            "top-level block #{qual(cand)} carved; skeleton + isolated harness built"
+          )
+
           gate_candidate(seed, module_src, iso_harness, tfim_id, cand, files, cfg)
         end
       rescue
@@ -186,6 +202,14 @@ defmodule GenTask.TestFim do
       not Evaluator.green?(recon) ->
         record_rejected(seed, cand, cfg)
 
+        GateLog.fail(
+          cfg,
+          tfim_id,
+          :tfim,
+          :reconstruction,
+          "reconstruct not green: " <> Cycle.reason_for(recon)
+        )
+
         {outcome(tfim_id, seed, qual(cand), :rejected,
            reason: "reconstruct not green: " <> Cycle.reason_for(recon)
          ), false}
@@ -195,32 +219,82 @@ defmodule GenTask.TestFim do
       Evaluator.compile_warnings(recon) > 0 ->
         record_rejected(seed, cand, cfg)
 
+        GateLog.fail(
+          cfg,
+          tfim_id,
+          :tfim,
+          :reconstruction,
+          "reconstructed harness compiles with #{Evaluator.compile_warnings(recon)} warning(s)"
+        )
+
         {outcome(tfim_id, seed, qual(cand), :rejected,
            reason:
              "reconstructed harness compiles with #{Evaluator.compile_warnings(recon)} warning(s)"
          ), false}
 
-      not gate_ok?(
-        module_src,
-        files["solution.ex"],
-        iso_harness,
-        Path.join(stage_root, "iso"),
-        cfg
-      ) ->
-        record_rejected(seed, cand, cfg)
-
-        {outcome(tfim_id, seed, qual(cand), :rejected,
-           reason: "vacuous test block (no mutant killed / not independent)"
-         ), false}
-
       true ->
-        _ = Cycle.promote(cfg, tfim_id, files)
         stats = Cycle.grade_stats(recon)
-        # Honest mutation label (docs/12 §5.1 item 5): a single-file target passed the
-        # isolation raise-mutant gate (a real kill); a bundle target passed only the
-        # static assertion check (`asserting_block?/1`) — no mutant ran.
-        mode = if bundle?(module_src), do: "static_only", else: "isolation"
-        {outcome(tfim_id, seed, qual(cand), :accepted, stats: stats, mutation: mode), true}
+
+        GateLog.pass(
+          cfg,
+          tfim_id,
+          :tfim,
+          :reconstruction,
+          "gold block re-inserted grades green (#{stats.tests_passed}/#{stats.tests_total}), " <>
+            "0 warnings"
+        )
+
+        GateLog.applying(
+          cfg,
+          tfim_id,
+          :tfim,
+          :isolation_kill,
+          if(bundle?(module_src),
+            do: "bundle parent — static AST assertion check on the gold block",
+            else: "raise-mutating the module vs the isolated target block"
+          )
+        )
+
+        if gate_ok?(
+             module_src,
+             files["solution.ex"],
+             iso_harness,
+             Path.join(stage_root, "iso"),
+             cfg
+           ) do
+          # Honest mutation label (docs/12 §5.1 item 5): a single-file target passed the
+          # isolation raise-mutant gate (a real kill); a bundle target passed only the
+          # static assertion check (`asserting_block?/1`) — no mutant ran.
+          mode = if bundle?(module_src), do: "static_only", else: "isolation"
+
+          GateLog.pass(
+            cfg,
+            tfim_id,
+            :tfim,
+            :isolation_kill,
+            if(mode == "isolation",
+              do: "isolated block killed >=1 raise-mutant of the module",
+              else: "gold block carries a real assertion call (static check; no mutant ran)"
+            )
+          )
+
+          _ = Cycle.promote(cfg, tfim_id, files, :tfim)
+          {outcome(tfim_id, seed, qual(cand), :accepted, stats: stats, mutation: mode), true}
+        else
+          record_rejected(seed, cand, cfg)
+
+          GateLog.fail(
+            cfg,
+            tfim_id,
+            :tfim,
+            :isolation_kill,
+            "vacuous test block (no mutant killed / not independent)"
+          )
+
+          {outcome(tfim_id, seed, qual(cand), :rejected,
+             reason: "vacuous test block (no mutant killed / not independent)"
+           ), false}
+        end
     end
   end
 

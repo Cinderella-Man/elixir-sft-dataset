@@ -39,7 +39,7 @@ defmodule GenTask.Bugfix do
 
   require Logger
 
-  alias GenTask.{Config, Cycle, CycleLog, Evaluator, Mutation}
+  alias GenTask.{Config, Cycle, CycleLog, Evaluator, GateLog, Mutation}
 
   @bugfix_max 3
   @rejected_ledger "bugfix_rejected.jsonl"
@@ -181,12 +181,31 @@ defmodule GenTask.Bugfix do
       not Evaluator.killed_by_tests?(mutant_grade) ->
         record_rejected(seed, label, cfg)
 
+        GateLog.fail(
+          cfg,
+          id,
+          :bugfix,
+          :killed_by_tests,
+          "mutant #{label} not killed by tests (survives or fails to compile) — " <>
+            "not a mintable bug"
+        )
+
         {outcome(id, seed, label, :rejected,
            reason:
              "mutant not killed by tests (survives or fails to compile) — not a mintable bug"
          ), false}
 
       not Evaluator.green?(ref_grade) ->
+        GateLog.pass(cfg, id, :bugfix, :killed_by_tests, "mutant #{label} killed by tests")
+
+        GateLog.fail(
+          cfg,
+          id,
+          :bugfix,
+          :reference_green,
+          "reference NOT green against its own staged harness — investigate the parent"
+        )
+
         # The parent gold not green against its own harness would be corpus rot;
         # do NOT ledger the mutant (it is not the mutant's fault) — surface loudly.
         {outcome(id, seed, label, :error,
@@ -194,6 +213,17 @@ defmodule GenTask.Bugfix do
          ), false}
 
       not one_line_diff?(solution, mutated) ->
+        GateLog.pass(cfg, id, :bugfix, :killed_by_tests, "mutant #{label} killed by tests")
+        GateLog.pass(cfg, id, :bugfix, :reference_green, "gold green vs its own harness")
+
+        GateLog.fail(
+          cfg,
+          id,
+          :bugfix,
+          :one_line_diff,
+          "buggy module does not differ from the gold by exactly one line"
+        )
+
         # construction guarantees this (byte-surgical mutants); if it ever
         # fires, the applier regressed — surface loudly, never ship.
         {outcome(id, seed, label, :error,
@@ -201,8 +231,21 @@ defmodule GenTask.Bugfix do
          ), false}
 
       true ->
+        GateLog.pass(cfg, id, :bugfix, :killed_by_tests, "mutant #{label} killed by tests")
+        GateLog.pass(cfg, id, :bugfix, :reference_green, "gold green vs its own harness")
+
+        GateLog.pass(
+          cfg,
+          id,
+          :bugfix,
+          :one_line_diff,
+          "buggy module differs from the gold by exactly one line"
+        )
+
         {:ok, report} = failure_report(mutant_grade)
         promote(seed, solution, label, mutated, report, id, cfg)
+
+        GateLog.pass(cfg, id, :bugfix, :promote_guard, "promoted to #{cfg.tasks_dir}/#{id}")
 
         {outcome(id, seed, label, :accepted,
            reason: nil,

@@ -20,7 +20,7 @@ defmodule GenTask.Fim do
 
   require Logger
 
-  alias GenTask.{Config, Cycle, CycleLog, Evaluator, Mutation, Prompts, Reply}
+  alias GenTask.{Config, Cycle, CycleLog, Evaluator, GateLog, Mutation, Prompts, Reply}
 
   @type seed :: %{
           num: pos_integer(),
@@ -319,9 +319,19 @@ defmodule GenTask.Fim do
           {:ok, ff} ->
             case deterministic_skeleton(ff, seed, target, log_id) do
               {:ok, ff} ->
+                GateLog.pass(
+                  cfg,
+                  log_id,
+                  :fim,
+                  :skeleton,
+                  "deterministic skeleton built from the parent; candidate #{target} locatable"
+                )
+
                 run_attempts(seed, target, fim_id, log_id, ff, cfg)
 
               {:error, reason} ->
+                GateLog.fail(cfg, log_id, :fim, :skeleton, reason)
+
                 {reject(seed, log_id, target, Cycle.grade_stats(:timeout_or_crash), reason),
                  false}
             end
@@ -530,13 +540,25 @@ defmodule GenTask.Fim do
       failure =
         cond do
           not Evaluator.green?(grade) ->
+            GateLog.fail(cfg, log_id, :fim, :green_nowarn, Cycle.reason_for(grade))
             {Evaluator.repair_report({:failed, grade}), Cycle.reason_for(grade)}
 
           warns > 0 ->
+            GateLog.fail(cfg, log_id, :fim, :green_nowarn, "compiles with #{warns} warning(s)")
+
             {Evaluator.repair_report({:warnings, warns, Evaluator.warning_details(grade)}),
              "compiles with #{warns} warning(s)"}
 
           true ->
+            GateLog.pass(
+              cfg,
+              log_id,
+              :fim,
+              :green_nowarn,
+              "reconstructed module green vs the parent harness " <>
+                "(#{stats.tests_passed}/#{stats.tests_total} tests), 0 warnings"
+            )
+
             nil
         end
 
@@ -581,14 +603,32 @@ defmodule GenTask.Fim do
           end
 
         true ->
+          GateLog.applying(
+            cfg,
+            log_id,
+            :fim,
+            :candidate_mutant,
+            "gutting the candidate #{target} and re-grading vs the parent harness"
+          )
+
           case Mutation.gate_fim(fim_dir, ff["solution.ex"], mutant_path, cfg) do
             :killed ->
+              GateLog.pass(
+                cfg,
+                log_id,
+                :fim,
+                :candidate_mutant,
+                "parent harness fails with the candidate gutted — target is covered"
+              )
+
               CycleLog.record_attempt(cfg, log_id, attempt, candidate, grade, :accepted, nil)
-              _ = Cycle.promote(cfg, fim_id, candidate)
+              _ = Cycle.promote(cfg, fim_id, candidate, :fim)
 
               {:halt, {accept(seed, fim_id, target, stats, attempt + 1), true}}
 
             {:survived, why} ->
+              GateLog.fail(cfg, log_id, :fim, :candidate_mutant, why)
+
               CycleLog.record_attempt(
                 cfg,
                 log_id,

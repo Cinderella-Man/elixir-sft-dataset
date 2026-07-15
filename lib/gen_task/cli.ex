@@ -30,6 +30,12 @@ defmodule GenTask.CLI do
     cfg = Config.new(argv)
     CycleLog.startup(cfg)
 
+    # --force: wipe the single requested family BEFORE planning, so the planner
+    # sees the idea as todo and the run regenerates it from scratch (T1.9 — the
+    # loop-parity probe). Raises without a positional idea number; refuses when
+    # the family is not git-clean. Dry-run prints the deletion list only.
+    if cfg.force, do: GenTask.Force.wipe!(cfg)
+
     plan = plan(cfg)
     names = Map.new(plan.ideas, &{&1.num, &1.name})
 

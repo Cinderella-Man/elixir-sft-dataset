@@ -19,7 +19,7 @@ defmodule GenTask.Mutation do
   require Logger
 
   alias EvalTask.Bundle
-  alias GenTask.{Config, Evaluator}
+  alias GenTask.{Config, Evaluator, GateLog}
 
   @type result :: :killed | {:survived, String.t()}
 
@@ -708,17 +708,26 @@ defmodule GenTask.Mutation do
   end
 
   defp gate_base_per_fn(mutant_dir, files, fns, cfg) do
-    Enum.reduce_while(fns, :killed, fn {name, arity}, _acc ->
+    total = length(fns)
+
+    fns
+    |> Enum.with_index(1)
+    |> Enum.reduce_while(:killed, fn {{name, arity}, i}, _acc ->
       mutant_files = Map.put(files, "solution.ex", mutate_fn(files["solution.ex"], name, arity))
       Evaluator.stage!(mutant_dir, mutant_files)
       grade = Evaluator.grade(mutant_dir, cfg)
 
       case fate(grade) do
         :killed ->
+          GateLog.detail("mutant [#{i}/#{total}] #{name}/#{arity} gutted to raise ... killed")
           {:cont, :killed}
 
         :survived ->
           Logger.debug("base mutation gate (per-fn): #{name}/#{arity} survived")
+
+          GateLog.detail(
+            "mutant [#{i}/#{total}] #{name}/#{arity} gutted to raise ... SURVIVED (not covered)"
+          )
 
           {:halt,
            {:survived,
@@ -727,6 +736,11 @@ defmodule GenTask.Mutation do
 
         :inconclusive ->
           Logger.debug("base mutation gate (per-fn): #{name}/#{arity} inconclusive")
+
+          GateLog.detail(
+            "mutant [#{i}/#{total}] #{name}/#{arity} gutted to raise ... INCONCLUSIVE " <>
+              "(mutant compile failure or eval timeout)"
+          )
 
           {:halt,
            {:survived,

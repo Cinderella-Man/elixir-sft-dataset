@@ -30,7 +30,7 @@ defmodule GenTask.Adapt do
 
   require Logger
 
-  alias GenTask.{Catalog, Config, Cycle, CycleLog, Evaluator}
+  alias GenTask.{Catalog, Config, Cycle, CycleLog, Evaluator, GateLog}
 
   @ledger "adapt_redgate.jsonl"
 
@@ -96,8 +96,25 @@ defmodule GenTask.Adapt do
   end
 
   defp mint_gated(seed, adapt_id, base, var_dir, cfg) do
+    GateLog.applying(
+      cfg,
+      adapt_id,
+      :adapt,
+      :red_gate,
+      "grading the BASE gold under the variation harness (must be RED to teach anything)"
+    )
+
     case red_gate(cfg, base, var_dir) do
       :green_not_mintable ->
+        GateLog.fail(
+          cfg,
+          adapt_id,
+          :adapt,
+          :red_gate,
+          "base gold already grades green under the variation harness — " <>
+            "the pair teaches nothing (docs/13 §2.1 mint gate)"
+        )
+
         outcome(adapt_id, seed, :skipped,
           reason:
             "base gold already grades green under the variation harness — " <>
@@ -105,6 +122,14 @@ defmodule GenTask.Adapt do
         )
 
       red when red in [:red_tests, :red_compile, :red_crash] ->
+        GateLog.pass(
+          cfg,
+          adapt_id,
+          :adapt,
+          :red_gate,
+          "base gold grades #{red} under the variation harness — adaptation is non-trivial"
+        )
+
         do_mint(seed, adapt_id, base, var_dir, cfg)
     end
   end
@@ -114,25 +139,66 @@ defmodule GenTask.Adapt do
     stage = Path.join(cfg.staging_dir, adapt_id)
     Evaluator.stage!(stage, files)
     grade = Evaluator.grade(stage, cfg)
+    stats = Cycle.grade_stats(grade)
 
     cond do
       skipped?(grade) ->
+        GateLog.skip(
+          cfg,
+          adapt_id,
+          :adapt,
+          :gold_green,
+          "variation grades `skipped` (e.g. requires Postgres) — nothing can be verified here"
+        )
+
         outcome(adapt_id, seed, :skipped,
           reason: "variation grades `skipped` (e.g. requires Postgres)"
         )
 
       Evaluator.green?(grade) and Evaluator.compile_warnings(grade) > 0 ->
+        GateLog.pass(
+          cfg,
+          adapt_id,
+          :adapt,
+          :gold_green,
+          "#{stats.tests_passed}/#{stats.tests_total} tests passed"
+        )
+
+        GateLog.fail(
+          cfg,
+          adapt_id,
+          :adapt,
+          :zero_warnings,
+          "gold compiles with #{Evaluator.compile_warnings(grade)} warning(s)"
+        )
+
         outcome(adapt_id, seed, :rejected,
           reason:
             "gold compiles with #{Evaluator.compile_warnings(grade)} warning(s) vs the harness copy"
         )
 
       Evaluator.green?(grade) ->
-        _ = Cycle.promote(cfg, adapt_id, files)
-        stats = Cycle.grade_stats(grade)
+        GateLog.pass(
+          cfg,
+          adapt_id,
+          :adapt,
+          :gold_green,
+          "#{stats.tests_passed}/#{stats.tests_total} tests passed"
+        )
+
+        GateLog.pass(cfg, adapt_id, :adapt, :zero_warnings, "0 compile warnings")
+        _ = Cycle.promote(cfg, adapt_id, files, :adapt)
         outcome(adapt_id, seed, :accepted, stats: stats)
 
       true ->
+        GateLog.fail(
+          cfg,
+          adapt_id,
+          :adapt,
+          :gold_green,
+          "gold is not green vs the harness copy: " <> Cycle.reason_for(grade)
+        )
+
         outcome(adapt_id, seed, :rejected,
           reason: "gold is not green vs the harness copy: " <> Cycle.reason_for(grade)
         )

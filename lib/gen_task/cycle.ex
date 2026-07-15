@@ -16,10 +16,15 @@ defmodule GenTask.Cycle do
 
   require Logger
 
-  alias GenTask.{Config, CycleLog, Evaluator, Mutation, Prompts, Reply}
+  alias GenTask.{Config, CycleLog, Evaluator, GateLog, Mutation, Prompts, Reply}
 
   @type files :: %{String.t() => String.t()}
-  @type ctx :: %{dir: String.t(), mutant_dir: String.t(), id: String.t()}
+  @type ctx :: %{
+          :dir => String.t(),
+          :mutant_dir => String.t(),
+          :id => String.t(),
+          optional(:shape) => GateLog.shape()
+        }
   @type result :: %{
           status: :accepted | :rejected,
           files: files(),
@@ -49,7 +54,21 @@ defmodule GenTask.Cycle do
     # repair merge below) so the bytes that pass the gates are the bytes promoted —
     # the corpus stays `Code.format_string!`-canonical without spending repair
     # attempts on cosmetics (docs/10 R6).
+    raw = files
     files = Evaluator.autoformat(files)
+
+    reformatted = for {name, body} <- files, raw[name] != body, do: name
+
+    GateLog.pass(
+      cfg,
+      ctx.id,
+      shape(ctx),
+      :autoformat,
+      case reformatted do
+        [] -> "already formatter-canonical"
+        names -> "reformatted: #{Enum.join(Enum.sort(names), ", ")}"
+      end
+    )
 
     Enum.reduce_while(0..cfg.max_retries, {files, nil}, fn attempt, {files, cached} ->
       # A fix that returned byte-identical files (contract violation, rejected harness
@@ -174,12 +193,38 @@ defmodule GenTask.Cycle do
     end
   end
 
-  defp accept?(:timeout_or_crash, _ctx, _files, _cfg), do: {:reject, :timeout_or_crash}
+  # The GateLog shape for this cycle: `:base` for base tasks (the default), or
+  # whatever the caller staged in `ctx.shape` (`:variation` from GenTask.Variations).
+  defp shape(ctx), do: Map.get(ctx, :shape, :base)
+
+  defp accept?(:timeout_or_crash, ctx, _files, cfg) do
+    GateLog.fail(cfg, ctx.id, shape(ctx), :green, "evaluation timed out or crashed")
+    {:reject, :timeout_or_crash}
+  end
 
   defp accept?({:ok, json} = grade, ctx, files, cfg) do
+    s = grade_stats(grade)
+
     if Evaluator.green?(grade) do
+      GateLog.pass(
+        cfg,
+        ctx.id,
+        shape(ctx),
+        :green,
+        "compiled, #{s.tests_passed}/#{s.tests_total} tests passed, 0 failed, 0 errored"
+      )
+
       accept_green(json, ctx, files, cfg)
     else
+      GateLog.fail(
+        cfg,
+        ctx.id,
+        shape(ctx),
+        :green,
+        "#{reason_for(grade)} (#{s.tests_passed}/#{s.tests_total} passed, " <>
+          "#{s.tests_failed} failed, #{json["tests_errors"] || 0} errored)"
+      )
+
       {:reject, {:failed, grade}}
     end
   end
@@ -189,18 +234,23 @@ defmodule GenTask.Cycle do
   # Ordering fails fast — the cheap JSON/text checks run before the expensive
   # per-function mutation grades, and the confirmation eval runs only once, on accept.
   defp accept_green(json, ctx, files, cfg) do
-    shortfall = if cfg.quality_gate, do: Evaluator.quality_shortfall(json, files), else: nil
+    shortfall = quality_gate(json, ctx, files, cfg)
 
     cond do
       shortfall ->
         {:reject, {:quality, shortfall}}
 
       true ->
+        GateLog.applying(cfg, ctx.id, shape(ctx), :mutation, mutation_note_for(files, cfg))
+
         case Mutation.gate_base(ctx.mutant_dir, files, cfg) do
           {:survived, why} ->
+            GateLog.fail(cfg, ctx.id, shape(ctx), :mutation, why)
             {:reject, {:vacuous, why}}
 
           :killed ->
+            GateLog.pass(cfg, ctx.id, shape(ctx), :mutation, mutation_note_for(files, cfg))
+
             case confirm_stability(ctx, cfg) do
               :ok ->
                 case semantic_floor_gate(ctx, files, cfg) do
@@ -215,6 +265,48 @@ defmodule GenTask.Cycle do
     end
   end
 
+  # The quality gate, verbose: every named check prints its own console line, then
+  # the gate verdict. Returns the `; `-joined shortfall (the accept decision input),
+  # or nil. The decision and the printed checks come from the SAME
+  # `Evaluator.quality_checks/2` list, so they can never disagree.
+  defp quality_gate(_json, ctx, _files, %Config{quality_gate: false} = cfg) do
+    GateLog.skip(cfg, ctx.id, shape(ctx), :quality, "GEN_SKIP_QUALITY_GATE=1 — gate disabled")
+    nil
+  end
+
+  defp quality_gate(json, ctx, files, cfg) do
+    checks = Evaluator.quality_checks(json, files)
+    total = length(checks)
+
+    checks
+    |> Enum.with_index(1)
+    |> Enum.each(fn {{label, result}, i} -> GateLog.sub(i, total, label, result) end)
+
+    case for {_label, {:fail, msg}} <- checks, do: msg do
+      [] ->
+        ran = Enum.count(checks, fn {_l, r} -> r != :skip end)
+        GateLog.pass(cfg, ctx.id, shape(ctx), :quality, "#{ran}/#{total} checks ran, all ok")
+        nil
+
+      msgs ->
+        GateLog.fail(cfg, ctx.id, shape(ctx), :quality, "#{length(msgs)} check(s) failed")
+        Enum.join(msgs, "; ")
+    end
+  end
+
+  # One line saying WHICH mutation sweep the gate runs for these files under `cfg`
+  # (also the PASS detail — what was proven).
+  defp mutation_note_for(files, cfg) do
+    case Mutation.base_mode(files["solution.ex"], cfg) do
+      :per_fn ->
+        n = length(Mutation.per_fn_targets(files["solution.ex"]))
+        "per-function raise-mutants: #{n} public function(s) must each be killed"
+
+      :whole ->
+        "whole-solution raise-mutant must be killed (bundle or no parsable public functions)"
+    end
+  end
+
   # T1.8 (docs/12 §5.5 row 12): the accept-time semantic-mutant kill floor.
   # nil floor = off (report-only era behavior). Runs LAST — it is the most
   # expensive gate (up to @semantic_sample eval subprocesses) and must only
@@ -223,9 +315,28 @@ defmodule GenTask.Cycle do
   # (rule-7 corollary), pass or fail.
   @semantic_sample 40
 
-  defp semantic_floor_gate(_ctx, _files, %Config{semantic_floor: nil}), do: :ok
+  defp semantic_floor_gate(ctx, _files, %Config{semantic_floor: nil} = cfg) do
+    GateLog.skip(
+      cfg,
+      ctx.id,
+      shape(ctx),
+      :semantic_floor,
+      "GEN_SEMANTIC_FLOOR unset — gate DARK (report-only era; docs/12 §5.5 row 12 " <>
+        "awaits Kamil's floor number)"
+    )
+
+    :ok
+  end
 
   defp semantic_floor_gate(ctx, files, cfg) do
+    GateLog.applying(
+      cfg,
+      ctx.id,
+      shape(ctx),
+      :semantic_floor,
+      "floor #{cfg.semantic_floor}, up to #{@semantic_sample} seeded behavior mutants"
+    )
+
     mutants = Mutation.semantic_mutants(files["solution.ex"], @semantic_sample)
 
     {killed, survivors} =
@@ -256,7 +367,28 @@ defmodule GenTask.Cycle do
     rate = if total > 0, do: killed / total, else: 1.0
     record_semantic_measurement(cfg, ctx.id, files, killed, total, survivors)
 
-    if rate >= cfg.semantic_floor, do: :ok, else: {:below, rate, survivors}
+    if rate >= cfg.semantic_floor do
+      GateLog.pass(
+        cfg,
+        ctx.id,
+        shape(ctx),
+        :semantic_floor,
+        "kill rate #{Float.round(rate, 2)} (#{killed}/#{total}) >= floor #{cfg.semantic_floor}"
+      )
+
+      :ok
+    else
+      GateLog.fail(
+        cfg,
+        ctx.id,
+        shape(ctx),
+        :semantic_floor,
+        "kill rate #{Float.round(rate, 2)} (#{killed}/#{total}) < floor " <>
+          "#{cfg.semantic_floor}; survivors: #{Enum.join(Enum.take(survivors, 5), ", ")}"
+      )
+
+      {:below, rate, survivors}
+    end
   end
 
   defp record_semantic_measurement(cfg, id, files, killed, total, survivors) do
@@ -295,12 +427,31 @@ defmodule GenTask.Cycle do
   # gate stages into `ctx.mutant_dir`, never `ctx.dir`).
   defp confirm_stability(ctx, cfg) do
     seed = confirmation_seed(ctx.id)
+
+    GateLog.applying(
+      cfg,
+      ctx.id,
+      shape(ctx),
+      :stability,
+      "re-grading the accepted files at ExUnit seed #{seed}"
+    )
+
     grade = Evaluator.grade(ctx.dir, cfg, "solution.ex", seed)
 
     if Evaluator.green?(grade) do
+      GateLog.pass(cfg, ctx.id, shape(ctx), :stability, "still green at ExUnit seed #{seed}")
       :ok
     else
       Logger.warning("cycle #{ctx.id}: stability confirmation FAILED at seed #{seed} — flake")
+
+      GateLog.fail(
+        cfg,
+        ctx.id,
+        shape(ctx),
+        :stability,
+        "NOT green at ExUnit seed #{seed} — order/timing flake, recorded in logs/flaky.jsonl"
+      )
+
       CycleLog.record_flake(cfg, ctx.id, grade, seed)
       {:flaky, seed}
     end
@@ -455,38 +606,66 @@ defmodule GenTask.Cycle do
 
   Refuses (logs + `{:skipped, :exists}`) if the target already exists, honouring the
   safety invariant. Under `cfg.dry_run` nothing is written (`{:dry_run, target}`).
+
+  `shape` (a `GenTask.GateLog` shape) makes the promotion guard print as that
+  shape's `promote_guard` gate; `nil` (legacy callers, tests) promotes silently.
   """
-  @spec promote(Config.t(), String.t(), files()) ::
+  @spec promote(Config.t(), String.t(), files(), GateLog.shape() | nil) ::
           {:ok, String.t()} | {:skipped, :exists} | {:dry_run, String.t()}
-  def promote(%Config{} = cfg, task_id, files) do
+  def promote(%Config{} = cfg, task_id, files, shape \\ nil) do
     target = Path.join(cfg.tasks_dir, task_id)
 
-    cond do
-      File.exists?(target) ->
-        Logger.warning(
-          "promotion refused: #{target} already exists — skipping (safety invariant)"
-        )
+    result =
+      cond do
+        File.exists?(target) ->
+          Logger.warning(
+            "promotion refused: #{target} already exists — skipping (safety invariant)"
+          )
 
-        {:skipped, :exists}
+          {:skipped, :exists}
 
-      cfg.dry_run ->
-        Logger.info("dry-run: would promote #{task_id} (#{map_size(files)} files) — not writing")
-        {:dry_run, target}
+        cfg.dry_run ->
+          Logger.info(
+            "dry-run: would promote #{task_id} (#{map_size(files)} files) — not writing"
+          )
 
-      true ->
-        guard_under_tasks!(cfg, target)
-        File.mkdir_p!(target)
+          {:dry_run, target}
 
-        Enum.each(files, fn {rel, body} ->
-          full = safe_child_path!(target, rel)
-          File.mkdir_p!(Path.dirname(full))
-          File.write!(full, body)
-        end)
+        true ->
+          guard_under_tasks!(cfg, target)
+          File.mkdir_p!(target)
 
-        Logger.info("promoted #{task_id} -> #{target}")
-        {:ok, target}
-    end
+          Enum.each(files, fn {rel, body} ->
+            full = safe_child_path!(target, rel)
+            File.mkdir_p!(Path.dirname(full))
+            File.write!(full, body)
+          end)
+
+          Logger.info("promoted #{task_id} -> #{target}")
+          {:ok, target}
+      end
+
+    log_promotion(cfg, task_id, shape, result)
+    result
   end
+
+  defp log_promotion(_cfg, _task_id, nil, _result), do: :ok
+
+  defp log_promotion(cfg, task_id, shape, {:ok, target}),
+    do: GateLog.pass(cfg, task_id, shape, :promote_guard, "promoted to #{target}")
+
+  defp log_promotion(cfg, task_id, shape, {:skipped, :exists}),
+    do:
+      GateLog.fail(
+        cfg,
+        task_id,
+        shape,
+        :promote_guard,
+        "target dir already exists — promotion refused (safety invariant)"
+      )
+
+  defp log_promotion(cfg, task_id, shape, {:dry_run, _target}),
+    do: GateLog.skip(cfg, task_id, shape, :promote_guard, "dry-run — nothing written")
 
   defp guard_under_tasks!(%Config{tasks_dir: tasks_dir}, target) do
     t = Path.expand(target)

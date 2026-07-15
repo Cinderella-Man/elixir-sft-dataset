@@ -15,6 +15,13 @@
 #   mix run scripts/generate.exs 80         # a single base idea
 #   GEN_LIMIT=5 mix run scripts/generate.exs
 #   GEN_DRY_RUN=1 mix run scripts/generate.exs 80
+#
+#   mix run scripts/generate.exs 15 --force # DELETE idea 15's whole family first
+#     (base + variations + FIM dirs, wt_/tfim_/bugfix_/adapt_/repair_ children, its
+#     tasks.md variation entries, its logs/errors + logs/quarantine blockers), then
+#     regenerate it from the catalog idea. Refuses unless every target is git-clean,
+#     so the old family is always recoverable with `git checkout`. Combine with
+#     GEN_DRY_RUN=1 to print the deletion list without deleting. See GenTask.Force.
 
 # The generation model is HARDCODED to Opus. This overrides any GEN_MODEL value
 # leaking in from the environment, so an interactive session's saved default (e.g.

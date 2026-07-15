@@ -193,6 +193,25 @@ defmodule GenTask.Evaluator do
   """
   @spec quality_shortfall(map(), %{optional(String.t()) => String.t()}) :: String.t() | nil
   def quality_shortfall(%{} = json, files \\ %{}) do
+    case for {_label, {:fail, msg}} <- quality_checks(json, files), do: msg do
+      [] -> nil
+      reasons -> Enum.join(reasons, "; ")
+    end
+  end
+
+  @doc """
+  The named individual checks behind the quality gate, in gate order — each entry is
+  `{label, :ok | {:fail, message} | :skip}`. `:skip` marks a check whose text was not
+  supplied in `files` (harness/prompt/solution), so it could not run.
+
+  This is the single source of truth for what the quality gate inspects:
+  `quality_shortfall/2` (the accept decision) derives from this list, and the verbose
+  gate console (`GenTask.GateLog`) prints it check by check — the two can never say
+  different things.
+  """
+  @spec quality_checks(map(), %{optional(String.t()) => String.t()}) ::
+          [{String.t(), :ok | {:fail, String.t()} | :skip}]
+  def quality_checks(%{} = json, files \\ %{}) do
     a = json["analysis"] || %{}
     warnings = json["compile_warnings"] || 0
     tests_total = json["tests_total"] || 0
@@ -200,35 +219,46 @@ defmodule GenTask.Evaluator do
     floor = max(3, public_fns)
     harness = files["test_harness.exs"] || ""
     prompt = files["prompt.md"] || ""
+    solution = files["solution.ex"] || ""
 
-    []
-    |> add_if(warnings > 0, warnings_shortfall(warnings, json["warning_details"]))
-    |> add_if(a["has_moduledoc"] != true, "no @moduledoc")
-    |> add_if(a["has_typespecs"] != true, "no @spec on any public function")
-    |> add_if(a["has_doc_on_public_fns"] != true, "no @doc on any public function")
-    |> add_if((a["todo_count"] || 0) > 0, "#{a["todo_count"]} TODO/FIXME marker(s) in the code")
-    |> add_if(
-      (a["lines_over_98"] || 0) > 0,
-      "#{a["lines_over_98"]} line(s) over 98 columns — wrap them"
-    )
-    |> add_if(
-      a["sql_injection_risk"] == true,
-      "string interpolation inside SQL — use parameterized queries"
-    )
-    |> add_if(
-      tests_total < floor,
-      "only #{tests_total} test(s) — the harness needs at least #{floor} " <>
-        "(max of 3 and the #{public_fns} public function(s))"
-    )
-    |> add_harness_shortfalls(harness, prompt)
-    |> add_solution_shortfalls(files["solution.ex"] || "")
-    |> add_chatter_shortfalls(files)
-    |> add_prompt_coverage_shortfalls(harness, prompt, files["solution.ex"] || "")
-    |> case do
-      [] -> nil
-      reasons -> reasons |> Enum.reverse() |> Enum.join("; ")
-    end
+    [
+      {"zero compile warnings",
+       verdict(warnings == 0, warnings_shortfall(warnings, json["warning_details"]))},
+      {"@moduledoc present", verdict(a["has_moduledoc"] == true, "no @moduledoc")},
+      {"@spec on at least one public function",
+       verdict(a["has_typespecs"] == true, "no @spec on any public function")},
+      {"@doc on at least one public function",
+       verdict(a["has_doc_on_public_fns"] == true, "no @doc on any public function")},
+      {"no TODO/FIXME markers",
+       verdict(
+         (a["todo_count"] || 0) == 0,
+         "#{a["todo_count"]} TODO/FIXME marker(s) in the code"
+       )},
+      {"no lines over 98 columns",
+       verdict(
+         (a["lines_over_98"] || 0) == 0,
+         "#{a["lines_over_98"]} line(s) over 98 columns — wrap them"
+       )},
+      {"no string interpolation inside SQL",
+       verdict(
+         a["sql_injection_risk"] != true,
+         "string interpolation inside SQL — use parameterized queries"
+       )},
+      {"test-count floor: max(3, public function count)",
+       verdict(
+         tests_total >= floor,
+         "only #{tests_total} test(s) — the harness needs at least #{floor} " <>
+           "(max of 3 and the #{public_fns} public function(s))"
+       )}
+    ] ++
+      harness_checks(harness, prompt) ++
+      solution_checks(solution) ++
+      chatter_checks(files) ++
+      coverage_checks(harness, prompt, solution)
   end
+
+  defp verdict(true, _msg), do: :ok
+  defp verdict(false, msg), do: {:fail, msg}
 
   @doc """
   No-op helper functions in `solution_src`: a `defp` whose whole body is its own
@@ -262,20 +292,22 @@ defmodule GenTask.Evaluator do
     end
   end
 
-  defp add_solution_shortfalls(list, ""), do: list
+  @no_op_label "no no-op identity helpers (dead-code laundering)"
 
-  defp add_solution_shortfalls(list, solution) do
+  defp solution_checks(""), do: [{@no_op_label, :skip}]
+
+  defp solution_checks(solution) do
     case no_op_helpers(solution) do
       [] ->
-        list
+        [{@no_op_label, :ok}]
 
       names ->
-        add_if(
-          list,
-          true,
-          "solution.ex defines no-op identity helper(s) #{Enum.join(names, ", ")} — " <>
-            "dead code wrapped to silence warnings; delete the helper and the code it launders"
-        )
+        [
+          {@no_op_label,
+           {:fail,
+            "solution.ex defines no-op identity helper(s) #{Enum.join(names, ", ")} — " <>
+              "dead code wrapped to silence warnings; delete the helper and the code it launders"}}
+        ]
     end
   end
 
@@ -320,7 +352,9 @@ defmodule GenTask.Evaluator do
     end)
   end
 
-  defp add_chatter_shortfalls(list, files) do
+  @chatter_label "no generation-process chatter in comments"
+
+  defp chatter_checks(files) do
     hits =
       for name <- ["solution.ex", "test_harness.exs"],
           src = files[name] || "",
@@ -328,12 +362,21 @@ defmodule GenTask.Evaluator do
           hit <- process_chatter(src),
           do: "#{name} #{hit}"
 
-    add_if(
-      list,
-      hits != [],
-      "generation-process chatter in comments (#{Enum.join(hits, "; ")}) — " <>
-        "comments must describe behavior, never the process that wrote the file"
-    )
+    cond do
+      (files["solution.ex"] || "") == "" and (files["test_harness.exs"] || "") == "" ->
+        [{@chatter_label, :skip}]
+
+      hits == [] ->
+        [{@chatter_label, :ok}]
+
+      true ->
+        [
+          {@chatter_label,
+           {:fail,
+            "generation-process chatter in comments (#{Enum.join(hits, "; ")}) — " <>
+              "comments must describe behavior, never the process that wrote the file"}}
+        ]
+    end
   end
 
   # Names a prompt documents implicitly by naming the behaviour: OTP child specs,
@@ -368,28 +411,27 @@ defmodule GenTask.Evaluator do
         do: "#{short}.#{fun}"
   end
 
-  defp add_prompt_coverage_shortfalls(list, harness, prompt, solution)
-       when harness == "" or prompt == "" or solution == "",
-       do: list
+  @coverage_label "prompt documents every API function the harness calls"
 
-  defp add_prompt_coverage_shortfalls(list, harness, prompt, solution) do
+  defp coverage_checks(harness, prompt, solution)
+       when harness == "" or prompt == "" or solution == "",
+       do: [{@coverage_label, :skip}]
+
+  defp coverage_checks(harness, prompt, solution) do
     case undocumented_api_calls(harness, prompt, solution) do
       [] ->
-        list
+        [{@coverage_label, :ok}]
 
       calls ->
-        add_if(
-          list,
-          true,
-          "test_harness.exs calls #{Enum.join(calls, ", ")} but prompt.md never mentions " <>
-            "them — a solver reading only the prompt cannot know to define them; document " <>
-            "each in the prompt or drop the dependency"
-        )
+        [
+          {@coverage_label,
+           {:fail,
+            "test_harness.exs calls #{Enum.join(calls, ", ")} but prompt.md never mentions " <>
+              "them — a solver reading only the prompt cannot know to define them; document " <>
+              "each in the prompt or drop the dependency"}}
+        ]
     end
   end
-
-  defp add_if(list, true, msg), do: [msg | list]
-  defp add_if(list, false, _msg), do: list
 
   # "N compile warning(s) — silence them" alone sends the fixer hunting for an
   # invisible problem (034_001's variations burned every retry that way,
@@ -421,57 +463,70 @@ defmodule GenTask.Evaluator do
 
   @trigger_atoms ~w(cleanup sweep tick)
 
-  # No harness text (e.g. quality_shortfall called with only the grade JSON) → skip.
-  defp add_harness_shortfalls(list, "", _prompt), do: list
+  @harness_labels [
+    "S9: no :sys.get_state/:sys.replace_state reach-ins",
+    "S9: no assert inspect(...)",
+    "S9: no exact assert_raise message pins",
+    "S9: shared temp paths carry System.pid()",
+    "S9: :infinity interval options are documented in the prompt",
+    "S9: trigger messages sent to the server are documented in the prompt"
+  ]
 
-  defp add_harness_shortfalls(list, harness, prompt) do
+  # No harness text (e.g. quality_shortfall called with only the grade JSON) → skip.
+  defp harness_checks("", _prompt), do: Enum.map(@harness_labels, &{&1, :skip})
+
+  defp harness_checks(harness, prompt) do
     sys = count(harness, ~r/:sys\.(get_state|replace_state)/)
     insp = count(harness, ~r/assert\s+inspect\(/)
     exact_raise = count(harness, ~r/assert_raise\s+[\w.]+,\s*"/)
     infinity = undocumented_infinity_keys(harness, prompt)
     triggers = undocumented_trigger_atoms(harness, prompt)
 
-    list
-    # HARD shortfalls — the anti-pattern must go (the fixer reworks the harness).
-    |> add_if(
-      sys > 0,
-      "test_harness.exs reaches into internal state via `:sys.get_state`/`:sys.replace_state` " <>
-        "(#{sys} call(s)) — assert observable behavior through the public API instead"
-    )
-    |> add_if(
-      insp > 0,
-      "test_harness.exs uses `assert inspect(...)` (#{insp}) — assert the value or structure " <>
-        "directly, not its `inspect` string form (brittle to formatting)"
-    )
-    |> add_if(
-      exact_raise > 0,
-      "test_harness.exs pins an exact exception message in `assert_raise Mod, \"…\"` " <>
-        "(#{exact_raise}) — assert the exception TYPE only, not the message text"
-    )
-    |> add_if(
-      shared_temp_violation?(harness),
-      "test_harness.exs builds a path in a SHARED temp directory without `System.pid()` — " <>
-        "parallel evals run one BEAM per task and `System.unique_integer/1` alone is unique " <>
-        "only within one BEAM (the 102_002 flake class); include `System.pid()` in the path"
-    )
-    # Documents-or-removes advisories — fire only when the prompt does not document
-    # them. The repair contract forbids prompt.md edits, so in-loop the reachable fix
-    # is removing the hidden dependency; an author who WANTS the contract must write it
-    # into prompt.md before generation (the detector then stays silent).
-    |> add_if(
-      infinity != [],
-      "test_harness.exs relies on `:infinity` for the interval option(s) " <>
-        "#{Enum.join(infinity, ", ")}, a behavior prompt.md never documents — rework the " <>
-        "harness so it does not depend on that hidden contract (use a real interval or a " <>
-        "documented seam); prompt.md may not be edited during repair"
-    )
-    |> add_if(
-      triggers != [],
-      "test_harness.exs sends the undocumented trigger message(s) " <>
-        "#{Enum.map_join(triggers, ", ", &":#{&1}")} to the server, which prompt.md never " <>
-        "documents — rework the harness to drive that behavior through the documented " <>
-        "public API instead; prompt.md may not be edited during repair"
-    )
+    # The first four are HARD shortfalls — the anti-pattern must go (the fixer reworks
+    # the harness). The last two are documents-or-removes advisories that fire only
+    # when the prompt does not document the behavior: the repair contract forbids
+    # prompt.md edits, so in-loop the reachable fix is removing the hidden dependency;
+    # an author who WANTS the contract must write it into prompt.md before generation
+    # (the detector then stays silent).
+    verdicts = [
+      verdict(
+        sys == 0,
+        "test_harness.exs reaches into internal state via `:sys.get_state`/`:sys.replace_state` " <>
+          "(#{sys} call(s)) — assert observable behavior through the public API instead"
+      ),
+      verdict(
+        insp == 0,
+        "test_harness.exs uses `assert inspect(...)` (#{insp}) — assert the value or structure " <>
+          "directly, not its `inspect` string form (brittle to formatting)"
+      ),
+      verdict(
+        exact_raise == 0,
+        "test_harness.exs pins an exact exception message in `assert_raise Mod, \"…\"` " <>
+          "(#{exact_raise}) — assert the exception TYPE only, not the message text"
+      ),
+      verdict(
+        not shared_temp_violation?(harness),
+        "test_harness.exs builds a path in a SHARED temp directory without `System.pid()` — " <>
+          "parallel evals run one BEAM per task and `System.unique_integer/1` alone is unique " <>
+          "only within one BEAM (the 102_002 flake class); include `System.pid()` in the path"
+      ),
+      verdict(
+        infinity == [],
+        "test_harness.exs relies on `:infinity` for the interval option(s) " <>
+          "#{Enum.join(infinity, ", ")}, a behavior prompt.md never documents — rework the " <>
+          "harness so it does not depend on that hidden contract (use a real interval or a " <>
+          "documented seam); prompt.md may not be edited during repair"
+      ),
+      verdict(
+        triggers == [],
+        "test_harness.exs sends the undocumented trigger message(s) " <>
+          "#{Enum.map_join(triggers, ", ", &":#{&1}")} to the server, which prompt.md never " <>
+          "documents — rework the harness to drive that behavior through the documented " <>
+          "public API instead; prompt.md may not be edited during repair"
+      )
+    ]
+
+    Enum.zip(@harness_labels, verdicts)
   end
 
   # Shared-temp-path rule (docs/14 §5.0b; docs/12 §5.5 row 7): any harness path
@@ -577,7 +632,9 @@ defmodule GenTask.Evaluator do
           | {:vacuous, String.t()}
           | {:quality, String.t()}
           | {:warnings, non_neg_integer()}
+          | {:warnings, non_neg_integer(), [String.t()]}
           | {:flaky, integer()}
+          | {:semantic_floor, float(), [String.t()]}
           | {:failed, grade()}
         ) :: String.t()
   def repair_report(:timeout_or_crash) do

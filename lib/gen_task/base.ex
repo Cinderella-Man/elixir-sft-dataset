@@ -14,7 +14,7 @@ defmodule GenTask.Base do
 
   require Logger
 
-  alias GenTask.{Catalog, Config, Cycle, CycleLog, Evaluator, Reply, Prompts, Variations}
+  alias GenTask.{Catalog, Config, Cycle, CycleLog, Evaluator, GateLog, Reply, Prompts, Variations}
 
   @type seed :: %{
           num: pos_integer(),
@@ -97,7 +97,7 @@ defmodule GenTask.Base do
       if result.status == :accepted do
         case blind_rescreen(idea, result, cfg) do
           :promote ->
-            _ = Cycle.promote(cfg, idea.task_id, result.files)
+            _ = Cycle.promote(cfg, idea.task_id, result.files, :base)
             base_outcome(idea, :accepted, result, stats, seed(idea, result.files))
 
           {:quarantine, why} ->
@@ -182,10 +182,66 @@ defmodule GenTask.Base do
   def rescreen?(%Config{}, attempts), do: attempts > 1
 
   defp blind_rescreen(idea, result, cfg) do
-    if rescreen?(cfg, result.attempts) do
-      run_rescreen(idea, result, cfg)
-    else
-      :promote
+    cond do
+      not cfg.blind_rescreen ->
+        GateLog.skip(
+          cfg,
+          idea.task_id,
+          :base,
+          :blind_rescreen,
+          "GEN_BLIND_RESCREEN=0 — gate DARK (T1.1 built, awaiting Kamil's sign-off; " <>
+            "docs/12 §5.5 row 10)"
+        )
+
+        :promote
+
+      result.attempts == 1 ->
+        GateLog.pass(
+          cfg,
+          idea.task_id,
+          :base,
+          :blind_rescreen,
+          "not required — an attempt-1 accept is blind by construction " <>
+            "(the solver never saw the harness)"
+        )
+
+        :promote
+
+      true ->
+        GateLog.applying(
+          cfg,
+          idea.task_id,
+          :base,
+          :blind_rescreen,
+          "accepted after #{result.attempts} attempts — one independent prompt-only solve"
+        )
+
+        outcome = run_rescreen(idea, result, cfg)
+
+        case outcome do
+          :promote ->
+            GateLog.pass(
+              cfg,
+              idea.task_id,
+              :base,
+              :blind_rescreen,
+              "independent blind solve went green against the final harness"
+            )
+
+          {:quarantine, why} ->
+            GateLog.fail(cfg, idea.task_id, :base, :blind_rescreen, why)
+
+          {:error, reason} ->
+            GateLog.skip(
+              cfg,
+              idea.task_id,
+              :base,
+              :blind_rescreen,
+              "environmental failure, no verdict (F7 rule): " <> reason
+            )
+        end
+
+        outcome
     end
   end
 

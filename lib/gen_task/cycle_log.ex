@@ -124,6 +124,17 @@ defmodule GenTask.CycleLog do
     })
   end
 
+  @doc """
+  Append one gate verdict to `logs/gates.jsonl` (one per gate application —
+  written by `GenTask.GateLog`, the gate-transparency layer). The row carries
+  `{id, shape, gate, idx, total, verdict, detail}` so a run's full gate history
+  survives the console.
+  """
+  @spec record_gate(Config.t(), map()) :: :ok
+  def record_gate(%Config{logs_dir: logs_dir}, entry) do
+    append_jsonl(Path.join(logs_dir, "gates.jsonl"), Map.put_new(entry, :ts, ts()))
+  end
+
   @doc "Append one line to `logs/waits.jsonl` (one per usage-window pause)."
   @spec record_wait(Config.t(), non_neg_integer(), pos_integer(), String.t()) :: :ok
   def record_wait(%Config{logs_dir: logs_dir}, waited_ms, attempt, signal) do
