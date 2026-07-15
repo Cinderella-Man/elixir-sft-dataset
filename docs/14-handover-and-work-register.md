@@ -236,6 +236,37 @@ content sha, so a re-run resumes and never redoes finished work.
   per-shape gold mapping, advisory weights, round-trip `--check` + `--selfcheck`
   (both in CI). Output `results/export/` is a build artifact, never source.
 
+### Script disposition & testing (Kamil's ask, 2026-07-15)
+
+Every script is one of two kinds, and the testing bar follows the kind:
+
+**PERMANENT (steady-state infrastructure — must be tested):**
+
+| script | safety net today |
+|---|---|
+| `eval_task` / `validate` / `run_all` / `generate` / `work_status` | thin CLIs over `lib/` — the 344-test suite is their coverage |
+| `export_dataset` | CI `--selfcheck` (8 planted violations) + unit tests (`test/scripts/`: family/split determinism, shape-map totality, the write_test gold trap) |
+| `resync_adapt_embeds` | `--self-test` in CI (plant → detect → heal → re-verify) + dry-run gate |
+| `resync_tfim` / `resync_bugfix` / `resync_embeds --wt-all` | dry-run CI gates; **no self-tests yet — registered in STATUS as T-gates** |
+| `check_embeds` / `lint_temp_paths` / `check_screen_freshness` | have `--self-test`, wired in CI |
+| `format_corpus` | exercised on every push |
+| `spot_verify.sh` / `reverify_rejects` | CONTEXT rule-8 standing audits; deterministic + ledgered |
+| `rubric_judge` | positive-control-proven instrument + unit tests (agreement, reply contract, errored-row resume) |
+
+Scripts are unit-testable via the load guard: `test/scripts/*_test.exs` set
+`SCRIPTS_NO_AUTORUN=1` and `Code.require_file` the script, then test its
+public `@doc false` functions; ledger/corpus paths are env-overridable
+(`RUBRIC_JUDGE_LEDGER`, `CLOSE_GAPS_*`) so tests run in sandboxes.
+
+**CATCH-UP (delete at the line, docs/12 §7.2 — no test investment beyond
+protecting remaining use):** `strengthen_harnesses`, `enrich_prompts`,
+`rescreen_repaired`, `mint_repairs` (as one-shot), `screen_blind_solve` +
+`triage_screen` (after T1.1 flips + the CI evidence check), `close_gaps`
+(resume logic IS unit-tested — it is actively finishing T2.4-T),
+`survey_adapt_redgate` (superseded by `GenTask.Adapt.red_gate`, which lives
+in lib WITH tests), `quality_chain*.sh`. `semantic_review` is kept until the
+T2.2 full-pass decision, then Kamil decides its fate.
+
 ---
 
 ## 4. The ledgers (`logs/*.jsonl`) — what each one means

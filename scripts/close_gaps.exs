@@ -43,6 +43,11 @@ defmodule CloseGaps do
 
   @review_ledger "logs/semantic_review.jsonl"
   @ledger "logs/close_gaps.jsonl"
+
+  # Env-overridable so tests can sandbox the ledgers and the corpus dir.
+  defp review_ledger, do: System.get_env("CLOSE_GAPS_REVIEW_LEDGER") || @review_ledger
+  defp ledger, do: System.get_env("CLOSE_GAPS_LEDGER") || @ledger
+  defp tasks_root, do: System.get_env("CLOSE_GAPS_TASKS_DIR") || "tasks"
   @sm_limit 40
 
   def main(argv) do
@@ -63,7 +68,7 @@ defmodule CloseGaps do
   # ── population: families with confirmed harness_gap findings ───────────────
 
   defp gap_families(opts) do
-    @review_ledger
+    review_ledger()
     |> File.stream!()
     |> Enum.flat_map(fn line ->
       case Jason.decode(line) do
@@ -78,7 +83,7 @@ defmodule CloseGaps do
     # Latest row per task wins (re-reviews append).
     |> Map.new()
     |> Enum.filter(fn {task, confirmed} ->
-      File.dir?(Path.join("tasks", task)) and
+      File.dir?(Path.join(tasks_root(), task)) and
         Enum.any?(confirmed, &(&1["class"] == "harness_gap")) and
         (opts[:high_only] != true or
            Enum.any?(confirmed, &(&1["class"] == "harness_gap" and &1["severity"] == "high")))
@@ -91,8 +96,9 @@ defmodule CloseGaps do
   # harness re-opens it (found live 2026-07-15 — three hand-seeded gaps read
   # DONE because the resume key was the harness sha alone). Old rows carry no
   # gaps_sha; they count only for findings that existed when they were written.
-  defp done?(task, confirmed) do
-    dir = Path.join("tasks", task)
+  @doc false
+  def done?(task, confirmed) do
+    dir = Path.join(tasks_root(), task)
     current = harness_sha(dir)
     digest = gaps_sha(confirmed)
 
@@ -114,7 +120,7 @@ defmodule CloseGaps do
   end
 
   defp latest_review_ts(task) do
-    @review_ledger
+    review_ledger()
     |> File.stream!()
     |> Enum.reduce("", fn line, acc ->
       case Jason.decode(line) do
@@ -155,11 +161,11 @@ defmodule CloseGaps do
       |> Enum.filter(fn {task, _} -> match_only?(task, opts[:only]) end)
       |> Enum.reject(fn {task, confirmed} -> done?(task, confirmed) end)
 
-    IO.puts("closing gaps in #{length(todo)} family(ies), sequential, ledger #{@ledger}\n")
+    IO.puts("closing gaps in #{length(todo)} family(ies), sequential, ledger #{ledger()}\n")
 
     Enum.each(Enum.with_index(todo, 1), fn {{task, confirmed}, i} ->
       IO.write("[#{i}/#{length(todo)}] #{task} ... ")
-      row = close(cfg, Path.join("tasks", task), confirmed)
+      row = close(cfg, Path.join(tasks_root(), task), confirmed)
       append_ledger(row)
       IO.puts("#{row.verdict}#{if row[:detail], do: " — " <> row.detail, else: ""}")
     end)
@@ -576,11 +582,11 @@ defmodule CloseGaps do
 
   defp append_ledger(row) do
     File.mkdir_p!("logs")
-    File.write!(@ledger, Jason.encode!(row) <> "\n", [:append])
+    File.write!(ledger(), Jason.encode!(row) <> "\n", [:append])
   end
 
   defp success_rows do
-    case File.read(@ledger) do
+    case File.read(ledger()) do
       {:ok, body} ->
         body
         |> String.split("\n", trim: true)
@@ -601,7 +607,7 @@ defmodule CloseGaps do
   end
 
   defp report do
-    case File.read(@ledger) do
+    case File.read(ledger()) do
       {:ok, body} ->
         rows = body |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1)
         freq = Enum.frequencies_by(rows, & &1["verdict"])
@@ -654,4 +660,6 @@ defmodule CloseGaps do
   end
 end
 
-CloseGaps.main(System.argv())
+# test/scripts/* load this file with SCRIPTS_NO_AUTORUN=1 to unit-test the
+# module's pure decision functions without executing the CLI.
+unless System.get_env("SCRIPTS_NO_AUTORUN"), do: CloseGaps.main(System.argv())

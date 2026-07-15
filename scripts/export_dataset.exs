@@ -50,6 +50,13 @@ defmodule ExportDataset do
     test_fim: 0.25
   }
 
+  # The two contract maps, exposed so tests can assert every Discovery shape
+  # is mapped (a new shape missing here must fail the suite, not the export).
+  @doc false
+  def gold_file_map, do: @gold_file
+  @doc false
+  def weights_map, do: @weights
+
   def main(argv) do
     argv = Enum.drop_while(argv, &(&1 == "--"))
 
@@ -429,4 +436,6 @@ defmodule ExportDataset do
   end
 end
 
-ExportDataset.main(System.argv())
+# test/scripts/* load this file with SCRIPTS_NO_AUTORUN=1 to unit-test the
+# module's pure decision functions without executing the CLI.
+unless System.get_env("SCRIPTS_NO_AUTORUN"), do: ExportDataset.main(System.argv())

@@ -71,6 +71,9 @@ jobs:
       # adapt_ dirs are deterministic projections of (base gold, variation
       # prompt/gold/harness) — docs/13 §2.1. Editing any parent must propagate,
       # or the pair teaches a stale starting point or grades against a stale gate.
+      # --self-test first proves the gate itself bites (planted drift is caught
+      # and healed in a sandbox) before the dry run is trusted.
+      - run: mix run scripts/resync_adapt_embeds.exs -- --self-test
       - run: |
           out=$(mix run scripts/resync_adapt_embeds.exs)
           echo "$out"

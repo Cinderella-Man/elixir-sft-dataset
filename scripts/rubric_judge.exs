@@ -37,6 +37,9 @@ defmodule RubricJudge do
   @moduledoc false
 
   @ledger "logs/rubric_judge.jsonl"
+
+  # Env-overridable so tests can point the module at a sandbox ledger.
+  defp ledger_path, do: System.get_env("RUBRIC_JUDGE_LEDGER") || @ledger
   @default_sample 40
   @axes ~w(requirement_conformance logical_correctness edge_case_consideration)
 
@@ -170,7 +173,7 @@ defmodule RubricJudge do
 
     IO.puts(
       "judging #{length(todo)} root(s) with #{cfg.model} + #{second}, " <>
-        "sequential, ledger #{@ledger}\n"
+        "sequential, ledger #{ledger_path()}\n"
     )
 
     Enum.each(Enum.with_index(todo, 1), fn {{era, dir}, i} ->
@@ -217,7 +220,8 @@ defmodule RubricJudge do
 
   # Per axis: judges agree when both scored and within 1 point. `nil` when
   # either judge errored — an unknown, never an agreement.
-  defp agreement([a, b]) do
+  @doc false
+  def agreement([a, b]) do
     Map.new(@axes, fn axis ->
       with %{"scores" => %{^axis => sa}} <- a,
            %{"scores" => %{^axis => sb}} <- b do
@@ -316,7 +320,8 @@ defmodule RubricJudge do
     end
   end
 
-  defp validate_rubric(files) do
+  @doc false
+  def validate_rubric(files) do
     with json when is_binary(json) <- files["rubric.json"] || {:error, "missing rubric.json"},
          {:ok, %{"scores" => scores, "issues" => issues}} <- Jason.decode(json),
          true <- Enum.all?(@axes, &(is_integer(scores[&1]) and scores[&1] in 1..5)),
@@ -351,8 +356,9 @@ defmodule RubricJudge do
     |> Enum.join("|")
   end
 
-  defp done_keys do
-    case File.read(@ledger) do
+  @doc false
+  def done_keys do
+    case File.read(ledger_path()) do
       {:ok, body} ->
         body
         |> String.split("\n", trim: true)
@@ -391,7 +397,7 @@ defmodule RubricJudge do
 
   defp append_ledger(row) do
     File.mkdir_p!("logs")
-    File.write!(@ledger, Jason.encode!(row) <> "\n", [:append])
+    File.write!(ledger_path(), Jason.encode!(row) <> "\n", [:append])
   end
 
   # Two overlapping --go runs write duplicate rows for the same content (found
@@ -412,7 +418,7 @@ defmodule RubricJudge do
   end
 
   defp report do
-    case File.read(@ledger) do
+    case File.read(ledger_path()) do
       {:ok, body} ->
         all = body |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1)
         rows = all |> Map.new(&{&1["task"], &1}) |> Map.values()
@@ -483,4 +489,6 @@ defmodule RubricJudge do
   end
 end
 
-RubricJudge.main(System.argv())
+# test/scripts/* load this file with SCRIPTS_NO_AUTORUN=1 to unit-test the
+# module's pure decision functions without executing the CLI.
+unless System.get_env("SCRIPTS_NO_AUTORUN"), do: RubricJudge.main(System.argv())
