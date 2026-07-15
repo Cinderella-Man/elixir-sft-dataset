@@ -171,10 +171,14 @@ defmodule Monitor do
         status: :pending,
         last_check_at: nil,
         consecutive_failures: 0,
-        notified_down: false
+        notified_down: false,
+        # The live timer of this registration's check chain. Tracking it is
+        # what lets deregister/2 really cancel the chain — without it, a
+        # deregister followed by a re-registration under the same name would
+        # let the OLD chain's next {:check, name} drive the NEW registration
+        # (early checks, doubled cadence, doubled failure counting).
+        timer: schedule_check(name, interval_ms)
       }
-
-      schedule_check(name, interval_ms)
 
       {:reply, :ok, put_in(state.services[name], service)}
     end
@@ -193,10 +197,26 @@ defmodule Monitor do
   end
 
   def handle_call({:deregister, name}, _from, state) do
-    # Removing the service from the map is sufficient: any in-flight
-    # {:check, name} message will hit the :error branch in handle_info
-    # and be silently discarded.
-    {:reply, :ok, %{state | services: Map.delete(state.services, name)}}
+    case Map.fetch(state.services, name) do
+      {:ok, service} ->
+        # Cancel the chain's live timer. If it fired before the cancel, its
+        # {:check, name} message is already queued BEHIND this call — drain
+        # it, or a later re-registration under the same name would resurrect
+        # the old chain (`after 0` cannot block: the message is either queued
+        # by now or was never sent).
+        Process.cancel_timer(service.timer)
+
+        receive do
+          {:check, ^name} -> :ok
+        after
+          0 -> :ok
+        end
+
+        {:reply, :ok, %{state | services: Map.delete(state.services, name)}}
+
+      :error ->
+        {:reply, :ok, state}
+    end
   end
 
   @impl GenServer
