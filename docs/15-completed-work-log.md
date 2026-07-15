@@ -9,6 +9,36 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-16 — T1.6 Dialyzer gate BUILT, CALIBRATED, LANDED (last of the
+  four delegated decisions; F12-B's @spec half → F12 fully CLOSED).**
+  dialyxir in mix.exs; one-time deps PLT (1,184 modules, ~1 min); driver
+  `scripts/dialyzer_golds.exs` staging each single-module `_01` gold
+  in-process and analyzing via `:dialyzer.run/1` (the CLI cannot decode
+  Elixir debug_info — its own BEAM lacks elixir_erl; caught by self-test).
+  Calibration was the real work, all pilot-driven (rule 9): default
+  warnings MISS both planted regressions of the real historical defects
+  (038_001's missing error-variant, 043_001's tid-vs-atom); bare
+  `:overspecs` catches them but false-flagged 12/14 sample roots (private
+  narrow helpers, GenServer.call any()-return wrappers, alias-collapsed
+  t() returns, and a quote-mispairing regex bug found en route). Final
+  rule — subtype warnings count only when exported AND the success
+  typing's return has a variant tag the alias-expanded spec lacks (specs
+  expanded from beam binaries via Code.Typespec) — scores: planted 038
+  regression BITES, fixed files clean, sample 12/14→2/14 flagged with BOTH
+  keeps real findings (F20: 015_001 @typep service missing the :timer
+  field the F12 fix added — a spec lie introduced by a repair, caught next
+  day; F21: 102_002 migration change/0 spec'd :ok vs DSL return,
+  019-class). Documented miss: same-tag type confusion (043's original) —
+  owned by the spot-review layer. 5-module self-test (2 bite + 3 silence)
+  gates every CI run before verdicts are trusted; weekly CI block added to
+  validate.yml (PLT rides the _build cache; fresh checkout = no ledger =
+  full re-derive). Full-corpus pass launched detached from the worktree
+  (STATUS has pid/log/relaunch); Task-A fixes for F20/F21 + any new rows
+  deferred behind the retro-audit sweep. `--` argv trap (mix run leaves
+  the literal `--` in System.argv, turning --self-test into a full sweep)
+  fixed with the house idiom. TD.3 dedoc is UNBLOCKED once the pass reads
+  clean.
+
 - **2026-07-16 — Nightly-sweep systemd timer INSTALLED (same delegation) +
   detached-job guard added to the sweep.** The staged units are live:
   `~/.config/systemd/user/nightly-sweep.{service,timer}`, enabled, next

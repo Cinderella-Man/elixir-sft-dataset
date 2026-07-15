@@ -56,7 +56,11 @@ defmodule ElixirBenchmark.MixProject do
       {:decimal, "~> 2.1"},
 
       # Static analysis (for scoring solutions)
-      {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+
+      # Spec verification over the gold solutions (T1.6, docs/13 §2.6):
+      # one-time PLT + scripts/dialyzer_golds.exs driver + weekly CI gate.
+      {:dialyxir, "~> 1.4", only: [:dev], runtime: false}
     ]
   end
 

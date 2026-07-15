@@ -133,6 +133,19 @@ jobs:
         run: mix run scripts/audit_bugfix.exs $(ls -d tasks/bugfix_* | shuf -n 15 | sed 's|tasks/||')
       - if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: mix run scripts/reverify_rejects.exs -- --bugfix-sample 25
+      # T1.6 (docs/13 §2.6): specs are training targets — machine-check every
+      # gold's @spec/@type against dialyzer success typings. The PLT rides the
+      # _build cache (rebuilt only when mix.lock changes); a fresh checkout has
+      # no ledger, so nothing is skipped. --self-test first: the gate must
+      # prove it bites (planted contract lie + overspec) and stays silent
+      # (private helper, GenServer wrapper, clean module) before its verdicts
+      # are trusted. Exit 1 on any warnings/error row = red.
+      - if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: mix dialyzer --plt
+      - if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: mix run scripts/dialyzer_golds.exs -- --self-test
+      - if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: mix run scripts/dialyzer_golds.exs
       - name: Upload gate evidence
         if: always()
         uses: actions/upload-artifact@v4

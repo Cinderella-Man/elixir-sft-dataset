@@ -78,32 +78,36 @@ F17-1..10, candidate gates G-A..G-E). Remaining, in order:
         `logs/quarantine/*` + Kamil review + a keep-promotion path writing
         the evidence row. Until built, quarantines block their idea and
         surface here.
-  - [ ] **T1.6 DIALYZER IN PROGRESS (Kamil 2026-07-16: "do everything" —
-        all four standing decisions delegated; retro audit owns the token
-        budget, so T1.6 runs CPU-only in an isolated worktree
-        `../elixir-sft-dataset-t16` and NEVER runs `mix compile` in this
-        tree while the audit lives).** dialyxir added to mix.exs (deps
-        fetched in-tree, fetch-only). PLT build detached: log
-        `logs/t16_dialyzer_plt.log` (pid in `.pid` sidecar); idempotent
-        relaunch: `scripts/run_detached.sh logs/t16_dialyzer_plt.log bash
-        -c "cd ../elixir-sft-dataset-t16 && nice -n10 mix do deps.get +
-        compile + dialyzer --plt"`. THEN: `scripts/dialyzer_golds.exs`
-        driver (sha-keyed ledger `logs/dialyzer_golds.jsonl`, resumable),
-        pilot on 5 families incl. the two live would-have-caught cases
-        (038_001, 043_001 — the pilot must BITE), detailed review, weekly
-        CI job, full-corpus pass detached. Data fixes for whatever it
-        flags are DEFERRED until the retro audit finishes (concurrent gold
-        edits would race the sweep's writes; bugfix remints cost LLM).
-        Semantic-floor NUMBER stays at default 0.6 (tune only on evidence).
+  - [ ] **T1.6 DIALYZER FULL PASS RUNNING (gate BUILT + calibrated
+        2026-07-16 via Kamil's "do everything" delegation; Task B is
+        standing — weekly CI block in validate.yml + the driver itself).**
+        Driver `scripts/dialyzer_golds.exs`: per-root staging, `:overspecs`
+        + variant-tag filter (calibration story in the file header:
+        14-family sample went 12/14 false-flag → 2/14, both KEPT hits
+        real), 5-module self-test proves bite + silence. Full pass runs
+        CPU-only from the worktree `../elixir-sft-dataset-t16` (this tree
+        never runs `mix compile` while the retro audit lives): log
+        `logs/dialyzer_golds_full.log`, sha-keyed resumable ledger
+        `logs/dialyzer_golds.jsonl`; idempotent relaunch:
+        `scripts/run_detached.sh logs/dialyzer_golds_full.log bash -c "cd
+        /home/kamil/projects/elixir-sft-dataset-t16 && nice -n10 mix run
+        scripts/dialyzer_golds.exs -- --tasks
+        /home/kamil/projects/elixir-sft-dataset/tasks --ledger
+        /home/kamil/projects/elixir-sft-dataset/logs/dialyzer_golds.jsonl"`.
+        AFTER the retro audit finishes: re-run (audit-changed golds have
+        fresh shas), then Task-A-fix every warnings row (solution edits →
+        full cascade + bugfix remints, LLM). Worktree deleted at the §7.2
+        line. Semantic-floor NUMBER stays at default 0.6 (tune only on
+        evidence).
   - [ ] On close: move T1.9/T1.10 record to docs/15; keep `--force` + GateLog
         + PromiseAudit as permanent loop features.
 ---
 
 ## ⏭️ IMMEDIATE QUEUE (in order; updated 2026-07-15 early morning)
 
-1. **Kamil's five decisions** (section below) — they gate Phase 3, T1.1,
-   T1.6 (and TD.3 behind it), the nightly timer, and the T2.2 full-pass
-   question. Nothing else blocks them.
+1. *(2026-07-16: the five decisions are all resolved/delegated-executed —
+   see WAITING section. TD.3 dedoc is now UNBLOCKED by the T1.6 gate once
+   its full pass reads clean.)*
 2. Bigger builds: the **TD.2–TD.4** decisions (TD.1 closed — docs/15).
 
 *(F10-A + T2.4 measurement + T2.4-T (all 5 flags) + F12 + T1.7 + T1.8
@@ -123,15 +127,32 @@ committed immediately (one solved item = one commit).
 
 ### 🔎 OPEN FINDINGS — two tasks each
 
-**F12 — 015_001 lying deregister @doc + resurrectable check chain.**
-- F12-A (fix data): DONE → docs/15 (07-15: tracked timer refs + cancel +
-  drain, probe-proven, full cascade, bugfix children reminted).
-- F12-B (gate generator): prose-claims-need-pins half DONE 07-15 (T1.4
-  COVERAGE/LIFECYCLE/CALLBACK rules + the default-ON promise audit —
-  docs/17). REMAINING: the @spec half = T1.6 Dialyzer (Kamil's mix.exs
-  line).
+**F20 — 015_001 `@typep service` omits the `:timer` field the F12 fix
+added (machine-proven by the new T1.6 gate on its pilot run, 2026-07-16:
+"key 'timer' cannot exist in map of type ..." + a no-local-return cascade
+at solution.ex:211).** The 07-15 F12 repair added the tracked timer ref to
+the service map (register/deregister/handle_info) but never updated the
+typespec — a spec lie introduced BY a repair, one day old. Runtime-safe
+(update syntax preserves the real key) but the type contradicts the code.
+- F20-A (fix data): add `timer: reference()` to the @typep + re-run the
+  gate; full cascade (embeds resync, bugfix remints). DEFERRED until the
+  retro-audit sweep finishes — concurrent gold edits race its writes.
+- F20-B (gate): DONE — this is precisely the T1.6 gate that found it
+  (weekly CI + ledgered driver). Also evidence for docs/12 §5.5 parity:
+  repairs must re-run the spec gate on the repaired file (fold into the
+  cutover checklist).
 
-*(Closed with both tiers done — see docs/15: F1 — repaired-accept gaps
+**F21 — 102_002 migration `change/0` spec'd `:: :ok` but returns Ecto's
+migration DSL value ("return types do not overlap" — invalid_contract,
+the original 019_001 class, found by the same pilot).**
+- F21-A (fix data): spec the migration honestly (drop the @spec or use
+  the DSL's return; check the other kit-adjacent migrations while there);
+  cascade as above. DEFERRED behind the retro-audit sweep like F20-A.
+- F21-B (gate): DONE — T1.6 gate (weekly CI); invalid_contract class is
+  kept unconditionally by the driver.
+
+*(Closed with both tiers done — F12 (07-16: A done 07-15; B's @spec half
+landed as the T1.6 gate, prose half was T1.4 + promise audit); — see docs/15: F1 — repaired-accept gaps
 (T1.1 re-screen default-ON 07-15); F10 — promise-coverage gap (T1.4
 COVERAGE RULE + default-ON promise audit, 07-15); F2 — blind evidence staled by
 harness edits; F3 — reject rows surviving their gate's repair; F4 — tools imitating grandfathered anti-patterns; F5 —
@@ -193,15 +214,14 @@ against docs/16 §4's advisory weights (test_fim already down-weighted to
 
 ---
 
-## 🧍 WAITING ON KAMIL (decisions only — nothing else blocks Phase 3)
+## 🧍 WAITING ON KAMIL
 
-1. *(resolved 07-15 by Kamil's default-on directive: the blind re-screen
-   and promise audit run always; the semantic floor runs at 0.6 — tune the
-   NUMBER if you want a different bar.)*
-4. **T1.6 Dialyzer** — one `mix.exs` + lockfile change. (Two more live
-   would-have-caught cases from today's T2.2 batch: 038_001's undocumented
-   `duplicate_ids` return violating its own @spec; 043_001's named-table
-   atom vs declared `:ets.tid()` type.)
+*(Emptied 2026-07-16: all four standing decisions were delegated — "do
+everything" — and executed with the doc-recommended options: T1.6 Dialyzer
+LANDED (gate running, findings F20/F21 above), §4.2 halves signed off
+(docs/12 §4.2 items 2+4), nightly timer INSTALLED, T2.2 full pass DECLINED
+(docs/15). Veto/retune any of them anytime; the semantic-floor NUMBER
+(0.6) remains yours to tune.)*
 
 ## Current mode: 🔧 CATCHING UP (improvement round #1, 2026-07)
 
