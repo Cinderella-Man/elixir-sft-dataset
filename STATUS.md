@@ -23,20 +23,9 @@ days, not hours). AFTER the run: follow the log's cascade instructions
 pairs via `generate.exs <n>`), triage the `needs_triage` ledger rows (T2.6
 prompt material), commit per family batch.
 
-**T1.6 DIALYZER v1.2 RE-PASS — pid 71442, log
-`logs/dialyzer_golds_full.log`, ledger `logs/dialyzer_golds.jsonl`
-(sha+gate keyed, resumable).** Idempotent relaunch:
-`scripts/run_detached.sh logs/dialyzer_golds_full.log bash -c "cd
-/home/kamil/projects/elixir-sft-dataset-t16 && nice -n10 mix run
-scripts/dialyzer_golds.exs -- --tasks
-/home/kamil/projects/elixir-sft-dataset/tasks --ledger
-/home/kamil/projects/elixir-sft-dataset/logs/dialyzer_golds.jsonl"`
-Expected result: 317 clean + 8 warnings (the Task-A queue below) + 1
-waived — v1.1 measured exactly this except two bounded-fun FPs that v1.2
-filters. Runs CPU-only from the worktree `../elixir-sft-dataset-t16`;
-NEVER `mix compile` in this tree while the retro audit lives. Worktree is
-deleted at the docs/12 §7.2 line. Post-retro-audit: re-run once more
-(audit-edited golds get fresh shas).
+*(Only the retro audit is running. Standing constraint while it lives:
+NEVER `mix compile` in this tree — CPU work runs from the
+`../elixir-sft-dataset-t16` worktree.)*
 
 ---
 
@@ -84,7 +73,13 @@ metadata (ledger-side, tiny — fold into the export work).
 ### ⏭️ QUEUED AFTER THE RETRO AUDIT (in order)
 
 1. The audit's cascade + `needs_triage` triage (see RUNNING).
-2. T1.6 Task-A queue (findings above) + one dialyzer re-pass.
+2. T1.6 Task-A queue (findings above) + one dialyzer re-pass
+   (audit-edited golds get fresh shas; relaunch:
+   `scripts/run_detached.sh logs/dialyzer_golds_full.log bash -c "cd
+   /home/kamil/projects/elixir-sft-dataset-t16 && nice -n10 mix run
+   scripts/dialyzer_golds.exs -- --tasks
+   /home/kamil/projects/elixir-sft-dataset/tasks --ledger
+   /home/kamil/projects/elixir-sft-dataset/logs/dialyzer_golds.jsonl"`).
 3. §4.2.2 spot-review tranche: ~20 April-era seeds stratified against the
    sweep ledger toward audit-clean roots (doubles as the T2.2 residue
    check; signed off 2026-07-16).

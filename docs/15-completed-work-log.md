@@ -9,6 +9,16 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-16 — T1.6 v1.2 definitive pass CONFIRMED: 317 clean / 8
+  warnings / 1 waived / 0 errors — the 8 match the frozen Task-A queue
+  one-for-one (015_001, 032_002, 044_004, 073_003, 077_004, 100_002,
+  102_002, 625_003).** The gate is converged: zero unexplained warnings;
+  v1.2's only delta over v1.1 was unwrapping bounded-fun specs
+  (`when value :: term()`), which had false-flagged 071_003/071_004 via
+  the conservative keep-on-error path. Ledger `logs/dialyzer_golds.jsonl`
+  committed. The pass itself leaves STATUS; the Task-A queue and the
+  post-audit re-pass stay queued there.
+
 - **2026-07-16 — T1.9/T1.10 CLOSED (STATUS slimmed per rule 5; full
   narratives live in docs/17).** The whole arc is done and permanent:
   verbose gate logging + `generate.exs <n> --force` (T1.9a/b, docs/17
