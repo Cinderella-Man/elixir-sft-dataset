@@ -406,7 +406,15 @@ defmodule DialyzerGolds do
   defp spec_return_tags(m, f, a, mods_map) do
     with {:ok, specs} <- Code.Typespec.fetch_specs(Map.get(mods_map, m, m)),
          [spec | _] <- for({{^f, ^a}, asts} <- specs, ast <- asts, do: ast) do
-      {:type, _, :fun, [_args, ret]} = spec
+      # Bounded funs (`@spec f(...) :: value when value: term()`) wrap the fun
+      # type in :bounded_fun — unhandled, they errored into the conservative
+      # keep path and false-flagged 071_003/071_004 on the first v1.1 pass.
+      ret =
+        case spec do
+          {:type, _, :fun, [_args, ret]} -> ret
+          {:type, _, :bounded_fun, [{:type, _, :fun, [_args, ret]}, _constraints]} -> ret
+        end
+
       {:ok, collect_atoms(ret, m, 6, MapSet.new(), mods_map) |> MapSet.new(&to_string/1)}
     else
       _ -> :error

@@ -9,6 +9,21 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-16 — T1.9/T1.10 CLOSED (STATUS slimmed per rule 5; full
+  narratives live in docs/17).** The whole arc is done and permanent:
+  verbose gate logging + `generate.exs <n> --force` (T1.9a/b, docs/17
+  §1–4); the unified `GenTask.PromiseAudit` gate (T1.10, docs/17 §5.5);
+  all quality gates DEFAULT-ON per Kamil's 07-15 directive
+  (GEN_BLIND_RESCREEN, GEN_PROMISE_AUDIT, GEN_SEMANTIC_FLOOR=0.6 — parity
+  rows 10/12/13/14 ENFORCED); the audited pilot + probes #3/#4 (docs/17
+  §6: probe #3 correctly REFUSED to ship and exposed the prompt-template
+  gap → LIFECYCLE RULE landed; probe #4's family was born at the bar —
+  75 units, one repair call, floors 0.72–0.93). Probe #4's
+  free-instrument sweep (`logs/verify_015_probe4.log`) finished ALL DONE,
+  every gate green, adapt embeds 249/249 unchanged. `--force` + GateLog +
+  PromiseAudit remain permanent loop features. T2.6-pilot record was
+  already logged 07-15 (below).
+
 - **2026-07-16 — T1.6 first full pass + triage + gate v1.1.** Full pass
   v1.0: 326 roots in ~35 min, 299 clean / 27 flagged / 0 errors. All 27
   rows read and classified: **8 real spec lies** (015_001/F20,
