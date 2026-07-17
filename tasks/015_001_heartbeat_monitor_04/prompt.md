@@ -69,7 +69,8 @@ defmodule Monitor do
            status: status(),
            last_check_at: integer() | nil,
            consecutive_failures: non_neg_integer(),
-           notified_down: boolean()
+           notified_down: boolean(),
+           timer: reference()
          }
 
   # ---------------------------------------------------------------------------
@@ -156,8 +157,7 @@ defmodule Monitor do
     {:ok, %{services: %{}, clock: clock, notify: notify}}
   end
 
-  @impl GenServer
-  def handle_call(request, from, state) do
+  def handle_call({:register, name, check_func, interval_ms, max_failures}, _from, state) do
     # TODO
   end
 

@@ -187,7 +187,6 @@ defmodule MaxOverlapIntervalTree do
   #   * a prefix ending inside `left`            -> best_of(left)
   #   * the prefix ending exactly at `node`      -> sum_of(left) + delta
   #   * a prefix ending inside `right`           -> sum_of(left) + delta + best_of(right)
-  @spec make_node(integer(), integer(), t(), t()) :: node_t()
   defp make_node(coord, delta, left, right) do
     # TODO
   end
@@ -269,7 +268,7 @@ defmodule MaxOverlapIntervalTree do
   # Prefix-sum descent: total of deltas for all coordinates <= point.
   # ---------------------------------------------------------------------------
 
-  @spec prefix_sum(t(), integer()) :: integer()
+  @spec prefix_sum(t(), integer()) :: number()
   defp prefix_sum(nil, _point), do: 0
 
   defp prefix_sum(%{coord: c, delta: d, left: left, right: right}, point) do

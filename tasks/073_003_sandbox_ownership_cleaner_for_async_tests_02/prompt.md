@@ -34,7 +34,7 @@ defmodule DBCleaner do
   @state_key {__MODULE__, :state}
 
   @doc "Start or return the running ownership registry. Idempotent."
-  @spec ensure_registry() :: {:ok, pid()}
+  @spec ensure_registry() :: {:ok, pid()} | {:error, term()}
   def ensure_registry do
     case Process.whereis(@registry) do
       nil ->

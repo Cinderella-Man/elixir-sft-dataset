@@ -220,7 +220,6 @@ defmodule MaxOverlapIntervalTree do
   defp balance_factor(nil), do: 0
   defp balance_factor(%{left: l, right: r}), do: height(l) - height(r)
 
-  @spec rebalance(node_t()) :: node_t()
   defp rebalance(%{coord: xc, delta: xd, left: l, right: r} = node) do
     # TODO
   end
@@ -251,7 +250,7 @@ defmodule MaxOverlapIntervalTree do
   # Prefix-sum descent: total of deltas for all coordinates <= point.
   # ---------------------------------------------------------------------------
 
-  @spec prefix_sum(t(), integer()) :: integer()
+  @spec prefix_sum(t(), integer()) :: number()
   defp prefix_sum(nil, _point), do: 0
 
   defp prefix_sum(%{coord: c, delta: d, left: left, right: right}, point) do

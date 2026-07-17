@@ -1,4 +1,4 @@
-  @spec rate(term(), pos_integer()) :: non_neg_integer()
+  @spec rate(term(), pos_integer()) :: number()
   def rate(name, window_seconds) do
     cutoff = now() - window_seconds
 

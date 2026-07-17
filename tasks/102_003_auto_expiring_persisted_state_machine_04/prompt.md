@@ -45,7 +45,6 @@ defmodule Repo.Migrations.CreateEntityTransitions do
   @doc """
   Creates the `entity_transitions` table and an index on `entity_id`.
   """
-  @spec change() :: any()
   def change do
     create table(:entity_transitions) do
       add(:entity_id, :string, null: false)

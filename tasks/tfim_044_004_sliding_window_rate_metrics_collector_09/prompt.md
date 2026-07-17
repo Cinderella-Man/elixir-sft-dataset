@@ -70,7 +70,7 @@ defmodule Metrics do
   Returns the number of events recorded for `name` within the last
   `window_seconds` — every bucket whose second is `> now - window_seconds`.
   """
-  @spec rate(term(), pos_integer()) :: non_neg_integer()
+  @spec rate(term(), pos_integer()) :: number()
   def rate(name, window_seconds) do
     cutoff = now() - window_seconds
 
@@ -80,7 +80,7 @@ defmodule Metrics do
   end
 
   @doc "Returns the all-time total number of events recorded for `name`."
-  @spec count(term()) :: non_neg_integer()
+  @spec count(term()) :: number()
   def count(name) do
     @table
     |> :ets.select([{{{name, :"$1"}, :"$2"}, [], [:"$2"]}])

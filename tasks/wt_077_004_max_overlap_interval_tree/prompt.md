@@ -283,7 +283,7 @@ defmodule MaxOverlapIntervalTree do
   # Prefix-sum descent: total of deltas for all coordinates <= point.
   # ---------------------------------------------------------------------------
 
-  @spec prefix_sum(t(), integer()) :: integer()
+  @spec prefix_sum(t(), integer()) :: number()
   defp prefix_sum(nil, _point), do: 0
 
   defp prefix_sum(%{coord: c, delta: d, left: left, right: right}, point) do

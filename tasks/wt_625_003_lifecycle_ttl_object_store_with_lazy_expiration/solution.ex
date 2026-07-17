@@ -343,7 +343,7 @@ defmodule TtlObjectStorage do
   @spec now_ms() :: integer()
   defp now_ms, do: System.monotonic_time(:millisecond)
 
-  @spec compute_expires_at(ttl(), integer()) :: integer() | :infinity
+  @spec compute_expires_at(ttl(), integer()) :: number() | :infinity
   defp compute_expires_at(:infinity, _now), do: :infinity
   defp compute_expires_at(ttl_ms, now), do: now + ttl_ms
 

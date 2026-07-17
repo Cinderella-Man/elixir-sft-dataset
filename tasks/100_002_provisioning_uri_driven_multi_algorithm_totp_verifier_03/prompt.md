@@ -103,7 +103,7 @@ defmodule AuthenticatorURI do
 
   On an exact period boundary this returns the full period.
   """
-  @spec seconds_remaining(t(), integer()) :: pos_integer()
+  @spec seconds_remaining(t(), integer()) :: number()
   def seconds_remaining(config, unix_time) when is_integer(unix_time) do
     config.period - rem(unix_time, config.period)
   end

@@ -71,7 +71,8 @@ defmodule Monitor do
            status: status(),
            last_check_at: integer() | nil,
            consecutive_failures: non_neg_integer(),
-           notified_down: boolean()
+           notified_down: boolean(),
+           timer: reference()
          }
 
   # ---------------------------------------------------------------------------
@@ -258,7 +259,7 @@ defmodule Monitor do
   # we should fire the down-transition callback.
   @spec apply_check_result(service(), :ok | {:error, term()}, integer()) ::
           {service(), boolean()}
-  defp apply_check_result(service, result, now) do
+  defp apply_check_result(service, :ok, now) do
     # TODO
   end
 
