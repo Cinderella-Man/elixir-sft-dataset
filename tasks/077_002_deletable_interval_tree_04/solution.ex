@@ -1,8 +1,8 @@
-  defp delete_here(%{left: nil, right: r}), do: r
-  defp delete_here(%{left: l, right: nil}), do: l
+  defp delete_here(nil, right), do: right
+  defp delete_here(left, nil), do: left
 
-  defp delete_here(%{left: l, right: r}) do
-    successor = min_interval(r)
-    {nr, _found} = do_delete(r, successor)
-    rebalance(make_node(successor, l, nr))
+  defp delete_here(left, right) do
+    successor = min_interval(right)
+    {nr, _found} = do_delete(right, successor)
+    balance(successor, left, nr)
   end

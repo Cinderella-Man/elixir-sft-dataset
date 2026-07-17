@@ -8,7 +8,8 @@
 
       c when is_binary(c) ->
         with {:ok, bin} <- Base.url_decode64(c, padding: false),
-             {:ok, {^field, value, id}} <- safe_to_term(bin) do
+             {:ok, {^field, value, id}} <- safe_to_term(bin),
+             true <- valid_key?(field, value, id) do
           {:ok, {value, id}}
         else
           _ -> {:error, :invalid_cursor}

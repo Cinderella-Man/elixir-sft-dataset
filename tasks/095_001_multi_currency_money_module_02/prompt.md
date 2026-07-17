@@ -114,8 +114,9 @@ defmodule Money do
   Splits a money value evenly among `n` parties (a positive integer).
 
   Returns a list of `n` `Money` structs. The remainder is distributed one cent
-  at a time to the first `rem(amount, n)` parties, so the results always sum
-  back to the original amount.
+  at a time to the first `abs(rem(amount, n))` parties, so the results always
+  sum back to the original amount. For negative amounts the extra cent is a
+  negative cent, keeping every share within one cent of the others.
 
   Raises `ArgumentError` if `n` is not a positive integer.
   """

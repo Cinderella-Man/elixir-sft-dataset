@@ -131,10 +131,12 @@ defmodule QuotaTracker do
   @doc """
   Returns `{:ok, remaining}` — the remaining quota for `key` within `window_ms`.
 
-  Read-only: does not record any usage but evicts expired entries.
+  `remaining` is `quota - total_usage_in_window` and is not clamped; it may be
+  negative when usage exceeds the quota. Read-only: does not record any usage
+  but evicts expired entries.
   """
-  @spec remaining(server(), key(), non_neg_integer(), non_neg_integer()) ::
-          {:ok, non_neg_integer()}
+  @spec remaining(server(), key(), integer(), non_neg_integer()) ::
+          {:ok, integer()}
   def remaining(server, key, quota, window_ms) do
     GenServer.call(server, {:remaining, key, quota, window_ms})
   end

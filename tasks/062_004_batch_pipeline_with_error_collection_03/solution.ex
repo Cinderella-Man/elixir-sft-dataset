@@ -1,9 +1,11 @@
   def run(%__MODULE__{stages: stages}, inputs) when is_list(inputs) do
+    indexed_stages = Enum.with_index(stages)
+
     {successes, failures, stats} =
       inputs
       |> Enum.with_index()
       |> Enum.reduce({[], [], %{}}, fn {input, index}, {succ, fail, stats} ->
-        case process_item(stages, input, stats) do
+        case process_item(indexed_stages, input, stats) do
           {:ok, result, stats2} ->
             {[%{index: index, result: result} | succ], fail, stats2}
 
@@ -12,7 +14,10 @@
         end
       end)
 
-    stage_stats = Enum.map(stages, fn {name, _fun} -> stat_entry(name, stats) end)
+    stage_stats =
+      Enum.map(indexed_stages, fn {{name, _fun}, position} ->
+        stat_entry(name, position, stats)
+      end)
 
     {:ok,
      %{

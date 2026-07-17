@@ -18,8 +18,13 @@ defmodule HierarchicalLimiter do
   first).  For each incoming `check/3` call, every tier counts how many
   recorded timestamps fall within its own window.  If any tier's count has
   already reached its limit, the request is rejected and the tightest
-  offending tier is reported — "tightest" meaning the tier whose oldest
-  in-window timestamp is farthest from expiring (longest retry_after).
+  offending tier is reported — "tightest" meaning the tier the caller must
+  wait longest on (longest retry_after).
+
+  A tier's retry_after is the time until enough of its oldest in-window
+  timestamps expire that the tier would admit a new request.  When a tier is
+  over its limit by more than one entry, that means waiting for several of the
+  oldest entries to leave the window — not merely the single oldest.
 
   Rejected requests do **not** record a new timestamp, so they don't consume
   budget under any tier.
@@ -79,7 +84,7 @@ defmodule HierarchicalLimiter do
 
   On failure, returns `{:error, :rate_limited, tier_name, retry_after_ms}`
   identifying the tier that kept the request out for the longest and the wait
-  (in milliseconds) until that tier's oldest in-window timestamp expires.
+  (in milliseconds) until that tier would admit a new request.
   """
   @spec check(GenServer.server(), term(), [{atom(), pos_integer(), pos_integer()}, ...]) ::
           {:ok, %{atom() => non_neg_integer()}}

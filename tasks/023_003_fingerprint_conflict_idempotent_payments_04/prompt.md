@@ -97,8 +97,7 @@ defmodule StrictIdempotentPayments do
       idempotency_keys: %{}
     }
 
-    schedule_cleanup(state.cleanup_interval_ms)
-    {:ok, state}
+    {:ok, schedule_cleanup(state)}
   end
 
   @impl true
@@ -175,10 +174,13 @@ defmodule StrictIdempotentPayments do
       Map.has_key?(params, :recipient)
   end
 
-  defp schedule_cleanup(:infinity), do: :ok
+  # Arms the next periodic purge (when enabled) and returns the state unchanged,
+  # so it can be threaded through `init/1` and `handle_info/2`.
+  defp schedule_cleanup(%{cleanup_interval_ms: :infinity} = state), do: state
 
-  defp schedule_cleanup(interval) when is_integer(interval) do
+  defp schedule_cleanup(%{cleanup_interval_ms: interval} = state) when is_integer(interval) do
     Process.send_after(self(), :cleanup, interval)
+    state
   end
 end
 ```

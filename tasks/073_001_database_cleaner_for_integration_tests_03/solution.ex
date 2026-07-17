@@ -1,12 +1,18 @@
 def start(:transaction, opts) do
   repo = fetch_repo!(opts)
 
+  # Drop any prior registration before touching the database: if
+  # begin_transaction/0 raises, no stale strategy may survive this call.
+  clear_state()
+
   try do
     {:ok, _ref} = repo.begin_transaction()
     put_state(%{strategy: :transaction, repo: repo})
     {:ok, :transaction}
   rescue
-    e -> {:error, Exception.message(e)}
+    e ->
+      clear_state()
+      {:error, Exception.message(e)}
   end
 end
 
@@ -14,6 +20,7 @@ def start(:truncation, opts) do
   repo = fetch_repo!(opts)
   tables = Keyword.get(opts, :tables, [])
 
+  clear_state()
   validate_tables!(tables)
 
   put_state(%{strategy: :truncation, repo: repo, tables: tables})

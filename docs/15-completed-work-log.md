@@ -9,6 +9,27 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-17 — T1.11 EMBED CASCADE COMPLETE + GREEN: check_embeds
+  reads 1,321 clean / 0 reflow / 0 drift / 0 skipped (990 module-FIM +
+  331 wt).** Five sub-steps, one commit each (user directive: commit per
+  step, not per family): audit roots committed as-written (4eacbe29,
+  274 files); wt resync 228/331 (204e9fc9); bugfix embeds verified no-op
+  960/960 — they derive from root prompts, of which the audit changed
+  zero (83765590); tfim resync 2,256/3,269 prompt embeds (db07a5fc);
+  adapt resync 184/249 (be23b4a0); module-FIM resync in three passes —
+  90/117 drifted `_02+` dirs healed mechanically (89f6cb84), then 26
+  fix_child_gold children hand-rebuilt as byte-slice-verified extracts
+  of their audited parents (4 initial over-grabs caught by head-anchor
+  comparison and shrunk to the original clause selection — new sibling
+  clauses stay visible in the FIM prompt), then a 26-dir re-resync
+  (25 resynced / 1 unchanged / 0 errors). One unit DELETED:
+  `tasks/077_002_deletable_interval_tree_02` — its blanked `rebalance`
+  fn no longer exists (audit replaced AVL height/rebalance with
+  size-balanced rotations); re-carveable, flagged to Kamil in STATUS.
+  Dirs-files + logs: `logs/embed_drift_dirs_20260717.txt`,
+  `logs/embed_fix_child_dirs_20260717.txt` (+`_v2`),
+  `logs/resync_*_full.log`, `logs/check_embeds_v2.log`.
+
 - **2026-07-17 — T1.11 FULL RETRO-AUDIT RUN COMPLETE: 326/326 roots
   audited, summary 4 clean / 228 changed / 94 needs_triage.** Wall-clock
   2026-07-15 18:34 → 2026-07-17 04:24 (~34 h, token-window dominated);

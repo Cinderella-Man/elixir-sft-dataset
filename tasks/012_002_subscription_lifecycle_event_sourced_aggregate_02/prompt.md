@@ -117,7 +117,7 @@ defmodule SubscriptionAggregate do
 
   # --- Domain Logic: Command Validation ---
 
-  defp validate_command(current_state, command) do
+  defp validate_command(nil, {:create, plan_name}) do
     # TODO
   end
 

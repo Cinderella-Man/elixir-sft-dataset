@@ -38,6 +38,9 @@ defmodule Pipeline do
   halts only that item (recording it as a failure); the batch continues with the
   remaining items. The final report separates successes from failures and
   aggregates per-stage execution counts and timing.
+
+  Stage statistics are tracked per pipeline position, so two stages that share a
+  name keep independent counters.
   """
 
   defstruct stages: []
@@ -62,11 +65,13 @@ defmodule Pipeline do
   """
   @spec run(t(), [any()]) :: {:ok, map()}
   def run(%__MODULE__{stages: stages}, inputs) when is_list(inputs) do
+    indexed_stages = Enum.with_index(stages)
+
     {successes, failures, stats} =
       inputs
       |> Enum.with_index()
       |> Enum.reduce({[], [], %{}}, fn {input, index}, {succ, fail, stats} ->
-        case process_item(stages, input, stats) do
+        case process_item(indexed_stages, input, stats) do
           {:ok, result, stats2} ->
             {[%{index: index, result: result} | succ], fail, stats2}
 
@@ -75,7 +80,10 @@ defmodule Pipeline do
         end
       end)
 
-    stage_stats = Enum.map(stages, fn {name, _fun} -> stat_entry(name, stats) end)
+    stage_stats =
+      Enum.map(indexed_stages, fn {{name, _fun}, position} ->
+        stat_entry(name, position, stats)
+      end)
 
     {:ok,
      %{
@@ -87,18 +95,18 @@ defmodule Pipeline do
 
   # ---------------------------------------------------------------------------
 
-  defp process_item(stages, value, stats) do
+  defp process_item([], value, stats) do
     # TODO
   end
 
-  defp bump(stats, name, duration) do
-    Map.update(stats, name, {1, duration}, fn {count, total} ->
+  defp bump(stats, position, duration) do
+    Map.update(stats, position, {1, duration}, fn {count, total} ->
       {count + 1, total + duration}
     end)
   end
 
-  defp stat_entry(name, stats) do
-    {executions, total_duration_us} = Map.get(stats, name, {0, 0})
+  defp stat_entry(name, position, stats) do
+    {executions, total_duration_us} = Map.get(stats, position, {0, 0})
     %{stage: name, executions: executions, total_duration_us: total_duration_us}
   end
 end

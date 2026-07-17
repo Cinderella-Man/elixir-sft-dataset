@@ -7,7 +7,9 @@
       if state.count > 0 do
         flush(state)
       else
-        clear_timer(state)
+        # Nothing buffered: never call the callback, just wait another
+        # interval.
+        start_timer(state)
       end
 
     {:noreply, state}

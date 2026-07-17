@@ -40,6 +40,8 @@ defmodule ConfigMerger do
 
     * `:locked` - A list of key paths (each a list of atoms) whose values must not
       be changed by the override. The base value is always preserved for locked paths.
+      A locked path the base does not define cannot be injected by the override —
+      the key is simply absent from the result.
 
   ## Examples
 
@@ -154,9 +156,7 @@ defmodule ConfigMerger do
   # Both values are lists → apply the applicable list strategy.
   defp merge_values(base_val, override_val, key_path, opts)
        when is_list(base_val) and is_list(override_val) do
-    strategy = list_strategy_for(key_path, opts)
-
-    case strategy do
+    case list_strategy_for(key_path, opts) do
       :replace -> override_val
       :append -> base_val ++ override_val
     end

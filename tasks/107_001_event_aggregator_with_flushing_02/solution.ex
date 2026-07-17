@@ -5,6 +5,6 @@ defp flush(state) do
   state.on_flush.(batch)
 
   state
-  |> clear_timer()
   |> Map.merge(%{buffer: [], count: 0})
+  |> start_timer()
 end

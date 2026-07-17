@@ -146,6 +146,16 @@ defmodule LayeredConfig do
 
   defp leaf_provenance(_value, name, path, pr), do: Map.put(pr, path, name)
 
+  # Drops `kpath` and every provenance entry nested beneath it, so a subtree that a
+  # higher layer replaced leaves no stale descendant paths behind.
+  defp prune_subtree(pr, kpath) do
+    depth = length(kpath)
+
+    Map.reject(pr, fn {path, _name} ->
+      is_list(path) and Enum.take(path, depth) == kpath
+    end)
+  end
+
   defp locked?(kpath, %{locked_paths: locked}), do: kpath in locked
 
   defp list_strategy_for(kpath, %{per_key_strategies: per_key, global_list_strategy: global}) do

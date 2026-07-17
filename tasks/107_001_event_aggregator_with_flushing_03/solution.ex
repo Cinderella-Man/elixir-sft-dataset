@@ -1,9 +1,6 @@
 @impl true
 def handle_cast({:push, event}, state) do
-  state =
-    state
-    |> add_event(event)
-    |> ensure_timer()
+  state = add_event(state, event)
 
   state =
     if state.count >= state.batch_size do

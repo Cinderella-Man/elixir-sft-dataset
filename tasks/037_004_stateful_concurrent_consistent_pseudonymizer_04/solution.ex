@@ -5,5 +5,5 @@
   end
 
   defp resolve(pid, field, value, {:pseudonym, prefix}) do
-    GenServer.call(pid, {:pseudonym, field, to_string(value), prefix})
+    GenServer.call(pid, {:pseudonym, field, value, prefix})
   end

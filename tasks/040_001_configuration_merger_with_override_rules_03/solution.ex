@@ -7,9 +7,7 @@ end
 # Both values are lists → apply the applicable list strategy.
 defp merge_values(base_val, override_val, key_path, opts)
      when is_list(base_val) and is_list(override_val) do
-  strategy = list_strategy_for(key_path, opts)
-
-  case strategy do
+  case list_strategy_for(key_path, opts) do
     :replace -> override_val
     :append -> base_val ++ override_val
   end

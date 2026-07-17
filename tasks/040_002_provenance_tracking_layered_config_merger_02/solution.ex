@@ -15,9 +15,10 @@
 
       is_map(ov) ->
         # Override replaces a scalar/list with a whole subtree.
-        {ov, leaf_provenance(ov, name, kpath, Map.delete(pr, kpath))}
+        {ov, leaf_provenance(ov, name, kpath, prune_subtree(pr, kpath))}
 
       true ->
-        {ov, Map.put(pr, kpath, name)}
+        # Override replaces whatever was there (possibly a subtree) with a leaf.
+        {ov, Map.put(prune_subtree(pr, kpath), kpath, name)}
     end
   end

@@ -7,7 +7,7 @@ defp build_layers(in_degree, dependents, layers) do
 
   case ready do
     [] ->
-      {:error, {:cycle, Map.keys(in_degree)}}
+      {:error, {:cycle, cycle_nodes(Map.keys(in_degree), dependents)}}
 
     _ ->
       remaining = Map.drop(in_degree, ready)

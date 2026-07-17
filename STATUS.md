@@ -13,22 +13,14 @@ Reference docs: `docs/14` (handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**T1.11 cascade step 5c — hand-fix the 27 `fix_child_gold` module-FIM
-children (in the main session, no detached job; list = the
-`fix_child_gold / hand-fix:` lines in `logs/resync_fim_full.log`).**
-These are children whose blanked gold FUNCTION the audit rewrote: for
-each, replace the child `solution.ex` with the parent's new version of
-that function (same clauses + attached @doc/@spec if present), then
-re-run the resync on the fixed dirs:
-`scripts/run_detached.sh logs/resync_fim_fixed.log mix run scripts/resync_embeds.exs -- --dirs-file logs/embed_fix_child_dirs_20260717.txt --apply`
-then `elixir scripts/check_embeds.exs` until 0 drift, commit. A child
-whose function was REMOVED/renamed beyond recognition cannot be
-hand-fixed — flag it for deletion/re-carve instead. Push becomes safe
-only when the re-check is green.
-(Steps done: 1 wt 228/331 → 204e9fc9; 2 bugfix no-op → 83765590; 3 tfim
-2,256/3,269 → db07a5fc; 4 adapt 184/249 → be23b4a0; 5a check first pass
-wt clean + 117 FIM drift; 5b FIM resync 90/117 healed, 27 errors = this
-step.)
+Nothing (between cascade steps). Embed resyncs + check_embeds are DONE
+and GREEN (1,321 clean / 0 drift — record in docs/15); push is safe
+again. Next launch: audit_bugfix over the 40 solution-changed families
+(TODO item 1). The nightly-sweep false-flake hazard is over.
+
+**Flag for Kamil:** `tasks/077_002_deletable_interval_tree_02` was
+DELETED (git rm, recoverable): its blanked fn `rebalance` no longer
+exists after the audit's balancing redesign. Re-carve when convenient.
 
 ⚠️ Standing hazard until check_embeds (step 5) is green: children lag the
 audit-edited roots — a nightly sweep firing mid-cascade can report false
@@ -46,14 +38,7 @@ Audit output on disk, uncommitted: 228 `test_harness.exs` + 40
 the cascade instructions are verbatim at the tail of
 `logs/retro_audit_full.log`. In order:
 
-1. **Embed resyncs** (deterministic, no LLM; one per commit, each via
-   `scripts/run_detached.sh logs/<name>.log ...` + in-session monitor):
-   - [x] step 1 wt — done, committed
-   - [x] step 2 bugfix — verified no-op (960/960 unchanged)
-   - [x] step 3 tfim — done, 2,256/3,269 prompt embeds resynced
-   - [x] step 4 adapt — done, 184/249 resynced
-   - [~] step 5 check: `elixir scripts/check_embeds.exs`, hand-fix any
-     `fix_child_gold` rows, commit; push only after this is green. (RUNNING above)
+1. ~~Embed resyncs + check_embeds~~ DONE GREEN 2026-07-17 (docs/15).
 2. **Bugfix-pair invalidation**: `scripts/audit_bugfix.exs` on the 40
    solution-changed families (a redesigned gold invalidates its bugfix
    pairs) — delete + remint invalidated pairs via `generate.exs <n>`

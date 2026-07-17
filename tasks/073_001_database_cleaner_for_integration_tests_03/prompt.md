@@ -61,6 +61,9 @@ defmodule DBCleaner do
 
   All state is stored in the calling process's dictionary under the private key
   `{DBCleaner, :state}`, so no Agent or extra process is required.
+
+  Every `start/2` call discards any previously registered state *before* doing
+  any database work, so a failed start can never leave a stale strategy behind.
   """
 
   @state_key {__MODULE__, :state}
@@ -82,7 +85,8 @@ defmodule DBCleaner do
                   `:truncation` strategy. Ignored by `:transaction`.
 
   Returns `{:ok, :transaction | :truncation}` on success, or
-  `{:error, reason}` on failure.
+  `{:error, reason}` on failure. Any state registered by an earlier `start/2`
+  is discarded first, even when this call ultimately fails.
   """
   @spec start(:transaction | :truncation, keyword()) ::
           {:ok, :transaction | :truncation} | {:error, term()}

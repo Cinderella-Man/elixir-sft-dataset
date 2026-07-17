@@ -52,7 +52,7 @@
         Map.put(state.entries, key, retained_entries)
       end
 
-    remaining = max(quota - current_usage, 0)
+    remaining = quota - current_usage
     {:reply, {:ok, remaining}, %{state | entries: new_entries}}
   end
 

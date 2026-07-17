@@ -86,7 +86,8 @@ defmodule Money do
 
   @doc """
   Splits a money value evenly among `n` parties (a positive integer),
-  distributing the remainder to the first `rem(amount, n)` parties.
+  distributing the remainder to the first `rem(amount, n)` parties so the
+  shares always sum back to the original amount, including negative amounts.
   """
   @spec split(t(), pos_integer()) :: [t()]
   def split(%__MODULE__{amount: amount, currency: currency}, n)

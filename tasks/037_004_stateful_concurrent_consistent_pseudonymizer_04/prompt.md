@@ -88,8 +88,9 @@ defmodule Anonymizer do
 
   # --- Rule resolution --------------------------------------------------------
 
-  # TODO: implement resolve/4 (one clause per rule: :redact, :hash,
-  # and {:pseudonym, prefix}).
+  defp resolve(_pid, _field, _value, :redact) do
+    # TODO
+  end
 
   # --- GenServer callbacks ----------------------------------------------------
 

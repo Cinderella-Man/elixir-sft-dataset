@@ -13,11 +13,14 @@ defp evaluate_tiers(tiers, active, now) do
         # `count + 1` will exist, leaving `max_requests - count - 1` headroom.
         {:pass, name, max_requests - count - 1}
       else
-        # Tier saturated.  The oldest in-window timestamp is the last one
-        # in the truncated list (timestamps are newest-first).  Wait until
-        # it exits the window.
-        oldest = List.last(in_window)
-        retry_after = max(oldest + window_ms - now, 1)
+        # Tier saturated.  To admit a new request the in-window count must
+        # drop to `max_requests - 1`, so the `count - max_requests + 1`
+        # oldest timestamps must leave the window.  Wait until the newest of
+        # those (the k-th oldest) expires.  When over by exactly one, k = 1,
+        # i.e. just the single oldest entry.
+        k = count - max_requests + 1
+        nth_oldest = in_window |> Enum.reverse() |> Enum.at(k - 1)
+        retry_after = max(nth_oldest + window_ms - now, 1)
         {:fail, name, retry_after}
       end
     end)
