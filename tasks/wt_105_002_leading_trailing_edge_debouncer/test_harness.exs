@@ -163,4 +163,60 @@ defmodule EdgeDebouncerTest do
     EdgeDebouncer.call("alive", 50, notify(:alive), edge: :leading)
     assert_receive :alive, 300
   end
+
+  test "a second call restarts the delay so trailing survives the original deadline" do
+    # t0: arm a 200ms trailing burst for "k".
+    EdgeDebouncer.call("k", 200, notify(:late))
+
+    # A separate key acts as a deterministic ~120ms clock (keys are independent).
+    EdgeDebouncer.call("clock", 120, notify(:tick))
+    assert_receive :tick, 500
+
+    # ~t0+120: re-call "k" — the deadline must restart from now (~t0+320),
+    # not stay at the original ~t0+200.
+    EdgeDebouncer.call("k", 200, notify(:late))
+    refute_receive :late, 120
+
+    assert_receive :late, 500
+  end
+
+  test "the opening call's edge wins over a later call's edge option" do
+    EdgeDebouncer.call("k", 150, notify(:lead), edge: :leading)
+    EdgeDebouncer.call("k", 150, notify(:tail), edge: :trailing)
+
+    # The burst was opened as :leading, so the first func fires immediately...
+    assert_receive :lead, 200
+    # ...and no trailing execution occurs even though a later call said :trailing.
+    refute_receive :tail, 500
+  end
+
+  test "a settled :both burst leaves no state and the next call fires leading again" do
+    EdgeDebouncer.call("k", 100, notify({:b, 1}), edge: :both)
+    EdgeDebouncer.call("k", 100, notify({:b, 2}), edge: :both)
+
+    assert_receive {:b, 1}, 200
+    # Trailing arriving means the burst has settled and the key is cleared.
+    assert_receive {:b, 2}, 500
+
+    EdgeDebouncer.call("k", 100, notify({:b, 3}), edge: :both)
+    assert_receive {:b, 3}, 200
+  end
+
+  test "the :both trailing func runs exactly once when the burst settles" do
+    EdgeDebouncer.call("k", 100, notify(:x), edge: :both)
+    EdgeDebouncer.call("k", 100, notify(:x), edge: :both)
+
+    # Leading, then exactly one trailing — never a third execution.
+    assert_receive :x, 200
+    assert_receive :x, 500
+    refute_receive :x, 300
+  end
+
+  test "start_link/1 registers under a custom :name and returns {:ok, pid}" do
+    assert {:ok, pid} = EdgeDebouncer.start_link(name: :edge_debouncer_alt)
+
+    assert Process.whereis(:edge_debouncer_alt) == pid
+    # The default-named process from setup/1 is a distinct registration.
+    assert Process.whereis(EdgeDebouncer) != pid
+  end
 end

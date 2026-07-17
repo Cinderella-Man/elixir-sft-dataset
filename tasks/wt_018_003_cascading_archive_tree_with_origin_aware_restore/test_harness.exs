@@ -487,4 +487,90 @@ defmodule CascadeCrud.ArchiveTest do
       assert c.id == b.id + 1
     end
   end
+
+  test "restore walks through a cascade child but skips a direct grandchild subtree", %{server: s} do
+    root = folder!(s, "root")
+    mid = folder!(s, "mid", root.id)
+    leaf = folder!(s, "leaf", mid.id)
+    deep = file!(s, "deep.txt", leaf.id)
+
+    %{node: leaf_archived} = archive!(s, leaf.id)
+    assert {:ok, %{cascaded: cascaded}} = Archive.archive_node(s, root.id)
+    assert cascaded == [mid.id]
+
+    assert {:ok, %{restored: restored}} = Archive.unarchive_node(s, root.id)
+    assert restored == [mid.id]
+
+    assert {:ok, _} = Archive.fetch_node(s, mid.id)
+    assert {:error, :not_found} = Archive.fetch_node(s, leaf.id)
+
+    assert {:ok, leaf_now} = Archive.fetch_node(s, leaf.id, include_archived: true)
+    assert leaf_now.archive_origin == :direct
+    assert leaf_now.archived_at == leaf_archived.archived_at
+
+    assert {:ok, deep_now} = Archive.fetch_node(s, deep.id, include_archived: true)
+    assert deep_now.archive_origin == :cascade
+
+    assert {:ok, %{restored: leaf_restored}} = Archive.unarchive_node(s, leaf.id)
+    assert leaf_restored == [deep.id]
+    assert {:ok, []} = Archive.list_archived(s)
+  end
+
+  test "start_link registers the server under the given :name and serves calls through it" do
+    name = :"cascade_archive_named_#{System.unique_integer([:positive])}"
+
+    assert {:ok, pid} = Archive.start_link(name: name)
+    assert Process.whereis(name) == pid
+
+    assert {:ok, folder} = Archive.create_folder(name, %{name: "root"})
+    assert folder.id == 1
+    assert {:ok, ^folder} = Archive.fetch_node(name, folder.id)
+
+    assert {:ok, %{node: node, cascaded: []}} = Archive.archive_node(name, folder.id)
+    assert node.archive_origin == :direct
+    assert {:ok, [archived]} = Archive.list_archived(name)
+    assert archived.id == folder.id
+  end
+
+  test "rename_node reports :invalid_name before the node lookup", %{server: s} do
+    assert {:error, :invalid_name} = Archive.rename_node(s, 999, "")
+    assert {:error, :invalid_name} = Archive.rename_node(s, 999, "   ")
+    assert {:error, :invalid_name} = Archive.rename_node(s, 999, :nope)
+
+    root = folder!(s, "root")
+    archive!(s, root.id)
+    assert {:error, :invalid_name} = Archive.rename_node(s, root.id, "  ")
+  end
+
+  test "archiving a cascade-archived descendant reports :already_archived and restamps nothing",
+       %{
+         server: s
+       } do
+    root = folder!(s, "root")
+    sub = folder!(s, "sub", root.id)
+    f = file!(s, "a.txt", sub.id)
+
+    %{node: target} = archive!(s, root.id)
+
+    assert {:error, :already_archived} = Archive.archive_node(s, sub.id)
+    assert {:error, :already_archived} = Archive.archive_node(s, f.id)
+
+    for id <- [sub.id, f.id] do
+      assert {:ok, n} = Archive.fetch_node(s, id, include_archived: true)
+      assert n.archive_origin == :cascade
+      assert n.archived_at == target.archived_at
+    end
+  end
+
+  test "an archived file used as a parent yields :parent_not_found", %{server: s} do
+    root = folder!(s, "root")
+    f = file!(s, "a.txt", root.id)
+    archive!(s, f.id)
+
+    assert {:error, :parent_not_found} =
+             Archive.create_file(s, %{name: "b.txt", parent_id: f.id})
+
+    assert {:error, :parent_not_found} =
+             Archive.create_folder(s, %{name: "sub", parent_id: f.id})
+  end
 end

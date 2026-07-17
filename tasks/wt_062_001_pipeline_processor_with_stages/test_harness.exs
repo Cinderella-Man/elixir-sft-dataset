@@ -188,4 +188,115 @@ defmodule PipelineTest do
 
     assert {:ok, 12, _} = Pipeline.run(pipeline, [1, 2, 3, 4, 5])
   end
+
+  test "halted run still reports timing metadata for the stages that actually executed" do
+    executed = Agent.start_link(fn -> [] end) |> elem(1)
+
+    pipeline =
+      Pipeline.new()
+      |> Pipeline.stage(:first, fn v ->
+        Agent.update(executed, &[:first | &1])
+        {:ok, v}
+      end)
+      |> Pipeline.stage(:boom, fn _ ->
+        Agent.update(executed, &[:boom | &1])
+        {:error, :nope}
+      end)
+      |> Pipeline.stage(:never, fn v ->
+        Agent.update(executed, &[:never | &1])
+        {:ok, v}
+      end)
+
+    # A halted run reports the failing stage and its reason; per the public
+    # contract the error tuple carries no metadata list.
+    assert {:error, :boom, :nope} = Pipeline.run(pipeline, 1)
+    assert Enum.reverse(Agent.get(executed, & &1)) == [:first, :boom]
+
+    # The same executed prefix, run to completion, reports timing for exactly
+    # those stages and nothing more.
+    prefix =
+      Pipeline.new()
+      |> Pipeline.stage(:first, fn v -> {:ok, v} end)
+      |> Pipeline.stage(:boom, fn v -> {:ok, v} end)
+
+    assert {:ok, 1, metadata} = Pipeline.run(prefix, 1)
+    assert Enum.map(metadata, & &1.stage) == [:first, :boom]
+    assert Enum.all?(metadata, &(is_integer(&1.duration_us) and &1.duration_us >= 0))
+  end
+
+  test "stages execute in the calling process and repeated runs are unaffected by prior runs" do
+    caller = self()
+
+    pipeline =
+      Pipeline.new()
+      |> Pipeline.stage(:report, fn v ->
+        send(caller, {:ran_in, self()})
+        {:ok, v + 1}
+      end)
+      |> Pipeline.stage(:finish, fn v -> {:ok, v * 2} end)
+
+    assert {:ok, 4, meta_one} = Pipeline.run(pipeline, 1)
+    assert_receive {:ran_in, ^caller}, 100
+
+    assert {:ok, 4, meta_two} = Pipeline.run(pipeline, 1)
+    assert_receive {:ran_in, ^caller}, 100
+
+    assert Enum.map(meta_one, & &1.stage) == Enum.map(meta_two, & &1.stage)
+    refute_receive {:ran_in, _}, 50
+  end
+
+  test "stage/3 rejects a non-atom name and a function of the wrong arity" do
+    pipeline = Pipeline.new()
+
+    assert_raise FunctionClauseError, fn ->
+      Pipeline.stage(pipeline, "not_an_atom", fn v -> {:ok, v} end)
+    end
+
+    assert_raise FunctionClauseError, fn ->
+      Pipeline.stage(pipeline, :two_arity, fn a, b -> {:ok, {a, b}} end)
+    end
+  end
+
+  test "duplicate stage names both run in insertion order and the failing one is named" do
+    pipeline =
+      Pipeline.new()
+      |> Pipeline.stage(:step, fn v -> {:ok, v <> "a"} end)
+      |> Pipeline.stage(:step, fn v -> {:ok, v <> "b"} end)
+
+    assert {:ok, "xab", metadata} = Pipeline.run(pipeline, "x")
+    assert Enum.map(metadata, & &1.stage) == [:step, :step]
+
+    failing =
+      Pipeline.new()
+      |> Pipeline.stage(:step, fn v -> {:ok, v} end)
+      |> Pipeline.stage(:step, fn _ -> {:error, :second} end)
+
+    assert {:error, :step, :second} = Pipeline.run(failing, "x")
+  end
+
+  test "stage/3 leaves the original pipeline untouched so a base can be reused" do
+    base = Pipeline.new() |> Pipeline.stage(:base, fn v -> {:ok, v + 1} end)
+
+    left = Pipeline.stage(base, :left, fn v -> {:ok, v * 10} end)
+    right = Pipeline.stage(base, :right, fn v -> {:ok, v * 100} end)
+
+    assert {:ok, 2, base_meta} = Pipeline.run(base, 1)
+    assert Enum.map(base_meta, & &1.stage) == [:base]
+
+    assert {:ok, 20, left_meta} = Pipeline.run(left, 1)
+    assert Enum.map(left_meta, & &1.stage) == [:base, :left]
+
+    assert {:ok, 200, right_meta} = Pipeline.run(right, 1)
+    assert Enum.map(right_meta, & &1.stage) == [:base, :right]
+  end
+
+  test "the failure reason term is returned verbatim regardless of its shape" do
+    reason = {:http, 500, %{body: "boom", retries: [1, 2]}}
+
+    pipeline =
+      Pipeline.new()
+      |> Pipeline.stage(:fetch, fn _ -> {:error, reason} end)
+
+    assert {:error, :fetch, ^reason} = Pipeline.run(pipeline, :input)
+  end
 end

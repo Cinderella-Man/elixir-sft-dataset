@@ -191,4 +191,44 @@ defmodule TimeSeriesResamplerTest do
     assert bucket_map[2_000] == 2
     assert bucket_map[4_000] == 1
   end
+
+  test "first bucket floors a negative earliest timestamp downwards, not toward zero" do
+    # floor(-100 / 2000) * 2000 = -1 * 2000 = -2000
+    # floor( 100 / 2000) * 2000 =  0 * 2000 =     0
+    data = [{-100, 1}, {100, 2}]
+    result = TimeSeriesResampler.resample(data, 2_000, agg: :last, fill: nil)
+
+    assert result == [{-2_000, 1}, {0, 2}]
+  end
+
+  test "negative timestamps are assigned to their floored bucket, not a truncated one" do
+    # floor(-3000 / 2000) * 2000 = -2 * 2000 = -4000
+    # floor(-1000 / 2000) * 2000 = -1 * 2000 = -2000
+    data = [{-3_000, 1}, {-1_000, 2}]
+    result = TimeSeriesResampler.resample(data, 2_000, agg: :count, fill: nil)
+
+    assert result == [{-4_000, 1}, {-2_000, 1}]
+  end
+
+  test "omitting :agg defaults to :last" do
+    data = [{0, 10}, {1_500, 20}]
+    result = TimeSeriesResampler.resample(data, 2_000, [])
+
+    assert result == [{0, 20}]
+  end
+
+  test "omitting :fill defaults to nil-filling empty buckets" do
+    data = [{0, 10}, {4_100, 30}]
+    result = TimeSeriesResampler.resample(data, 2_000, [])
+
+    assert result == [{0, 10}, {2_000, nil}, {4_000, 30}]
+  end
+
+  test ":mean yields a float even when all bucket values are integers" do
+    data = [{0, 10}, {1_500, 20}]
+    [{0, mean}] = TimeSeriesResampler.resample(data, 2_000, agg: :mean, fill: nil)
+
+    assert is_float(mean)
+    assert mean == 15.0
+  end
 end

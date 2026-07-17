@@ -182,4 +182,79 @@ defmodule WorkStealQueueTest do
 
     assert wid >= 0 and wid < 3
   end
+
+  test "process_fn is applied exactly once per item even when work is stolen" do
+    parent = self()
+    items = Enum.to_list(1..30)
+
+    results =
+      WorkStealQueue.run(items, 4, fn x ->
+        send(parent, {:applied, x})
+        x
+      end)
+
+    assert length(results) == 30
+
+    seen =
+      for _ <- 1..30 do
+        assert_receive {:applied, x}, 1_000
+        x
+      end
+
+    assert Enum.sort(seen) == items
+    refute_receive {:applied, _}, 100
+  end
+
+  test "duplicate items each get their own result entry" do
+    items = [:dup, :dup, :dup, :other, :dup]
+    results = WorkStealQueue.run(items, 3, fn x -> x end)
+
+    assert length(results) == 5
+    assert Enum.count(results, &(&1.item == :dup)) == 4
+    assert Enum.count(results, &(&1.item == :other)) == 1
+    assert Enum.all?(results, fn r -> r.result == {:ok, r.item} end)
+  end
+
+  test "one item per worker means every worker_id appears exactly once" do
+    items = Enum.to_list(1..6)
+    results = WorkStealQueue.run(items, 6, fn x -> x end)
+
+    assert length(results) == 6
+    assert results |> Enum.map(& &1.worker_id) |> Enum.sort() == Enum.to_list(0..5)
+  end
+
+  test "an exit with reason :normal is still captured and tagged" do
+    results = WorkStealQueue.run([1, 2], 2, fn _ -> exit(:normal) end)
+
+    assert length(results) == 2
+
+    for %{result: result} <- results do
+      assert result == {:error, %{kind: :exit, reason: :normal}}
+    end
+  end
+
+  test "idle workers give up when the only item fails and run/3 still returns" do
+    results = WorkStealQueue.run([:boom_item], 8, fn _ -> raise "kaboom" end)
+
+    assert [%{item: :boom_item, result: result, worker_id: wid}] = results
+    assert result == {:error, %{kind: :error, reason: "kaboom"}}
+    assert wid >= 0 and wid < 8
+  end
+
+  test "error-shaped and nil return values are still tagged as successes" do
+    items = [:nil_item, :err_item, :exit_item]
+
+    results =
+      WorkStealQueue.run(items, 2, fn
+        :nil_item -> nil
+        :err_item -> {:error, %{kind: :error, reason: "not really raised"}}
+        :exit_item -> {:exit, :boom}
+      end)
+
+    by_item = Map.new(results, fn r -> {r.item, r.result} end)
+
+    assert by_item[:nil_item] == {:ok, nil}
+    assert by_item[:err_item] == {:ok, {:error, %{kind: :error, reason: "not really raised"}}}
+    assert by_item[:exit_item] == {:ok, {:exit, :boom}}
+  end
 end

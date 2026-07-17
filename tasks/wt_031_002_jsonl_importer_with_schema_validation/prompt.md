@@ -203,23 +203,23 @@ defmodule JsonlImporter do
         []
       end
 
-    # Type and format checks only apply to non-nil values.
-    type_errors =
-      if not is_nil(value) and not (is_binary(value) and String.trim(value) == "") do
-        check_type(value, type, field.name)
-      else
-        []
-      end
-
-    format_errors =
-      if not is_nil(value) and is_binary(value) and String.trim(value) != "" and format != nil do
-        check_format(String.trim(value), format, field.name)
-      else
-        []
-      end
-
-    required_errors ++ type_errors ++ format_errors
+    # Type and format checks only apply to present, non-blank values.
+    if absent? do
+      required_errors
+    else
+      required_errors ++
+        check_type(value, type, field.name) ++
+        format_errors(value, type, format, field.name)
+    end
   end
+
+  # Format checks only apply to string-typed fields holding a string value.
+  defp format_errors(value, :string, format, name)
+       when is_binary(value) and not is_nil(format) do
+    check_format(String.trim(value), format, name)
+  end
+
+  defp format_errors(_value, _type, _format, _name), do: []
 
   # Type checkers -------------------------------------------------------
 

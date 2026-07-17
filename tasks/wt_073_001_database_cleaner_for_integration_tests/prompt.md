@@ -83,6 +83,9 @@ defmodule DBCleaner do
 
   All state is stored in the calling process's dictionary under the private key
   `{DBCleaner, :state}`, so no Agent or extra process is required.
+
+  Every `start/2` call discards any previously registered state *before* doing
+  any database work, so a failed start can never leave a stale strategy behind.
   """
 
   @state_key {__MODULE__, :state}
@@ -104,7 +107,8 @@ defmodule DBCleaner do
                   `:truncation` strategy. Ignored by `:transaction`.
 
   Returns `{:ok, :transaction | :truncation}` on success, or
-  `{:error, reason}` on failure.
+  `{:error, reason}` on failure. Any state registered by an earlier `start/2`
+  is discarded first, even when this call ultimately fails.
   """
   @spec start(:transaction | :truncation, keyword()) ::
           {:ok, :transaction | :truncation} | {:error, term()}
@@ -113,12 +117,18 @@ defmodule DBCleaner do
   def start(:transaction, opts) do
     repo = fetch_repo!(opts)
 
+    # Drop any prior registration before touching the database: if
+    # begin_transaction/0 raises, no stale strategy may survive this call.
+    clear_state()
+
     try do
       {:ok, _ref} = repo.begin_transaction()
       put_state(%{strategy: :transaction, repo: repo})
       {:ok, :transaction}
     rescue
-      e -> {:error, Exception.message(e)}
+      e ->
+        clear_state()
+        {:error, Exception.message(e)}
     end
   end
 
@@ -126,6 +136,7 @@ defmodule DBCleaner do
     repo = fetch_repo!(opts)
     tables = Keyword.get(opts, :tables, [])
 
+    clear_state()
     validate_tables!(tables)
 
     put_state(%{strategy: :truncation, repo: repo, tables: tables})

@@ -157,4 +157,67 @@ defmodule DataFlowRunnerTest do
       DataFlowRunner.submit(:runner, :a, func: fn -> :zero end)
     end
   end
+
+  test "submitting alone executes nothing before run_all is called" do
+    DataFlowRunner.submit(:runner, :s1, func: rec(:s1, 0, fn _ -> 1 end))
+
+    DataFlowRunner.submit(:runner, :s2,
+      depends_on: [:s1],
+      func: rec(:s2, 0, fn %{s1: v} -> v end)
+    )
+
+    assert Recorder.events() == []
+
+    assert {:ok, %{s1: 1, s2: 1}} = DataFlowRunner.run_all(:runner)
+    assert Recorder.started_at(:s1) != nil
+  end
+
+  test "cycle report lists only the tasks participating in the cycle" do
+    DataFlowRunner.submit(:runner, :a, depends_on: [:b], func: fn _ -> 1 end)
+    DataFlowRunner.submit(:runner, :b, depends_on: [:a], func: fn _ -> 2 end)
+    DataFlowRunner.submit(:runner, :downstream, depends_on: [:a], func: fn _ -> 3 end)
+
+    assert {:error, {:cycle, involved}} = DataFlowRunner.run_all(:runner)
+    assert Enum.sort(involved) == [:a, :b]
+  end
+
+  test "input map excludes results of tasks that were not declared as dependencies" do
+    DataFlowRunner.submit(:runner, :a, func: fn _ -> 1 end)
+    DataFlowRunner.submit(:runner, :b, func: fn _ -> 2 end)
+    DataFlowRunner.submit(:runner, :c, depends_on: [:a], func: fn inputs -> inputs end)
+
+    assert {:ok, results} = DataFlowRunner.run_all(:runner)
+    assert results.c == %{a: 1}
+  end
+
+  test "a cycle prevents an otherwise runnable independent task from executing" do
+    DataFlowRunner.submit(:runner, :x, depends_on: [:y], func: rec(:x, 0, fn _ -> 1 end))
+    DataFlowRunner.submit(:runner, :y, depends_on: [:x], func: rec(:y, 0, fn _ -> 2 end))
+    DataFlowRunner.submit(:runner, :free, func: rec(:free, 0, fn _ -> :ran end))
+
+    assert {:error, {:cycle, _}} = DataFlowRunner.run_all(:runner)
+    assert Recorder.events() == []
+    assert Recorder.started_at(:free) == nil
+  end
+
+  test "resubmitting replaces the previous dependency list, not just the func" do
+    DataFlowRunner.submit(:runner, :a, func: fn _ -> 1 end)
+    DataFlowRunner.submit(:runner, :b, depends_on: [:a, :ghost], func: fn _ -> :old end)
+    DataFlowRunner.submit(:runner, :b, func: fn inputs -> {:new, inputs} end)
+
+    assert {:ok, results} = DataFlowRunner.run_all(:runner)
+    assert results == %{a: 1, b: {:new, %{}}}
+  end
+
+  test "non-atom task ids such as strings and tuples are supported" do
+    DataFlowRunner.submit(:runner, "src", func: fn _ -> 7 end)
+
+    DataFlowRunner.submit(:runner, {:sink, 1},
+      depends_on: ["src"],
+      func: fn inputs -> Map.fetch!(inputs, "src") * 2 end
+    )
+
+    assert {:ok, results} = DataFlowRunner.run_all(:runner)
+    assert results == %{"src" => 7, {:sink, 1} => 14}
+  end
 end

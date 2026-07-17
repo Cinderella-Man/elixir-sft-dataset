@@ -13,18 +13,18 @@ Reference docs: `docs/14` (handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-Nothing. (The T1.11 retro audit finished 2026-07-17 04:24 — 326/326 roots,
-4 clean / 228 changed / 94 needs_triage; run record in docs/15. `mix compile`
-in this tree is allowed again — no detached job is alive.)
+**T1.11 cascade step 2 of 5 — bugfix embed resync (launched 2026-07-17).
+Log `logs/resync_bugfix_full.log` (+ `.pid` sidecar with the pid).**
+Idempotent relaunch:
+`scripts/run_detached.sh logs/resync_bugfix_full.log mix run scripts/resync_bugfix_embeds.exs -- --apply`
+On exit: verify the diff touches only bugfix-pair dirs, spot-read a few,
+commit, then launch step 3 (tfim) — full step list in TODO item 1 below.
+One resync per commit. (Step 1 wt landed: 228/331 resynced, verified
+byte-identical to root golds, committed.)
 
-⚠️ Two live hazards until the cascade (item 1 below) lands:
-- The audit's output sits UNCOMMITTED on disk (228 harnesses + 40
-  solutions rewritten). No checkout/reset/stash/`git add -A` until the
-  per-family commits are done.
-- The nightly sweep's detached-job guard no longer suppresses it, and
-  children of the 228 changed roots have STALE EMBEDS until the resyncs
-  run — a sweep firing first would report false flakes. Run the resyncs
-  (cascade step 1) before the next nightly window.
+⚠️ Standing hazard until check_embeds (step 5) is green: children lag the
+audit-edited roots — a nightly sweep firing mid-cascade can report false
+flakes on those families, and DO NOT push (CI embed gate would fail).
 
 ---
 
@@ -38,13 +38,14 @@ Audit output on disk, uncommitted: 228 `test_harness.exs` + 40
 the cascade instructions are verbatim at the tail of
 `logs/retro_audit_full.log`. In order:
 
-1. **Embed resyncs** (deterministic, no LLM):
-   `mix run scripts/resync_embeds.exs -- --wt-all --apply`
-   `mix run scripts/resync_bugfix_embeds.exs -- --apply`
-   `mix run scripts/resync_tfim_embeds.exs -- --apply`
-   `mix run scripts/resync_adapt_embeds.exs -- --apply`
-   then `elixir scripts/check_embeds.exs` and hand-fix any
-   `fix_child_gold` rows.
+1. **Embed resyncs** (deterministic, no LLM; one per commit, each via
+   `scripts/run_detached.sh logs/<name>.log ...` + in-session monitor):
+   - [x] step 1 wt — done, committed
+   - [~] step 2 bugfix: `mix run scripts/resync_bugfix_embeds.exs -- --apply` (RUNNING above)
+   - [ ] step 3 tfim: `mix run scripts/resync_tfim_embeds.exs -- --apply`
+   - [ ] step 4 adapt: `mix run scripts/resync_adapt_embeds.exs -- --apply`
+   - [ ] step 5 check: `elixir scripts/check_embeds.exs`, hand-fix any
+     `fix_child_gold` rows, commit; push only after this is green.
 2. **Bugfix-pair invalidation**: `scripts/audit_bugfix.exs` on the 40
    solution-changed families (a redesigned gold invalidates its bugfix
    pairs) — delete + remint invalidated pairs via `generate.exs <n>`

@@ -276,4 +276,80 @@ defmodule BloomFilterTest do
     end)
     |> MapSet.new()
   end
+
+  test "merge/2 raises FunctionClauseError when an argument is not a filter struct" do
+    f = BloomFilter.new(100, 0.01)
+    look_alike = %{m: f.m, k: f.k, bits: f.bits}
+
+    assert_raise FunctionClauseError, fn -> BloomFilter.merge(f, look_alike) end
+    assert_raise FunctionClauseError, fn -> BloomFilter.merge(look_alike, f) end
+    assert_raise FunctionClauseError, fn -> BloomFilter.merge(nil, f) end
+    assert_raise FunctionClauseError, fn -> BloomFilter.merge(f, :not_a_filter) end
+  end
+
+  test "merge/2 error message names both filters' m and k values" do
+    f1 = BloomFilter.new(100, 0.01)
+    f2 = BloomFilter.new(999, 0.05)
+
+    error = assert_raise ArgumentError, fn -> BloomFilter.merge(f1, f2) end
+
+    assert error.message =~ "cannot merge filters with different parameters"
+    assert error.message =~ "filter1 has m=#{f1.m}, k=#{f1.k}"
+    assert error.message =~ "filter2 has m=#{f2.m}, k=#{f2.k}"
+  end
+
+  test "merge/2 is associative and idempotent on identical inputs" do
+    a = BloomFilter.new(100, 0.01) |> BloomFilter.add("a-item")
+    b = BloomFilter.new(100, 0.01) |> BloomFilter.add("b-item")
+    c = BloomFilter.new(100, 0.01) |> BloomFilter.add({:c, 3})
+
+    left = BloomFilter.merge(BloomFilter.merge(a, b), c)
+    right = BloomFilter.merge(a, BloomFilter.merge(b, c))
+
+    assert left == right
+    assert BloomFilter.merge(a, a) == a
+    assert BloomFilter.merge(left, left) == left
+    assert BloomFilter.member?(left, "a-item")
+    assert BloomFilter.member?(left, "b-item")
+    assert BloomFilter.member?(left, {:c, 3})
+  end
+
+  test "add/2 yields equal structs regardless of insertion order" do
+    empty = BloomFilter.new(100, 0.01)
+    items = ["x", :y, 3, {4, "z"}, [5, 6]]
+
+    build = fn list -> Enum.reduce(list, empty, &BloomFilter.add(&2, &1)) end
+
+    forward = build.(items)
+    backward = build.(Enum.reverse(items))
+    rotated = build.(tl(items) ++ [hd(items)])
+
+    assert forward == backward
+    assert forward == rotated
+    assert forward.bits == rotated.bits
+  end
+
+  test "add/2 preserves every previously set bit as items accumulate" do
+    start = BloomFilter.new(200, 0.01)
+
+    Enum.reduce(1..50, start, fn i, f ->
+      next = BloomFilter.add(f, {:grow, i})
+
+      assert tuple_size(next.bits) == tuple_size(f.bits)
+
+      for wi <- 0..(tuple_size(f.bits) - 1) do
+        old_word = elem(f.bits, wi)
+        assert Bitwise.band(old_word, elem(next.bits, wi)) == old_word
+      end
+
+      assert BloomFilter.member?(next, {:grow, i})
+      next
+    end)
+  end
+
+  test "new/2 returns equal structs for repeated calls with identical arguments" do
+    assert BloomFilter.new(1_000, 0.01) == BloomFilter.new(1_000, 0.01)
+    assert BloomFilter.new(7, 0.25) == BloomFilter.new(7, 0.25)
+    assert BloomFilter.new(1_000, 0.9) == BloomFilter.new(1_000, 0.9)
+  end
 end

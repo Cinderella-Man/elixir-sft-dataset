@@ -168,4 +168,96 @@ defmodule CatalogTest do
     assert Catalog.count() == 0
     assert Catalog.all() == []
   end
+
+  test "all-or-nothing reports duplicate refs and rolls the batch back" do
+    items = [
+      %{"name" => "first", "ref" => "dup"},
+      %{"name" => "second", "ref" => "dup"},
+      %{"name" => "clean"}
+    ]
+
+    assert {:error, results} = Catalog.bulk_create(items)
+    assert Catalog.count() == 0
+    assert Catalog.all() == []
+
+    assert {0, :error, :duplicate_ref} = Enum.find(results, fn {i, _, _} -> i == 0 end)
+    assert {1, :error, :duplicate_ref} = Enum.find(results, fn {i, _, _} -> i == 1 end)
+    assert {2, :ok, :valid} = Enum.find(results, fn {i, _, _} -> i == 2 end)
+  end
+
+  test "partial mode marks only cycle members as :cycle and downstream items as skipped" do
+    items = [
+      %{"name" => "a", "ref" => "a", "parent" => "b"},
+      %{"name" => "b", "ref" => "b", "parent" => "a"},
+      %{"name" => "downstream", "parent" => "a"},
+      %{"name" => "free"}
+    ]
+
+    assert {:ok, results} = Catalog.bulk_create(items, partial: true)
+
+    assert {0, :error, :cycle} = Enum.find(results, fn {i, _, _} -> i == 0 end)
+    assert {1, :error, :cycle} = Enum.find(results, fn {i, _, _} -> i == 1 end)
+    assert {2, :skipped, 0} = Enum.find(results, fn {i, _, _} -> i == 2 end)
+    assert {3, :ok, created} = Enum.find(results, fn {i, _, _} -> i == 3 end)
+
+    assert created.name == "free"
+    assert created.parent_id == nil
+    assert Catalog.count() == 1
+    assert [^created] = Catalog.all()
+  end
+
+  test "partial mode skips the dependent of a duplicate-ref item instead of erroring it" do
+    items = [
+      %{"name" => "one", "ref" => "dup"},
+      %{"name" => "two", "ref" => "dup"},
+      %{"name" => "child", "parent" => "dup"}
+    ]
+
+    assert {:ok, results} = Catalog.bulk_create(items, partial: true)
+
+    assert {0, :error, :duplicate_ref} = Enum.find(results, fn {i, _, _} -> i == 0 end)
+    assert {1, :error, :duplicate_ref} = Enum.find(results, fn {i, _, _} -> i == 1 end)
+    assert {2, :skipped, ancestor} = Enum.find(results, fn {i, _, _} -> i == 2 end)
+    assert ancestor in [0, 1]
+    assert Catalog.count() == 0
+  end
+
+  test "name of exactly 100 chars is valid while 101 chars is a validation error" do
+    items = [
+      %{"name" => String.duplicate("a", 100)},
+      %{"name" => String.duplicate("b", 101)}
+    ]
+
+    assert {:ok, results} = Catalog.bulk_create(items, partial: true)
+
+    ok = item(results, 0)
+    assert String.length(ok.name) == 100
+
+    assert {1, :error, {:validation, errs}} = Enum.find(results, fn {i, _, _} -> i == 1 end)
+    assert Map.has_key?(errs, "name")
+    assert Catalog.count() == 1
+  end
+
+  test "validation errors_map is keyed by string field with a list of message strings" do
+    assert {:error, results} = Catalog.bulk_create([%{"name" => ""}])
+    assert {0, :error, {:validation, errs}} = hd(results)
+
+    assert errs == %{"name" => ["can't be blank"]}
+    assert Enum.all?(Map.keys(errs), &is_binary/1)
+    assert Enum.all?(errs["name"], &is_binary/1)
+  end
+
+  test "ids auto-increment across items and across successive batches" do
+    assert {:ok, first} = Catalog.bulk_create([%{"name" => "one"}, %{"name" => "two"}])
+    a = item(first, 0)
+    b = item(first, 1)
+    assert is_integer(a.id)
+    assert b.id == a.id + 1
+
+    assert {:ok, second} = Catalog.bulk_create([%{"name" => "three"}])
+    c = item(second, 0)
+    assert c.id == b.id + 1
+    assert Catalog.get(c.id) == c
+    assert Catalog.count() == 3
+  end
 end

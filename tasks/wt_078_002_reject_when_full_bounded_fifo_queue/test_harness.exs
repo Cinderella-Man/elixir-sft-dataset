@@ -156,4 +156,103 @@ defmodule RejectingRingBufferTest do
 
     assert RejectingRingBuffer.to_list(buf) == [42, "hello", :atom, {:tuple, 1}, [1, 2, 3]]
   end
+
+  test "full? is false one slot below capacity and flips true exactly at capacity" do
+    buf = RejectingRingBuffer.new(3)
+    {:ok, buf} = RejectingRingBuffer.push(buf, :a)
+    refute RejectingRingBuffer.full?(buf)
+    {:ok, buf} = RejectingRingBuffer.push(buf, :b)
+    assert RejectingRingBuffer.size(buf) == 2
+    refute RejectingRingBuffer.full?(buf)
+    {:ok, buf} = RejectingRingBuffer.push(buf, :c)
+    assert RejectingRingBuffer.full?(buf)
+
+    {:ok, :a, buf} = RejectingRingBuffer.pop(buf)
+    refute RejectingRingBuffer.full?(buf)
+  end
+
+  test "peek_newest is correct when the write head has wrapped back to slot zero" do
+    buf = RejectingRingBuffer.new(3)
+    {:ok, buf} = RejectingRingBuffer.push(buf, :a)
+    {:ok, buf} = RejectingRingBuffer.push(buf, :b)
+    {:ok, buf} = RejectingRingBuffer.push(buf, :c)
+
+    # write head has just wrapped to 0; newest must still be the last push
+    assert {:ok, :c} = RejectingRingBuffer.peek_newest(buf)
+    assert {:ok, :a} = RejectingRingBuffer.peek_oldest(buf)
+
+    {:ok, :a, buf} = RejectingRingBuffer.pop(buf)
+    {:ok, buf} = RejectingRingBuffer.push(buf, :d)
+    {:ok, :b, buf} = RejectingRingBuffer.pop(buf)
+    {:ok, :c, buf} = RejectingRingBuffer.pop(buf)
+    assert {:ok, :d} = RejectingRingBuffer.peek_newest(buf)
+    assert {:ok, :d} = RejectingRingBuffer.peek_oldest(buf)
+  end
+
+  test "buffer drained after wraparound reports empty on every reader" do
+    buf = RejectingRingBuffer.new(2)
+    {:ok, buf} = RejectingRingBuffer.push(buf, 1)
+    {:ok, buf} = RejectingRingBuffer.push(buf, 2)
+    {:ok, 1, buf} = RejectingRingBuffer.pop(buf)
+    {:ok, buf} = RejectingRingBuffer.push(buf, 3)
+    {:ok, 2, buf} = RejectingRingBuffer.pop(buf)
+    {:ok, 3, buf} = RejectingRingBuffer.pop(buf)
+
+    assert RejectingRingBuffer.size(buf) == 0
+    refute RejectingRingBuffer.full?(buf)
+    assert RejectingRingBuffer.to_list(buf) == []
+    assert :error = RejectingRingBuffer.peek_oldest(buf)
+    assert :error = RejectingRingBuffer.peek_newest(buf)
+    assert :empty = RejectingRingBuffer.pop(buf)
+  end
+
+  test "nil and duplicate items are stored as real values in insertion order" do
+    buf = RejectingRingBuffer.new(4)
+    {:ok, buf} = RejectingRingBuffer.push(buf, nil)
+    {:ok, buf} = RejectingRingBuffer.push(buf, :dup)
+    {:ok, buf} = RejectingRingBuffer.push(buf, :dup)
+    {:ok, buf} = RejectingRingBuffer.push(buf, nil)
+
+    assert RejectingRingBuffer.size(buf) == 4
+    assert RejectingRingBuffer.full?(buf)
+    assert RejectingRingBuffer.to_list(buf) == [nil, :dup, :dup, nil]
+    assert {:ok, nil} = RejectingRingBuffer.peek_oldest(buf)
+    assert {:ok, nil} = RejectingRingBuffer.peek_newest(buf)
+    assert {:error, :full} = RejectingRingBuffer.push(buf, :extra)
+    assert {:ok, nil, _} = RejectingRingBuffer.pop(buf)
+  end
+
+  test "repeated rejected pushes never change size or contents" do
+    buf = RejectingRingBuffer.new(2)
+    {:ok, buf} = RejectingRingBuffer.push(buf, :x)
+    {:ok, buf} = RejectingRingBuffer.push(buf, :y)
+
+    Enum.each(1..5, fn i ->
+      assert {:error, :full} = RejectingRingBuffer.push(buf, i)
+    end)
+
+    assert RejectingRingBuffer.size(buf) == 2
+    assert RejectingRingBuffer.to_list(buf) == [:x, :y]
+    assert {:ok, :x} = RejectingRingBuffer.peek_oldest(buf)
+    assert {:ok, :y} = RejectingRingBuffer.peek_newest(buf)
+  end
+
+  test "slots are reused across several complete wraps of the backing store" do
+    buf = RejectingRingBuffer.new(3)
+    {:ok, buf} = RejectingRingBuffer.push(buf, 0)
+
+    final =
+      Enum.reduce(1..12, buf, fn i, acc ->
+        {:ok, oldest} = RejectingRingBuffer.peek_oldest(acc)
+        assert oldest == i - 1
+        {:ok, next} = RejectingRingBuffer.push(acc, i)
+        assert RejectingRingBuffer.to_list(next) == [i - 1, i]
+        assert {:ok, ^i} = RejectingRingBuffer.peek_newest(next)
+        {:ok, ^oldest, next} = RejectingRingBuffer.pop(next)
+        next
+      end)
+
+    assert RejectingRingBuffer.to_list(final) == [12]
+    assert RejectingRingBuffer.size(final) == 1
+  end
 end

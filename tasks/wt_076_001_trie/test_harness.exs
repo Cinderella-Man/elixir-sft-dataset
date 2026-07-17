@@ -233,4 +233,66 @@ defmodule TrieTest do
     all = Trie.words(t)
     assert all == Enum.sort(words)
   end
+
+  test "deleting the same word twice leaves the count at zero" do
+    t =
+      Trie.new()
+      |> Trie.insert("hello")
+      |> Trie.delete("hello")
+      |> Trie.delete("hello")
+
+    assert Trie.size(t) == 0
+    assert Trie.member?(t, "hello") == false
+    assert Trie.words(t) == []
+  end
+
+  test "re-inserting a word after it was deleted restores it" do
+    t =
+      Trie.new()
+      |> Trie.insert("car")
+      |> Trie.insert("card")
+      |> Trie.delete("card")
+      |> Trie.insert("card")
+
+    assert Trie.member?(t, "card") == true
+    assert Trie.member?(t, "car") == true
+    assert Trie.size(t) == 2
+    assert Trie.search(t, "car") == ["car", "card"]
+  end
+
+  test "a duplicate insert appears only once in words and search" do
+    t =
+      Trie.new()
+      |> Trie.insert("apple")
+      |> Trie.insert("apple")
+      |> Trie.insert("apply")
+
+    assert Trie.words(t) == ["apple", "apply"]
+    assert Trie.search(t, "appl") == ["apple", "apply"]
+    assert Trie.size(t) == 2
+  end
+
+  test "search for a prefix that runs past a stored word returns no words" do
+    t =
+      Trie.new()
+      |> Trie.insert("hello")
+      |> Trie.insert("help")
+
+    assert Trie.search(t, "helloworld") == []
+    assert Trie.search(t, "hell") == ["hello"]
+    assert Trie.search(t, "hel") == ["hello", "help"]
+  end
+
+  test "the empty string is a member only when inserted as a word" do
+    t = Trie.new() |> Trie.insert("") |> Trie.insert("a")
+
+    assert Trie.member?(t, "") == true
+    assert Trie.size(t) == 2
+    assert Trie.words(t) == ["", "a"]
+
+    t2 = Trie.delete(t, "")
+    assert Trie.member?(t2, "") == false
+    assert Trie.member?(t2, "a") == true
+    assert Trie.size(t2) == 1
+  end
 end

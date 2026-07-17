@@ -139,4 +139,113 @@ defmodule SagaTest do
     assert {:error, :a, :immediate, []} = result
     assert tracked(:comp) == []
   end
+
+  test "a raising compensation early in the reverse chain still lets later ones run and is recorded" do
+    result =
+      Saga.new()
+      |> Saga.step(:a, fn _ -> {:ok, 1} end, fn _ ->
+        track(:ran, :a)
+        :ca
+      end)
+      |> Saga.step(:b, fn _ -> {:ok, 2} end, fn _ ->
+        track(:ran, :b)
+        raise "kaboom in compensation b"
+      end)
+      |> Saga.step(:c, fn _ -> {:error, :fail} end, fn _ -> track(:ran, :c) end)
+      |> Saga.execute(%{})
+
+    assert {:error, :c, :fail, comps} = result
+    assert Keyword.keys(comps) == [:b, :a]
+    assert Keyword.has_key?(comps, :b)
+    assert comps[:a] == :ca
+    assert tracked(:ran) == [:b, :a]
+  end
+
+  test "retries_exhausted carries the reason from the final attempt, not an earlier one" do
+    Process.put(:n, 0)
+
+    result =
+      Saga.new()
+      |> Saga.retriable(
+        :commit,
+        fn _ ->
+          n = Process.get(:n) + 1
+          Process.put(:n, n)
+          {:error, {:attempt, n}}
+        end,
+        3
+      )
+      |> Saga.execute(%{})
+
+    assert {:error, :commit, {:retries_exhausted, {:attempt, 3}}, []} = result
+  end
+
+  test "every retry of a retriable action receives the identical context map" do
+    result =
+      Saga.new()
+      |> Saga.step(:seed, fn _ -> {:ok, :s} end, fn _ -> nil end)
+      |> Saga.retriable(
+        :commit,
+        fn ctx ->
+          track(:ctxs, ctx)
+          if length(tracked(:ctxs)) < 3, do: {:error, :flaky}, else: {:ok, :done}
+        end,
+        4
+      )
+      |> Saga.execute(%{base: 7})
+
+    assert {:ok, _} = result
+    seen = tracked(:ctxs)
+    assert length(seen) == 3
+    assert Enum.uniq(seen) == [%{base: 7, seed: :s}]
+  end
+
+  test "retriable rejects a non-positive max_attempts via its guard" do
+    saga = Saga.new()
+
+    assert_raise FunctionClauseError, fn ->
+      Saga.retriable(saga, :commit, fn _ -> {:ok, :x} end, 0)
+    end
+
+    assert_raise FunctionClauseError, fn ->
+      Saga.retriable(saga, :commit, fn _ -> {:ok, :x} end, -1)
+    end
+  end
+
+  test "max_attempts of one performs a single attempt and never retries" do
+    Process.put(:once, 0)
+
+    result =
+      Saga.new()
+      |> Saga.retriable(
+        :commit,
+        fn _ ->
+          Process.put(:once, Process.get(:once) + 1)
+          {:error, :nope}
+        end,
+        1
+      )
+      |> Saga.execute(%{})
+
+    assert {:error, :commit, {:retries_exhausted, :nope}, []} = result
+    assert Process.get(:once) == 1
+  end
+
+  test "compensating functions receive the context accumulated up to the failure" do
+    result =
+      Saga.new()
+      |> Saga.step(:a, fn ctx -> {:ok, ctx.init} end, fn ctx ->
+        track(:comp_ctx, ctx)
+        :ca
+      end)
+      |> Saga.step(:b, fn _ -> {:ok, :bee} end, fn ctx ->
+        track(:comp_ctx, ctx)
+        :cb
+      end)
+      |> Saga.step(:c, fn _ -> {:error, :boom} end, fn _ -> :cc end)
+      |> Saga.execute(%{init: :z})
+
+    assert {:error, :c, :boom, [b: :cb, a: :ca]} = result
+    assert tracked(:comp_ctx) == [%{init: :z, a: :z, b: :bee}, %{init: :z, a: :z, b: :bee}]
+  end
 end

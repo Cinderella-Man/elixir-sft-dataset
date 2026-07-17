@@ -6,6 +6,14 @@ defmodule Metrics do
   own the table and survive crashes — all hot-path reads and counter
   increments go directly to ETS and never serialise through the process.
 
+  ## Backing table
+
+  The table is named `Metrics` (the module itself), is a `:set`, and is
+  created with `:named_table`, `:public`, `read_concurrency: true` and
+  `write_concurrency: true`. Those properties are part of the contract: the
+  table must be reachable by name from any process, writable without the
+  owner's involvement, and tuned for simultaneous readers and writers.
+
   ## Quick start
 
       {:ok, _pid} = Metrics.start_link()
@@ -58,7 +66,8 @@ defmodule Metrics do
   no round-trip to the GenServer.
 
   `amount` must be a non-negative integer — counters are monotonically
-  increasing and never decrease.
+  increasing and never decrease. An `amount` of `0` is explicitly allowed:
+  it leaves an existing counter untouched and creates a missing one at `0`.
 
   Returns `:ok`.
   """
@@ -74,6 +83,8 @@ defmodule Metrics do
   Gauges are free to move up or down. Unlike `increment/2` this write
   is not atomic with respect to concurrent gauge writes for the same key,
   which is acceptable for gauge semantics (last-write wins).
+
+  Returns `:ok`.
   """
   @spec gauge(term(), number()) :: :ok
   def gauge(name, value) do
@@ -119,6 +130,8 @@ defmodule Metrics do
 
   Works for both counters and gauges. If `name` does not exist it is
   created with the value `0`.
+
+  Returns `:ok`.
   """
   @spec reset(term()) :: :ok
   def reset(name) do

@@ -38,6 +38,28 @@ defmodule MetricsTest do
     assert Metrics.get(:score) == 3
   end
 
+  test "increment accepts an amount of 0 and leaves an existing counter unchanged" do
+    Metrics.increment(:zero_bump, 7)
+    assert :ok = Metrics.increment(:zero_bump, 0)
+    assert Metrics.get(:zero_bump) == 7
+    assert :ok = Metrics.increment(:zero_bump, 0)
+    assert Metrics.get(:zero_bump) == 7
+  end
+
+  test "increment with an amount of 0 creates a missing counter at 0" do
+    assert Metrics.get(:fresh_zero) == nil
+    assert :ok = Metrics.increment(:fresh_zero, 0)
+    assert Metrics.get(:fresh_zero) == 0
+    assert Metrics.all()[:fresh_zero] == 0
+  end
+
+  test "increment/2 returns :ok rather than the counter's new value" do
+    assert Metrics.increment(:ret_val) == :ok
+    assert Metrics.increment(:ret_val, 4) == :ok
+    assert Metrics.increment(:ret_val, 0) == :ok
+    assert Metrics.get(:ret_val) == 5
+  end
+
   # -------------------------------------------------------
   # Gauges
   # -------------------------------------------------------
@@ -66,6 +88,13 @@ defmodule MetricsTest do
     assert Metrics.get(:active) == 0
   end
 
+  test "gauge/2 returns :ok on create and on overwrite" do
+    assert Metrics.gauge(:ret_gauge, 1) == :ok
+    assert Metrics.gauge(:ret_gauge, 2) == :ok
+    assert :ok = Metrics.gauge(:ret_gauge, -5)
+    assert Metrics.get(:ret_gauge) == -5
+  end
+
   # -------------------------------------------------------
   # get/1
   # -------------------------------------------------------
@@ -87,6 +116,20 @@ defmodule MetricsTest do
   test "reset on unknown metric sets it to 0" do
     Metrics.reset(:brand_new)
     assert Metrics.get(:brand_new) == 0
+  end
+
+  test "reset/1 returns :ok for counters, gauges and unknown metrics" do
+    Metrics.increment(:ret_counter, 3)
+    Metrics.gauge(:ret_g, 9)
+
+    assert Metrics.reset(:ret_counter) == :ok
+    assert Metrics.reset(:ret_g) == :ok
+    assert Metrics.reset(:never_seen_before) == :ok
+    assert :ok = Metrics.reset(:ret_counter)
+
+    assert Metrics.get(:ret_counter) == 0
+    assert Metrics.get(:ret_g) == 0
+    assert Metrics.get(:never_seen_before) == 0
   end
 
   # -------------------------------------------------------
@@ -128,6 +171,18 @@ defmodule MetricsTest do
   end
 
   # -------------------------------------------------------
+  # Backing ETS table contract
+  # -------------------------------------------------------
+
+  test "the backing table is a public named set tuned for concurrent access" do
+    assert :ets.info(Metrics, :type) == :set
+    assert :ets.info(Metrics, :named_table) == true
+    assert :ets.info(Metrics, :protection) == :public
+    assert :ets.info(Metrics, :read_concurrency) == true
+    assert :ets.info(Metrics, :write_concurrency) == true
+  end
+
+  # -------------------------------------------------------
   # Concurrent increments
   # -------------------------------------------------------
 
@@ -148,5 +203,71 @@ defmodule MetricsTest do
 
     assert Metrics.get(:c1) == 50
     assert Metrics.get(:g1) in 1..50
+  end
+
+  test "start_link registers the server under a custom :name option" do
+    :ok = stop_supervised(Metrics)
+
+    pid = start_supervised!({Metrics, name: :custom_metrics_server})
+
+    assert Process.whereis(:custom_metrics_server) == pid
+    assert :ok = Metrics.increment(:via_custom_name, 2)
+    assert Metrics.get(:via_custom_name) == 2
+  end
+
+  test "increment and get still work while the owning GenServer is suspended" do
+    :sys.suspend(Metrics)
+
+    try do
+      assert :ok = Metrics.increment(:hot_path, 3)
+      assert :ok = Metrics.increment(:hot_path)
+      assert Metrics.get(:hot_path) == 4
+    after
+      :sys.resume(Metrics)
+    end
+  end
+
+  test "gauge and reset still work while the owning GenServer is suspended" do
+    :sys.suspend(Metrics)
+
+    try do
+      assert :ok = Metrics.gauge(:hot_gauge, 12)
+      assert Metrics.get(:hot_gauge) == 12
+      assert :ok = Metrics.reset(:hot_gauge)
+      assert Metrics.get(:hot_gauge) == 0
+    after
+      :sys.resume(Metrics)
+    end
+  end
+
+  test "a negative increment amount never lowers an existing counter" do
+    Metrics.increment(:downward, 10)
+
+    try do
+      Metrics.increment(:downward, -4)
+    rescue
+      _ -> :ok
+    catch
+      _, _ -> :ok
+    end
+
+    assert Metrics.get(:downward) >= 10
+  end
+
+  test "a negative increment amount raises rather than returning :ok" do
+    Metrics.increment(:strict_down, 6)
+
+    assert_raise FunctionClauseError, fn -> Metrics.increment(:strict_down, -1) end
+
+    assert Metrics.get(:strict_down) == 6
+  end
+
+  test "start_link defaults the process registration name to the module itself" do
+    assert is_pid(Process.whereis(Metrics))
+  end
+
+  test "all/0 and snapshot/0 return an empty map when nothing has been recorded" do
+    assert Metrics.all() == %{}
+    assert Metrics.snapshot() == %{}
   end
 end

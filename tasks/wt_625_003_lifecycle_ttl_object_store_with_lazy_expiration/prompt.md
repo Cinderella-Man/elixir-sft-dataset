@@ -80,7 +80,8 @@ defmodule TtlObjectStorage do
   @typedoc "A time-to-live in milliseconds, or `:infinity` to never expire."
   @type ttl :: pos_integer() | :infinity
 
-  @name_regex ~r/^[a-z0-9.-]+$/
+  # `\A`/`\z` (not `^`/`$`) so that a trailing newline cannot sneak past the anchors.
+  @name_regex ~r/\A[a-z0-9.-]+\z/
 
   ## Public API
 

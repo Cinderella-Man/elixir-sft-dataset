@@ -223,13 +223,38 @@ defmodule ObjectStore do
   # Commit serialization / parsing
   # ------------------------------------------------------------------
 
-  # A commit is serialized as the canonical external term format of a fixed
-  # tuple shape. This is fully deterministic for identical inputs, round-trips
-  # arbitrary binaries (including newlines and null bytes), and yields distinct
-  # bytes — and therefore distinct hashes — whenever any field differs.
+  # A commit is serialized as a deterministic, git-like text representation:
+  #
+  #     tree <tree-hash>
+  #     parent <parent-hash>        (repeated, once per parent, in order)
+  #     author <byte-size>
+  #     <author>
+  #     message <byte-size>
+  #     <message>
+  #
+  # The byte-size headers let the author and message round-trip verbatim even
+  # when they contain newlines. Identical inputs always yield identical bytes —
+  # and therefore an identical hash — while any difference in the tree, in the
+  # parents (including their order), in the author, or in the message changes
+  # the bytes and thus the hash.
   @spec build_commit_object(hash(), [hash()], String.t(), String.t()) :: binary()
   defp build_commit_object(tree_hash, parents, message, author) do
-    :erlang.term_to_binary({:commit, tree_hash, parents, author, message})
+    IO.iodata_to_binary([
+      "tree ",
+      tree_hash,
+      "\n",
+      Enum.map(parents, fn parent -> ["parent ", parent, "\n"] end),
+      "author ",
+      Integer.to_string(byte_size(author)),
+      "\n",
+      author,
+      "\n",
+      "message ",
+      Integer.to_string(byte_size(message)),
+      "\n",
+      message,
+      "\n"
+    ])
   end
 
   @spec parse_commit(binary()) :: %{
@@ -239,8 +264,30 @@ defmodule ObjectStore do
           message: String.t()
         }
   defp parse_commit(binary) do
-    {:commit, tree, parents, author, message} = :erlang.binary_to_term(binary)
+    {"tree " <> tree, rest} = split_line(binary)
+    {parents, rest} = parse_parents(rest, [])
+    {"author " <> author_size, rest} = split_line(rest)
+    author_bytes = String.to_integer(author_size)
+    <<author::binary-size(^author_bytes), "\n", rest::binary>> = rest
+    {"message " <> message_size, rest} = split_line(rest)
+    message_bytes = String.to_integer(message_size)
+    <<message::binary-size(^message_bytes), "\n">> = rest
+
     %{tree: tree, parents: parents, author: author, message: message}
+  end
+
+  @spec parse_parents(binary(), [hash()]) :: {[hash()], binary()}
+  defp parse_parents("parent " <> _ = binary, acc) do
+    {"parent " <> parent, rest} = split_line(binary)
+    parse_parents(rest, [parent | acc])
+  end
+
+  defp parse_parents(binary, acc), do: {Enum.reverse(acc), binary}
+
+  @spec split_line(binary()) :: {binary(), binary()}
+  defp split_line(binary) do
+    [line, rest] = :binary.split(binary, "\n")
+    {line, rest}
   end
 
   # ------------------------------------------------------------------

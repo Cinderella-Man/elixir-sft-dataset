@@ -156,4 +156,80 @@ defmodule MarkdownOutlineTest do
     md = "# Root\r\n- **Item**: Desc (tag)\r\n"
     assert [%{title: "Root", items: [%{name: "Item", tags: ["tag"]}]}] = parse(md)
   end
+
+  test "heading titles are trimmed of surrounding whitespace" do
+    md = "#    Spaced Title   \n"
+
+    assert [%{title: "Spaced Title", level: 1, items: [], children: []}] = parse(md)
+  end
+
+  test "multiple items and multiple children keep document order" do
+    md = """
+    # Root
+    - **i1**: one
+    - **i2**: two
+    - **i3**: three
+    ## C1
+    ## C2
+    ## C3
+    """
+
+    [root] = parse(md)
+    assert Enum.map(root.items, & &1.name) == ["i1", "i2", "i3"]
+    assert Enum.map(root.children, & &1.title) == ["C1", "C2", "C3"]
+  end
+
+  test "empty heading between populated siblings has empty items and children" do
+    md = """
+    # A
+    - **a**: da
+    # Empty
+    # B
+    - **b**: db
+    """
+
+    assert [_a, empty, _b] = parse(md)
+    assert empty == %{title: "Empty", level: 1, items: [], children: []}
+  end
+
+  test "shallower heading closes deep branch and becomes an ancestor's child sibling" do
+    md = """
+    # One
+    ## Two
+    ### Three
+    ## Four
+    - **f**: under four
+    """
+
+    [one] = parse(md)
+    assert Enum.map(one.children, & &1.title) == ["Two", "Four"]
+    [two, four] = one.children
+    assert Enum.map(two.children, & &1.title) == ["Three"]
+    assert [%{name: "f", description: "under four", tags: []}] = four.items
+    assert four.level == 2
+  end
+
+  test "six-hash heading is recognised as a level six node" do
+    md = """
+    # L1
+    ###### L6
+    - **x**: deep
+    """
+
+    [l1] = parse(md)
+    assert [%{title: "L6", level: 6, items: [%{name: "x"}], children: []}] = l1.children
+  end
+
+  test "hash line without whitespace before the text is not a heading" do
+    md = """
+    # Real
+    #NotAHeading
+    - **x**: kept
+    """
+
+    [node] = parse(md)
+    assert node.title == "Real"
+    assert node.children == []
+    assert Enum.map(node.items, & &1.name) == ["x"]
+  end
 end
