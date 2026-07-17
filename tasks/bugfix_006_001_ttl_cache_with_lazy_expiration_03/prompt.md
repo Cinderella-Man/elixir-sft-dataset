@@ -13,7 +13,7 @@ I need these functions in the public API:
 
 - `TTLCache.start_link(opts)` to start the process. It should accept a `:clock` option which is a zero-arity function returning the current time in milliseconds. If not provided, default to `fn -> System.monotonic_time(:millisecond) end`. It should also accept a `:name` option for process registration and a `:sweep_interval_ms` option (default 60_000) controlling how often a periodic sweep runs to remove all expired entries.
 
-- `TTLCache.put(server, key, value, ttl_ms)` which stores a key-value pair that expires after `ttl_ms` milliseconds from the time of insertion. If the key already exists, overwrite both its value and its expiration. Returns `:ok`.
+- `TTLCache.put(server, key, value, ttl_ms)` which stores a key-value pair that expires after `ttl_ms` milliseconds from the time of insertion. The entry is live only while the current time (per `:clock`) is strictly before its expiration instant of insertion-time + `ttl_ms`; at or after that instant the key is expired. If the key already exists, overwrite both its value and its expiration. Returns `:ok`.
 
 - `TTLCache.get(server, key)` which looks up a key. If the key exists and has not expired, return `{:ok, value}`. If the key does not exist or has expired, return `:miss`. Expired keys must be lazily deleted from internal state on read so they don't linger.
 
@@ -21,7 +21,7 @@ I need these functions in the public API:
 
 Each key is independent — putting or deleting key "a" must have no effect on key "b". A `put` with a new TTL on an existing key resets that key's expiration entirely based on the current time plus the new TTL.
 
-You also need to prevent memory leaks from keys that are written but never read again. Use `Process.send_after` to schedule a `:sweep` message every `:sweep_interval_ms` milliseconds. When the sweep runs, remove all entries whose expiration time is in the past. The sweep should reschedule itself after completing.
+You also need to prevent memory leaks from keys that are written but never read again. Use `Process.send_after` to schedule a `:sweep` message every `:sweep_interval_ms` milliseconds. When the sweep runs, remove all entries whose expiration time is in the past. The sweep should reschedule itself after completing. Handling a `:sweep` message must remove expired entries whether it arrived from the scheduled timer or was sent to the process directly, and must not disrupt subsequent `put`/`get`/`delete` operations.
 
 Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
 

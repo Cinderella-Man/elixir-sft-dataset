@@ -9,6 +9,30 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-17 — 004_004 VERIFIED CLEAN + T2.6 PROMPT-PRECISION TOOL
+  BUILT AND PILOT-VALIDATED 3/3.** 004_004's calendar rules already make
+  the conservative F22 choice (nth restricted to 1..4, bounded month
+  walk) — no crash hole. The T2.6 instrument
+  (`scripts/prompt_precision.exs`, retro_audit skeleton): one editor
+  call per root proposes a precision-raised prompt (promises = tested
+  behavior), machine-vetted (file-block reply contract, API-token
+  retention — the self-test caught the first regex missing
+  `Mod.fun/arity`; the first pilot caught the validator receiving
+  Cycle.generate's parsed files map, not raw text), then gated by a
+  blind prompt-only solve that must go green against the current harness
+  BEFORE the write (S6 row appended; freshness stays green). Sha+gate
+  keyed ledger `logs/prompt_precision.jsonl`; backups + saved rejected
+  candidates. Pilot vs ground truth: 006_001 IMPROVED with exactly the
+  spot-review-predicted manual-:sweep sentence + the expiry-boundary
+  rule (blind green 22/22); 007_004 ALREADY PRECISE as predicted;
+  010_001 conservatively unchanged (its prompt already documents the
+  manual trigger). Cascade green (1 wt + 3 bugfix embeds; 1,322 clean /
+  0 drift; freshness OK). Rider: triage_screen's report gained the
+  RESOLUTION concept — review-resolution rows close gaps for their
+  (task, sha); report reads open gaps 0 / review-resolutions 3.
+  FULL-CORPUS RUN NOT STARTED — Kamil's call (~2 LLM calls/root over
+  ~300 roots; interacts with the round-2 T2.6-proper boundary).
+
 - **2026-07-17 — F22 CLOSED (Kamil direction: reject at registration) +
   strays resolved.** 004_001's `register/4` now rejects expressions that
   can never match any real datetime (`{:error, :invalid_cron}` via a

@@ -13,10 +13,15 @@ Reference docs: `docs/14` (handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**Push of the F22 close-out (detached, log
-`logs/push_v12_20260717.log`).** F22 and the stray-dirs decision are
-both RESOLVED (docs/15) — no Kamil inputs outstanding. Next queue item:
-the T2.6 prompt-precision tool.
+**Push of the T2.6-tool close-out (detached, log
+`logs/push_v13_20260717.log`).** The tool is BUILT and pilot-validated
+3/3 (docs/15). ONE decision now waits on Kamil: run
+`scripts/prompt_precision.exs` corpus-wide? Cost ~2 LLM calls/root over
+~300 roots (editor + blind verify); scope interacts with the round-2
+T2.6-proper boundary (docs/12 §7.4) — the tool raises PRECISION only
+and does not touch register diversity, so it can run before round #2
+or as its opening move. Idempotent relaunch (resumable):
+`scripts/run_detached.sh logs/precision_full.log mix run scripts/prompt_precision.exs`
 
 ---
 
@@ -66,11 +71,8 @@ metadata (ledger-side, tiny — fold into the export work).
 
 ### ⏭️ QUEUE ORDER
 
-1. **T2.6 prompt-precision tool** (same skeleton as retro_audit.exs; feed
-   it the judge-sweep + spot-review ledgers in `logs/screen_triage.jsonl`
-   and `logs/spot_review.jsonl`) — never concurrently with the sweep.
-   Should also add a resolution concept to the triage report (the three
-   ledgered rejections still render as open gaps).
+1. **T2.6 precision full run** — tool built + piloted (docs/15); awaiting
+   Kamil's go (see RUNNING note). Never concurrently with the sweep.
 
 ### 📦 DATA EXTENSION (docs/13 §2; after the above)
 
