@@ -13,12 +13,18 @@ Reference docs: `docs/14` (handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**Push of the T1.6 closure (detached, log `logs/push_v6_20260717.log`).**
-T1.6 Task-A is CLOSED (docs/15): 8 spec lies fixed + re-proven, 33 pairs
-reminted + 6/6-verified, embeds 1,322 clean / 0 drift, dialyzer clean or
-waived. The whole T1.11 retro-audit arc is also closed (docs/15). Next
-queue items after the push: §4.2.2 spot-review tranche, then the T2.6
-prompt-precision tool.
+**§4.2.2 SPOT-REVIEW TRANCHE — in progress (in-session deep reads, no
+detached job; docs/12 §4.2 item 2, signed off 2026-07-16).** Tranche
+list `logs/spot_review_tranche_20260717.txt` (20 seeds, deterministic:
+April-era ∩ audit-changed-harness-only ∩ 0 proven-defect promise tests
+— the machinery's blind spot — one per idea family, 58-candidate pool).
+Verdicts append sha-keyed to `logs/spot_review.jsonl` (task, file shas,
+verdict ok|finding, notes) — resume = skip rows whose shas match.
+Method: fresh-eyes read of prompt + solution + harness targeting
+MEANING (gold bugs, contract mismatches, harness blind spots); rule 7
+on every finding. Precedent rate: ~2 defects per 12 roots (the 07-13
+tranche) and 1 gold bug per 4 roots (the 07-15 T2.6 pilot).
+(Pushed through e9681997: T1.11 + T1.6 arcs fully closed on origin.)
 
 ---
 
