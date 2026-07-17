@@ -13,21 +13,23 @@ Reference docs: `docs/14` (handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**PUSH of the remint batch (detached, log `logs/push_v3_20260717.log`),
-then: BUILD + PILOT the 94-root needs_triage judge (T1.11 triage, next
-loop step — Kamil picked it 2026-07-17).** Remint is DONE and VERIFIED
-(117/117 six-property pass — docs/15); its batch commit includes the
-fresh bugfix/repair/tfim dirs + the 077_002 `_05` re-carve. Triage tool
-sketch: adapt the standing judge flow (`scripts/triage_screen.exs`
-skeleton + `GenTask.Opus`) to read the 94 needs_triage rows of
-`logs/retro_audit.jsonl` (94 = 95 rows minus 001_002 which resolved to
-changed), judge each root's failed promise-test against prompt.md +
-current harness, and ledger verdicts sha-keyed to
-`logs/needs_triage_verdicts.jsonl` with classes: `prompt_gap` (T2.6
-material, carries a proposed missing sentence), `bad_test` (auditor
-over-reach — drop), `hard_keep` (evidence row). Rule 9: pilot on 3 rows
-+ detailed review BEFORE the full detached run. Rule 7: each CLASS gets
-its Task A + Task B when verdicts land.
+**PUSH of the remint batch (detached, log `logs/push_v3_20260717.log`;
+a second push follows for the part-2 repair commit), then: the
+NEEDS-TRIAGE JUDGE SWEEP — no new tool needed.** Discovery 2026-07-17:
+the standing `scripts/triage_screen.exs` (docs/10 R12d) already covers
+BOTH triage queues in one pass — it judges every task whose LATEST
+screen row is RED, and (a) each of the 94 audit needs_triage cycles left
+exactly such a red row (the failed blind solve of its grown-and-discarded
+harness, failing assertion captured in the row), and (b) the 25
+re-screen reds are latest-red too. ~119 judge calls; ledger
+`logs/screen_triage.jsonl` keyed (task, prompt sha), skip-if-triaged,
+resumable. ENTAILED → hard-keep evidence; NOT entailed → judge proposes
+the one missing prompt sentence (human applies — never automatic; T2.6
+material). Rule 9 pilot first: `--limit 3`, read the verdict rows in
+detail, then full detached run:
+`scripts/run_detached.sh logs/triage_reds.log mix run scripts/triage_screen.exs`
+Rule 7 on the verdict classes when they land. NOTE: no mix runs while
+the push hook or the sweep lives.
 
 **NEW TRIAGE QUEUE from the re-screen: 25 of 50 roots came back RED
 (quarantined, "prompt under-specified OR solver too weak"; rows in
