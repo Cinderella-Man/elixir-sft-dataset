@@ -13,10 +13,14 @@ Reference docs: `docs/14` (handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-Nothing (between cascade steps). Embed resyncs + check_embeds are DONE
-and GREEN (1,321 clean / 0 drift — record in docs/15); push is safe
-again. Next launch: audit_bugfix over the 40 solution-changed families
-(TODO item 1). The nightly-sweep false-flake hazard is over.
+Nothing (between cascade steps). Verdict landed: ALL 116 bugfix pairs of
+the 40 solution-changed families are invalidated — 116/116 pair golds
+byte-differ from their redesigned parents (structural proof), 16/16
+evaluator verdicts agree (`FAIL [:gold_is_parent, :one_line_bug]`,
+`logs/audit_bugfix_full.log`; sweep crashed at pair 17 on
+:timeout_or_crash — tool fixed, 0bfa8476). Next: git rm the 116 pairs
+(list `logs/bugfix_pairs_to_audit_20260717.txt`), commit, PUSH (unblocks
+the pre-push gate), then launch the remint (LLM, detached).
 
 **Flag for Kamil:** `tasks/077_002_deletable_interval_tree_02` was
 DELETED (git rm, recoverable): its blanked fn `rebalance` no longer
