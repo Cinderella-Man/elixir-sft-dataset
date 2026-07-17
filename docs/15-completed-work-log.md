@@ -9,6 +9,30 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-17 — §4.2.2 SPOT-REVIEW TRANCHE COMPLETE: 20/20 April-era
+  blind-spot roots deep-read, 15 ok / 5 findings** (verdicts sha-keyed in
+  `logs/spot_review.jsonl`; selection: audit-changed-harness-only ∩ 0
+  proven-defect promise tests, one per idea family, pool 58). Findings:
+  **F22 004_001** (REAL gold defect — valid-per-contract impossible cron
+  crashes the scheduler after a CPU-burn scan; STATUS item with Task A/B);
+  **002_001** (unobservable :half_open contract, vestigial
+  half_open_max_probes, tested-but-unpromised consecutive-failure
+  semantics, undocumented unexpected_return wrapper); **003_001**
+  (unsatisfiable-request retry_after lie + undocumented manual-:cleanup
+  cadence doubling); **009_001 minor** (throw/exit func permanently
+  bricks a key: infinite caller hangs + poisoned wait list); **034_001
+  minor** (duplicate composite keys silently drop records in a
+  reconciliation engine; zero harness coverage). Systematic result — the
+  T2.6 thesis measured directly: every finding sits in an April-register
+  prompt; the July precision-register roots (007_004, 013_001 — which
+  even documents its crash semantics) read flawless. Recurring
+  uniformity nit: manual :cleanup/:sweep re-schedule documented only in
+  001_001 (003/006/010 silent); 011/012 default :name to __MODULE__
+  against the family convention. Doubles as the T2.2 residue check:
+  residue is prompt-precision debt, not gold defects (F22 the lone code
+  defect, an edge robustness hole). Rate 5/20 vs the 2/12 precedent —
+  the blind-spot stratification concentrated findings as designed.
+
 - **2026-07-17 — T1.6 TASK-A QUEUE CLOSED: all 8 machine-proven spec
   lies fixed, cascaded, re-proven.** F20 015_001 (`@typep service` +
   `timer: reference()`); F21 102_002 + sibling sweep (102_004's same

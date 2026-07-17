@@ -13,15 +13,17 @@ Reference docs: `docs/14` (handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**§4.2.2 SPOT-REVIEW TRANCHE — in progress, 10/20 roots done: 6 ok /
-4 findings (002_001, 003_001, 004_001=F22 scheduler crash, 009_001
-minor task-death key-poisoning). Pattern confirmed so far: findings
-concentrate in April-register prompts; the July precision prompts
-(007_004) read flawless — direct T2.6 evidence. Recurring uniformity
-nit: the manual-:cleanup/:sweep re-schedule side effect is documented
-in 001_001 only (003/006/010 silent).**
-(Method reminder — in-session deep reads, no detached job; docs/12
-§4.2 item 2, signed off 2026-07-16.) Tranche
+**Push of the tranche close-out (detached, log
+`logs/push_v8_20260717.log`).** The §4.2.2 spot-review tranche is
+COMPLETE — 20/20, 15 ok / 5 findings, full record in docs/15 and
+`logs/spot_review.jsonl`. F22 remains the one OPEN code-defect finding
+(item below); the four prompt-precision findings (002_001, 003_001,
+009_001 minor, 034_001 minor) plus the uniformity nits join the T2.6
+material. Next queue item: the T2.6 prompt-precision tool — but its
+scope now has three inputs waiting on Kamil (the 19-root sign-off
+queue, the tranche's prompt findings, and the improvement-round-#2
+boundary docs/12 §7.4), so the tool build should start AFTER Kamil's
+sign-off pass. Tranche
 list `logs/spot_review_tranche_20260717.txt` (20 seeds, deterministic:
 April-era ∩ audit-changed-harness-only ∩ 0 proven-defect promise tests
 — the machinery's blind spot — one per idea family, 58-candidate pool).
