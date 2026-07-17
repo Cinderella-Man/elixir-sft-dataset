@@ -13,33 +13,76 @@ Reference docs: `docs/14` (handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**T1.11 FULL RETRO-AUDIT — pid 3468644, log `logs/retro_audit_full.log`,
-ledger `logs/retro_audit.jsonl` (sha+gate keyed, fully resumable).**
-Idempotent relaunch:
-`scripts/run_detached.sh logs/retro_audit_full.log mix run scripts/retro_audit.exs`
-~300 of 326 roots to go; wall-clock is dominated by token windows (expect
-days, not hours). AFTER the run: follow the log's cascade instructions
-(resyncs + `audit_bugfix` on solution-changed families + remint invalidated
-pairs via `generate.exs <n>`), triage the `needs_triage` ledger rows (T2.6
-prompt material), commit per family batch.
+Nothing. (The T1.11 retro audit finished 2026-07-17 04:24 — 326/326 roots,
+4 clean / 228 changed / 94 needs_triage; run record in docs/15. `mix compile`
+in this tree is allowed again — no detached job is alive.)
 
-*(Only the retro audit is running. Standing constraint while it lives:
-NEVER `mix compile` in this tree — CPU work runs from the
-`../elixir-sft-dataset-t16` worktree.)*
+⚠️ Two live hazards until the cascade (item 1 below) lands:
+- The audit's output sits UNCOMMITTED on disk (228 harnesses + 40
+  solutions rewritten). No checkout/reset/stash/`git add -A` until the
+  per-family commits are done.
+- The nightly sweep's detached-job guard no longer suppresses it, and
+  children of the 228 changed roots have STALE EMBEDS until the resyncs
+  run — a sweep firing first would report false flakes. Run the resyncs
+  (cascade step 1) before the next nightly window.
 
 ---
 
 ## 📋 TODO (rules 7–10 apply: every finding = Task A fix data + Task B gate
 the generator; pilots before full runs; one solved item = one commit)
 
+### 1. T1.11 CASCADE — propagate the finished retro audit (top priority)
+
+Audit output on disk, uncommitted: 228 `test_harness.exs` + 40
+`solution.ex` rewritten. Ledger `logs/retro_audit.jsonl` (sha+gate keyed);
+the cascade instructions are verbatim at the tail of
+`logs/retro_audit_full.log`. In order:
+
+1. **Embed resyncs** (deterministic, no LLM):
+   `mix run scripts/resync_embeds.exs -- --wt-all --apply`
+   `mix run scripts/resync_bugfix_embeds.exs -- --apply`
+   `mix run scripts/resync_tfim_embeds.exs -- --apply`
+   `mix run scripts/resync_adapt_embeds.exs -- --apply`
+   then `elixir scripts/check_embeds.exs` and hand-fix any
+   `fix_child_gold` rows.
+2. **Bugfix-pair invalidation**: `scripts/audit_bugfix.exs` on the 40
+   solution-changed families (a redesigned gold invalidates its bugfix
+   pairs) — delete + remint invalidated pairs via `generate.exs <n>`
+   (LLM work: detached + ledgered, rule 1). Family list (reconciled
+   ledger↔git 2026-07-17):
+   `jq -r 'select(.outcome=="changed" and (.detail|contains("solution.ex")))|.task' logs/retro_audit.jsonl | sort -u`
+   → 001_003 010_004 012_002 013_002 014_001 014_004 016_002 016_003
+   017_002 019_002 023_001 023_003 031_002 033_001 033_002 033_003
+   033_004 035_001 035_003 035_004 037_004 040_001 040_002 040_003
+   041_001 044_001 062_004 073_001 077_001 077_002 077_003 095_001
+   095_004 097_001 099_001 107_001 109_002 624_002 625_003 626_004
+3. **Commit per family batch** — root + its resynced children + reminted
+   pairs together; explicit paths only.
+4. **Two stray dirs** minted in the audit's pre-restart first hour
+   (untracked, full triplets, no ledger row):
+   `tasks/repair_001_002_fixed_window_counter_01_audit_00/` and
+   `tasks/repair_001_003_hierarchical_limiter_01_audit_00/`. The
+   restarted audit minted no others — decide: verify + keep like any
+   repair pair, or delete.
+
+### 2. T1.11 TRIAGE — the 94 needs_triage roots (T2.6 prompt material)
+
+Roots the audit refused to auto-change (verified untouched on disk). List:
+`jq -r 'select(.outcome=="needs_triage")|.task' logs/retro_audit.jsonl | sort -u`
+minus 001_002 (resolved to changed after the restart). Shape: ~80 "grown
+harness not blind-solvable: <test>: <failure>" — the promise audit grew a
+test an independent solver can't pass from the prompt alone; each is
+either a prompt gap (T2.6 material), a bad grown test (drop), or a real
+hard-task keep — plus ~15 staging compile errors. Rule 7 applies to every
+class found here.
+
 ### 🔎 OPEN FINDINGS
 
 **T1.6 Task-A queue — 8 machine-proven spec lies (dialyzer gate,
 2026-07-16; Task B = the standing weekly-CI gate, so each item closes when
-its data fix lands). DEFERRED until the retro audit finishes: gold edits
-race its writes, and the bugfix-remint cascade costs LLM. Each fix: edit
-the spec → re-run the gate → full cascade (embeds resync + reminted bugfix
-pairs):**
+its data fix lands). Was deferred on the running retro audit — now
+UNBLOCKED; do after the cascade (queue below). Each fix: edit the spec →
+re-run the gate → full cascade (embeds resync + reminted bugfix pairs):**
 
 - **F20 — 015_001**: `@typep service` omits the `timer: reference()` field
   the 07-15 F12 repair added (runtime-safe, but the type lies; a spec lie
@@ -70,21 +113,21 @@ block their idea and surface here.
 **T1.4 sliver (d)**: record each seed's blind-screen outcome as difficulty
 metadata (ledger-side, tiny — fold into the export work).
 
-### ⏭️ QUEUED AFTER THE RETRO AUDIT (in order)
+### ⏭️ QUEUE ORDER (after items 1–2 above)
 
-1. The audit's cascade + `needs_triage` triage (see RUNNING).
-2. T1.6 Task-A queue (findings above) + one dialyzer re-pass
-   (audit-edited golds get fresh shas; relaunch:
+1. T1.6 Task-A queue (the 8 findings above) + one dialyzer re-pass —
+   audit-edited golds have fresh shas (40 solutions changed), so the
+   pass re-verifies them all; relaunch:
    `scripts/run_detached.sh logs/dialyzer_golds_full.log bash -c "cd
    /home/kamil/projects/elixir-sft-dataset-t16 && nice -n10 mix run
    scripts/dialyzer_golds.exs -- --tasks
    /home/kamil/projects/elixir-sft-dataset/tasks --ledger
-   /home/kamil/projects/elixir-sft-dataset/logs/dialyzer_golds.jsonl"`).
-3. §4.2.2 spot-review tranche: ~20 April-era seeds stratified against the
+   /home/kamil/projects/elixir-sft-dataset/logs/dialyzer_golds.jsonl"`.
+2. §4.2.2 spot-review tranche: ~20 April-era seeds stratified against the
    sweep ledger toward audit-clean roots (doubles as the T2.2 residue
    check; signed off 2026-07-16).
-4. T2.6 prompt-precision tool (same skeleton as retro_audit.exs) — never
-   concurrently with the sweep.
+3. T2.6 prompt-precision tool (same skeleton as retro_audit.exs; feed it
+   the 94 triage rows from item 2) — never concurrently with the sweep.
 
 ### 📦 DATA EXTENSION (docs/13 §2; after the above)
 

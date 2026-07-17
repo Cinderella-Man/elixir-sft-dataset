@@ -9,6 +9,24 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-17 — T1.11 FULL RETRO-AUDIT RUN COMPLETE: 326/326 roots
+  audited, summary 4 clean / 228 changed / 94 needs_triage.** Wall-clock
+  2026-07-15 18:34 → 2026-07-17 04:24 (~34 h, token-window dominated);
+  pid 3468644 exited cleanly after printing the summary + cascade
+  instructions (tail of `logs/retro_audit_full.log`). Discovery saw 332
+  roots: 5 bundle-skipped, 1 postgres-skipped, 326 audited. Ledger
+  `logs/retro_audit.jsonl` (sha+gate keyed) holds 329 rows — 3 duplicates
+  from a first-hour restart at 18:59 on 07-15 (001_001–001_003; latest
+  row wins; 001_002's early needs_triage resolved to changed). On-disk
+  output, all UNCOMMITTED at completion: 228 `test_harness.exs` + 40
+  `solution.ex` rewritten, 0 prompts; the 40 modified solution files
+  reconcile one-for-one with the ledger's solution-changed rows. The two
+  untracked `repair_001_00{2,3}_*_audit_00/` dirs date from the
+  pre-restart first hour. Only the RUN leaves STATUS: the embed-resync
+  cascade, audit_bugfix + remint over the 40 solution-changed families,
+  the 94-root needs_triage triage, the per-family commits, and the stray
+  repair-dir decision are queued in STATUS as the top item.
+
 - **2026-07-16 — T1.6 v1.2 definitive pass CONFIRMED: 317 clean / 8
   warnings / 1 waived / 0 errors — the 8 match the frozen Task-A queue
   one-for-one (015_001, 032_002, 044_004, 073_003, 077_004, 100_002,
