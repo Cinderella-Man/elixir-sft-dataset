@@ -13,15 +13,18 @@ Reference docs: `docs/14` (handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**Push of the T2.6-tool close-out (detached, log
-`logs/push_v13_20260717.log`).** The tool is BUILT and pilot-validated
-3/3 (docs/15). ONE decision now waits on Kamil: run
-`scripts/prompt_precision.exs` corpus-wide? Cost ~2 LLM calls/root over
-~300 roots (editor + blind verify); scope interacts with the round-2
-T2.6-proper boundary (docs/12 §7.4) — the tool raises PRECISION only
-and does not touch register diversity, so it can run before round #2
-or as its opening move. Idempotent relaunch (resumable):
+**T2.6 PRECISION FULL RUN — corpus-wide (Kamil's go 2026-07-17,
+launched; pid in the `.pid` sidecar). Log `logs/precision_full.log`;
+ledger `logs/prompt_precision.jsonl` (sha+gate keyed, resumable — the 3
+pilot roots skip automatically).** Idempotent relaunch:
 `scripts/run_detached.sh logs/precision_full.log mix run scripts/prompt_precision.exs`
+~326 roots x (1 editor + 1 blind-verify) LLM calls; expect hours-to-days
+riding token windows. Every write is blind-verified green BEFORE landing
+and appends its S6 row (freshness stays green throughout). AFTER the
+run: embed cascade (wt/bugfix/adapt resyncs + check), review
+needs_triage rejects in `logs/prompt_precision_candidates/`, commit in
+batches, push. The nightly sweep auto-skips while this lives. Never run
+another prompt-writing tool concurrently.
 
 ---
 
@@ -71,8 +74,7 @@ metadata (ledger-side, tiny — fold into the export work).
 
 ### ⏭️ QUEUE ORDER
 
-1. **T2.6 precision full run** — tool built + piloted (docs/15); awaiting
-   Kamil's go (see RUNNING note). Never concurrently with the sweep.
+1. **T2.6 precision full run** — RUNNING (see above).
 
 ### 📦 DATA EXTENSION (docs/13 §2; after the above)
 
