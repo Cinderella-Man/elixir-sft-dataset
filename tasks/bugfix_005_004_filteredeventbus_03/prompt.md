@@ -18,12 +18,12 @@ The filter is expressed as a small **match-spec**-like DSL that the bus can eval
 - `{:gt, path, value}` / `{:lt, path, value}` / `{:gte, path, value}` / `{:lte, path, value}` — numeric comparison; returns false if either side is non-numeric
 - `{:in, path, list}` — event value at `path` is a member of `list`
 - `{:exists, path}` — `path` resolves to a non-nil value
-- `{:any, [filter, filter, ...]}` — at least one of the sub-filters matches (OR)
-- `{:none, [filter, filter, ...]}` — none of the sub-filters match (NOT-OR, i.e. NAND of the disjunction)
+- `{:any, [clause, clause, ...]}` — at least one of the sub-clauses matches (OR). Each element is a single clause tuple from this list — a nested clause-*list* (a whole filter) is **not** a valid element.
+- `{:none, [clause, clause, ...]}` — none of the sub-clauses match (NOT-OR, i.e. NAND of the disjunction). Elements are single clause tuples, exactly as for `:any`.
 
 A `path` is a list of map keys or integer list indices, e.g. `[:user, :role]` navigates `event[:user][:role]` for a map or `event.user.role` for a struct via `Access`. A path that doesn't resolve returns `nil` (never raises) and fails all clauses except `{:eq, path, nil}` and `{:neq, path, non_nil}`.
 
-An entire subscription filter is a list of clauses, ALL of which must match (empty list = always match). This is different from `{:any, [...]}` which is OR within a nested group.
+An entire subscription filter is a list of clauses, ALL of which must match (empty list = always match). This is different from `{:any, [...]}` which is OR within a nested group of clauses.
 
 I need these functions in the public API:
 
@@ -37,7 +37,7 @@ I need these functions in the public API:
 
 - `FilteredEventBus.test_filter(filter, event)` — a pure utility function (no GenServer) that returns `true` or `false` for a given filter and event, useful for subscribers that want to replicate the same filter logic client-side. Returns `{:error, :invalid_filter}` if the filter fails structural validation.
 
-Filter validation at subscription time: recursively check that every clause matches one of the shapes above, that `path`s are lists of atoms/binaries/integers, and that `:any` / `:none` contain non-empty lists of valid sub-filters. Validation is structural only — it does NOT evaluate the filter; invalid path types raise no error, they just return `nil` during evaluation.
+Filter validation at subscription time: recursively check that every clause matches one of the shapes above, that `path`s are lists of atoms/binaries/integers, and that `:any` / `:none` contain non-empty lists of valid sub-clauses (bare clause tuples — a nested clause-list element makes the whole filter invalid). Validation is structural only — it does NOT evaluate the filter; invalid path types raise no error, they just return `nil` during evaluation.
 
 When a monitored subscriber dies (`:DOWN`), remove all its subscriptions across all topics.
 

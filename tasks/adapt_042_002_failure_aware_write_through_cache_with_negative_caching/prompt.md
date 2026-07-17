@@ -259,6 +259,6 @@ I need these functions in the public API:
 - `CacheLayer.invalidate(server, table, key)` which removes the entry (success *or* failure) for `{table, key}`. Returns `:ok`.
 - `CacheLayer.invalidate_all(server, table)` which removes **all** cached entries for the given `table`. Returns `:ok`.
 
-Each `table` is an atom mapping to a separate `:set`, `:public` ETS table owned by the GenServer, created lazily on first use. Success reads must be servable directly from ETS without a GenServer call; all writes, deletes, and negative-hit bookkeeping are serialised through the GenServer so `fallback_fn` runs at most once per miss even under concurrent access.
+Each `table` is an atom mapping to a separate `:set`, `:public` ETS table owned by the GenServer, created lazily on first use. Success reads must be servable directly from ETS without a GenServer call; all writes, deletes, and negative-hit bookkeeping are serialised through the GenServer so `fallback_fn` runs at most once per miss even under concurrent access. The table-name → ETS-tid registry that powers the no-round-trip read path lives in `:persistent_term`, keyed `{CacheLayer, server_pid, table_name}`, and `terminate/2` must erase every entry the server put there so no stale keys survive shutdown.
 
 Give me the complete module in a single file. Use only OTP and the standard library, no external dependencies.

@@ -237,7 +237,7 @@ I need this public API:
 
 - `DBCleaner.deletion_order(spec)` — a pure helper that takes a normalized spec map `%{table => [dependency, ...]}` and returns `{:ok, ordered_tables}` where each table precedes the tables it depends on (children first, parents last). Dependencies that reference tables not in the map are ignored for ordering. If the dependencies contain a cycle, return `{:error, {:cycle, remaining_tables}}`. The order must be deterministic (break ties by sorting names).
 
-- `DBCleaner.clean()` — called in `on_exit`. Compute the deletion order, then issue `DELETE FROM <table>` via `repo.query!(repo, sql, [])` for each table in that order. On a cycle, issue no queries and return `{:error, {:cycle, ...}}`. Safe no-op if `start/2` was never called.
+- `DBCleaner.clean()` — called in `on_exit`. Compute the deletion order, then issue `DELETE FROM <table>` via `repo.query!(repo, sql, [])` for each table in that order. On success return `:ok` (not the ordered table list). On a cycle, issue no queries and return `{:error, {:cycle, ...}}`. Safe no-op if `start/2` was never called.
 
 Keep it self-contained in one file (no dependencies beyond Ecto), store state in the process dictionary, and implement the topological sort yourself (e.g. Kahn's algorithm). Guard against SQL injection via the identifier allowlist.
 

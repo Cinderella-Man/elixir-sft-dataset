@@ -13,7 +13,7 @@ This is a variation on a sequential bulk endpoint: here each item is validated a
 
 **Store**
 - Back the module with a named `Agent` started via `ConcurrentCatalog.start_link/0` (registered under the module name).
-- Provide `ConcurrentCatalog.all/0`, `ConcurrentCatalog.count/0`, `ConcurrentCatalog.get/1` (by id), and `ConcurrentCatalog.peak/0` (the high-water mark of simultaneously-running item tasks — for verifying the concurrency bound).
+- Provide `ConcurrentCatalog.all/0`, `ConcurrentCatalog.count/0`, `ConcurrentCatalog.get/1` (by id), and `ConcurrentCatalog.peak/0` (the high-water mark of simultaneously-running item tasks — for verifying the concurrency bound). `get/1` returns the stored item map directly, or `nil` when no item with that id exists.
 - Each stored item is `%{id: integer, name: String.t(), price: integer}`.
 
 **Input shape**

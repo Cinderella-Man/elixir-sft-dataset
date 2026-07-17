@@ -325,7 +325,7 @@ Unlike an LRU cache (which evicts the entry that was accessed least recently), t
 
 ## Implementation requirements
 
-- Use two ETS tables owned by the GenServer: one that maps `key → {value, frequency, seq}` for O(1) lookups, and one ordered set whose key is the composite `{frequency, seq}` (mapping to the cache key) so the least-frequently-used entry — with a least-recently-used tie-break — is always at the front for O(log n) eviction.
+- Use two ETS tables owned by the GenServer: one that maps `key → {value, frequency, seq}` for O(1) lookups — each row stored literally as the two-element tuple `{key, {value, frequency, seq}}` (the triple nested, not flattened into the row), since callers may read rows directly — and one ordered set whose key is the composite `{frequency, seq}` (mapping to the cache key) so the least-frequently-used entry — with a least-recently-used tie-break — is always at the front for O(log n) eviction.
 - The two tables must stay consistent: for every key in the data table there is exactly one entry in the order table, keyed by that key's current `{frequency, seq}` — stale composite keys must be removed when an entry is touched, updated, or evicted.
 - All mutations (`put`, eviction, and the frequency bump on `get`) must go through the GenServer process to serialise writes; reads may read directly from ETS first. Because mutations are serialised through synchronous calls, concurrent callers observe a single well-defined interleaving.
 - A frequency bump requested for a key that has since vanished (e.g. it was evicted between the direct ETS read and the server call) must be a harmless no-op rather than a crash or a resurrected entry.
