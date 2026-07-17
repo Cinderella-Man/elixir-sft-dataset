@@ -40,8 +40,20 @@ results =
 
     buggy_path = Path.join(cfg.staging_dir, "accept_audit_buggy.ex")
     File.write!(buggy_path, buggy <> "\n")
-    {:ok, bad} = Evaluator.grade(stage, cfg, buggy_path)
-    {:ok, good} = Evaluator.grade(stage, cfg)
+
+    # A buggy module may hang or crash outright against a harness it was not
+    # minted for (e.g. after a parent redesign) — that is a verdict, not a
+    # reason to abort the sweep. Fold any non-ok grade into an empty result
+    # so every property below reads as failed for that side.
+    grade_or_empty = fn args ->
+      case apply(Evaluator, :grade, args) do
+        {:ok, g} -> g
+        err -> %{"grade_error" => inspect(err)}
+      end
+    end
+
+    bad = grade_or_empty.([stage, cfg, buggy_path])
+    good = grade_or_empty.([stage, cfg])
 
     reported_tests =
       ~r/^  \* (test .+)$/m
