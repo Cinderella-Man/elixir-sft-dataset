@@ -31,7 +31,7 @@ This is a variation on a sequential bulk endpoint: here each item is validated a
 - `opts[:max_concurrency]` (default `4`) — at most this many item tasks run at once.
 - `opts[:timeout_ms]` (default `1000`) — per-item time budget; an item exceeding it is killed.
 - Process items concurrently (use `Task.async_stream/3` with `ordered: true`, `on_timeout: :kill_task`, and the given `max_concurrency`/`timeout`) so that CPU/IO-bound insert work parallelizes, yet the returned results are in **original input order**, exactly one per item.
-- Each result carries the zero-based index: `{index, :ok, item}`, or `{index, :error, reason}` where `reason` is `{:validation, errors_map}`, `:insert_failed`, or `:timeout`.
+- Each result carries the zero-based index: `{index, :ok, item}`, or `{index, :error, reason}` where `reason` is `{:validation, errors_map}`, `:insert_failed`, or `:timeout`. The `errors_map` maps the offending field's **string** key exactly as in the input attrs to a list of error message strings — e.g. `%{"price" => ["must be a positive integer"]}`.
 - Return the plain list of results (no `{:ok, _}`/`{:error, _}` wrapper — every item is independent).
 
 The store must remain consistent under concurrent access (Agent serializes writes), the running-task high-water mark must never exceed `max_concurrency`, and timed-out or failed items must not be inserted. Use only Elixir/OTP standard library — no external dependencies.

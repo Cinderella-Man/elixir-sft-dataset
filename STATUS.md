@@ -13,17 +13,13 @@ Reference docs: `docs/14` (handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**Push of the tranche close-out (detached, log
-`logs/push_v8_20260717.log`).** The §4.2.2 spot-review tranche is
-COMPLETE — 20/20, 15 ok / 5 findings, full record in docs/15 and
-`logs/spot_review.jsonl`. F22 remains the one OPEN code-defect finding
-(item below); the four prompt-precision findings (002_001, 003_001,
-009_001 minor, 034_001 minor) plus the uniformity nits join the T2.6
-material. Next queue item: the T2.6 prompt-precision tool — but its
-scope now has three inputs waiting on Kamil (the 19-root sign-off
-queue, the tranche's prompt findings, and the improvement-round-#2
-boundary docs/12 §7.4), so the tool build should start AFTER Kamil's
-sign-off pass. Tranche
+**Push of the prompt-gap close-out (detached, log
+`logs/push_v10_20260717.log`).** The 19-root prompt-gap queue is
+RESOLVED (docs/15): 18 fixes applied across two layers, 3 rejections
+ledgered, all cascades + re-screens green. Next queue item: the T2.6
+prompt-precision tool — its inputs are now the judge+spot-review
+ledgers and the tranche findings; remaining Kamil inputs are only the
+F22 fix direction and the two stray repair dirs (items below). Tranche
 list `logs/spot_review_tranche_20260717.txt` (20 seeds, deterministic:
 April-era ∩ audit-changed-harness-only ∩ 0 proven-defect promise tests
 — the machinery's blind spot — one per idea family, 58-candidate pool).
@@ -42,30 +38,7 @@ the generator; pilots before full runs; one solved item = one commit)
 
 ### 🧑‍⚖️ WAITING ON KAMIL
 
-**1. Prompt-gap sign-off queue — 19 roots from the 07-17 judge sweep
-(prompt edits are never automatic; each applied edit cascades: sha-keyed
-re-screen + embed resyncs, docs/10 invariant #5).**
-`mix run scripts/triage_screen.exs -- --report` prints every root with
-its proposed one-sentence fix (ledger `logs/screen_triage.jsonl`).
-Review notes: (a) split the list by origin — roots also in
-`logs/rescreen_pending.txt` are re-screen reds whose NOT-entailed
-assertion lives in the SHIPPED harness (prompt↔harness inconsistency:
-fix prompt OR harness, higher priority), while audit-red roots' grown
-tests were already discarded (sentence = optional T2.6 improvement);
-(b) 031_001's 07-17 row has a sound not-entailed reason but a NULL
-proposed sentence (incomplete judge reply) — write it by hand;
-(c) some proposals read like implementation over-specification (e.g.
-037_002's verbatim word lists, 079_002's exact defstruct) — rejecting
-the grown test is a valid outcome there. The 83 keeps need no action
-(evidence rows recorded; they feed the quarantine-keep design and T2.6
-scoping). **(d) ADDED by the §4.2.2 spot-review (see
-`logs/spot_review.jsonl`): 002_001 — three prompt-precision defects
-incl. an unobservable-by-construction :half_open contract and a
-vestigial half_open_max_probes option (details in the ledger row);
-Task-B candidate template rule: "no documented option or state may be
-unobservable".**
-
-**2. Two stray repair dirs** minted in the audit's pre-restart first hour
+**Two stray repair dirs** minted in the audit's pre-restart first hour
 (untracked, full triplets, no ledger row):
 `tasks/repair_001_002_fixed_window_counter_01_audit_00/` and
 `tasks/repair_001_003_hierarchical_limiter_01_audit_00/`. Evidence

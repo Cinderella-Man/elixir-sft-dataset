@@ -9,6 +9,31 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-17 — PROMPT-GAP SIGN-OFF QUEUE RESOLVED (Kamil: "fix the 19"):
+  18 prompt fixes applied across two layers, 3 proposals REJECTED with
+  ledgered reasons, every edited root re-screened GREEN or judged an
+  entailed keep.** Every judge sentence was verified against the gold
+  before applying — that review CORRECTED three of them (019_003/019_004
+  error values are LISTS of strings, not bare strings; 079_002 counters
+  are a TUPLE, not a list; 110_004's first arg is the series only — the
+  helpers always call the default registration) and found 005_004's
+  prompt actively CONTRADICTING its gold (`:any`/`:none` elements are
+  bare clause tuples; 4 sentences realigned). 031_001's null proposal
+  hand-written (schema∩headers row maps). 080_002 got a latent GOLD fix
+  (MapSet.to_list is term-ordered only ≤32 entries → Enum.sort;
+  F18-precedent) + 3 pairs reminted and 6/6-verified. Rejections:
+  075_002 (sentence mandates a mechanism the gold lacks), 037_002
+  (implementation internals never pinned by the shipped harness),
+  037_003 (proposal contradicted gold AND the existing prompt).
+  Cascades all green: 16 wt + 54 bugfix + 9 tfim + 13 adapt + 6
+  module-FIM embeds resynced, check_embeds 1,322 clean / 0 drift.
+  Re-screen: 12/16 green first pass; 031_001 + 073_004 judged ENTAILED
+  keeps; 019_004 + 074_004 surfaced second-layer literals (errors_map
+  shape, "did not contain") — fixed and re-screened GREEN. Freshness
+  gate OK (fresh=317/legacy=6/via_strengthen=9). Ledgers:
+  `logs/screen_triage.jsonl` (incl. rejection rows),
+  `logs/gapfix_*.log`.
+
 - **2026-07-17 — §4.2.2 SPOT-REVIEW TRANCHE COMPLETE: 20/20 April-era
   blind-spot roots deep-read, 15 ok / 5 findings** (verdicts sha-keyed in
   `logs/spot_review.jsonl`; selection: audit-changed-harness-only ∩ 0
