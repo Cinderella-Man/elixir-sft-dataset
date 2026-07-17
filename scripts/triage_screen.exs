@@ -178,6 +178,23 @@ defmodule TriageScreen do
   defp screen_path(cfg), do: Path.join(cfg.logs_dir, @screen_ledger)
   defp triage_path(cfg), do: Path.join(cfg.logs_dir, @triage_ledger)
 
+  defp rows(path) do
+    case File.read(path) do
+      {:ok, content} ->
+        content
+        |> String.split("\n", trim: true)
+        |> Enum.flat_map(fn line ->
+          case Jason.decode(line) do
+            {:ok, e} -> [e]
+            _ -> []
+          end
+        end)
+
+      {:error, _} ->
+        []
+    end
+  end
+
   defp latest_entries(path) do
     case File.read(path) do
       {:ok, content} ->
@@ -225,17 +242,26 @@ defmodule TriageScreen do
     # re-screens green), so those entries are history, not work.
     screen = latest_entries(screen_path(cfg)) |> Map.new(&{&1["task"], &1})
 
+    # A human-review row with `resolution` (e.g. "rejected") closes the gap for
+    # that (task, prompt sha) even though the prompt was deliberately NOT
+    # edited — over-specified or gold-contradicting proposals end here.
+    resolutions =
+      rows(triage_path(cfg))
+      |> Enum.filter(&(&1["resolution"] != nil))
+      |> MapSet.new(&{&1["task"], &1["sha"]})
+
     {gaps, stale} =
       entries
       |> Enum.filter(&(&1["entailed"] == false))
       |> Enum.split_with(fn g ->
-        current_sha(g["task"]) == g["sha"] and get_in(screen, [g["task"], "green"]) != true
+        current_sha(g["task"]) == g["sha"] and get_in(screen, [g["task"], "green"]) != true and
+          not MapSet.member?(resolutions, {g["task"], g["sha"]})
       end)
 
     IO.puts("""
 
     === SCREEN TRIAGE SUMMARY (whole ledger) ===
-      triaged: #{length(entries)}   entailed/keep: #{length(keep)}   open prompt gaps: #{length(gaps)}   stale/resolved gaps: #{length(stale)}   errors: #{length(errors)}
+      triaged: #{length(entries)}   entailed/keep: #{length(keep)}   open prompt gaps: #{length(gaps)}   stale/resolved/rejected gaps: #{length(stale)}   errors: #{length(errors)}   review-resolutions: #{MapSet.size(resolutions)}
     """)
 
     if gaps != [] do
