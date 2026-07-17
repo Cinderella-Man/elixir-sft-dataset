@@ -13,14 +13,15 @@ Reference docs: `docs/14` (handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**T1.11 cascade step 2 of 5 — bugfix embed resync (launched 2026-07-17).
-Log `logs/resync_bugfix_full.log` (+ `.pid` sidecar with the pid).**
-Idempotent relaunch:
-`scripts/run_detached.sh logs/resync_bugfix_full.log mix run scripts/resync_bugfix_embeds.exs -- --apply`
-On exit: verify the diff touches only bugfix-pair dirs, spot-read a few,
-commit, then launch step 3 (tfim) — full step list in TODO item 1 below.
-One resync per commit. (Step 1 wt landed: 228/331 resynced, verified
-byte-identical to root golds, committed.)
+**T1.11 cascade step 3 of 5 — tfim embed resync over 3,269 tfim_ dirs
+(launched 2026-07-17). Log `logs/resync_tfim_full.log` (+ `.pid` sidecar
+with the pid).** Idempotent relaunch:
+`scripts/run_detached.sh logs/resync_tfim_full.log mix run scripts/resync_tfim_embeds.exs -- --apply`
+On exit: verify the diff touches only tfim_* dirs, spot-read a few,
+commit, then launch step 4 (adapt) — full step list in TODO item 1 below.
+(Step 1 wt: 228/331 resynced, committed 204e9fc9. Step 2 bugfix: verified
+no-op — 960/960 embeds unchanged, consistent since 0 root prompts
+changed; pair invalidation is audit_bugfix's job, cascade item 2.)
 
 ⚠️ Standing hazard until check_embeds (step 5) is green: children lag the
 audit-edited roots — a nightly sweep firing mid-cascade can report false
@@ -41,8 +42,8 @@ the cascade instructions are verbatim at the tail of
 1. **Embed resyncs** (deterministic, no LLM; one per commit, each via
    `scripts/run_detached.sh logs/<name>.log ...` + in-session monitor):
    - [x] step 1 wt — done, committed
-   - [~] step 2 bugfix: `mix run scripts/resync_bugfix_embeds.exs -- --apply` (RUNNING above)
-   - [ ] step 3 tfim: `mix run scripts/resync_tfim_embeds.exs -- --apply`
+   - [x] step 2 bugfix — verified no-op (960/960 unchanged)
+   - [~] step 3 tfim: `mix run scripts/resync_tfim_embeds.exs -- --apply` (RUNNING above)
    - [ ] step 4 adapt: `mix run scripts/resync_adapt_embeds.exs -- --apply`
    - [ ] step 5 check: `elixir scripts/check_embeds.exs`, hand-fix any
      `fix_child_gold` rows, commit; push only after this is green.
