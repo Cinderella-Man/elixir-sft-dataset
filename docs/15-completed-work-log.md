@@ -9,6 +9,20 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-17 — NEEDS-TRIAGE JUDGE SWEEP COMPLETE — both red queues in
+  one pass, no new tool.** Discovery: the standing `triage_screen.exs`
+  (docs/10 R12d) already covers the 94 audit needs_triage roots AND the
+  25 re-screen reds — every one is a latest-red screen row. Rule-9 pilot
+  3/3 verified in detail (2 concrete prompt gaps, 1 quote-grounded
+  keep); full sweep 42 more, 0 errors; ledger dedupe skipped pairs
+  triaged in earlier rounds. Whole-ledger totals: **121 triaged = 83
+  entailed keeps / 19 open prompt gaps / 19 stale-resolved**; proposed
+  sentences live in `logs/screen_triage.jsonl`
+  (`triage_screen.exs --report` prints them). One anomaly: 031_001's
+  07-17 row is not-entailed with a sound reason but a null proposed
+  sentence (incomplete judge reply) — write it at review. Gaps await
+  Kamil sign-off in STATUS (edits cascade, docs/10 invariant #5).
+
 - **2026-07-17 — T1.11 REMINT + VERIFICATION COMPLETE (cascade item 2
   closed).** 27/27 scoped idea backfills (`GEN_ONLY=backfill` per idea);
   117 fresh bugfix pairs ACCEPTED and re-verified **117/117 on all six

@@ -13,28 +13,11 @@ Reference docs: `docs/14` (handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**PUSH of the remint batch (detached, log `logs/push_v3_20260717.log`;
-a second push follows for the part-2 repair commit), then: the
-NEEDS-TRIAGE JUDGE SWEEP — no new tool needed.** Discovery 2026-07-17:
-the standing `scripts/triage_screen.exs` (docs/10 R12d) already covers
-BOTH triage queues in one pass — it judges every task whose LATEST
-screen row is RED, and (a) each of the 94 audit needs_triage cycles left
-exactly such a red row (the failed blind solve of its grown-and-discarded
-harness, failing assertion captured in the row), and (b) the 25
-re-screen reds are latest-red too. ~119 judge calls; ledger
-`logs/screen_triage.jsonl` keyed (task, prompt sha), skip-if-triaged,
-resumable. ENTAILED → hard-keep evidence; NOT entailed → judge proposes
-the one missing prompt sentence (human applies — never automatic; T2.6
-material). Rule 9 pilot DONE (3/3 verdicts reviewed in detail, all correctly
-grounded: 003_003 + 005_004 prompt gaps with concrete proposed
-sentences, 015_001 entailed keep with lifecycle-rule quotes). FULL
-SWEEP now RUNNING — idempotent relaunch:
-`scripts/run_detached.sh logs/triage_reds.log mix run scripts/triage_screen.exs`
-On exit: `mix run scripts/triage_screen.exs -- --report`, then rule 7
-on the classes — prompt gaps go to Kamil for sign-off (prompt edits
-cascade, docs/10 invariant #5; each applied edit → sha-keyed re-screen);
-keeps get their evidence rows and unblock T2.6 scoping. NOTE: no mix
-runs while the sweep lives.
+**Final push of the triage-sweep bookkeeping (detached, log
+`logs/push_v5_20260717.log`), then: T1.6 Task-A queue (the 8 spec
+lies) — next loop step.** The judge sweep is DONE (121 triaged: 83
+keeps / 19 open prompt gaps / 19 stale-resolved, 0 errors — docs/15);
+the T1.11 retro-audit arc is fully closed except the Kamil items below.
 
 **NEW TRIAGE QUEUE from the re-screen: 25 of 50 roots came back RED
 (quarantined, "prompt under-specified OR solver too weak"; rows in
@@ -89,6 +72,24 @@ hard-task keep — plus ~15 staging compile errors. Rule 7 applies to every
 class found here.
 
 ### 🔎 OPEN FINDINGS
+
+**Prompt-gap sign-off queue — 19 roots from the 07-17 judge sweep,
+KAMIL ONLY (prompt edits are never automatic; each applied edit
+cascades: sha-keyed re-screen + embed resyncs, docs/10 invariant #5).**
+`mix run scripts/triage_screen.exs -- --report` prints every root with
+its proposed one-sentence fix (ledger `logs/screen_triage.jsonl`).
+Review notes: (a) split the list by origin — roots also in
+`logs/rescreen_pending.txt` are re-screen reds whose NOT-entailed
+assertion lives in the SHIPPED harness (prompt↔harness inconsistency:
+fix prompt OR harness, higher priority), while audit-red roots' grown
+tests were already discarded (sentence = optional T2.6 improvement);
+(b) 031_001's 07-17 row has a sound not-entailed reason but a NULL
+proposed sentence (incomplete judge reply) — write it by hand;
+(c) some proposals read like implementation over-specification (e.g.
+037_002's verbatim word lists, 079_002's exact defstruct) — rejecting
+the grown test is a valid outcome there. The 83 keeps need no action
+(evidence rows recorded; they feed the quarantine-keep design and T2.6
+scoping).
 
 **T1.6 Task-A queue — 8 machine-proven spec lies (dialyzer gate,
 2026-07-16; Task B = the standing weekly-CI gate, so each item closes when
