@@ -25,11 +25,16 @@ re-screen reds are latest-red too. ~119 judge calls; ledger
 `logs/screen_triage.jsonl` keyed (task, prompt sha), skip-if-triaged,
 resumable. ENTAILED → hard-keep evidence; NOT entailed → judge proposes
 the one missing prompt sentence (human applies — never automatic; T2.6
-material). Rule 9 pilot first: `--limit 3`, read the verdict rows in
-detail, then full detached run:
+material). Rule 9 pilot DONE (3/3 verdicts reviewed in detail, all correctly
+grounded: 003_003 + 005_004 prompt gaps with concrete proposed
+sentences, 015_001 entailed keep with lifecycle-rule quotes). FULL
+SWEEP now RUNNING — idempotent relaunch:
 `scripts/run_detached.sh logs/triage_reds.log mix run scripts/triage_screen.exs`
-Rule 7 on the verdict classes when they land. NOTE: no mix runs while
-the push hook or the sweep lives.
+On exit: `mix run scripts/triage_screen.exs -- --report`, then rule 7
+on the classes — prompt gaps go to Kamil for sign-off (prompt edits
+cascade, docs/10 invariant #5; each applied edit → sha-keyed re-screen);
+keeps get their evidence rows and unblock T2.6 scoping. NOTE: no mix
+runs while the sweep lives.
 
 **NEW TRIAGE QUEUE from the re-screen: 25 of 50 roots came back RED
 (quarantined, "prompt under-specified OR solver too weak"; rows in
