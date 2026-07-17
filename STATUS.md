@@ -13,14 +13,23 @@ Reference docs: `docs/14` (handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-Nothing (between cascade steps). Verdict landed: ALL 116 bugfix pairs of
-the 40 solution-changed families are invalidated — 116/116 pair golds
-byte-differ from their redesigned parents (structural proof), 16/16
-evaluator verdicts agree (`FAIL [:gold_is_parent, :one_line_bug]`,
-`logs/audit_bugfix_full.log`; sweep crashed at pair 17 on
-:timeout_or_crash — tool fixed, 0bfa8476). Next: git rm the 116 pairs
-(list `logs/bugfix_pairs_to_audit_20260717.txt`), commit, PUSH (unblocks
-the pre-push gate), then launch the remint (LLM, detached).
+**T1.11 push-unblock — blind re-screen of the 50 genuinely stale roots
+(launched 2026-07-17; LLM, rides token windows — expect hours). Log
+`logs/rescreen_stale.log` (+ `.pid` sidecar); evidence rows append to
+`logs/screen_blind.jsonl`.** Idempotent relaunch (re-derives the
+REMAINING stale list from the freshness gate at each start, so it never
+redoes finished roots):
+`scripts/run_detached.sh logs/rescreen_stale.log bash -c 'mix run scripts/check_screen_freshness.exs > logs/rescreen_gate_pass.txt 2>&1 || true; grep -oP "^\\s*STALE\\s+\\K\\S+" logs/rescreen_gate_pass.txt | sort > logs/rescreen_pending.txt; while read -r r; do mix run scripts/screen_blind_solve.exs -- --only "$r" --rescreen || echo "SCREEN FAILED: $r"; done < logs/rescreen_pending.txt; mix run scripts/check_screen_freshness.exs'`
+On exit: gate output at the log tail must read stale=0 → PUSH (5 local
+commits waiting: ca76a06c..be05b82a range), triage any new reds, then
+launch the bugfix remint. Context: the failed push surfaced 78 "stale"
+blind verdicts; 28 were FALSE — the audit's in-cycle candidate screens
+(needs_triage cycles whose grown harness was discarded) masked the valid
+disk-pair rows under the gate's latest-row-per-prompt keying. Gate now
+keys by (prompt, harness) pair; self-test bites; 332 roots re-read
+fresh=260 / legacy=6 / via_strengthen=16 / stale=50 / unscreened=0. The
+50 are pre-existing screen-coverage debt (harnesses last edited ~07-09
+R10 without re-screen), not audit output.
 
 **Flag for Kamil:** `tasks/077_002_deletable_interval_tree_02` was
 DELETED (git rm, recoverable): its blanked fn `rebalance` no longer

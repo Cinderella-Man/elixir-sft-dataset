@@ -8,8 +8,10 @@
 # re-screen. This gate makes that knowledge structural.
 #
 # A root's blind evidence is FRESH when any of these holds:
-#   1. its latest screen row (for the CURRENT prompt sha) records
-#      `harness_sha` equal to the harness on disk (rows since 2026-07-13);
+#   1. ANY screen row for the CURRENT prompt sha records `harness_sha` equal
+#      to the harness on disk (rows since 2026-07-13) — evidence is keyed to
+#      the (prompt, harness) pair, and later rows for candidate harnesses
+#      that never landed must not mask it;
 #   2. `logs/strengthen_harnesses.jsonl` has a SUCCESS row whose
 #      `harness_sha_after` equals the harness on disk — the strengthener's
 #      blind gate ran a prompt-only solve against exactly that harness;
@@ -90,7 +92,8 @@ defmodule CheckScreenFreshness do
 
           #{length(stale)} root(s) carry blind verdicts for an OLDER harness. Re-screen:
             mix run scripts/screen_blind_solve.exs --only "<name>" --rescreen
-          Never delete the old rows — append-only; the latest row wins.
+          Never delete the old rows — append-only; within a (prompt, harness)
+          pair the latest row wins.
           """)
         end
 
@@ -108,27 +111,29 @@ defmodule CheckScreenFreshness do
   end
 
   defp verdict(root, screen, strengthened) do
-    case Map.get(screen, root.prompt_sha) do
-      nil ->
+    case Map.get(screen, root.prompt_sha, []) do
+      [] ->
         {:unscreened, nil}
 
-      row ->
+      rows ->
+        latest = List.last(rows)
+
         cond do
-          row["harness_sha"] == root.harness_sha ->
+          Enum.any?(rows, &(&1["harness_sha"] == root.harness_sha)) ->
             {:fresh, nil}
 
           MapSet.member?(strengthened, root.harness_sha) ->
             {:fresh_via_strengthen, nil}
 
-          is_binary(row["harness_sha"]) ->
-            {:stale, "screened against harness #{String.slice(row["harness_sha"], 0, 8)}, " <>
+          is_binary(latest["harness_sha"]) ->
+            {:stale, "screened against harness #{String.slice(latest["harness_sha"], 0, 8)}, " <>
                "disk has #{String.slice(root.harness_sha, 0, 8)}"}
 
-          harness_commit_iso(root.dir) <= row["ts"] ->
+          harness_commit_iso(root.dir) <= latest["ts"] ->
             {:fresh_legacy, nil}
 
           true ->
-            {:stale, "legacy row #{String.slice(row["ts"] || "", 0, 19)} predates the " <>
+            {:stale, "legacy row #{String.slice(latest["ts"] || "", 0, 19)} predates the " <>
                "harness commit #{String.slice(harness_commit_iso(root.dir), 0, 19)}"}
         end
     end
@@ -154,13 +159,17 @@ defmodule CheckScreenFreshness do
 
   defp file_sha!(dir, name), do: CycleLog.content_sha(File.read!(Path.join(dir, name)))
 
-  # Last row per prompt sha wins (append-only ledger, re-screens overwrite).
+  # ALL rows per prompt sha, in ledger (chronological) order. Blind
+  # solvability is a property of the (prompt, harness) PAIR, so ANY row
+  # recording the disk harness sha is evidence for what is on disk — a later
+  # row for a candidate harness that never landed (an audit/loop cycle that
+  # ended needs_triage and discarded its grown harness) must not mask it
+  # (78 false STALEs at the 2026-07-17 post-retro-audit push). The latest
+  # row is still what stale/legacy reporting reads.
   defp screen_by_prompt_sha do
     rows(@screen)
-    |> Enum.reduce(%{}, fn
-      %{"sha" => sha} = row, acc -> Map.put(acc, sha, row)
-      _, acc -> acc
-    end)
+    |> Enum.filter(&is_binary(&1["sha"]))
+    |> Enum.group_by(& &1["sha"])
   end
 
   # Both harness-editing tools run the same blind gate (one prompt-only solve
