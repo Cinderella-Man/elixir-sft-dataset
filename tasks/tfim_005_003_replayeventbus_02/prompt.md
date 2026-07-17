@@ -667,5 +667,34 @@ defmodule ReplayEventBusTest do
     assert :ok = ReplayEventBus.publish(bus, "t", :fresh)
     assert [:fresh] = ReplayEventBus.history(bus, "t")
   end
+
+  test "history/2 returns [] for a topic never published or subscribed", %{bus: bus} do
+    assert [] = ReplayEventBus.history(bus, "never.seen.topic")
+  end
+
+  test "history_ttl_ms defaults to 3_600_000 ms when the option is omitted" do
+    {:ok, bus} =
+      ReplayEventBus.start_link(
+        clock: &Clock.now/0,
+        default_history_size: 10,
+        cleanup_interval_ms: :infinity
+      )
+
+    ReplayEventBus.publish(bus, "t", :e)
+
+    # Aged exactly the default TTL: retained (only strictly older is dropped).
+    Clock.advance(3_600_000)
+    assert [:e] = ReplayEventBus.history(bus, "t")
+
+    # One ms past the default TTL: dropped lazily on the next read.
+    Clock.advance(1)
+    assert [] = ReplayEventBus.history(bus, "t")
+  end
+
+  test "set_history_size/3 rejects a negative size via its guard", %{bus: bus} do
+    assert_raise FunctionClauseError, fn ->
+      ReplayEventBus.set_history_size(bus, "t", -1)
+    end
+  end
 end
 ```

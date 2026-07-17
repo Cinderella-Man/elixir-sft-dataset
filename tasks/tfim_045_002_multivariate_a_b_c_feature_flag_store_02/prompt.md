@@ -316,5 +316,79 @@ defmodule FeatureFlagsTest do
   defp unique_name(prefix) do
     String.to_atom("#{prefix}_#{System.pid()}_#{System.unique_integer([:positive])}")
   end
+
+  test "set_variants rejects weights summing above 100 and empty variant lists" do
+    assert_raise ArgumentError, fn ->
+      FeatureFlags.set_variants(:over, [{:a, 60}, {:b, 50}])
+    end
+
+    assert_raise ArgumentError, fn ->
+      FeatureFlags.set_variants(:empty, [])
+    end
+
+    assert FeatureFlags.variant_for(:over, "u1") == :off
+    assert FeatureFlags.variant_for(:empty, "u1") == :off
+    refute FeatureFlags.enabled_for?(:over, "u1")
+  end
+
+  test "bucket exactly equal to the first cumulative bound belongs to the next variant" do
+    FeatureFlags.set_variants(:bound, [{:a, 50}, {:b, 50}])
+
+    at_50 =
+      Enum.find(1..50_000, fn i ->
+        :erlang.phash2({:bound, "user:#{i}"}, 100) == 50
+      end)
+
+    at_49 =
+      Enum.find(1..50_000, fn i ->
+        :erlang.phash2({:bound, "user:#{i}"}, 100) == 49
+      end)
+
+    assert is_integer(at_50)
+    assert is_integer(at_49)
+    assert FeatureFlags.variant_for(:bound, "user:#{at_50}") == :b
+    assert FeatureFlags.variant_for(:bound, "user:#{at_49}") == :a
+  end
+
+  test "leading zero-weight variant owns no bucket, not even bucket 0" do
+    FeatureFlags.set_variants(:zfirst, [{:z, 0}, {:a, 100}])
+
+    at_0 =
+      Enum.find(1..50_000, fn i ->
+        :erlang.phash2({:zfirst, "user:#{i}"}, 100) == 0
+      end)
+
+    assert is_integer(at_0)
+    assert FeatureFlags.variant_for(:zfirst, "user:#{at_0}") == :a
+
+    assignments = for i <- 1..500, do: FeatureFlags.variant_for(:zfirst, "user:#{i}")
+    refute Enum.any?(assignments, &(&1 == :z))
+  end
+
+  test "enable and disable replace an existing multivariate configuration" do
+    FeatureFlags.set_variants(:swap, [{:a, 100}])
+    assert FeatureFlags.variant_for(:swap, "u1") == :a
+
+    FeatureFlags.enable(:swap)
+    assert FeatureFlags.enabled?(:swap)
+    assert FeatureFlags.variant_for(:swap, "u1") == :on
+
+    FeatureFlags.disable(:swap)
+    refute FeatureFlags.enabled?(:swap)
+    assert FeatureFlags.variant_for(:swap, "u1") == :off
+    refute FeatureFlags.enabled_for?(:swap, "u1")
+
+    FeatureFlags.set_variants(:swap, [{:b, 100}])
+    refute FeatureFlags.enabled?(:swap)
+    assert FeatureFlags.variant_for(:swap, "u1") == :b
+  end
+
+  test "set_variants rejects a negative weight even when the weights total 100" do
+    assert_raise ArgumentError, fn ->
+      FeatureFlags.set_variants(:neg, [{:a, -10}, {:b, 110}])
+    end
+
+    assert FeatureFlags.variant_for(:neg, "u1") == :off
+  end
 end
 ```

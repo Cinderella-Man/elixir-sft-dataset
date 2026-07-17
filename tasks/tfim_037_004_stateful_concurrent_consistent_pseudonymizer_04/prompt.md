@@ -78,7 +78,7 @@ defmodule Anonymizer do
   end
 
   defp resolve(pid, field, value, {:pseudonym, prefix}) do
-    GenServer.call(pid, {:pseudonym, field, to_string(value), prefix})
+    GenServer.call(pid, {:pseudonym, field, value, prefix})
   end
 
   # --- GenServer callbacks ----------------------------------------------------
@@ -185,6 +185,54 @@ defmodule AnonymizerTest do
 
     [r2] = Anonymizer.anonymize(pid, [%{email: "a@x.com"}])
     assert Map.has_key?(r2, :email)
+  end
+
+  test "distinct non-string and string values are not conflated into one pseudonym", %{pid: pid} do
+    [r1, r2, r3] = Anonymizer.anonymize(pid, [%{name: 42}, %{name: "42"}, %{name: 42}])
+    assert r1.name == r3.name
+    refute r1.name == r2.name
+    assert map_size(Anonymizer.mapping(pid, :name)) == 2
+  end
+
+  test "mapping/2 keys are the original values, not stringified copies", %{pid: pid} do
+    Anonymizer.anonymize(pid, [%{name: 42}])
+    mapping = Anonymizer.mapping(pid, :name)
+    assert Map.has_key?(mapping, 42)
+    assert mapping[42] =~ ~r/^PERSON_\d+$/
+  end
+
+  test "each pseudonymized field numbers independently with its own prefix" do
+    {:ok, pid} = Anonymizer.start_link(%{name: {:pseudonym, "PERSON"}, org: {:pseudonym, "ORG"}})
+    [r] = Anonymizer.anonymize(pid, [%{name: "Acme", org: "Acme"}])
+    assert r.name == "PERSON_1"
+    assert r.org == "ORG_1"
+    assert Anonymizer.mapping(pid, :name) == %{"Acme" => "PERSON_1"}
+    assert Anonymizer.mapping(pid, :org) == %{"Acme" => "ORG_1"}
+  end
+
+  test "records missing rule fields do not gain those keys", %{pid: pid} do
+    [r] = Anonymizer.anonymize(pid, [%{role: "admin"}])
+    assert r == %{role: "admin"}
+    refute Map.has_key?(r, :name)
+    refute Map.has_key?(r, :email)
+    refute Map.has_key?(r, :ssn)
+  end
+
+  test "mapping/2 accumulates entries across separate anonymize calls", %{pid: pid} do
+    Anonymizer.anonymize(pid, [%{name: "Alice"}])
+    Anonymizer.anonymize(pid, [%{name: "Bob"}, %{name: "Alice"}])
+    mapping = Anonymizer.mapping(pid, :name)
+    assert map_size(mapping) == 2
+    assert Map.has_key?(mapping, "Alice")
+    assert Map.has_key?(mapping, "Bob")
+    assert length(Enum.uniq(Map.values(mapping))) == 2
+  end
+
+  test "start_link/1 returns {:ok, pid} for a rules map" do
+    assert {:ok, pid} = Anonymizer.start_link(%{name: {:pseudonym, "P"}})
+    assert is_pid(pid)
+    assert Process.alive?(pid)
+    assert Anonymizer.mapping(pid, :name) == %{}
   end
 end
 ```

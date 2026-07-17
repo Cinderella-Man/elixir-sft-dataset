@@ -329,5 +329,64 @@ defmodule Catalog.RankedTest do
     assert item.score == 8
     assert item.price == "89.99"
   end
+
+  test "punctuated, capitalized query tokenizes into bare alphanumeric tokens" do
+    assert {:ok, %{data: data}} = Ranked.search(products(), %{"q" => "Running, shoes!"})
+
+    # tokens ["running", "shoes"]
+    # p1: name running(3)+shoes(3)=6, desc running(1)+shoes(1)=2 -> 8
+    # p2: name 0, desc running(1) only ("shoe" does not start with "shoes") -> 1
+    assert ids(data) == [1, 2]
+    assert Enum.map(data, & &1.score) == [8, 1]
+  end
+
+  test "a single query token accumulates once per matching document token" do
+    assert {:ok, %{data: data}} = Ranked.search(products(), %{"q" => "r"})
+
+    # p2: name runner(3) + desc running(1)+rugged(1) = 5
+    # p4: name rest(3) + desc rest(1) = 4
+    # p1: name running(3) + desc running(1) = 4  -> tie with p4, name asc
+    assert ids(data) == [2, 4, 1]
+    assert Enum.map(data, & &1.score) == [5, 4, 4]
+  end
+
+  test "unparseable and blank price bounds are ignored rather than excluding products" do
+    assert {:ok, %{data: data}} =
+             Ranked.search(products(), %{"min_price" => "abc", "max_price" => "   "})
+
+    assert Enum.sort(ids(data)) == [1, 2, 3, 4, 5]
+
+    assert {:ok, %{data: partial}} =
+             Ranked.search(products(), %{"min_price" => "2999abc", "max_price" => ""})
+
+    assert Enum.sort(ids(partial)) == [1, 2, 3, 4, 5]
+  end
+
+  test "price sort defaults to ascending and breaks equal prices by id ascending" do
+    assert {:ok, %{data: data}} = Ranked.search(products(), %{"sort" => "price"})
+
+    # 1500(4), 2999(3), 2999(5) -> tie by id asc, 8999(1), 12999(2)
+    assert ids(data) == [4, 3, 5, 1, 2]
+  end
+
+  test "explicit name sort with desc order reverses alphabetical ordering" do
+    assert {:ok, %{data: data}} =
+             Ranked.search(products(), %{"sort" => "name", "order" => "desc"})
+
+    assert ids(data) == [5, 3, 2, 1, 4]
+  end
+
+  test "equal relevance scores with identical names fall back to id ascending" do
+    catalog = [
+      %{id: 7, name: "Alpha Kit", description: "kit", category: "c", price_cents: 100},
+      %{id: 3, name: "Alpha Kit", description: "kit", category: "c", price_cents: 200},
+      %{id: 9, name: "Alpha Box", description: "kit", category: "c", price_cents: 300}
+    ]
+
+    assert {:ok, %{data: data}} = Ranked.search(catalog, %{"q" => "alpha"})
+
+    assert Enum.map(data, & &1.score) == [3, 3, 3]
+    assert ids(data) == [9, 3, 7]
+  end
 end
 ```

@@ -654,5 +654,59 @@ defmodule CapabilityTokenTest do
     assert {:ok, %{caveats: caveats}} = CapabilityToken.inspect_token(token)
     assert length(caveats) == 25
   end
+
+  test "expires_at accepts a negative value and rejects a value with trailing garbage" do
+    negative = attenuate!(CapabilityToken.mint(@root, "u"), "expires_at = -5")
+
+    assert :ok = CapabilityToken.authorize(negative, @root, %{now: -6})
+
+    assert {:error, {:caveat_failed, "expires_at = -5"}} =
+             CapabilityToken.authorize(negative, @root, %{now: -5})
+
+    trailing = attenuate!(CapabilityToken.mint(@root, "u"), "expires_at = 100abc")
+
+    assert {:error, {:caveat_failed, "expires_at = 100abc"}} =
+             CapabilityToken.authorize(trailing, @root, %{now: 1})
+  end
+
+  test "expires_at fails closed when :now is present but not an integer" do
+    token = attenuate!(CapabilityToken.mint(@root, "u"), "expires_at = 100")
+
+    assert {:error, {:caveat_failed, "expires_at = 100"}} =
+             CapabilityToken.authorize(token, @root, %{now: 99.0})
+
+    assert {:error, {:caveat_failed, "expires_at = 100"}} =
+             CapabilityToken.authorize(token, @root, %{now: "99"})
+
+    assert {:error, {:caveat_failed, "expires_at = 100"}} =
+             CapabilityToken.authorize(token, @root, %{now: nil})
+  end
+
+  test "a non-binary root key yields malformed" do
+    token = attenuate!(CapabilityToken.mint(@root, "u"), "action = read")
+
+    assert {:error, :malformed} = CapabilityToken.authorize(token, :not_a_key, %{action: "read"})
+    assert {:error, :malformed} = CapabilityToken.authorize(token, 123, %{action: "read"})
+    assert {:error, :malformed} = CapabilityToken.authorize(token, nil, %{action: "read"})
+  end
+
+  test "resource_prefix fails closed when :resource is present but not a binary" do
+    token = attenuate!(CapabilityToken.mint(@root, "u"), "resource_prefix = /docs/")
+
+    assert {:error, {:caveat_failed, "resource_prefix = /docs/"}} =
+             CapabilityToken.authorize(token, @root, %{resource: :"/docs/x"})
+
+    assert {:error, {:caveat_failed, "resource_prefix = /docs/"}} =
+             CapabilityToken.authorize(token, @root, %{resource: 42})
+
+    assert {:error, {:caveat_failed, "resource_prefix = /docs/"}} =
+             CapabilityToken.authorize(token, @root, %{resource: ["/docs/", "x"]})
+  end
+
+  test "attenuate rejects a non-binary token" do
+    assert {:error, :malformed} = CapabilityToken.attenuate(:not_a_token, "action = read")
+    assert {:error, :malformed} = CapabilityToken.attenuate(nil, "action = read")
+    assert {:error, :malformed} = CapabilityToken.attenuate(42, "action = read")
+  end
 end
 ```

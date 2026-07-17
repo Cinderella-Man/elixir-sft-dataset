@@ -18,8 +18,10 @@ defmodule Aggregator do
     * `:interval_ms` milliseconds elapse since the last flush (or since
       start) while there are buffered events.
 
-  Events are always delivered to the `:on_flush` callback as a list, in the
-  exact order they were pushed.
+  The interval is anchored on the most recent flush (or on start, if no
+  flush has happened yet) — not on the moment an event is pushed. Events
+  are always delivered to the `:on_flush` callback as a list, in the exact
+  order they were pushed.
   """
 
   use GenServer
@@ -78,15 +80,14 @@ defmodule Aggregator do
       timer_ref: nil
     }
 
-    {:ok, state}
+    # The interval clock runs from start, independently of when events are
+    # pushed, and is restarted on every flush.
+    {:ok, start_timer(state)}
   end
 
   @impl true
   def handle_cast({:push, event}, state) do
-    state =
-      state
-      |> add_event(event)
-      |> ensure_timer()
+    state = add_event(state, event)
 
     state =
       if state.count >= state.batch_size do
@@ -107,7 +108,9 @@ defmodule Aggregator do
       if state.count > 0 do
         flush(state)
       else
-        clear_timer(state)
+        # Nothing buffered: never call the callback, just wait another
+        # interval.
+        start_timer(state)
       end
 
     {:noreply, state}
@@ -127,13 +130,8 @@ defmodule Aggregator do
     %{state | buffer: [event | state.buffer], count: state.count + 1}
   end
 
-  # Start the interval timer only when the buffer transitions from empty to
-  # non-empty. While buffered events remain, the timer keeps running until a
-  # flush resets it.
-  defp ensure_timer(%{timer: nil} = state), do: start_timer(state)
-  defp ensure_timer(state), do: state
-
   defp start_timer(state) do
+    state = clear_timer(state)
     ref = make_ref()
     timer = Process.send_after(self(), {:flush, ref}, state.interval_ms)
     %{state | timer: timer, timer_ref: ref}
@@ -147,8 +145,8 @@ defmodule Aggregator do
   end
 
   # Deliver the buffered events (in push order) to the callback, then reset
-  # the buffer and the interval timer. After a flush the buffer is empty, so
-  # the timer is left cleared and will be restarted on the next push.
+  # the buffer and restart the interval timer, so the next time-based flush
+  # is due a full interval after this one.
   defp flush(%{count: 0} = state), do: state
 
   defp flush(state) do
@@ -156,8 +154,8 @@ defmodule Aggregator do
     state.on_flush.(batch)
 
     state
-    |> clear_timer()
     |> Map.merge(%{buffer: [], count: 0})
+    |> start_timer()
   end
 end
 ```
@@ -348,6 +346,48 @@ defmodule AggregatorTest do
     Aggregator.push(name, :b)
 
     assert_receive {:flushed, [:a, :b]}, 500
+  end
+
+  test "time-based flush is due a full interval after the flush, even if the event is pushed late" do
+    # Interval 400ms, batch size 2 so we can force a size flush at t ~= 0.
+    agg = start_agg(batch_size: 2, interval_ms: 400)
+
+    Aggregator.push(agg, :a)
+    Aggregator.push(agg, :b)
+    assert_receive {:flushed, [:a, :b]}, 500
+
+    # The most recent flush happened at t ~= 0, so the next time-based flush is
+    # due at t ~= 400 — regardless of when the event that fills the buffer
+    # arrives. Push :c at t ~= 250, i.e. only ~150ms before that deadline.
+    Process.sleep(250)
+    Aggregator.push(agg, :c)
+
+    # Anchored on the flush (as promised), [:c] flushes ~150ms from now.
+    # Anchored on the push instead, it would take a further ~400ms.
+    assert_receive {:flushed, [:c]}, 280
+  end
+
+  test "time-based flush is due a full interval after start when the first event arrives late" do
+    # Batch size high enough that only the time trigger can fire.
+    agg = start_agg(batch_size: 5, interval_ms: 400)
+
+    # No flush has happened yet, so the interval is measured from start:
+    # the deadline is t ~= 400. Buffer an event at t ~= 250.
+    Process.sleep(250)
+    Aggregator.push(agg, :a)
+
+    # Measured from start (as promised), [:a] flushes ~150ms from now.
+    # Measured from the push instead, it would take a further ~400ms.
+    assert_receive {:flushed, [:a]}, 280
+  end
+
+  test "push returns :ok for both a pid and a registered name" do
+    name = :"aggregator_push_ret_#{System.unique_integer([:positive])}"
+
+    pid = start_agg(name: name, batch_size: 5, interval_ms: 5_000)
+
+    assert Aggregator.push(pid, :a) == :ok
+    assert Aggregator.push(name, :b) == :ok
   end
 end
 ```

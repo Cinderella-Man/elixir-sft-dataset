@@ -109,10 +109,12 @@ defmodule QuotaTracker do
   @doc """
   Returns `{:ok, remaining}` — the remaining quota for `key` within `window_ms`.
 
-  Read-only: does not record any usage but evicts expired entries.
+  `remaining` is `quota - total_usage_in_window` and is not clamped; it may be
+  negative when usage exceeds the quota. Read-only: does not record any usage
+  but evicts expired entries.
   """
-  @spec remaining(server(), key(), non_neg_integer(), non_neg_integer()) ::
-          {:ok, non_neg_integer()}
+  @spec remaining(server(), key(), integer(), non_neg_integer()) ::
+          {:ok, integer()}
   def remaining(server, key, quota, window_ms) do
     GenServer.call(server, {:remaining, key, quota, window_ms})
   end
@@ -219,7 +221,7 @@ defmodule QuotaTracker do
         Map.put(state.entries, key, retained_entries)
       end
 
-    remaining = max(quota - current_usage, 0)
+    remaining = quota - current_usage
     {:reply, {:ok, remaining}, %{state | entries: new_entries}}
   end
 
@@ -545,6 +547,65 @@ defmodule QuotaTrackerTest do
   test "record with amount 0 succeeds without affecting quota", %{tracker: t} do
     assert {:ok, 10} = QuotaTracker.record(t, :api, 0, 10, 1_000)
     assert {:ok, 0} = QuotaTracker.usage(t, :api, 1_000)
+  end
+
+  test "keys lists a key whose entries have all aged past the query window",
+       %{tracker: t} do
+    {:ok, _} = QuotaTracker.record(t, :api, 5, 10, 1_000)
+
+    Clock.advance(5_000)
+
+    # The entry is far outside its 1_000ms query window (so usage reads 0) yet
+    # still within max_window_ms (10_000), so keys/1 must still list the key.
+    assert {:ok, 0} = QuotaTracker.usage(t, :api, 1_000)
+    assert QuotaTracker.keys(t) == [:api]
+  end
+
+  test "remaining reports negative headroom when usage exceeds the quota",
+       %{tracker: t} do
+    {:ok, _} = QuotaTracker.record(t, :api, 8, 10, 1_000)
+
+    # 8 units are counted in the window; against a quota of 5 the promised
+    # value is 5 - 8 = -3 (the formula is stated with no clamping).
+    assert {:ok, -3} = QuotaTracker.remaining(t, :api, 5, 1_000)
+  end
+
+  test "default max_window_ms evicts entries after one hour" do
+    {:ok, t2} =
+      QuotaTracker.start_link(clock: &Clock.now/0, cleanup_interval_ms: :infinity)
+
+    {:ok, _} = QuotaTracker.record(t2, :api, 5, 10, 1_000)
+
+    # Just under the default hour: lazy cleanup on access must retain the entry.
+    Clock.advance(3_599_999)
+    {:ok, _} = QuotaTracker.usage(t2, :api, 100_000_000)
+    assert QuotaTracker.keys(t2) == [:api]
+
+    # At the default hour: lazy cleanup on access must evict, dropping the key.
+    Clock.advance(1)
+    {:ok, _} = QuotaTracker.usage(t2, :api, 100_000_000)
+    assert QuotaTracker.keys(t2) == []
+  end
+
+  test "name option registers the process for lookups" do
+    {:ok, _pid} =
+      QuotaTracker.start_link(
+        name: :quota_tracker_named,
+        clock: &Clock.now/0,
+        cleanup_interval_ms: :infinity
+      )
+
+    assert {:ok, 7} = QuotaTracker.record(:quota_tracker_named, :api, 3, 10, 1_000)
+    assert {:ok, 3} = QuotaTracker.usage(:quota_tracker_named, :api, 1_000)
+  end
+
+  test "reset removes the key from the keys listing", %{tracker: t} do
+    {:ok, _} = QuotaTracker.record(t, :api, 5, 10, 1_000)
+    {:ok, _} = QuotaTracker.record(t, :uploads, 3, 10, 1_000)
+
+    :ok = QuotaTracker.reset(t, :api)
+
+    assert QuotaTracker.keys(t) == [:uploads]
   end
 end
 ```

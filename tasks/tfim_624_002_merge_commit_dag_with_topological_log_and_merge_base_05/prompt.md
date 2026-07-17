@@ -190,13 +190,38 @@ defmodule ObjectStore do
   # Commit serialization / parsing
   # ------------------------------------------------------------------
 
-  # A commit is serialized as the canonical external term format of a fixed
-  # tuple shape. This is fully deterministic for identical inputs, round-trips
-  # arbitrary binaries (including newlines and null bytes), and yields distinct
-  # bytes — and therefore distinct hashes — whenever any field differs.
+  # A commit is serialized as a deterministic, git-like text representation:
+  #
+  #     tree <tree-hash>
+  #     parent <parent-hash>        (repeated, once per parent, in order)
+  #     author <byte-size>
+  #     <author>
+  #     message <byte-size>
+  #     <message>
+  #
+  # The byte-size headers let the author and message round-trip verbatim even
+  # when they contain newlines. Identical inputs always yield identical bytes —
+  # and therefore an identical hash — while any difference in the tree, in the
+  # parents (including their order), in the author, or in the message changes
+  # the bytes and thus the hash.
   @spec build_commit_object(hash(), [hash()], String.t(), String.t()) :: binary()
   defp build_commit_object(tree_hash, parents, message, author) do
-    :erlang.term_to_binary({:commit, tree_hash, parents, author, message})
+    IO.iodata_to_binary([
+      "tree ",
+      tree_hash,
+      "\n",
+      Enum.map(parents, fn parent -> ["parent ", parent, "\n"] end),
+      "author ",
+      Integer.to_string(byte_size(author)),
+      "\n",
+      author,
+      "\n",
+      "message ",
+      Integer.to_string(byte_size(message)),
+      "\n",
+      message,
+      "\n"
+    ])
   end
 
   @spec parse_commit(binary()) :: %{
@@ -206,8 +231,30 @@ defmodule ObjectStore do
           message: String.t()
         }
   defp parse_commit(binary) do
-    {:commit, tree, parents, author, message} = :erlang.binary_to_term(binary)
+    {"tree " <> tree, rest} = split_line(binary)
+    {parents, rest} = parse_parents(rest, [])
+    {"author " <> author_size, rest} = split_line(rest)
+    author_bytes = String.to_integer(author_size)
+    <<author::binary-size(^author_bytes), "\n", rest::binary>> = rest
+    {"message " <> message_size, rest} = split_line(rest)
+    message_bytes = String.to_integer(message_size)
+    <<message::binary-size(^message_bytes), "\n">> = rest
+
     %{tree: tree, parents: parents, author: author, message: message}
+  end
+
+  @spec parse_parents(binary(), [hash()]) :: {[hash()], binary()}
+  defp parse_parents("parent " <> _ = binary, acc) do
+    {"parent " <> parent, rest} = split_line(binary)
+    parse_parents(rest, [parent | acc])
+  end
+
+  defp parse_parents(binary, acc), do: {Enum.reverse(acc), binary}
+
+  @spec split_line(binary()) :: {binary(), binary()}
+  defp split_line(binary) do
+    [line, rest] = :binary.split(binary, "\n")
+    {line, rest}
   end
 
   # ------------------------------------------------------------------
@@ -464,6 +511,81 @@ defmodule ObjectStoreTest do
     {:ok, r2} = ObjectStore.commit(s, t, [], "root two", "bob")
 
     assert {:error, :no_merge_base} = ObjectStore.merge_base(s, r1, r2)
+  end
+
+  test "merge_base returns the nearest shared ancestor, not an older common one", %{store: s} do
+    {:ok, t} = ObjectStore.store(s, "tc")
+    {:ok, root} = ObjectStore.commit(s, t, [], "root", "alice")
+    {:ok, mid} = ObjectStore.commit(s, t, [root], "mid", "alice")
+    {:ok, a} = ObjectStore.commit(s, t, [mid], "a", "alice")
+    {:ok, b} = ObjectStore.commit(s, t, [mid], "b", "bob")
+
+    # root is also a common ancestor, but it is a proper ancestor of mid.
+    assert {:ok, ^mid} = ObjectStore.merge_base(s, a, b)
+  end
+
+  test "the stored commit object is a text representation carrying every field", %{store: s} do
+    {:ok, t} = ObjectStore.store(s, "tree-content")
+    {:ok, c} = ObjectStore.commit(s, t, [], "an important message", "alice")
+    {:ok, raw} = ObjectStore.retrieve(s, c)
+
+    assert String.printable?(raw)
+    assert raw =~ t
+    assert raw =~ "an important message"
+    assert raw =~ "alice"
+  end
+
+  test "log of a diamond lists each reachable commit exactly once", %{store: s} do
+    {:ok, t} = ObjectStore.store(s, "tc")
+    {:ok, root} = ObjectStore.commit(s, t, [], "root", "alice")
+    {:ok, a} = ObjectStore.commit(s, t, [root], "a", "alice")
+    {:ok, b} = ObjectStore.commit(s, t, [root], "b", "bob")
+    {:ok, m} = ObjectStore.commit(s, t, [a, b], "merge", "carol")
+
+    {:ok, log} = ObjectStore.log(s, m)
+    hashes = Enum.map(log, & &1.hash)
+
+    assert length(hashes) == 4
+    assert Enum.uniq(hashes) == hashes
+    assert MapSet.new(hashes) == MapSet.new([m, a, b, root])
+    assert hd(log).hash == m
+    assert order_ok?(log)
+  end
+
+  test "start_link registers the process under the given :name option" do
+    name = :object_store_promise_named
+    {:ok, pid} = ObjectStore.start_link(name: name)
+    on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
+
+    assert Process.whereis(name) == pid
+
+    {:ok, hash} = ObjectStore.store(name, "named registration")
+    assert hash == sha1("named registration")
+    assert {:ok, "named registration"} = ObjectStore.retrieve(name, hash)
+  end
+
+  test "reordering the parent list changes the commit hash", %{store: s} do
+    {:ok, t} = ObjectStore.store(s, "tc")
+    {:ok, p1} = ObjectStore.commit(s, t, [], "p one", "alice")
+    {:ok, p2} = ObjectStore.commit(s, t, [], "p two", "bob")
+
+    {:ok, ab} = ObjectStore.commit(s, t, [p1, p2], "merge", "carol")
+    {:ok, ba} = ObjectStore.commit(s, t, [p2, p1], "merge", "carol")
+    {:ok, again} = ObjectStore.commit(s, t, [p1, p2], "merge", "carol")
+
+    assert ab != ba
+    assert ab == again
+
+    {:ok, [entry | _]} = ObjectStore.log(s, ba)
+    assert entry.parents == [p2, p1]
+  end
+
+  test "merge_base of a commit with itself returns that commit", %{store: s} do
+    {:ok, t} = ObjectStore.store(s, "tc")
+    {:ok, c1} = ObjectStore.commit(s, t, [], "first", "alice")
+    {:ok, c2} = ObjectStore.commit(s, t, [c1], "second", "bob")
+
+    assert {:ok, ^c2} = ObjectStore.merge_base(s, c2, c2)
   end
 end
 ```

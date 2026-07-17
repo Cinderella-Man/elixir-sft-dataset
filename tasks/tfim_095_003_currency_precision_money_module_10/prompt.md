@@ -316,5 +316,44 @@ defmodule MoneyTest do
     assert total.amount == 3000
     assert Money.to_string(total) == "30.00 USD"
   end
+
+  test "multiply/2 rounds halves away from zero for negative amounts too" do
+    assert Money.multiply(Money.new(-101, :USD), 0.5).amount == -51
+    assert Money.multiply(Money.new(101, :USD), -0.5).amount == -51
+    assert Money.multiply(Money.new(-100, :JPY), 3).amount == -300
+    assert is_integer(Money.multiply(Money.new(-101, :USD), 0.5).amount)
+  end
+
+  test "from_major/2 rounds negative halves away from zero" do
+    assert Money.from_major(-0.005, :USD).amount == -1
+    assert Money.from_major(-1.2345, :BHD).amount == -1235
+    assert is_integer(Money.from_major(-0.005, :USD).amount)
+  end
+
+  test "split/2 raises when n is a non-integer or negative" do
+    assert_raise ArgumentError, fn -> Money.split(Money.new(100, :USD), 1.5) end
+    assert_raise ArgumentError, fn -> Money.split(Money.new(100, :USD), 2.0) end
+    assert_raise ArgumentError, fn -> Money.split(Money.new(100, :USD), -3) end
+    assert_raise ArgumentError, fn -> Money.split(Money.new(100, :USD), :two) end
+  end
+
+  test "exponent/1 knows every currency in the table, including EUR and GBP" do
+    assert Money.exponent(:EUR) == 2
+    assert Money.exponent(:GBP) == 2
+    assert Money.from_major(123.45, :EUR).amount == 12_345
+    assert Money.to_string(Money.new(12_345, :GBP)) == "123.45 GBP"
+  end
+
+  test "to_string/1 signs negative zero-decimal and 3-decimal amounts" do
+    assert Money.to_string(Money.new(-500, :JPY)) == "-500 JPY"
+    assert Money.to_string(Money.new(-1_234_567, :BHD)) == "-1234.567 BHD"
+    assert Money.to_string(Money.new(-7, :KWD)) == "-0.007 KWD"
+  end
+
+  test "Money struct exposes exactly the amount and currency fields" do
+    m = Money.new(12_345, :USD)
+    assert m.__struct__ == Money
+    assert m |> Map.from_struct() |> Map.keys() |> Enum.sort() == [:amount, :currency]
+  end
 end
 ```

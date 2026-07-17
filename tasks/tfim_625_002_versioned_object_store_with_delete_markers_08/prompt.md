@@ -761,5 +761,76 @@ defmodule VersionedObjectStorageTest do
     assert obj.metadata == %{"a" => "b"}
     assert obj.data == "body"
   end
+
+  test "start_link registers the process under the :name option", %{tmp_dir: tmp_dir} do
+    name = :"vos_named_#{System.unique_integer([:positive])}"
+
+    {:ok, _pid} =
+      VersionedObjectStorage.start_link(root_dir: Path.join(tmp_dir, "named"), name: name)
+
+    assert :ok = VersionedObjectStorage.create_bucket(name, "b")
+    assert {:ok, _vid} = VersionedObjectStorage.put_object(name, "b", "k", "via-name")
+    assert {:ok, ["b"]} = VersionedObjectStorage.list_buckets(name)
+    assert {:ok, %{data: "via-name"}} = VersionedObjectStorage.get_object(name, "b", "k")
+  end
+
+  test "a permanently deleted version stays gone after a restart", %{os: os, tmp_dir: tmp_dir} do
+    VersionedObjectStorage.create_bucket(os, "perm")
+    {:ok, v1} = VersionedObjectStorage.put_object(os, "perm", "k", "one")
+    {:ok, v2} = VersionedObjectStorage.put_object(os, "perm", "k", "two")
+    assert :ok = VersionedObjectStorage.delete_version(os, "perm", "k", v1)
+
+    GenServer.stop(os)
+    {:ok, pid2} = VersionedObjectStorage.start_link(root_dir: tmp_dir)
+
+    assert {:error, :not_found} = VersionedObjectStorage.get_object_version(pid2, "perm", "k", v1)
+    assert {:ok, [%{version_id: ^v2}]} = VersionedObjectStorage.list_versions(pid2, "perm", "k")
+    assert {:ok, %{data: "two"}} = VersionedObjectStorage.get_object(pid2, "perm", "k")
+  end
+
+  test "identical repeated puts still create distinct retained versions", %{os: os} do
+    VersionedObjectStorage.create_bucket(os, "b")
+    {:ok, v1} = VersionedObjectStorage.put_object(os, "b", "k", "same", %{"m" => "1"})
+    {:ok, v2} = VersionedObjectStorage.put_object(os, "b", "k", "same", %{"m" => "1"})
+
+    assert v1 != v2
+    assert {:ok, versions} = VersionedObjectStorage.list_versions(os, "b", "k")
+    assert Enum.map(versions, & &1.version_id) == [v2, v1]
+
+    assert {:ok, %{data: "same", metadata: %{"m" => "1"}}} =
+             VersionedObjectStorage.get_object_version(os, "b", "k", v1)
+  end
+
+  test "delete_object on a key with no versions returns a marker id", %{os: os} do
+    VersionedObjectStorage.create_bucket(os, "b")
+
+    assert {:ok, marker} = VersionedObjectStorage.delete_object(os, "b", "ghost")
+    assert is_binary(marker)
+
+    assert {:ok, [%{version_id: ^marker, is_delete_marker: true, size: 0}]} =
+             VersionedObjectStorage.list_versions(os, "b", "ghost")
+
+    assert {:error, :not_found} = VersionedObjectStorage.get_object(os, "b", "ghost")
+    assert {:ok, []} = VersionedObjectStorage.list_objects(os, "b")
+  end
+
+  test "delete_version with an unknown id leaves existing versions intact", %{os: os} do
+    VersionedObjectStorage.create_bucket(os, "b")
+    {:ok, v1} = VersionedObjectStorage.put_object(os, "b", "k", "one")
+
+    assert :ok = VersionedObjectStorage.delete_version(os, "b", "k", "no-such-version")
+    assert {:ok, [%{version_id: ^v1}]} = VersionedObjectStorage.list_versions(os, "b", "k")
+    assert {:ok, %{data: "one"}} = VersionedObjectStorage.get_object(os, "b", "k")
+  end
+
+  test "a bucket recreated after a restart reports already_exists", %{os: os, tmp_dir: tmp_dir} do
+    assert :ok = VersionedObjectStorage.create_bucket(os, "dup")
+
+    GenServer.stop(os)
+    {:ok, pid2} = VersionedObjectStorage.start_link(root_dir: tmp_dir)
+
+    assert {:error, :already_exists} = VersionedObjectStorage.create_bucket(pid2, "dup")
+    assert {:ok, ["dup"]} = VersionedObjectStorage.list_buckets(pid2)
+  end
 end
 ```

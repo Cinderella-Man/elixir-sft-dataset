@@ -586,5 +586,76 @@ defmodule InvertedIndexTest do
     :ok = InvertedIndex.index(:bool_index, "a", %{body: "hello world"})
     assert InvertedIndex.search(:bool_index, {:term, "hello"}) == ["a"]
   end
+
+  test "term query with multi-token word uses only the first token", %{idx: idx} do
+    :ok = InvertedIndex.index(idx, "a", %{body: "quick brown fox"})
+    :ok = InvertedIndex.index(idx, "b", %{body: "quick green turtle"})
+    :ok = InvertedIndex.index(idx, "c", %{body: "slow brown bear"})
+
+    # tokenizes to ["quick", "brown"]; only "quick" is used
+    assert InvertedIndex.search(idx, {:term, "quick brown"}) == ["a", "b"]
+    # punctuation-separated form tokenizes the same way
+    assert InvertedIndex.search(idx, {:term, "quick, brown!"}) == ["a", "b"]
+  end
+
+  test "phrase of only stop words matches no documents", %{idx: idx} do
+    :ok = InvertedIndex.index(idx, "a", %{body: "the quick brown fox"})
+    :ok = InvertedIndex.index(idx, "b", %{body: "is on at the of"})
+
+    assert InvertedIndex.search(idx, {:phrase, "the is of"}) == []
+    assert InvertedIndex.search(idx, {:phrase, "!!! ,,,"}) == []
+    assert InvertedIndex.search(idx, {:phrase, ""}) == []
+  end
+
+  test "removed document drops its exclusive terms from the vocabulary", %{idx: idx} do
+    :ok = InvertedIndex.index(idx, "a", %{body: "quick brown fox"})
+    :ok = InvertedIndex.index(idx, "b", %{body: "quick brown cat"})
+    assert InvertedIndex.stats(idx).term_count == 4
+
+    :ok = InvertedIndex.remove(idx, "a")
+
+    assert InvertedIndex.search(idx, {:term, "fox"}) == []
+    assert InvertedIndex.search(idx, {:phrase, "brown fox"}) == []
+    assert InvertedIndex.suggest(idx, "fo") == []
+    assert InvertedIndex.stats(idx).term_count == 3
+  end
+
+  test "every documented default stop word is excluded from the index", _ctx do
+    {:ok, idx} = InvertedIndex.start_link([])
+
+    defaults = ~w(the a an is are was were in on at to of and or it this that for with
+                as by not be has had have do does did but if from)
+
+    text = Enum.join(defaults, " ") <> " sentinel"
+    :ok = InvertedIndex.index(idx, "a", %{body: text})
+
+    assert InvertedIndex.stats(idx).term_count == 1
+    assert InvertedIndex.search(idx, {:term, "sentinel"}) == ["a"]
+
+    for word <- defaults do
+      assert InvertedIndex.search(idx, {:term, word}) == [], "#{word} was indexed"
+    end
+  end
+
+  test "re-indexing removes the old version's terms from the vocabulary", %{idx: idx} do
+    :ok = InvertedIndex.index(idx, "a", %{title: "apple pie", body: "apple banana"})
+    assert InvertedIndex.stats(idx).term_count == 3
+
+    :ok = InvertedIndex.index(idx, "a", %{body: "cherry"})
+
+    assert InvertedIndex.stats(idx) == %{document_count: 1, term_count: 1}
+    assert InvertedIndex.suggest(idx, "app") == []
+    assert InvertedIndex.search(idx, {:phrase, "apple pie"}) == []
+    assert InvertedIndex.search(idx, {:term, "cherry"}) == ["a"]
+  end
+
+  test "term query matches a token found in any field of the document", %{idx: idx} do
+    :ok = InvertedIndex.index(idx, "a", %{title: "alpha", body: "beta", notes: "gamma"})
+    :ok = InvertedIndex.index(idx, "b", %{title: "beta", body: "delta"})
+
+    assert InvertedIndex.search(idx, {:term, "alpha"}) == ["a"]
+    assert InvertedIndex.search(idx, {:term, "gamma"}) == ["a"]
+    assert InvertedIndex.search(idx, {:term, "beta"}) == ["a", "b"]
+  end
 end
 ```

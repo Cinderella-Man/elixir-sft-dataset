@@ -198,5 +198,39 @@ defmodule CumulativeLeaderboardTest do
       assert {:ok, 100} = CumulativeLeaderboard.total(board, p)
     end
   end
+
+  test "top returns every player when n exceeds the player count", %{board: board} do
+    CumulativeLeaderboard.add_points(board, "alice", 30)
+    CumulativeLeaderboard.add_points(board, "bob", 10)
+
+    assert [{"alice", 30}, {"bob", 10}] == CumulativeLeaderboard.top(board, 25)
+  end
+
+  test "add_points refuses non-integer point values", %{board: board} do
+    assert_raise FunctionClauseError, fn ->
+      CumulativeLeaderboard.add_points(board, "alice", 1.5)
+    end
+
+    assert_raise FunctionClauseError, fn ->
+      CumulativeLeaderboard.add_points(board, "alice", "5")
+    end
+
+    assert {:error, :not_found} = CumulativeLeaderboard.total(board, "alice")
+  end
+
+  test "a zero-point award registers the player with a total of zero", %{board: board} do
+    assert {:ok, 0} = CumulativeLeaderboard.add_points(board, "alice", 0)
+    assert {:ok, 0} = CumulativeLeaderboard.total(board, "alice")
+    assert {:ok, 1, 0} = CumulativeLeaderboard.rank(board, "alice")
+  end
+
+  test "top sorts negative totals below zero and positive totals", %{board: board} do
+    CumulativeLeaderboard.add_points(board, "alice", -50)
+    CumulativeLeaderboard.add_points(board, "bob", 0)
+    CumulativeLeaderboard.add_points(board, "carol", 5)
+    CumulativeLeaderboard.add_points(board, "carol", -20)
+
+    assert [{"bob", 0}, {"carol", -15}, {"alice", -50}] == CumulativeLeaderboard.top(board, 3)
+  end
 end
 ```

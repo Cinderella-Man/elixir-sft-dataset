@@ -273,6 +273,13 @@ defmodule ExpiringPriorityQueueTest do
     end
   end
 
+  # Calls drain/1 without risking an infinite block: returns {:ok, :ok} when the
+  # queue drains within `timeout`, and nil (via Task.shutdown) when it does not.
+  defp await_drain(pq, timeout \\ 2000) do
+    task = Task.async(fn -> ExpiringPriorityQueue.drain(pq) end)
+    Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill)
+  end
+
   # -------------------------------------------------------
   # Basic enqueue / process
   # -------------------------------------------------------
@@ -633,6 +640,108 @@ defmodule ExpiringPriorityQueueTest do
   end
 
   # -------------------------------------------------------
+  # TTL boundary: the instant a task's TTL elapses it is expired
+  # -------------------------------------------------------
+
+  test "a task whose expiry equals the current clock is expired, not pending" do
+    clock_agent = start_clock(0)
+    parent = self()
+    gate = spawn(fn -> Process.sleep(:infinity) end)
+
+    {:ok, pq} =
+      ExpiringPriorityQueue.start_link(
+        processor: fn task ->
+          if task == "blocker" do
+            send(parent, :blocker_started)
+            ref = Process.monitor(gate)
+
+            receive do
+              {:DOWN, ^ref, _, _, _} -> :ok
+            end
+          end
+
+          {:processed, task}
+        end,
+        clock: clock_fn(clock_agent),
+        default_ttl_ms: 100_000
+      )
+
+    # Occupy the processor so "boundary" stays queued while we move the clock.
+    ExpiringPriorityQueue.enqueue(pq, "blocker", :normal, ttl_ms: 100_000)
+    assert_receive :blocker_started, 2000
+
+    # Enqueued at clock 0 with a 1000ms TTL -> expires_at == 1000.
+    ExpiringPriorityQueue.enqueue(pq, "boundary", :high, ttl_ms: 1000)
+
+    # One tick before the deadline the task is still pending.
+    advance_clock(clock_agent, 999)
+    assert ExpiringPriorityQueue.status(pq).high == 1
+
+    # Exactly at the deadline the TTL window is over: the task is no longer pending.
+    advance_clock(clock_agent, 1)
+    assert ExpiringPriorityQueue.status(pq).high == 0
+
+    Process.exit(gate, :kill)
+    ExpiringPriorityQueue.drain(pq)
+
+    # ...and picking it up at exactly expires_at records it as expired, not processed.
+    assert ExpiringPriorityQueue.expired(pq) == [{"boundary", :high}]
+    assert Enum.map(ExpiringPriorityQueue.processed(pq), &elem(&1, 0)) == ["blocker"]
+  end
+
+  # -------------------------------------------------------
+  # Returning to idle
+  # -------------------------------------------------------
+
+  test "queue returns to idle after a task finishes so later enqueues still run" do
+    clock_agent = start_clock(0)
+
+    {:ok, pq} =
+      ExpiringPriorityQueue.start_link(
+        processor: recording_processor(),
+        clock: clock_fn(clock_agent),
+        default_ttl_ms: 100_000
+      )
+
+    assert :ok = ExpiringPriorityQueue.enqueue(pq, "one", :normal)
+    assert await_drain(pq) == {:ok, :ok}
+    assert Enum.map(ExpiringPriorityQueue.processed(pq), &elem(&1, 0)) == ["one"]
+
+    # The processor is idle again, so a fresh enqueue must trigger processing.
+    assert :ok = ExpiringPriorityQueue.enqueue(pq, "two", :high)
+    assert await_drain(pq) == {:ok, :ok}
+
+    assert Enum.map(ExpiringPriorityQueue.processed(pq), &elem(&1, 0)) == ["one", "two"]
+    assert ExpiringPriorityQueue.expired(pq) == []
+    assert ExpiringPriorityQueue.status(pq) == %{high: 0, normal: 0, low: 0, expired: 0}
+  end
+
+  test "queue returns to idle after a round where every candidate task expired" do
+    clock_agent = start_clock(0)
+
+    {:ok, pq} =
+      ExpiringPriorityQueue.start_link(
+        processor: recording_processor(),
+        clock: clock_fn(clock_agent),
+        default_ttl_ms: 100_000
+      )
+
+    # A zero TTL expires the moment :process_next looks at it, so this round of
+    # processing finds nothing to run and must leave the processor idle.
+    assert :ok = ExpiringPriorityQueue.enqueue(pq, "dead", :normal, ttl_ms: 0)
+    assert ExpiringPriorityQueue.expired(pq) == [{"dead", :normal}]
+    assert ExpiringPriorityQueue.processed(pq) == []
+
+    # Idle again: this task must be picked up.
+    assert :ok = ExpiringPriorityQueue.enqueue(pq, "alive", :normal, ttl_ms: 100_000)
+    assert await_drain(pq) == {:ok, :ok}
+
+    assert ExpiringPriorityQueue.processed(pq) == [{"alive", {:processed, "alive"}}]
+    assert ExpiringPriorityQueue.expired(pq) == [{"dead", :normal}]
+    assert ExpiringPriorityQueue.status(pq) == %{high: 0, normal: 0, low: 0, expired: 1}
+  end
+
+  # -------------------------------------------------------
   # Edge cases
   # -------------------------------------------------------
 
@@ -732,6 +841,133 @@ defmodule ExpiringPriorityQueueTest do
 
     processed_tasks = Enum.map(processed, &elem(&1, 0)) |> Enum.sort()
     assert processed_tasks == Enum.to_list(1..50)
+  end
+
+  test "default_ttl_ms defaults to 5000 when the option is omitted" do
+    clock_agent = start_clock(0)
+    parent = self()
+    gate = spawn(fn -> Process.sleep(:infinity) end)
+
+    {:ok, pq} =
+      ExpiringPriorityQueue.start_link(
+        processor: fn task ->
+          if task == "blocker" do
+            send(parent, :blocker_started)
+            ref = Process.monitor(gate)
+
+            receive do
+              {:DOWN, ^ref, _, _, _} -> :ok
+            end
+          end
+
+          {:processed, task}
+        end,
+        clock: clock_fn(clock_agent)
+      )
+
+    ExpiringPriorityQueue.enqueue(pq, "blocker", :normal, ttl_ms: 100_000)
+    assert_receive :blocker_started, 2000
+
+    ExpiringPriorityQueue.enqueue(pq, "uses_default", :normal)
+
+    advance_clock(clock_agent, 4999)
+    assert ExpiringPriorityQueue.status(pq).normal == 1
+
+    advance_clock(clock_agent, 2)
+    assert ExpiringPriorityQueue.status(pq).normal == 0
+
+    Process.exit(gate, :kill)
+    ExpiringPriorityQueue.drain(pq)
+
+    assert ExpiringPriorityQueue.expired(pq) == [{"uses_default", :normal}]
+    assert Enum.map(ExpiringPriorityQueue.processed(pq), &elem(&1, 0)) == ["blocker"]
+  end
+
+  test "identical ttl_ms values expire relative to each task's own enqueue time" do
+    clock_agent = start_clock(0)
+    parent = self()
+    gate = spawn(fn -> Process.sleep(:infinity) end)
+
+    {:ok, pq} =
+      ExpiringPriorityQueue.start_link(
+        processor: fn task ->
+          if task == "blocker" do
+            send(parent, :blocker_started)
+            ref = Process.monitor(gate)
+
+            receive do
+              {:DOWN, ^ref, _, _, _} -> :ok
+            end
+          end
+
+          {:processed, task}
+        end,
+        clock: clock_fn(clock_agent),
+        default_ttl_ms: 100_000
+      )
+
+    ExpiringPriorityQueue.enqueue(pq, "blocker", :normal, ttl_ms: 100_000)
+    assert_receive :blocker_started, 2000
+
+    # Enqueued at clock 0 -> expires at 1000
+    ExpiringPriorityQueue.enqueue(pq, "early", :normal, ttl_ms: 1000)
+
+    advance_clock(clock_agent, 800)
+
+    # Same ttl_ms, but enqueued at clock 800 -> expires at 1800
+    ExpiringPriorityQueue.enqueue(pq, "late", :normal, ttl_ms: 1000)
+
+    advance_clock(clock_agent, 400)
+
+    Process.exit(gate, :kill)
+    ExpiringPriorityQueue.drain(pq)
+
+    assert Enum.map(ExpiringPriorityQueue.processed(pq), &elem(&1, 0)) == ["blocker", "late"]
+    assert ExpiringPriorityQueue.expired(pq) == [{"early", :normal}]
+  end
+
+  test "the :name option registers the server so the API can be driven by name" do
+    clock_agent = start_clock(0)
+    name = :expiring_priority_queue_named_server
+
+    {:ok, pid} =
+      ExpiringPriorityQueue.start_link(
+        name: name,
+        processor: fn task -> {:ok, task} end,
+        clock: clock_fn(clock_agent),
+        default_ttl_ms: 10_000
+      )
+
+    assert Process.whereis(name) == pid
+
+    assert :ok = ExpiringPriorityQueue.enqueue(name, "named", :normal)
+    assert :ok = ExpiringPriorityQueue.drain(name)
+
+    assert ExpiringPriorityQueue.processed(name) == [{"named", {:ok, "named"}}]
+    assert ExpiringPriorityQueue.expired(name) == []
+    assert ExpiringPriorityQueue.status(name) == %{high: 0, normal: 0, low: 0, expired: 0}
+  end
+
+  test "enqueue refuses a priority outside high, normal and low" do
+    clock_agent = start_clock(0)
+
+    {:ok, pq} =
+      ExpiringPriorityQueue.start_link(
+        processor: recording_processor(),
+        clock: clock_fn(clock_agent),
+        default_ttl_ms: 10_000
+      )
+
+    assert_raise FunctionClauseError, fn ->
+      ExpiringPriorityQueue.enqueue(pq, "bad", :urgent)
+    end
+
+    assert_raise FunctionClauseError, fn ->
+      ExpiringPriorityQueue.enqueue(pq, "bad", "high", ttl_ms: 100)
+    end
+
+    assert ExpiringPriorityQueue.status(pq) == %{high: 0, normal: 0, low: 0, expired: 0}
+    assert ExpiringPriorityQueue.processed(pq) == []
   end
 end
 ```

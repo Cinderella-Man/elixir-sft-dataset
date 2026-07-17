@@ -302,5 +302,79 @@ defmodule WorkflowTest do
     assert Workflow.can?(m, bad, :submit) == false
     assert Workflow.can?(m, ok, :approve) == false
   end
+
+  test "no matching edge means no guard is ever invoked" do
+    parent = self()
+
+    spy = fn _r ->
+      send(parent, :guard_ran)
+      true
+    end
+
+    m = Workflow.define(:draft, [{:approve, :submitted, :approved, spy}])
+    rec = Workflow.new(m, %{items: [:a]})
+
+    assert {:error, :invalid_transition, :draft, :approve} =
+             Workflow.transition(m, rec, :approve)
+
+    assert {:error, :invalid_transition, :draft, :teleport} =
+             Workflow.transition(m, rec, :teleport)
+
+    assert Workflow.can?(m, rec, :approve) == false
+    refute_received :guard_ran
+  end
+
+  test "states/1 includes the initial state when no transition mentions it" do
+    m = Workflow.define(:start, [{:go, :a, :b}])
+    states = Workflow.states(m)
+
+    assert Enum.sort(Enum.uniq(states)) == [:a, :b, :start]
+    assert length(states) == 3
+  end
+
+  test "the same event from different from-states is not a duplicate" do
+    m = Workflow.define(:a, [{:go, :a, :b}, {:go, :b, :c}])
+    rec = Workflow.new(m)
+
+    assert {:ok, rec} = Workflow.transition(m, rec, :go)
+    assert rec.state == :b
+    assert {:ok, %{state: :c}} = Workflow.transition(m, rec, :go)
+  end
+
+  test "a guard returning nil is falsy and fails the transition" do
+    m = Workflow.define(:a, [{:go, :a, :b, fn _r -> nil end}])
+    rec = Workflow.new(m, %{tag: 1})
+
+    assert {:error, :guard_failed, :a, :go} = Workflow.transition(m, rec, :go)
+    assert Workflow.can?(m, rec, :go) == false
+    assert rec == %{state: :a, tag: 1}
+  end
+
+  test "define raises for a 2-arity guard and for a non-function guard" do
+    assert_raise ArgumentError, fn ->
+      Workflow.define(:a, [{:go, :a, :b, fn _x, _y -> true end}])
+    end
+
+    assert_raise ArgumentError, fn ->
+      Workflow.define(:a, [{:go, :a, :b, :always}])
+    end
+  end
+
+  test "the guard receives the whole record including state and domain fields" do
+    parent = self()
+
+    spy = fn r ->
+      send(parent, {:saw, r})
+      Map.get(r, :ok?)
+    end
+
+    m = Workflow.define(:a, [{:go, :a, :b, spy}])
+    rec = Workflow.new(m, %{ok?: true, meta: %{z: 9}})
+
+    assert {:ok, %{state: :b, meta: %{z: 9}, ok?: true}} =
+             Workflow.transition(m, rec, :go)
+
+    assert_received {:saw, %{state: :a, ok?: true, meta: %{z: 9}}}
+  end
 end
 ```

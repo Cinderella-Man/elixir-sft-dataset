@@ -223,5 +223,69 @@ defmodule PipelineTest do
 
     assert {:error, :b, :boom} = Pipeline.run(pipeline, 0)
   end
+
+  test "map stage reports the earliest failing element when several elements fail" do
+    fun = fn
+      1 -> {:error, :first}
+      3 -> {:error, :third}
+      x -> {:ok, x}
+    end
+
+    pipeline = Pipeline.new() |> Pipeline.map_stage(:pick, fun)
+
+    assert {:error, :pick, :first} = Pipeline.run(pipeline, [0, 1, 2, 3])
+  end
+
+  test "stages after a failing sequential stage never run" do
+    {:ok, ran?} = Agent.start_link(fn -> false end)
+
+    pipeline =
+      Pipeline.new()
+      |> Pipeline.stage(:boom, fn _ -> {:error, :nope} end)
+      |> Pipeline.stage(:later, fn v ->
+        Agent.update(ran?, fn _ -> true end)
+        {:ok, v}
+      end)
+
+    assert {:error, :boom, :nope} = Pipeline.run(pipeline, 1)
+    refute Agent.get(ran?, & &1)
+  end
+
+  test "map stage without :max_concurrency starts every element concurrently" do
+    parent = self()
+
+    rendezvous = fn x ->
+      send(parent, {:started, x, self()})
+
+      receive do
+        :go -> {:ok, x}
+      end
+    end
+
+    pipeline = Pipeline.new() |> Pipeline.map_stage(:rendezvous, rendezvous)
+    runner = Task.async(fn -> Pipeline.run(pipeline, [1, 2, 3, 4]) end)
+
+    pids =
+      for _ <- 1..4 do
+        assert_receive {:started, _x, pid}, 2_000
+        pid
+      end
+
+    Enum.each(pids, &send(&1, :go))
+
+    assert {:ok, [1, 2, 3, 4], [%{stage: :rendezvous, type: :map, count: 4}]} =
+             Task.await(runner, 5_000)
+  end
+
+  test "metadata reports non-negative integer durations for both stage types" do
+    pipeline =
+      Pipeline.new()
+      |> Pipeline.map_stage(:m, fn x -> {:ok, x} end)
+      |> Pipeline.stage(:s, fn v -> {:ok, Enum.sum(v)} end)
+
+    assert {:ok, 3, [map_meta, seq_meta]} = Pipeline.run(pipeline, [1, 2])
+    assert is_integer(map_meta.duration_us) and map_meta.duration_us >= 0
+    assert is_integer(seq_meta.duration_us) and seq_meta.duration_us >= 0
+  end
 end
 ```

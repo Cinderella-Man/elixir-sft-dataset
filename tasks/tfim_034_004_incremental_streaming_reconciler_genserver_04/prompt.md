@@ -547,5 +547,78 @@ defmodule StreamReconcilerTest do
     assert StreamReconciler.take_matches(a) == []
     assert StreamReconciler.take_matches(b) == []
   end
+
+  test "a record missing a key field keys on nil and matches a counterpart missing it too" do
+    pid = start!(key_fields: [:org_id, :user_id])
+
+    assert StreamReconciler.push_left(pid, %{user_id: 10, v: "l"}) == :pending
+    assert StreamReconciler.pending(pid) == %{left: [%{user_id: 10, v: "l"}], right: []}
+
+    assert {:matched, entry} =
+             StreamReconciler.push_right(pid, %{org_id: nil, user_id: 10, v: "r"})
+
+    assert entry.key == %{org_id: nil, user_id: 10}
+    assert entry.left == %{user_id: 10, v: "l"}
+    assert entry.right == %{org_id: nil, user_id: 10, v: "r"}
+    assert entry.differences == %{v: %{left: "l", right: "r"}}
+
+    assert StreamReconciler.pending(pid) == %{left: [], right: []}
+  end
+
+  test "a duplicate pending right push replaces the older right record" do
+    pid = start!(key_fields: [:id])
+
+    assert StreamReconciler.push_right(pid, %{id: 1, v: "first"}) == :pending
+    assert StreamReconciler.push_right(pid, %{id: 1, v: "second"}) == :pending
+
+    assert StreamReconciler.pending(pid) == %{left: [], right: [%{id: 1, v: "second"}]}
+
+    {:matched, entry} = StreamReconciler.push_left(pid, %{id: 1, v: "second"})
+    assert entry.right == %{id: 1, v: "second"}
+    assert entry.differences == %{}
+    assert StreamReconciler.pending(pid) == %{left: [], right: []}
+  end
+
+  test "a third push on a completed key parks as pending and buffers no second entry" do
+    pid = start!(key_fields: [:id])
+
+    assert StreamReconciler.push_left(pid, %{id: 1, v: "l"}) == :pending
+    assert {:matched, _} = StreamReconciler.push_right(pid, %{id: 1, v: "r"})
+
+    assert StreamReconciler.push_right(pid, %{id: 1, v: "r2"}) == :pending
+    assert StreamReconciler.pending(pid) == %{left: [], right: [%{id: 1, v: "r2"}]}
+
+    matches = StreamReconciler.take_matches(pid)
+    assert length(matches) == 1
+    assert StreamReconciler.take_matches(pid) == []
+  end
+
+  test "values that are equal under == but not identical are not reported as differences" do
+    pid = start!(key_fields: [:id])
+
+    StreamReconciler.push_left(pid, %{id: 1, amount: 1})
+    {:matched, entry} = StreamReconciler.push_right(pid, %{id: 1, amount: 1.0})
+
+    assert entry.differences == %{}
+    assert entry.left == %{id: 1, amount: 1}
+    assert entry.right == %{id: 1, amount: 1.0}
+  end
+
+  test "an empty compare_fields list diffs nothing while records stay complete" do
+    pid = start!(key_fields: [:id], compare_fields: [])
+
+    StreamReconciler.push_left(pid, %{id: 1, a: 1, b: 2})
+    {:matched, entry} = StreamReconciler.push_right(pid, %{id: 1, a: 9, b: 8})
+
+    assert entry.differences == %{}
+    assert entry.left == %{id: 1, a: 1, b: 2}
+    assert entry.right == %{id: 1, a: 9, b: 8}
+  end
+
+  test "non-list key_fields raise ArgumentError" do
+    assert_raise ArgumentError, fn -> StreamReconciler.start_link(key_fields: :id) end
+    assert_raise ArgumentError, fn -> StreamReconciler.start_link(key_fields: nil) end
+    assert_raise ArgumentError, fn -> StreamReconciler.start_link(key_fields: [:id, "org"]) end
+  end
 end
 ```

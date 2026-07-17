@@ -316,5 +316,55 @@ defmodule RecordMergeTest do
                ]
              }
   end
+
+  test "conflict descriptors are keyed by the custom :key option field" do
+    base = []
+    ours = [%{sku: "a", qty: 1}]
+    theirs = [%{sku: "a", qty: 2}]
+
+    assert RecordMerge.merge(base, ours, theirs, key: :sku) ==
+             %{
+               merged: [],
+               conflicts: [
+                 %{
+                   sku: "a",
+                   type: :add_add,
+                   ours: %{sku: "a", qty: 1},
+                   theirs: %{sku: "a", qty: 2}
+                 }
+               ]
+             }
+  end
+
+  test "modify_modify reports only conflicting fields and suppresses the merged record" do
+    base = [%{id: 1, a: 1, b: 1, c: 1}]
+    ours = [%{id: 1, a: 2, b: 1, c: 9}]
+    theirs = [%{id: 1, a: 3, b: 5, c: 9}]
+
+    assert RecordMerge.merge(base, ours, theirs) ==
+             %{
+               merged: [],
+               conflicts: [
+                 %{id: 1, type: :modify_modify, fields: %{a: %{base: 1, ours: 2, theirs: 3}}}
+               ]
+             }
+  end
+
+  test "record added on the theirs side only is taken cleanly" do
+    base = []
+    ours = []
+    theirs = [%{id: 7, x: 42}]
+
+    assert RecordMerge.merge(base, ours, theirs) ==
+             %{merged: [%{id: 7, x: 42}], conflicts: []}
+  end
+
+  test "record deleted by theirs while unchanged by ours is dropped" do
+    base = [%{id: 1, x: 1}]
+    ours = [%{id: 1, x: 1}]
+    theirs = []
+
+    assert RecordMerge.merge(base, ours, theirs) == %{merged: [], conflicts: []}
+  end
 end
 ```

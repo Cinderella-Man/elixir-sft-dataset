@@ -11,6 +11,10 @@ defmodule TimeoutRetryWorker do
   @moduledoc """
   A GenServer that executes functions with exponential backoff, jitter,
   and per-attempt timeouts enforced via Task.yield/Task.shutdown.
+
+  Each attempt runs inside a supervised, unlinked Task so that an abnormal
+  exit in the user function cannot bring down the worker; such an exit is
+  surfaced as a retryable `{:task_crashed, reason}` failure.
   """
 
   use GenServer
@@ -18,6 +22,7 @@ defmodule TimeoutRetryWorker do
 
   # --- Public API ---
 
+  @doc "Starts the worker. Accepts `:name`, `:clock`, and `:random` options."
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
     name = Keyword.get(opts, :name)
@@ -38,7 +43,8 @@ defmodule TimeoutRetryWorker do
   def init(opts) do
     clock = Keyword.get(opts, :clock, fn -> System.monotonic_time(:millisecond) end)
     random = Keyword.get(opts, :random, fn max -> :rand.uniform(max) - 1 end)
-    {:ok, %{clock: clock, random: random, tasks: %{}}}
+    {:ok, supervisor} = Task.Supervisor.start_link()
+    {:ok, %{clock: clock, random: random, supervisor: supervisor, tasks: %{}}}
   end
 
   @impl true
@@ -54,7 +60,7 @@ defmodule TimeoutRetryWorker do
   end
 
   def handle_info({ref, result}, state) when is_reference(ref) do
-    # Task completed normally — flush the :DOWN message
+    # Defensive: a stray result for an execution we no longer track is ignored.
     Process.demonitor(ref, [:flush])
 
     case Map.pop(state.tasks, ref) do
@@ -83,21 +89,23 @@ defmodule TimeoutRetryWorker do
   defp launch_attempt(func, attempt, opts, from, state) do
     timeout = Keyword.get(opts, :attempt_timeout_ms, 5_000)
 
-    task = Task.async(fn -> func.() end)
+    task = Task.Supervisor.async_nolink(state.supervisor, fn -> func.() end)
 
-    case Task.yield(task, timeout) do
-      {:ok, result} ->
-        # Completed within timeout — handle synchronously
-        Process.demonitor(task.ref, [:flush])
-        {_, state} = handle_task_result_sync(result, func, attempt, opts, from, state)
-        state
+    outcome =
+      case Task.yield(task, timeout) do
+        {:ok, result} ->
+          result
 
-      nil ->
-        # Timed out — shut it down
-        Task.shutdown(task, :brutal_kill)
-        {_, state} = handle_task_result_sync({:error, :timeout}, func, attempt, opts, from, state)
-        state
-    end
+        {:exit, reason} ->
+          {:error, {:task_crashed, reason}}
+
+        nil ->
+          _ = Task.shutdown(task, :brutal_kill)
+          {:error, :timeout}
+      end
+
+    {_, state} = handle_task_result_sync(outcome, func, attempt, opts, from, state)
+    state
   end
 
   defp handle_task_result_sync(result, func, attempt, opts, from, state) do
@@ -621,6 +629,92 @@ defmodule TimeoutRetryWorkerTest do
     # 300 retries x exactly 1 ms of wait, minus the no-wait overhead baseline.
     assert waited_ms >= 100
     assert waited_ms <= 560
+  end
+
+  test "abnormal task exit yields task_crashed reason on the final exhausted attempt", %{rw: rw} do
+    func = fn -> exit(:kaboom) end
+
+    assert {:error, :max_retries_exceeded, {:task_crashed, :kaboom}} =
+             TimeoutRetryWorker.execute(rw, func,
+               max_retries: 0,
+               attempt_timeout_ms: 1_000
+             )
+  end
+
+  test "abnormal task exit is retryable so a later attempt can still succeed", %{rw: rw} do
+    {:ok, agent} = Agent.start_link(fn -> 0 end)
+
+    func = fn ->
+      n = Agent.get_and_update(agent, fn n -> {n + 1, n + 1} end)
+      if n == 1, do: exit(:kaboom), else: {:ok, :recovered}
+    end
+
+    assert {:ok, :recovered} =
+             TimeoutRetryWorker.execute(rw, func,
+               max_retries: 3,
+               base_delay_ms: 0,
+               max_delay_ms: 0,
+               attempt_timeout_ms: 1_000
+             )
+
+    Agent.stop(agent)
+  end
+
+  test "registers under the :name option and serves calls addressed by that name" do
+    {:ok, _pid} =
+      TimeoutRetryWorker.start_link(
+        name: :trw_named_worker,
+        random: &ZeroRandom.rand/1
+      )
+
+    assert {:ok, :via_name} =
+             TimeoutRetryWorker.execute(:trw_named_worker, fn -> {:ok, :via_name} end,
+               max_retries: 0
+             )
+  end
+
+  test "start_link with no arguments starts a usable worker" do
+    assert {:ok, pid} = TimeoutRetryWorker.start_link()
+
+    assert {:ok, :no_arg} =
+             TimeoutRetryWorker.execute(pid, fn -> {:ok, :no_arg} end, max_retries: 0)
+  end
+
+  test "execute called with only server and func uses the default option set", %{rw: rw} do
+    assert {:ok, :two_arg} = TimeoutRetryWorker.execute(rw, fn -> {:ok, :two_arg} end)
+  end
+
+  test "re-running execute on the same server restarts attempt counting from zero", %{rw: rw} do
+    {:ok, agent} = Agent.start_link(fn -> 0 end)
+
+    func = fn ->
+      Agent.update(agent, &(&1 + 1))
+      {:error, :boom}
+    end
+
+    assert {:error, :max_retries_exceeded, :boom} =
+             TimeoutRetryWorker.execute(rw, func,
+               max_retries: 2,
+               base_delay_ms: 0,
+               max_delay_ms: 0,
+               attempt_timeout_ms: 1_000
+             )
+
+    assert Agent.get(agent, & &1) == 3
+
+    Agent.update(agent, fn _ -> 0 end)
+
+    assert {:error, :max_retries_exceeded, :boom} =
+             TimeoutRetryWorker.execute(rw, func,
+               max_retries: 2,
+               base_delay_ms: 0,
+               max_delay_ms: 0,
+               attempt_timeout_ms: 1_000
+             )
+
+    assert Agent.get(agent, & &1) == 3
+
+    Agent.stop(agent)
   end
 end
 ```

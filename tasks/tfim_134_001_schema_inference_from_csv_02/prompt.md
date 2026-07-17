@@ -507,5 +507,62 @@ defmodule SchemaInferenceTest do
              "label" => :string
            }
   end
+
+  test "sample_rows defaults to exactly 100 data rows" do
+    rows = Enum.map(1..100, fn _ -> "1" end) ++ ["3.5"]
+    csv = Enum.join(["n" | rows], "\n") <> "\n"
+
+    assert schema(csv) == %{"n" => :integer}
+    assert schema(csv, sample_rows: 101) == %{"n" => :float}
+  end
+
+  test "a quoted empty field counts as a non-null string cell" do
+    csv = """
+    a
+    1
+    ""
+    2
+    """
+
+    assert schema(csv) == %{"a" => :string}
+  end
+
+  test "values with surrounding whitespace are not trimmed before detection" do
+    csv = "n,f\n 1 , 2.5 \n 3 , 4.5 \n"
+
+    assert schema(csv) == %{"n" => :string, "f" => :string}
+  end
+
+  test "a doubled quote inside a quoted header becomes one literal quote" do
+    csv = ~s("a""b",c\n1,2\n)
+
+    assert schema(csv) == %{"a\"b" => :integer, "c" => :integer}
+  end
+
+  test "a datetime with an impossible calendar date falls back to string" do
+    csv = """
+    ts
+    2020-02-30T10:00:00
+    2021-01-01 24:00:00
+    """
+
+    assert schema(csv) == %{"ts" => :string}
+  end
+
+  test "infer_file forwards options to infer_string" do
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "schema_opts_#{System.pid()}_#{System.unique_integer([:positive])}.csv"
+      )
+
+    File.write!(path, "1,2.5\n3,4.5\n")
+    on_exit(fn -> File.rm(path) end)
+
+    assert SchemaInference.infer_file(path, headers: false) == %{
+             "column_1" => :integer,
+             "column_2" => :float
+           }
+  end
 end
 ```

@@ -193,5 +193,66 @@ defmodule BatchDebouncerTest do
     {micros, :ok} = :timer.tc(fn -> BatchDebouncer.call("s", 50, :item, slow) end)
     assert micros < 100_000
   end
+
+  test "a crashing handler leaves the server usable for later batches" do
+    boom = fn _batch -> raise "boom" end
+    BatchDebouncer.call("crash", 50, :bad, boom)
+
+    BatchDebouncer.call("after", 120, :good, report(:batch))
+    assert_receive {:batch, [:good]}, 600
+
+    assert BatchDebouncer.pending("crash") == 0
+    assert Process.alive?(Process.whereis(BatchDebouncer))
+  end
+
+  test "re-arming with a shorter delay flushes once and the replaced deadline never fires" do
+    BatchDebouncer.call("k", 400, :a, report(:batch))
+    BatchDebouncer.call("k", 60, :b, report(:batch))
+
+    assert_receive {:batch, [:a, :b]}, 300
+    assert BatchDebouncer.pending("k") == 0
+
+    # The replaced 400ms deadline must not produce a second flush.
+    refute_receive {:batch, _}, 500
+  end
+
+  test "start_link/1 registers under a custom :name alongside the default process" do
+    pid = start_supervised!({BatchDebouncer, [name: :batch_debouncer_alt]}, id: :bd_alt)
+
+    assert Process.whereis(:batch_debouncer_alt) == pid
+    assert is_pid(pid)
+    default = Process.whereis(BatchDebouncer)
+    assert is_pid(default)
+    assert default != pid
+  end
+
+  test "a call issued from inside a handler starts a fresh batch for the same key" do
+    test = self()
+
+    handler = fn batch ->
+      send(test, {:first, batch})
+      BatchDebouncer.call("k", 60, :again, fn b -> send(test, {:second, b}) end)
+    end
+
+    BatchDebouncer.call("k", 60, :one, handler)
+
+    assert_receive {:first, [:one]}, 500
+    assert_receive {:second, [:again]}, 500
+    refute_receive {:first, _}, 200
+  end
+
+  test "identical items are appended rather than deduplicated" do
+    BatchDebouncer.call("k", 150, :dup, report(:batch))
+    BatchDebouncer.call("k", 150, :dup, report(:batch))
+
+    assert BatchDebouncer.pending("k") == 2
+    assert_receive {:batch, [:dup, :dup]}, 600
+  end
+
+  test "call/4 refuses a handler whose arity is not one" do
+    assert_raise FunctionClauseError, fn ->
+      BatchDebouncer.call("k", 50, :item, fn _a, _b -> :ok end)
+    end
+  end
 end
 ```

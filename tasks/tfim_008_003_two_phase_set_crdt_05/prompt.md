@@ -598,5 +598,51 @@ defmodule TwoPhaseSetTest do
     remaining = Enum.drop(elements, 5) |> MapSet.new()
     assert TwoPhaseSet.members(s) == remaining
   end
+
+  test "remote merge that re-adds a locally-removed element cannot resurrect it", %{s: s} do
+    TwoPhaseSet.add(s, :x)
+    TwoPhaseSet.remove(s, :x)
+
+    # Remote never removed :x — it carries :x only in its add-set.
+    remote = %{added: MapSet.new([:x]), removed: MapSet.new()}
+    TwoPhaseSet.merge(s, remote)
+
+    assert TwoPhaseSet.member?(s, :x) == false
+    assert TwoPhaseSet.members(s) == MapSet.new()
+  end
+
+  test "adding an element tombstoned via merge but never locally added raises", %{s: s} do
+    remote = %{added: MapSet.new(), removed: MapSet.new([:ghost])}
+    TwoPhaseSet.merge(s, remote)
+
+    assert_raise ArgumentError, fn ->
+      TwoPhaseSet.add(s, :ghost)
+    end
+  end
+
+  test "element present only in the remove-set is not a member", %{s: s} do
+    remote = %{added: MapSet.new(), removed: MapSet.new([:ghost])}
+    TwoPhaseSet.merge(s, remote)
+
+    assert TwoPhaseSet.member?(s, :ghost) == false
+    assert TwoPhaseSet.members(s) == MapSet.new()
+  end
+
+  test "adding a present element again returns :ok and does not change state", %{s: s} do
+    TwoPhaseSet.add(s, :x)
+    before = TwoPhaseSet.state(s)
+
+    assert :ok = TwoPhaseSet.add(s, :x)
+    assert TwoPhaseSet.state(s) == before
+  end
+
+  test "an element made a member only through merge can be removed", %{s: s} do
+    remote = %{added: MapSet.new([:m]), removed: MapSet.new()}
+    TwoPhaseSet.merge(s, remote)
+    assert TwoPhaseSet.member?(s, :m) == true
+
+    assert :ok = TwoPhaseSet.remove(s, :m)
+    assert TwoPhaseSet.member?(s, :m) == false
+  end
 end
 ```

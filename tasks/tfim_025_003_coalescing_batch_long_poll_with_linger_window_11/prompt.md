@@ -329,5 +329,66 @@ defmodule CoalescingNotificationPollerTest do
   test "publish to a user with no subscribers does not crash", %{server: server} do
     assert :ok = Notifications.publish(server, "nobody", %{"ignored" => true})
   end
+
+  test "linger window extends past the original deadline while a burst keeps arriving",
+       %{server: server, opts: opts} do
+    task = Task.async(fn -> poll(opts, "user:slide") end)
+    Process.sleep(100)
+
+    # linger_ms is 120: each gap is under the window, but the total span (160ms)
+    # is well past the deadline measured from the FIRST notification.
+    Notifications.publish(server, "user:slide", %{"seq" => 1})
+    Process.sleep(80)
+    Notifications.publish(server, "user:slide", %{"seq" => 2})
+    Process.sleep(80)
+    Notifications.publish(server, "user:slide", %{"seq" => 3})
+
+    conn = Task.await(task, 2_000)
+    assert conn.status == 200
+
+    body = Jason.decode!(conn.resp_body)
+    assert body["notifications"] == [%{"seq" => 1}, %{"seq" => 2}, %{"seq" => 3}]
+    assert body["count"] == 3
+  end
+
+  test "401 response carries the literal unauthorized body", %{opts: opts} do
+    conn =
+      :get
+      |> conn("/api/notifications/poll")
+      |> NotificationRouter.call(NotificationRouter.init(opts))
+
+    assert conn.status == 401
+    assert conn.resp_body == "unauthorized"
+  end
+
+  test "linger_ms falls back to the documented default when the option is omitted",
+       %{server: server} do
+    opts = [notifications_server: server, timeout_ms: 500]
+    task = Task.async(fn -> poll(opts, "user:dl") end)
+    Process.sleep(100)
+
+    Notifications.publish(server, "user:dl", %{"d" => 1})
+    Notifications.publish(server, "user:dl", %{"d" => 2})
+
+    # A default linger of 50ms must have closed long before this arrives.
+    Process.sleep(250)
+    Notifications.publish(server, "user:dl", %{"d" => 3})
+
+    conn = Task.await(task, 2_000)
+    assert conn.status == 200
+
+    body = Jason.decode!(conn.resp_body)
+    assert body["notifications"] == [%{"d" => 1}, %{"d" => 2}]
+    assert body["count"] == 2
+  end
+
+  test "default server name backs the default subscribe and publish arguments" do
+    start_supervised!({Notifications, []})
+
+    Notifications.subscribe("user:default")
+    assert :ok = Notifications.publish("user:default", %{"via" => "default"})
+
+    assert_receive {:notification, %{"via" => "default"}}, 500
+  end
 end
 ```

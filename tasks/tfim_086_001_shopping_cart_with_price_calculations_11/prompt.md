@@ -456,5 +456,75 @@ defmodule CartTest do
     assert_in_delta totals.tax, 252.0 * 0.05, 0.001
     assert_in_delta totals.grand_total, 252.0 * 1.05, 0.001
   end
+
+  test "add_item rejects a non-integer quantity" do
+    cart = Cart.new()
+    assert {:error, :invalid_quantity} = Cart.add_item(cart, "prod:1", 2.5, 5.0)
+    assert {:error, :invalid_quantity} = Cart.add_item(cart, "prod:1", "3", 5.0)
+    assert Cart.calculate_totals(cart).items == []
+  end
+
+  test "discounted line echoes the raw unit price, not the discounted price" do
+    cart = Cart.new()
+    {:ok, cart} = Cart.add_item(cart, "prod:1", 10, 10.0)
+    [item] = Cart.calculate_totals(cart).items
+    assert item.product_id == "prod:1"
+    assert item.quantity == 10
+    assert item.unit_price == 10.0
+    assert item.discount_rate == 0.1
+    assert_in_delta item.line_total, 90.0, 0.001
+  end
+
+  test "update_quantity to 0 for an unknown product returns not_found" do
+    cart = Cart.new()
+    {:ok, cart} = Cart.add_item(cart, "prod:1", 2, 5.0)
+    assert {:error, :not_found} = Cart.update_quantity(cart, "prod:999", 0)
+    [item] = Cart.calculate_totals(cart).items
+    assert item.product_id == "prod:1"
+  end
+
+  test "remove_item returns a bare cart struct for both hit and miss" do
+    cart = Cart.new(tax_rate: 0.08)
+    {:ok, cart} = Cart.add_item(cart, "prod:1", 2, 5.0)
+
+    missed = Cart.remove_item(cart, "prod:999")
+    refute match?({:ok, _}, missed)
+    assert is_struct(missed, Cart)
+    assert missed.tax_rate == 0.08
+
+    hit = Cart.remove_item(cart, "prod:1")
+    refute match?({:ok, _}, hit)
+    assert is_struct(hit, Cart)
+    assert Cart.calculate_totals(hit).items == []
+  end
+
+  test "accumulated adds crossing the threshold earn the discount" do
+    cart = Cart.new()
+    {:ok, cart} = Cart.add_item(cart, "prod:1", 5, 10.0)
+    [before] = Cart.calculate_totals(cart).items
+    assert before.discount_rate == 0.0
+
+    {:ok, cart} = Cart.add_item(cart, "prod:1", 5, 10.0)
+    totals = Cart.calculate_totals(cart)
+    assert length(totals.items) == 1
+    [item] = totals.items
+    assert item.quantity == 10
+    assert item.discount_rate == 0.1
+    assert_in_delta item.line_total, 90.0, 0.001
+    assert_in_delta totals.subtotal, 90.0, 0.001
+  end
+
+  test "update_quantity back below the threshold drops the discount" do
+    cart = Cart.new()
+    {:ok, cart} = Cart.add_item(cart, "prod:1", 11, 10.0)
+    [item] = Cart.calculate_totals(cart).items
+    assert item.discount_rate == 0.1
+    assert_in_delta item.line_total, 99.0, 0.001
+
+    {:ok, cart} = Cart.update_quantity(cart, "prod:1", 9)
+    [item] = Cart.calculate_totals(cart).items
+    assert item.discount_rate == 0.0
+    assert_in_delta item.line_total, 90.0, 0.001
+  end
 end
 ```

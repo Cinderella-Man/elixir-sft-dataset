@@ -430,5 +430,89 @@ defmodule DLQTest do
     assert DLQ.peek(dlq, "a", 10) == []
     assert [%{message: :mb}] = DLQ.peek(dlq, "b", 10)
   end
+
+  test "retry with a handler returning an unexpected value fails and keeps the message", %{
+    dlq: dlq
+  } do
+    {:ok, id} = DLQ.push(dlq, "q", :msg, :orig, %{})
+
+    assert {:error, _reason} = DLQ.retry(dlq, "q", id, fn _ -> :weird end)
+    assert Process.alive?(dlq)
+
+    assert [entry] = DLQ.peek(dlq, "q", 10)
+    assert entry.id == id
+    assert entry.message == :msg
+    assert entry.retry_count == 1
+
+    assert {:error, _other} = DLQ.retry(dlq, "q", id, fn _ -> {:not, :ok} end)
+    assert [entry2] = DLQ.peek(dlq, "q", 10)
+    assert entry2.retry_count == 2
+  end
+
+  test "purge removes a message whose age is exactly equal to older_than", %{dlq: dlq} do
+    {:ok, exact} = DLQ.push(dlq, "q", :exact, :err, %{})
+
+    Clock.advance(500)
+    {:ok, younger} = DLQ.push(dlq, "q", :younger, :err, %{})
+
+    Clock.advance(500)
+    # now = 1000: :exact age = 1000 (== 1000 -> purged), :younger age = 500 (kept)
+    assert {:ok, 1} = DLQ.purge(dlq, "q", 1_000)
+
+    assert [entry] = DLQ.peek(dlq, "q", 10)
+    assert entry.id == younger
+    refute entry.id == exact
+  end
+
+  test "retry does not find a message id that lives in a different queue", %{dlq: dlq} do
+    {:ok, a_id} = DLQ.push(dlq, "a", :ma, :err, %{})
+    {:ok, _b_id} = DLQ.push(dlq, "b", :mb, :err, %{})
+
+    test_pid = self()
+    handler = fn msg -> send(test_pid, {:called, msg}) && :ok end
+
+    assert {:error, :not_found} = DLQ.retry(dlq, "b", a_id, handler)
+    refute_received {:called, _}
+
+    assert [%{id: ^a_id, retry_count: 0, message: :ma}] = DLQ.peek(dlq, "a", 10)
+    assert [%{message: :mb, retry_count: 0}] = DLQ.peek(dlq, "b", 10)
+  end
+
+  test "push ids are unique across different queues in the same server", %{dlq: dlq} do
+    {:ok, a1} = DLQ.push(dlq, "a", :m1, :err, %{})
+    {:ok, b1} = DLQ.push(dlq, "b", :m2, :err, %{})
+    {:ok, a2} = DLQ.push(dlq, "a", :m3, :err, %{})
+    {:ok, c1} = DLQ.push(dlq, "c", :m4, :err, %{})
+
+    ids = [a1, b1, a2, c1]
+    assert length(Enum.uniq(ids)) == 4
+
+    # removing one id must leave the identically-positioned ids in other queues alone
+    assert :ok = DLQ.retry(dlq, "a", a1, fn _ -> :ok end)
+    assert [%{id: ^b1}] = DLQ.peek(dlq, "b", 10)
+    assert [%{id: ^c1}] = DLQ.peek(dlq, "c", 10)
+  end
+
+  test "start_link registers the server under the given :name option" do
+    name = :dlq_name_option_registration_test
+
+    pid = start_supervised!({DLQ, [clock: &Clock.now/0, name: name]}, id: :named_dlq)
+
+    assert Process.whereis(name) == pid
+    assert {:ok, id} = DLQ.push(name, "q", :via_name, :err, %{k: 1})
+    assert [entry] = DLQ.peek(name, "q", 10)
+    assert entry.id == id
+    assert entry.message == :via_name
+    assert entry.metadata == %{k: 1}
+  end
+
+  test "peek with a count of 0 returns [] without removing anything", %{dlq: dlq} do
+    {:ok, id} = DLQ.push(dlq, "q", :kept, :err, %{})
+
+    assert DLQ.peek(dlq, "q", 0) == []
+    assert [entry] = DLQ.peek(dlq, "q", 1)
+    assert entry.id == id
+    assert entry.message == :kept
+  end
 end
 ```

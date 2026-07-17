@@ -273,5 +273,69 @@ defmodule CartServerTest do
   test "accumulated item keeps the product_id and unit_price it was added with" do
     # TODO
   end
+
+  test "add_item rejects non-integer quantities and leaves the cart untouched" do
+    {:ok, pid} = CartServer.start_link()
+
+    assert {:error, :invalid_quantity} = CartServer.add_item(pid, "a", 2.0, 5.0)
+    assert {:error, :invalid_quantity} = CartServer.add_item(pid, "a", 1.5, 5.0)
+    assert {:error, :invalid_quantity} = CartServer.add_item(pid, "a", "3", 5.0)
+    assert {:error, :invalid_quantity} = CartServer.add_item(pid, "a", :two, 5.0)
+
+    assert CartServer.totals(pid).items == []
+  end
+
+  test "subtotal sums discounted and undiscounted lines together with tax on top" do
+    {:ok, pid} = CartServer.start_link(tax_rate: 0.05)
+    :ok = CartServer.add_item(pid, "bulk", 10, 10.0)
+    :ok = CartServer.add_item(pid, "single", 2, 5.0)
+
+    totals = CartServer.totals(pid)
+    by_id = Map.new(totals.items, fn item -> {item.product_id, item} end)
+
+    assert by_id["bulk"].discount_rate == 0.1
+    assert_in_delta by_id["bulk"].line_total, 90.0, 0.001
+    assert by_id["single"].discount_rate == 0.0
+    assert_in_delta by_id["single"].line_total, 10.0, 0.001
+
+    assert_in_delta totals.subtotal, 100.0, 0.001
+    assert_in_delta totals.tax, 5.0, 0.001
+    assert_in_delta totals.grand_total, 105.0, 0.001
+  end
+
+  test "accumulated adds crossing the bulk threshold earn the discount" do
+    {:ok, pid} = CartServer.start_link()
+    :ok = CartServer.add_item(pid, "a", 6, 10.0)
+
+    [before] = CartServer.totals(pid).items
+    assert before.discount_rate == 0.0
+    assert_in_delta before.line_total, 60.0, 0.001
+
+    :ok = CartServer.add_item(pid, "a", 4, 10.0)
+
+    [after_bulk] = CartServer.totals(pid).items
+    assert after_bulk.quantity == 10
+    assert after_bulk.discount_rate == 0.1
+    assert_in_delta after_bulk.line_total, 90.0, 0.001
+  end
+
+  test "empty cart reports zero subtotal, tax and grand total" do
+    {:ok, pid} = CartServer.start_link(tax_rate: 0.2)
+
+    totals = CartServer.totals(pid)
+    assert totals.items == []
+    assert_in_delta totals.subtotal, 0.0, 0.001
+    assert_in_delta totals.tax, 0.0, 0.001
+    assert_in_delta totals.grand_total, 0.0, 0.001
+
+    :ok = CartServer.add_item(pid, "a", 1, 10.0)
+    :ok = CartServer.remove_item(pid, "a")
+
+    emptied = CartServer.totals(pid)
+    assert emptied.items == []
+    assert_in_delta emptied.subtotal, 0.0, 0.001
+    assert_in_delta emptied.tax, 0.0, 0.001
+    assert_in_delta emptied.grand_total, 0.0, 0.001
+  end
 end
 ```

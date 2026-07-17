@@ -310,5 +310,68 @@ defmodule LifecycleApi.RouterTest do
     conn = call("/api/nope", [{"accept-version", "v2"}])
     assert conn.status == 404
   end
+
+  test "ApiVersion initialised with no options falls back to the v2 default" do
+    opts = LifecycleApi.Plugs.ApiVersion.init([])
+    conn = LifecycleApi.Plugs.ApiVersion.call(conn(:get, "/api/users/1"), opts)
+
+    assert conn.assigns[:api_version] == "v2"
+    refute conn.halted
+    assert Plug.Conn.get_resp_header(conn, "deprecation") == []
+    assert Plug.Conn.get_resp_header(conn, "warning") == []
+  end
+
+  test "ApiVersion honours a configured :default when the header is absent" do
+    opts = LifecycleApi.Plugs.ApiVersion.init(default: "v1")
+    conn = LifecycleApi.Plugs.ApiVersion.call(conn(:get, "/api/users/1"), opts)
+
+    assert conn.assigns[:api_version] == "v1"
+    refute conn.halted
+    assert Plug.Conn.get_resp_header(conn, "deprecation") == ["true"]
+    assert Plug.Conn.get_resp_header(conn, "sunset") == ["Sat, 01 Nov 2025 00:00:00 GMT"]
+  end
+
+  test "unknown version 406 response is served as application/json" do
+    conn = call("/api/users/1", [{"accept-version", "v9"}])
+
+    assert conn.status == 406
+    assert content_type(conn) =~ "application/json"
+    assert conn.halted
+  end
+
+  test "deprecated v1 warning header matches the documented format exactly" do
+    conn = call("/api/users/1", [{"accept-version", "v1"}])
+
+    assert Plug.Conn.get_resp_header(conn, "warning") ==
+             [~s(299 - "Deprecated API version v1")]
+  end
+
+  test "UserView v2 render returns exactly the four documented fields" do
+    user = %{
+      first_name: "Zed",
+      last_name: "Quinn",
+      email: "zed@example.com",
+      created_at: "2025-02-02T09:00:00Z"
+    }
+
+    assert LifecycleApi.Views.UserView.render("v2", user) == %{
+             first_name: "Zed",
+             last_name: "Quinn",
+             email: "zed@example.com",
+             created_at: "2025-02-02T09:00:00Z"
+           }
+  end
+
+  test "UserView v1 render returns exactly the joined name and the email" do
+    user = %{
+      first_name: "Zed",
+      last_name: "Quinn",
+      email: "zed@example.com",
+      created_at: "2025-02-02T09:00:00Z"
+    }
+
+    assert LifecycleApi.Views.UserView.render("v1", user) ==
+             %{name: "Zed Quinn", email: "zed@example.com"}
+  end
 end
 ```

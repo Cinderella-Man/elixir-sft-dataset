@@ -254,5 +254,52 @@ defmodule RankingTest do
     only = item(id: :only, rating: 8.0, vote_count: 42)
     assert Ranking.rank([only]) == [only]
   end
+
+  test "rating equal to the mean scores exactly the mean at every vote count" do
+    for v <- [0, 1, 25, 1_000, 100_000] do
+      it = item(rating: 8.5, vote_count: v)
+      assert_in_delta Ranking.score(it, mean: 8.5, min_votes: 25), 8.5, 1.0e-9
+      assert_in_delta Ranking.score(it, mean: 8.5, min_votes: 100), 8.5, 1.0e-9
+    end
+  end
+
+  test "a no-vote item lands at the corpus mean between a stronger and a weaker item" do
+    a = item(id: :a, rating: 9.0, vote_count: 100)
+    b = item(id: :b, rating: 6.0, vote_count: 0)
+    c = item(id: :c, rating: 3.0, vote_count: 100)
+
+    # corpus mean = (9.0 + 6.0 + 3.0) / 3 = 6.0, m = 25 (default):
+    #   a -> (100/125)*9.0 + (25/125)*6.0 = 8.4
+    #   b -> no votes                     = 6.0  (exactly the corpus mean)
+    #   c -> (100/125)*3.0 + (25/125)*6.0 = 3.6
+    assert ids(Ranking.rank([c, b, a])) == [:a, :b, :c]
+    assert_in_delta Ranking.score(b, mean: 6.0), 6.0, 1.0e-9
+  end
+
+  test "rank threads min_votes 0 so a no-vote item still scores at the corpus mean" do
+    a = item(id: :a, rating: 9.0, vote_count: 10)
+    b = item(id: :b, rating: 5.0, vote_count: 0)
+    c = item(id: :c, rating: 1.0, vote_count: 10)
+
+    # corpus mean = (9.0 + 5.0 + 1.0) / 3 = 5.0, m = 0:
+    #   a -> (10/10)*9.0 = 9.0
+    #   b -> v + m == 0  = 5.0 (the corpus mean, no raise)
+    #   c -> (10/10)*1.0 = 1.0
+    assert ids(Ranking.rank([c, b, a], min_votes: 0)) == [:a, :b, :c]
+  end
+
+  test "score with no options at all uses the documented defaults m = 25 and C = 0.0" do
+    # (25/50)*8.0 + (25/50)*0.0 = 4.0
+    assert_in_delta Ranking.score(item(rating: 8.0, vote_count: 25)), 4.0, 1.0e-9
+    # (75/100)*8.0 + (25/100)*0.0 = 6.0
+    assert_in_delta Ranking.score(item(rating: 8.0, vote_count: 75)), 6.0, 1.0e-9
+  end
+
+  test "score returns a float in the zero-denominator branch given an integer mean" do
+    it = item(rating: 4, vote_count: 0)
+    assert is_float(Ranking.score(it, mean: 3, min_votes: 0))
+    assert Ranking.score(it, mean: 3, min_votes: 0) === 3.0
+    assert is_float(Ranking.score(item(rating: 4, vote_count: 10), mean: 3, min_votes: 0))
+  end
 end
 ```

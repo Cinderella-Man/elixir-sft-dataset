@@ -426,5 +426,139 @@ defmodule OverflowPoolTest do
     assert {:ok, c2} = OverflowPool.checkout(:op_distinct, 100)
     assert c1 != c2
   end
+
+  test "a crashed holder's overflow connection is destroyed on reclamation" do
+    parent = self()
+    destroy = fn conn -> send(parent, {:destroyed, conn}) end
+
+    start_supervised!(
+      {OverflowPool, name: :op_crash_ovf, size: 1, max_overflow: 1, destroy: destroy}
+    )
+
+    # The base connection stays in use here, so the holder's connection is overflow.
+    assert {:ok, _c1} = OverflowPool.checkout(:op_crash_ovf, 100)
+    {holder, {:ok, c2}} = spawn_holder(:op_crash_ovf, 1_000)
+    assert OverflowPool.stats(:op_crash_ovf).overflow == 1
+
+    Process.exit(holder, :kill)
+
+    # No waiter exists, so the reclaimed overflow connection must be destroyed.
+    assert_receive {:destroyed, ^c2}, 1_000
+
+    s = OverflowPool.stats(:op_crash_ovf)
+    assert s.total == 1 and s.overflow == 0 and s.in_use == 1 and s.available == 0
+  end
+
+  test "a crashed holder's connection goes to a blocked waiter and stays alive" do
+    parent = self()
+    destroy = fn conn -> send(parent, {:destroyed, conn}) end
+
+    start_supervised!(
+      {OverflowPool, name: :op_crash_wait, size: 1, max_overflow: 1, destroy: destroy}
+    )
+
+    assert {:ok, _c1} = OverflowPool.checkout(:op_crash_wait, 100)
+    {holder, {:ok, c2}} = spawn_holder(:op_crash_wait, 1_000)
+
+    waiter =
+      spawn(fn ->
+        send(parent, {:served, OverflowPool.checkout(:op_crash_wait, 5_000)})
+
+        receive do
+          :release -> :ok
+        end
+      end)
+
+    # The pool is at size + max_overflow, so this caller is enqueued as a waiter.
+    refute_receive {:served, _}, 100
+
+    Process.exit(holder, :kill)
+
+    # Demand still exists, so reclamation hands the connection over instead of destroying it.
+    assert_receive {:served, {:ok, got}}, 1_000
+    assert got == c2
+    refute_receive {:destroyed, _}, 100
+    assert OverflowPool.stats(:op_crash_wait).total == 2
+
+    send(waiter, :release)
+  end
+
+  test "a waiter that already timed out is never served by a later checkin" do
+    start_supervised!({OverflowPool, name: :op_stale, size: 1, max_overflow: 0})
+    parent = self()
+
+    assert {:ok, c1} = OverflowPool.checkout(:op_stale, 100)
+
+    spawn(fn -> send(parent, {:done, OverflowPool.checkout(:op_stale, 100)}) end)
+    assert_receive {:done, {:error, :timeout}}, 1_000
+
+    # The waiter has retired: the returned connection must go back to the pool,
+    # not to the caller that already got its timeout result.
+    assert :ok = OverflowPool.checkin(:op_stale, c1)
+    refute_receive {:done, _}, 200
+
+    s = OverflowPool.stats(:op_stale)
+    assert s.total == 1 and s.available == 1 and s.in_use == 0
+
+    assert {:ok, ^c1} = OverflowPool.checkout(:op_stale, 100)
+  end
+
+  test "a checkin serves the next waiter when the longest-waiting one died" do
+    start_supervised!({OverflowPool, name: :op_dead_waiter, size: 1, max_overflow: 0})
+    parent = self()
+
+    assert {:ok, c1} = OverflowPool.checkout(:op_dead_waiter, 100)
+
+    spawn_waiter = fn tag ->
+      spawn(fn ->
+        send(parent, {:got, tag, OverflowPool.checkout(:op_dead_waiter, 5_000)})
+
+        receive do
+          :release -> :ok
+        end
+      end)
+    end
+
+    first = spawn_waiter.(:first)
+    refute_receive {:got, :first, _}, 100
+    second = spawn_waiter.(:second)
+    refute_receive {:got, :second, _}, 100
+
+    ref = Process.monitor(first)
+    Process.exit(first, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^first, :killed}, 1_000
+
+    # The only live blocked caller must receive the connection.
+    assert :ok = OverflowPool.checkin(:op_dead_waiter, c1)
+    assert_receive {:got, :second, {:ok, got}}, 1_000
+    assert got == c1
+
+    send(second, :release)
+  end
+
+  test "the default connection factory hands out fresh distinct references" do
+    start_supervised!({OverflowPool, name: :op_def_create, size: 1, max_overflow: 1})
+
+    assert {:ok, c1} = OverflowPool.checkout(:op_def_create, 100)
+    assert {:ok, c2} = OverflowPool.checkout(:op_def_create, 100)
+
+    assert is_reference(c1) and is_reference(c2)
+    assert c1 != c2
+  end
+
+  test "an overflow connection is dismissed cleanly without a :destroy option" do
+    start_supervised!({OverflowPool, name: :op_no_destroy, size: 1, max_overflow: 1})
+
+    assert {:ok, c1} = OverflowPool.checkout(:op_no_destroy, 100)
+    assert {:ok, c2} = OverflowPool.checkout(:op_no_destroy, 100)
+
+    # With the default no-op destroy the pool still shrinks back toward :size.
+    assert :ok = OverflowPool.checkin(:op_no_destroy, c2)
+    s = OverflowPool.stats(:op_no_destroy)
+    assert s.total == 1 and s.overflow == 0 and s.in_use == 1 and s.available == 0
+
+    assert :ok = OverflowPool.checkin(:op_no_destroy, c1)
+    assert {:ok, ^c1} = OverflowPool.checkout(:op_no_destroy, 100)
+  end
 end
 ```

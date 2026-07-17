@@ -308,5 +308,76 @@ defmodule PriorityBiMapTest do
       end
     end
   end
+
+  test "put beating one conflict but tying the other is rejected with no partial eviction", %{
+    bm: bm
+  } do
+    PriorityBiMap.put(bm, :a, 1, 10)
+    PriorityBiMap.put(bm, :b, 2, 7)
+
+    # :a wants value 2. Conflicts: (a,1,10) key-side and (b,2,7) value-side.
+    # 8 beats the value-side pair but not the key-side pair -> reject everything.
+    assert {:error, :rejected} = PriorityBiMap.put(bm, :a, 2, 8)
+
+    assert {:ok, 1} = PriorityBiMap.get_by_key(bm, :a)
+    assert {:ok, :a} = PriorityBiMap.get_by_value(bm, 1)
+    assert {:ok, 2} = PriorityBiMap.get_by_key(bm, :b)
+    assert {:ok, :b} = PriorityBiMap.get_by_value(bm, 2)
+    assert {:ok, 10} = PriorityBiMap.priority(bm, :a)
+    assert {:ok, 7} = PriorityBiMap.priority(bm, :b)
+  end
+
+  test "rejected key-side-only conflict leaves the requested value entirely free", %{bm: bm} do
+    PriorityBiMap.put(bm, :a, 1, 10)
+
+    # Value 2 is free; the only conflict is the pair sitting at key :a.
+    assert {:error, :rejected} = PriorityBiMap.put(bm, :a, 2, 4)
+
+    assert {:ok, 1} = PriorityBiMap.get_by_key(bm, :a)
+    assert {:ok, :a} = PriorityBiMap.get_by_value(bm, 1)
+    assert {:ok, 10} = PriorityBiMap.priority(bm, :a)
+    # No partial change: value 2 was never installed.
+    assert :error = PriorityBiMap.get_by_value(bm, 2)
+  end
+
+  test "key-side-only conflict is displaced and frees its old value", %{bm: bm} do
+    PriorityBiMap.put(bm, :a, 1, 10)
+
+    # Value 2 is free; :a is rebound away from 1. 20 > 10 -> accept.
+    assert {:ok, evicted} = PriorityBiMap.put(bm, :a, 2, 20)
+    assert evicted == [{:a, 1}]
+
+    assert {:ok, 2} = PriorityBiMap.get_by_key(bm, :a)
+    assert {:ok, :a} = PriorityBiMap.get_by_value(bm, 2)
+    assert {:ok, 20} = PriorityBiMap.priority(bm, :a)
+    # The old value must not linger in the reverse direction.
+    assert :error = PriorityBiMap.get_by_value(bm, 1)
+  end
+
+  test "re-putting the same pair at a lower priority lowers the stored priority", %{bm: bm} do
+    assert {:ok, []} = PriorityBiMap.put(bm, :x, 9, 30)
+    assert {:ok, []} = PriorityBiMap.put(bm, :x, 9, 2)
+
+    assert {:ok, 9} = PriorityBiMap.get_by_key(bm, :x)
+    assert {:ok, :x} = PriorityBiMap.get_by_value(bm, 9)
+    assert {:ok, 2} = PriorityBiMap.priority(bm, :x)
+
+    # The lowered priority really governs later conflicts.
+    assert {:ok, [{:x, 9}]} = PriorityBiMap.put(bm, :y, 9, 3)
+  end
+
+  test "arbitrary terms work as keys and values in both directions", %{bm: bm} do
+    key = {:tuple, [1, 2], %{nested: "map"}}
+    value = %{"list" => [:a, {:b}], other: <<1, 2, 3>>}
+
+    assert {:ok, []} = PriorityBiMap.put(bm, key, value, -5)
+    assert {:ok, ^value} = PriorityBiMap.get_by_key(bm, key)
+    assert {:ok, ^key} = PriorityBiMap.get_by_value(bm, value)
+    assert {:ok, -5} = PriorityBiMap.priority(bm, key)
+
+    assert {:ok, [{^key, ^value}]} = PriorityBiMap.put(bm, "str", value, -4)
+    assert :error = PriorityBiMap.get_by_key(bm, key)
+    assert {:ok, "str"} = PriorityBiMap.get_by_value(bm, value)
+  end
 end
 ```

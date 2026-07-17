@@ -282,5 +282,113 @@ defmodule ParallelSagaTest do
     assert {:ok, %{x: 1}} = ParallelSaga.execute(ParallelSaga.new(), %{x: 1})
     assert Recorder.events() == []
   end
+
+  test "steps within a stage are started before any of them completes" do
+    parent = self()
+
+    rendezvous = fn name ->
+      fn _ctx ->
+        send(parent, {:started, name, self()})
+
+        receive do
+          :go -> {:ok, name}
+        after
+          2_000 -> {:error, :never_released}
+        end
+      end
+    end
+
+    saga =
+      ParallelSaga.new()
+      |> ParallelSaga.stage([
+        {:a, rendezvous.(:a), comp(:a)},
+        {:b, rendezvous.(:b), comp(:b)}
+      ])
+
+    runner = Task.async(fn -> ParallelSaga.execute(saga, %{}) end)
+
+    assert_receive {:started, :a, pid_a}, 1_000
+    assert_receive {:started, :b, pid_b}, 1_000
+
+    send(pid_a, :go)
+    send(pid_b, :go)
+
+    assert {:ok, %{a: :a, b: :b}} = Task.await(runner, 5_000)
+  end
+
+  test "a failing stage aborts the saga so later stages never run" do
+    saga =
+      ParallelSaga.new()
+      |> ParallelSaga.stage([{:a, fail_action(:a, :boom), comp(:a)}])
+      |> ParallelSaga.stage([{:b, ok_action(:b, 2), comp(:b)}])
+
+    assert {:error, err} = ParallelSaga.execute(saga, %{})
+    assert err.stage == 0
+    assert err.failed == %{a: :boom}
+    assert Recorder.action_names() == MapSet.new([:a])
+    assert Recorder.comps() == []
+  end
+
+  test "the error map carries exactly the four documented keys" do
+    saga =
+      ParallelSaga.new()
+      |> ParallelSaga.stage([
+        {:a, ok_action(:a, 1), comp(:a)},
+        {:b, fail_action(:b, :boom), comp(:b)}
+      ])
+
+    assert {:error, err} = ParallelSaga.execute(saga, %{})
+
+    assert err |> Map.keys() |> Enum.sort() ==
+             [:compensated, :compensations, :failed, :stage]
+  end
+
+  test "compensation walks every earlier stage most recent stage first" do
+    saga =
+      ParallelSaga.new()
+      |> ParallelSaga.stage([
+        {:a, ok_action(:a, 1), comp(:a)},
+        {:b, ok_action(:b, 2), comp(:b)}
+      ])
+      |> ParallelSaga.stage([
+        {:c, ok_action(:c, 3), comp(:c)},
+        {:d, ok_action(:d, 4), comp(:d)}
+      ])
+      |> ParallelSaga.stage([
+        {:e, ok_action(:e, 5), comp(:e)},
+        {:f, fail_action(:f, :nope), comp(:f)}
+      ])
+
+    assert {:error, err} = ParallelSaga.execute(saga, %{})
+    assert err.stage == 2
+    assert err.compensated == [:e, :d, :c, :b, :a]
+
+    assert Recorder.comps() ==
+             [{:comp, :e}, {:comp, :d}, {:comp, :c}, {:comp, :b}, {:comp, :a}]
+  end
+
+  test "an earlier compensation sees the failing stage's succeeded results" do
+    spy = fn ctx ->
+      Recorder.record({:comp_ctx, Map.take(ctx, [:a, :b, :c])})
+      {:ok, :undone}
+    end
+
+    saga =
+      ParallelSaga.new()
+      |> ParallelSaga.stage([{:a, ok_action(:a, 1), spy}])
+      |> ParallelSaga.stage([
+        {:b, ok_action(:b, 2), comp(:b)},
+        {:c, fail_action(:c, :boom), comp(:c)}
+      ])
+
+    assert {:error, _err} = ParallelSaga.execute(saga, %{})
+    assert {:comp_ctx, %{a: 1, b: 2}} in Recorder.events()
+  end
+
+  test "a compensation that is not arity-1 raises ArgumentError" do
+    assert_raise ArgumentError, fn ->
+      ParallelSaga.stage(ParallelSaga.new(), [{:a, fn _ -> :ok end, fn -> :ok end}])
+    end
+  end
 end
 ```

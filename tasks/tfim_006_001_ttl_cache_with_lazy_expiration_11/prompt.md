@@ -401,5 +401,40 @@ defmodule TTLCacheTest do
     # expired at 700
     assert :miss = TTLCache.get(cache, "z")
   end
+
+  test "name option registers the process for public API calls" do
+    name = :ttl_cache_named_process
+
+    {:ok, _pid} =
+      TTLCache.start_link(
+        clock: &Clock.now/0,
+        sweep_interval_ms: :infinity,
+        name: name
+      )
+
+    assert :ok = TTLCache.put(name, "k", "v", 1_000)
+    assert {:ok, "v"} = TTLCache.get(name, "k")
+    assert :ok = TTLCache.delete(name, "k")
+    assert :miss = TTLCache.get(name, "k")
+  end
+
+  test "put with a shorter TTL retires the previous later expiration", %{cache: cache} do
+    TTLCache.put(cache, "k", "v1", 1_000)
+    Clock.advance(100)
+
+    # New expiry is 100 + 50 = 150, well before the old expiry of 1_100.
+    TTLCache.put(cache, "k", "v2", 50)
+
+    Clock.advance(100)
+
+    # time = 200: past the new expiry (150) even though the old expiry is far away.
+    assert :miss = TTLCache.get(cache, "k")
+  end
+
+  test "get returns :miss at exactly the TTL boundary", %{cache: cache} do
+    TTLCache.put(cache, "k", "v", 500)
+    Clock.advance(500)
+    assert :miss = TTLCache.get(cache, "k")
+  end
 end
 ```

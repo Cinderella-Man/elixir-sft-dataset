@@ -370,5 +370,66 @@ defmodule ClockV1Test do
       assert_receive :ding
     end
   end
+
+  test "timers due at the same instant fire in registration order" do
+    test = self()
+    {:ok, clock} = Clock.Fake.start_link(initial: ~U[2024-01-01 00:00:00Z])
+
+    r1 = Clock.Fake.schedule(clock, [seconds: 5], fn -> send(test, :first) end)
+    r2 = Clock.Fake.schedule(clock, [seconds: 5], fn -> send(test, :second) end)
+
+    assert Clock.Fake.advance(clock, seconds: 5) == [r1, r2]
+    assert drain(2) == [:first, :second]
+  end
+
+  test "a zero-duration timer stays pending until an advance call fires it" do
+    test = self()
+    {:ok, clock} = Clock.Fake.start_link(initial: ~U[2024-01-01 00:00:00Z])
+
+    ref = Clock.Fake.schedule(clock, [seconds: 0], fn -> send(test, :now_due) end)
+    refute_receive :now_due, 50
+    assert Clock.Fake.pending(clock) == 1
+
+    assert Clock.Fake.advance(clock, seconds: 0) == [ref]
+    assert_receive :now_due
+  end
+
+  test "start_link without :initial starts at the documented default instant" do
+    {:ok, clock} = Clock.Fake.start_link([])
+    assert Clock.Fake.now(clock) == ~U[2024-01-01 00:00:00Z]
+  end
+
+  test "advance returns fired refs chronologically rather than by registration order" do
+    {:ok, clock} = Clock.Fake.start_link(initial: ~U[2024-01-01 00:00:00Z])
+
+    late = Clock.Fake.schedule(clock, [seconds: 10], fn -> :ok end)
+    early = Clock.Fake.schedule(clock, [seconds: 5], fn -> :ok end)
+
+    assert Clock.Fake.advance(clock, seconds: 20) == [early, late]
+  end
+
+  test "advance supports singular unit names and day units" do
+    {:ok, clock} = Clock.Fake.start_link(initial: ~U[2024-01-01 00:00:00Z])
+
+    Clock.Fake.advance(clock, day: 1, hour: 1, minute: 1, second: 1)
+    assert Clock.Fake.now(clock) == ~U[2024-01-02 01:01:01Z]
+
+    Clock.Fake.advance(clock, days: 2, minutes: 1)
+    assert Clock.Fake.now(clock) == ~U[2024-01-04 01:02:01Z]
+  end
+
+  test "schedule hands out unique integer refs across cancelled and fired timers" do
+    {:ok, clock} = Clock.Fake.start_link(initial: ~U[2024-01-01 00:00:00Z])
+
+    a = Clock.Fake.schedule(clock, [seconds: 1], fn -> :ok end)
+    b = Clock.Fake.schedule(clock, [seconds: 2], fn -> :ok end)
+    assert Clock.Fake.cancel(clock, b) == :ok
+    assert Clock.Fake.advance(clock, seconds: 5) == [a]
+    c = Clock.Fake.schedule(clock, [seconds: 1], fn -> :ok end)
+
+    refs = [a, b, c]
+    assert Enum.all?(refs, &is_integer/1)
+    assert Enum.uniq(refs) == refs
+  end
 end
 ```

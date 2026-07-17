@@ -362,6 +362,18 @@ defmodule PriorityEventBusTest do
     assert [{^r2, ^s2, 10}, {^r1, ^s1, 5}, {^r3, ^s3, 5}] = subs
   end
 
+  test "subscribers/2 returns [] for a topic with no subscribers", %{bus: bus} do
+    assert [] = PriorityEventBus.subscribers(bus, "never.subscribed")
+
+    # After subscribing then unsubscribing, the topic is empty again.
+    sub = spawn_sub(:a, policy: :ack)
+    ref = sub!(bus, "t", sub, 0)
+    assert [{^ref, ^sub, 0}] = PriorityEventBus.subscribers(bus, "t")
+
+    :ok = PriorityEventBus.unsubscribe(bus, "t", ref)
+    assert [] = PriorityEventBus.subscribers(bus, "t")
+  end
+
   # -------------------------------------------------------
   # Priority ordering (the defining property)
   # -------------------------------------------------------
@@ -423,6 +435,24 @@ defmodule PriorityEventBusTest do
     assert_receive {:got, :top, _, _}
     refute_received {:got, :s1, _, _}
     refute_received {:got, :s2, _, _}
+  end
+
+  test "ack/1 and cancel/1 send the right message and return :ok", %{bus: bus} do
+    # Drive ack/1 and cancel/1 through the public convenience helpers directly,
+    # observing the effect on delivery counting rather than internal messages.
+    s_high = spawn_sub(:high, policy: :ack)
+    s_low = spawn_sub(:low, policy: :ack)
+
+    sub!(bus, "t", s_high, 100)
+    sub!(bus, "t", s_low, 1)
+
+    assert {:ok, 2} = PriorityEventBus.publish(bus, "t", :evt)
+    assert_receive {:got, :high, _, _}
+    assert_receive {:got, :low, _, _}
+
+    # Both helpers return :ok for a well-formed reply_to tuple.
+    assert :ok = PriorityEventBus.ack({bus, make_ref()})
+    assert :ok = PriorityEventBus.cancel({bus, make_ref()})
   end
 
   # -------------------------------------------------------
@@ -501,6 +531,46 @@ defmodule PriorityEventBusTest do
     assert {:ok, 0} = PriorityEventBus.publish(bus, "a", :evt)
     assert {:ok, 0} = PriorityEventBus.publish(bus, "b", :evt)
     refute_received {:got, :d, _, _}
+  end
+
+  test "in-flight publish on a dying subscriber continues delivery downstream", %{bus: bus} do
+    test_pid = self()
+
+    dying =
+      spawn(fn ->
+        receive do
+          {:event, topic, event, _reply_to} ->
+            send(test_pid, {:got, :dying, topic, event})
+            exit(:boom)
+        end
+      end)
+
+    s_low = spawn_sub(:low, policy: :ack)
+
+    sub!(bus, "t", dying, 100)
+    sub!(bus, "t", s_low, 1)
+
+    # The high-priority subscriber dies mid-publish without replying; the bus
+    # must treat it as an ack, still count it, and deliver to the lower sub.
+    assert {:ok, 2} = PriorityEventBus.publish(bus, "t", :evt)
+
+    assert_receive {:got, :dying, "t", :evt}
+    assert_receive {:got, :low, "t", :evt}
+  end
+
+  test "late cancel arriving after the timeout does not suppress lower priority", %{bus: bus} do
+    # Timeout is 200ms (setup); slow subscriber replies :cancel only after 400ms,
+    # i.e. with a now-stale reply_to ref. That late cancel must not suppress low.
+    s_slow = spawn_sub(:slow, policy: {:sleep, 400, :cancel})
+    s_low = spawn_sub(:low, policy: :ack)
+
+    sub!(bus, "t", s_slow, 100)
+    sub!(bus, "t", s_low, 1)
+
+    assert {:ok, 2} = PriorityEventBus.publish(bus, "t", :evt)
+
+    assert_receive {:got, :slow, "t", :evt}
+    assert_receive {:got, :low, "t", :evt}
   end
 end
 ```

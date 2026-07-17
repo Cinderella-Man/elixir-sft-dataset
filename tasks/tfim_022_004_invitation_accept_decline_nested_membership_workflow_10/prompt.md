@@ -942,5 +942,43 @@ defmodule TeamRouterInvitationTest do
   test "TeamStore.get_user_by_token returns error for unknown token", %{store: store} do
     assert :error = TeamStore.get_user_by_token(store, "bogus")
   end
+
+  test "POST accept returns 404 before 403 for a foreign invite on a missing team", %{
+    store: store
+  } do
+    conn = post_accept(store, "ghost-team", "dave", "token-alice")
+    assert conn.status == 404
+    assert json_body(conn)["error"] == "not_found"
+  end
+
+  test "POST invitations returns 403 before 400 when a non-member sends a bad body", %{
+    store: store
+  } do
+    body = Jason.encode!(%{"wrong_field" => "dave"})
+
+    conn =
+      :post
+      |> conn("/api/teams/team-1/invitations", body)
+      |> put_req_header("authorization", "Bearer token-carol")
+      |> put_req_header("content-type", "application/json")
+      |> call(store)
+
+    assert conn.status == 403
+    assert json_body(conn)["error"] == "forbidden"
+  end
+
+  test "POST decline returns 404 for a non-existent team", %{store: store} do
+    conn = post_decline(store, "ghost-team", "dave", "token-dave")
+    assert conn.status == 404
+    assert json_body(conn)["error"] == "not_found"
+  end
+
+  test "GET invitations returns 403 for a user who is only invited", %{store: store} do
+    assert post_invite(store, "team-1", "dave", "token-alice").status == 201
+
+    conn = get_invitations(store, "team-1", "token-dave")
+    assert conn.status == 403
+    assert json_body(conn)["error"] == "forbidden"
+  end
 end
 ```

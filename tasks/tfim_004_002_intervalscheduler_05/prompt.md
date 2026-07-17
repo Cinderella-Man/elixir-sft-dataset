@@ -523,5 +523,64 @@ defmodule IntervalSchedulerTest do
     tick(is)
     refute_received :f
   end
+
+  test "a second tick at the same clock does not re-fire a skipped job", %{is: is} do
+    :ok =
+      IntervalScheduler.register(
+        is,
+        "j",
+        {:every, 60, :seconds},
+        {JobSink, :ping, [self(), :f]}
+      )
+
+    # Jump past four missed boundaries; the single overdue fire happens now.
+    Clock.advance_seconds(250)
+    tick(is)
+    assert_received :f
+
+    # Drive one more tick at the SAME clock: next_run is now T0+300 > now,
+    # so the observable effect (a :f message) must NOT happen a second time.
+    tick(is)
+    refute_received :f
+
+    {:ok, next} = IntervalScheduler.next_run(is, "j")
+    expected = NaiveDateTime.add(@t0, 300, :second)
+    assert NaiveDateTime.compare(next, expected) == :eq
+  end
+
+  test "start_link registers the process under the given :name", %{is: _is} do
+    {:ok, _pid} =
+      IntervalScheduler.start_link(
+        clock: &Clock.now/0,
+        tick_interval_ms: :infinity,
+        name: :named_scheduler
+      )
+
+    assert :ok =
+             IntervalScheduler.register(
+               :named_scheduler,
+               "j",
+               {:every, 5, :seconds},
+               {JobSink, :ping, [self(), :n]}
+             )
+
+    assert {:ok, next} = IntervalScheduler.next_run(:named_scheduler, "j")
+    assert NaiveDateTime.compare(next, NaiveDateTime.add(@t0, 5, :second)) == :eq
+  end
+
+  test "jobs/1 tuples carry the interval_spec and a NaiveDateTime next_run", %{is: is} do
+    :ok =
+      IntervalScheduler.register(
+        is,
+        "a",
+        {:every, 10, :seconds},
+        {JobSink, :ping, [self(), :a]}
+      )
+
+    assert [{"a", spec, next}] = IntervalScheduler.jobs(is)
+    assert spec == {:every, 10, :seconds}
+    assert %NaiveDateTime{} = next
+    assert NaiveDateTime.compare(next, NaiveDateTime.add(@t0, 10, :second)) == :eq
+  end
 end
 ```

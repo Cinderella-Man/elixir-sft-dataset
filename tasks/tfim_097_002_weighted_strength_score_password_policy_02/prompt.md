@@ -299,5 +299,64 @@ defmodule PasswordPolicyV1Test do
       {:rejected, _score, reasons} -> :too_similar_to_username in reasons
     end
   end
+
+  test "lists all four rejection reasons together in canonical order" do
+    # "abc": len 3 -> 6, lowercase only -> 10, score 16.
+    # Short (< default 8), on the common list (matched case-insensitively against "ABC"),
+    # Levenshtein distance 1 from "abd" (<= default 3), and score 16 < default 60.
+    result =
+      PasswordPolicy.evaluate("abc", %{
+        username: "abd",
+        common_passwords: ["ABC"]
+      })
+
+    assert result ==
+             {:rejected, 16,
+              [:too_short, :common_password, :too_similar_to_username, :insufficient_strength]}
+  end
+
+  test "a custom min_length rejects a password that clears the score threshold" do
+    # len 16 -> 32, all 4 classes -> 40, +20 bonus -> score 92, which is well above the
+    # default min_score of 60. The hard length rule must still fire, and it must be the
+    # only reason reported.
+    result =
+      PasswordPolicy.evaluate("Zx9#mQpLwT7$vBn2", %{username: "operator", min_length: 20})
+
+    assert result == {:rejected, 92, [:too_short]}
+  end
+
+  test "accepts a password whose username distance is 4 under the default similarity limit" do
+    # "zx9#mqplwt7$wxyz" vs "zx9#mqplwt7$vbn2" differ in exactly the last 4 characters ->
+    # Levenshtein distance 4, which is strictly greater than the default limit of 3.
+    # len 16 -> 32, all 4 classes -> 40, +20 bonus -> score 92.
+    assert PasswordPolicy.evaluate("Zx9#mQpLwT7$WXYZ", %{username: "Zx9#mQpLwT7$vBn2"}) ==
+             {:accepted, 92}
+  end
+
+  test "each character class contributes exactly 10 points on its own" do
+    # Each password is 4 characters -> 4 * 2 = 8 length points, no bonus, and is far
+    # from the username, so the score isolates the character-class contribution.
+    ctx = %{username: "operator"}
+
+    # uppercase only -> 8 + 10 = 18
+    assert PasswordPolicy.evaluate("ABCD", ctx) ==
+             {:rejected, 18, [:too_short, :insufficient_strength]}
+
+    # lowercase only -> 8 + 10 = 18
+    assert PasswordPolicy.evaluate("abcd", ctx) ==
+             {:rejected, 18, [:too_short, :insufficient_strength]}
+
+    # digits only -> 8 + 10 = 18
+    assert PasswordPolicy.evaluate("1234", ctx) ==
+             {:rejected, 18, [:too_short, :insufficient_strength]}
+
+    # specials only -> 8 + 10 = 18
+    assert PasswordPolicy.evaluate("#$%^", ctx) ==
+             {:rejected, 18, [:too_short, :insufficient_strength]}
+
+    # all four classes at the same length -> 8 + 40 = 48
+    assert PasswordPolicy.evaluate("Ab3#", ctx) ==
+             {:rejected, 48, [:too_short, :insufficient_strength]}
+  end
 end
 ```

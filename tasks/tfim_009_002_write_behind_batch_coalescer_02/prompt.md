@@ -443,5 +443,116 @@ defmodule BatchCollectorTest do
     assert {:ok, [:hello]} =
              BatchCollector.submit(:my_batcher, :k, :hello, fn items -> {:ok, items} end)
   end
+
+  test "no second flush occurs after the count threshold triggers a flush" do
+    {:ok, bc} = BatchCollector.start_link(flush_interval_ms: 200)
+    parent = self()
+
+    ff = fn items ->
+      send(parent, {:flushed, length(items)})
+      {:ok, items}
+    end
+
+    t1 = Task.async(fn -> BatchCollector.submit(bc, :once, :a, ff, max_batch_size: 2) end)
+    t2 = Task.async(fn -> BatchCollector.submit(bc, :once, :b, ff, max_batch_size: 2) end)
+
+    [r1, r2] = Task.await_many([t1, t2], 1_000)
+    assert {:ok, items} = r1
+    assert length(items) == 2
+    assert r1 == r2
+
+    assert_receive {:flushed, 2}, 1_000
+    # The 200ms timer deadline passes here; it must not cause a second flush.
+    refute_receive {:flushed, _}, 600
+  end
+
+  test "default max_batch_size threshold is 10" do
+    {:ok, bc} = BatchCollector.start_link(flush_interval_ms: 60_000)
+    parent = self()
+
+    ff = fn items ->
+      send(parent, {:flushed, length(items)})
+      {:ok, items}
+    end
+
+    for i <- 1..9 do
+      Task.async(fn -> BatchCollector.submit(bc, :d, i, ff) end)
+    end
+
+    buffered =
+      Enum.reduce_while(1..200_000, 0, fn _, _ ->
+        case BatchCollector.pending_count(bc, :d) do
+          9 -> {:halt, 9}
+          _ -> {:cont, 0}
+        end
+      end)
+
+    assert buffered == 9
+    # 9 < default 10: no flush from the (60s) timer nor from the threshold.
+    refute_receive {:flushed, _}, 100
+
+    Task.async(fn -> BatchCollector.submit(bc, :d, 10, ff) end)
+    assert_receive {:flushed, 10}, 1_000
+  end
+
+  test "keys apply their own max_batch_size thresholds independently" do
+    {:ok, bc} = BatchCollector.start_link(flush_interval_ms: 60_000)
+    parent = self()
+
+    ff = fn items ->
+      send(parent, {:flushed, hd(items), length(items)})
+      {:ok, items}
+    end
+
+    Task.async(fn -> BatchCollector.submit(bc, :b, :b1, ff, max_batch_size: 3) end)
+    Task.async(fn -> BatchCollector.submit(bc, :b, :b2, ff, max_batch_size: 3) end)
+    Task.async(fn -> BatchCollector.submit(bc, :a, :a1, ff, max_batch_size: 2) end)
+    Task.async(fn -> BatchCollector.submit(bc, :a, :a2, ff, max_batch_size: 2) end)
+
+    buffered_b =
+      Enum.reduce_while(1..200_000, 0, fn _, _ ->
+        case BatchCollector.pending_count(bc, :b) do
+          2 -> {:halt, 2}
+          _ -> {:cont, 0}
+        end
+      end)
+
+    assert buffered_b == 2
+    # :a hits its own threshold of 2 and flushes...
+    assert_receive {:flushed, aa, 2}, 1_000
+    assert aa in [:a1, :a2]
+    # ...while :b (threshold 3) stays buffered and must not flush.
+    refute_receive {:flushed, _bb, _}, 300
+
+    # Drain :b via its own threshold so no callers block forever.
+    Task.async(fn -> BatchCollector.submit(bc, :b, :b3, ff, max_batch_size: 3) end)
+    assert_receive {:flushed, cc, 3}, 1_000
+    assert cc in [:b1, :b2]
+  end
+
+  test "pending_count reports one item while a batch is buffered" do
+    {:ok, bc} = BatchCollector.start_link(flush_interval_ms: 300)
+    parent = self()
+
+    ff = fn items ->
+      send(parent, {:flushed, items})
+      {:ok, items}
+    end
+
+    task = Task.async(fn -> BatchCollector.submit(bc, :pc, :only, ff, max_batch_size: 5) end)
+
+    observed =
+      Enum.reduce_while(1..200_000, 0, fn _, _ ->
+        case BatchCollector.pending_count(bc, :pc) do
+          0 -> {:cont, 0}
+          n -> {:halt, n}
+        end
+      end)
+
+    assert observed == 1
+    assert_receive {:flushed, [:only]}, 1_000
+    assert Task.await(task, 1_000) == {:ok, [:only]}
+    assert BatchCollector.pending_count(bc, :pc) == 0
+  end
 end
 ```

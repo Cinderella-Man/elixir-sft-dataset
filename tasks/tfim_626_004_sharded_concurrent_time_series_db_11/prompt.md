@@ -333,7 +333,7 @@ defmodule ShardedTSDB.Shard do
 
   defp label_match?(sorted_labels, matchers) do
     lmap = Map.new(sorted_labels)
-    Enum.all?(matchers, fn {k, v} -> Map.get(lmap, k) == v end)
+    Enum.all?(matchers, fn {k, v} -> Map.fetch(lmap, k) == {:ok, v} end)
   end
 
   defp in_range_points(chunks, start_ts, end_ts) do
@@ -750,6 +750,118 @@ defmodule ShardedTSDBTest do
         Process.sleep(10)
         wait_until(fun, attempts - 1)
     end
+  end
+
+  test "default chunk_duration_ms of 60_000 governs the cleanup boundary" do
+    {:ok, db} =
+      ShardedTSDB.start_link(
+        shards: 2,
+        clock: &Clock.now/0,
+        retention_ms: 10_000,
+        cleanup_interval_ms: :infinity
+      )
+
+    :ok = ShardedTSDB.insert(db, "m", %{}, 0, 1)
+    :ok = ShardedTSDB.insert(db, "m", %{}, 60_000, 2)
+
+    # cutoff = 60_000. With the default 60_000 chunk width the chunk starting at 0
+    # ends exactly at the cutoff and is dropped; the chunk at 60_000 survives.
+    Clock.set(70_000)
+    assert :ok = ShardedTSDB.cleanup(db)
+
+    [{_labels, points}] = ShardedTSDB.query(db, "m", %{}, {0, 200_000})
+    assert points == [{60_000, 2}]
+  end
+
+  test "default retention_ms keeps chunks until an hour of clock time has passed" do
+    {:ok, db} =
+      ShardedTSDB.start_link(
+        shards: 2,
+        clock: &Clock.now/0,
+        chunk_duration_ms: 1_000,
+        cleanup_interval_ms: :infinity
+      )
+
+    :ok = ShardedTSDB.insert(db, "m", %{}, 0, 1)
+
+    # cutoff = 0; the chunk ending at 1_000 is still within the default retention.
+    Clock.set(3_600_000)
+    assert :ok = ShardedTSDB.cleanup(db)
+    assert [{_labels, [{0, 1}]}] = ShardedTSDB.query(db, "m", %{}, {0, 10_000})
+
+    # cutoff = 1_000; the chunk ending at 1_000 now expires.
+    Clock.set(3_601_000)
+    assert :ok = ShardedTSDB.cleanup(db)
+    assert [] = ShardedTSDB.query(db, "m", %{}, {0, 10_000})
+    assert ShardedTSDB.series_count(db) == 0
+  end
+
+  test "a single :cleanup_tick performs exactly one cleanup pass" do
+    test_pid = self()
+
+    clock = fn ->
+      send(test_pid, :clock_read)
+      0
+    end
+
+    {:ok, db} =
+      ShardedTSDB.start_link(
+        shards: 2,
+        clock: clock,
+        chunk_duration_ms: 1_000,
+        retention_ms: 10_000,
+        cleanup_interval_ms: :infinity
+      )
+
+    :ok = ShardedTSDB.insert(db, "m", %{}, 100, 1)
+    send(db, :cleanup_tick)
+
+    # A cleanup pass reads the clock exactly once; a second pass would read again.
+    assert_receive :clock_read, 500
+    refute_receive :clock_read, 300
+    assert ShardedTSDB.series_count(db) == 1
+  end
+
+  test "a matcher pair whose key is absent from the series does not match", %{db: db} do
+    :ok = ShardedTSDB.insert(db, "cpu", %{"region" => "eu"}, 100, 1)
+    :ok = ShardedTSDB.insert(db, "cpu", %{"host" => nil}, 100, 2)
+
+    # Only the series that actually contains the pair {"host", nil} may match.
+    result = ShardedTSDB.query(db, "cpu", %{"host" => nil}, {0, 200})
+    assert result == [{%{"host" => nil}, [{100, 2}]}]
+  end
+
+  test "cleanup_interval_ms of :infinity arms no periodic cleanup timer" do
+    test_pid = self()
+
+    clock = fn ->
+      send(test_pid, :clock_read)
+      0
+    end
+
+    {:ok, db} =
+      ShardedTSDB.start_link(
+        shards: 2,
+        clock: clock,
+        chunk_duration_ms: 1_000,
+        retention_ms: 10_000,
+        cleanup_interval_ms: :infinity
+      )
+
+    :ok = ShardedTSDB.insert(db, "m", %{}, 100, 1)
+
+    # No cleanup pass may ever run on its own, so the clock is never read.
+    refute_receive :clock_read, 300
+    assert ShardedTSDB.series_count(db) == 1
+  end
+
+  test "query_agg windows begin at start_ts even when it is not step aligned", %{db: db} do
+    for {ts, v} <- [{150, 1}, {400, 2}, {450, 4}, {700, 8}] do
+      :ok = ShardedTSDB.insert(db, "m", %{}, ts, v)
+    end
+
+    [{_labels, agg}] = ShardedTSDB.query_agg(db, "m", %{}, {150, 750}, :sum, 300)
+    assert agg == [{150, 3}, {450, 12}]
   end
 end
 ```

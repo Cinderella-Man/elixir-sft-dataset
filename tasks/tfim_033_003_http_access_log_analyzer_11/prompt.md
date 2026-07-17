@@ -33,21 +33,37 @@ defmodule AccessLogAnalyzer do
   @doc "Analyzes the HTTP access log at `path`. Returns `{:ok, stats}` or `{:error, reason}`."
   @spec analyze(String.t()) :: {:ok, map()} | {:error, term()}
   def analyze(path) do
-    case File.stat(path) do
-      {:error, reason} ->
-        {:error, reason}
-
-      {:ok, _} ->
-        report =
-          path
-          |> File.stream!(:line, [])
-          |> Stream.map(&String.trim_trailing(&1, "\n"))
-          |> Stream.map(&String.trim_trailing(&1, "\r"))
-          |> Enum.reduce(initial_acc(), &process_line/2)
-          |> build_report()
-
-        {:ok, report}
+    with {:ok, :regular} <- check_readable(path) do
+      stream_report(path)
     end
+  end
+
+  # ---------------------------------------------------------------------------
+  # File checks
+  # ---------------------------------------------------------------------------
+
+  defp check_readable(path) do
+    case File.stat(path) do
+      {:ok, %File.Stat{type: :regular}} -> {:ok, :regular}
+      {:ok, %File.Stat{type: :directory}} -> {:error, :eisdir}
+      {:ok, %File.Stat{type: _other}} -> {:error, :einval}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp stream_report(path) do
+    report =
+      path
+      |> File.stream!(:line, [])
+      |> Stream.map(&String.trim_trailing(&1, "\n"))
+      |> Stream.map(&String.trim_trailing(&1, "\r"))
+      |> Enum.reduce(initial_acc(), &process_line/2)
+      |> build_report()
+
+    {:ok, report}
+  rescue
+    error in File.Error -> {:error, error.reason}
+    error in ErlangError -> {:error, error.original}
   end
 
   # ---------------------------------------------------------------------------
@@ -535,6 +551,121 @@ defmodule AccessLogAnalyzerTest do
              {{2024, 1, 1}, {23, 59}} => 1,
              {{2024, 1, 2}, {0, 1}} => 1
            }
+  end
+
+  test "path that exists but cannot be opened as a file returns an error tuple" do
+    dir = Path.join(System.tmp_dir!(), "access_log_dir_#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf(dir) end)
+
+    assert {:error, _reason} = AccessLogAnalyzer.analyze(dir)
+  end
+
+  test "line whose timestamp is not ISO 8601 is counted as malformed" do
+    path = tmp_path("bad_timestamp")
+
+    write_lines(path, [
+      access_line("15/01/2024 14:03:22", "GET", "/a", 200, 5.0),
+      access_line("not-a-timestamp", "GET", "/b", 200, 5.0),
+      access_line("2024-01-15T10:00:00Z", "GET", "/ok", 200, 5.0)
+    ])
+
+    on_exit(fn -> File.rm(path) end)
+
+    assert {:ok, report} = AccessLogAnalyzer.analyze(path)
+    assert report.malformed_count == 2
+    assert report.requests_by_method == %{"GET" => 1}
+    assert report.top_paths == [{"/ok", 1}]
+  end
+
+  test "valid JSON whose top-level value is not an object is malformed" do
+    path = tmp_path("not_object")
+
+    write_lines(path, [
+      "[1, 2, 3]",
+      "\"just a string\"",
+      "42",
+      "null",
+      access_line("2024-01-15T10:00:00Z", "GET", "/ok", 200, 5.0)
+    ])
+
+    on_exit(fn -> File.rm(path) end)
+
+    assert {:ok, report} = AccessLogAnalyzer.analyze(path)
+    assert report.malformed_count == 4
+    assert report.top_paths == [{"/ok", 1}]
+  end
+
+  test "non-string method or path makes the line malformed" do
+    path = tmp_path("bad_method_path")
+
+    write_lines(path, [
+      Jason.encode!(%{
+        "timestamp" => "2024-01-15T10:00:00Z",
+        "method" => 123,
+        "path" => "/a",
+        "status_code" => 200,
+        "duration_ms" => 5.0
+      }),
+      Jason.encode!(%{
+        "timestamp" => "2024-01-15T10:00:00Z",
+        "method" => "GET",
+        "path" => ["/b"],
+        "status_code" => 200,
+        "duration_ms" => 5.0
+      })
+    ])
+
+    on_exit(fn -> File.rm(path) end)
+
+    assert {:ok, report} = AccessLogAnalyzer.analyze(path)
+    assert report.malformed_count == 2
+    assert report.requests_by_method == %{}
+    assert report.time_range == nil
+  end
+
+  test "non-numeric duration_ms is malformed while integer duration_ms is valid" do
+    path = tmp_path("bad_duration")
+
+    write_lines(path, [
+      Jason.encode!(%{
+        "timestamp" => "2024-01-15T10:00:00Z",
+        "method" => "GET",
+        "path" => "/slow",
+        "status_code" => 200,
+        "duration_ms" => "12.5"
+      }),
+      Jason.encode!(%{
+        "timestamp" => "2024-01-15T10:00:01Z",
+        "method" => "GET",
+        "path" => "/int",
+        "status_code" => 200,
+        "duration_ms" => 7
+      })
+    ])
+
+    on_exit(fn -> File.rm(path) end)
+
+    assert {:ok, report} = AccessLogAnalyzer.analyze(path)
+    assert report.malformed_count == 1
+    assert report.top_paths == [{"/int", 1}]
+    assert report.avg_duration == 7.0
+    assert report.max_duration == {"/int", 7}
+  end
+
+  test "error_rate treats status_code exactly 400 as an error and 399 as success" do
+    path = tmp_path("status_boundary")
+
+    write_lines(path, [
+      access_line("2024-01-15T10:00:00Z", "GET", "/a", 399, 1.0),
+      access_line("2024-01-15T10:00:01Z", "GET", "/b", 400, 1.0),
+      access_line("2024-01-15T10:00:02Z", "GET", "/c", 401, 1.0)
+    ])
+
+    on_exit(fn -> File.rm(path) end)
+
+    assert {:ok, report} = AccessLogAnalyzer.analyze(path)
+    assert_in_delta report.error_rate, 2 / 3, 0.0001
   end
 end
 ```

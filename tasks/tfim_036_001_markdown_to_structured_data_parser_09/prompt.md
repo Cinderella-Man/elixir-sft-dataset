@@ -431,5 +431,71 @@ defmodule MarkdownParserTest do
     md = "## Category\r\n- **Item**: Desc (tag)\r\n"
     assert [%{category: "Category", items: [%{name: "Item"}]}] = parse(md)
   end
+
+  test "category whose only bullets are malformed still appears with empty items" do
+    md = """
+    ## Empty By Malformation
+
+    - plain bullet with no bold name
+      - **Nested**: indented child (x)
+    - another bad bullet (fake, tags)
+
+    ## Next
+
+    - **Real**: Kept (t)
+    """
+
+    result = parse(md)
+    assert Enum.map(result, & &1.category) == ["Empty By Malformation", "Next"]
+    assert Enum.at(result, 0).items == []
+    assert Enum.at(result, 1).items == [%{name: "Real", description: "Kept", tags: ["t"]}]
+  end
+
+  test "bullets following ignored H3 and H1 headings stay in the preceding H2 category" do
+    md = """
+    ## Real
+
+    - **First**: Before the H3 (a)
+
+    ### Not a category
+
+    - **Second**: After the H3 (b)
+
+    # Also not a category
+
+    - **Third**: After the H1 (c)
+    """
+
+    assert [%{category: "Real", items: items}] = parse(md)
+    assert Enum.map(items, & &1.name) == ["First", "Second", "Third"]
+    assert Enum.map(items, & &1.tags) == [["a"], ["b"], ["c"]]
+  end
+
+  test "bullet lines starting with more than one dash are ignored" do
+    md = """
+    ## Dashes
+
+    -- **Double**: Two dashes (a)
+    - - **Spaced**: Dash space dash (b)
+    --- **Triple**: Three dashes (c)
+    - **Good**: Single dash (d)
+    """
+
+    [%{items: items}] = parse(md)
+    assert Enum.map(items, & &1.name) == ["Good"]
+    assert hd(items).tags == ["d"]
+  end
+
+  test "a single tag in parentheses yields a one-element tags list" do
+    md = """
+    ## Single
+
+    - **Solo**: Only one tag (only)
+    """
+
+    [%{items: [item]}] = parse(md)
+    assert item.description == "Only one tag"
+    assert item.tags == ["only"]
+  end
 end
 ```

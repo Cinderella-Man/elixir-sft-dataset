@@ -376,5 +376,119 @@ defmodule BackoffDLQTest do
     assert {:error, :boom} = BackoffDLQ.retry(dlq, "q", a, fn _ -> {:error, :boom} end)
     assert Enum.map(BackoffDLQ.ready(dlq, "q", 2), & &1.id) == [b, c]
   end
+
+  test "a handler returning an unrecognised term is a failure that backs off", %{dlq: dlq} do
+    {:ok, id} = BackoffDLQ.push(dlq, "q", :m, :orig, %{})
+
+    assert {:error, _} = BackoffDLQ.retry(dlq, "q", id, fn _ -> :something_else end)
+    assert Process.alive?(dlq)
+
+    assert [e] = BackoffDLQ.peek(dlq, "q", 10)
+    assert e.retry_count == 1
+    assert e.status == :pending
+    assert e.next_retry_at == 1000
+    assert BackoffDLQ.ready(dlq, "q", 10) == []
+  end
+
+  test "max_attempts defaults to 5 failed retries before the message dies" do
+    {:ok, dlq} = BackoffDLQ.start_link(clock: &Clock.now/0)
+    {:ok, id} = BackoffDLQ.push(dlq, "q", :m, :orig, %{})
+    fail = fn _ -> {:error, :again} end
+
+    # default backoffs from the default base: 1000, 2000, 4000, 8000
+    for advance <- [0, 1000, 2000, 4000] do
+      Clock.advance(advance)
+      assert {:error, :again} = BackoffDLQ.retry(dlq, "q", id, fail)
+    end
+
+    # four failures is not yet enough under the default
+    assert [e4] = BackoffDLQ.peek(dlq, "q", 10)
+    assert e4.retry_count == 4
+    assert e4.status == :pending
+
+    Clock.advance(8000)
+    assert {:error, :again} = BackoffDLQ.retry(dlq, "q", id, fail)
+    assert [e5] = BackoffDLQ.peek(dlq, "q", 10)
+    assert e5.retry_count == 5
+    assert e5.status == :dead
+    assert {:error, :dead} = BackoffDLQ.retry(dlq, "q", id, fn _ -> :ok end)
+  end
+
+  test "base_backoff_ms defaults to 1000 when the option is omitted" do
+    {:ok, dlq} = BackoffDLQ.start_link(clock: &Clock.now/0)
+    {:ok, id} = BackoffDLQ.push(dlq, "q", :m, :orig, %{})
+
+    assert {:error, :boom} = BackoffDLQ.retry(dlq, "q", id, fn _ -> {:error, :boom} end)
+    assert [e] = BackoffDLQ.peek(dlq, "q", 10)
+    assert e.next_retry_at == 1000
+    assert BackoffDLQ.ready(dlq, "q", 10) == []
+
+    Clock.advance(999)
+    assert {:error, :not_ready, 1} = BackoffDLQ.retry(dlq, "q", id, fn _ -> :ok end)
+    Clock.advance(1)
+    assert [r] = BackoffDLQ.ready(dlq, "q", 10)
+    assert r.id == id
+  end
+
+  test "retrying a dead message never invokes the handler", %{dlq: dlq} do
+    {:ok, id} = BackoffDLQ.push(dlq, "q", :m, :orig, %{})
+    fail = fn _ -> {:error, :again} end
+
+    assert {:error, :again} = BackoffDLQ.retry(dlq, "q", id, fail)
+    Clock.advance(1000)
+    assert {:error, :again} = BackoffDLQ.retry(dlq, "q", id, fail)
+    Clock.advance(2000)
+    assert {:error, :again} = BackoffDLQ.retry(dlq, "q", id, fail)
+    assert [dead] = BackoffDLQ.peek(dlq, "q", 10)
+    assert dead.status == :dead
+
+    parent = self()
+    spy = fn _ -> send(parent, :handler_ran) end
+
+    assert {:error, :dead} = BackoffDLQ.retry(dlq, "q", id, spy)
+    refute_receive :handler_ran, 50
+
+    # the dead entry is untouched: no removal, no extra retry counted
+    assert [still] = BackoffDLQ.peek(dlq, "q", 10)
+    assert still.id == id
+    assert still.retry_count == 3
+    assert still.status == :dead
+  end
+
+  test "purge removes an entry whose age exactly equals older_than", %{dlq: dlq} do
+    {:ok, _a} = BackoffDLQ.push(dlq, "q", :exact, :err, %{})
+    Clock.advance(400)
+    {:ok, b} = BackoffDLQ.push(dlq, "q", :younger, :err, %{})
+    Clock.advance(100)
+
+    # a is exactly 500ms old (>= 500 → purged), b is 100ms old (< 500 → kept)
+    assert {:ok, 1} = BackoffDLQ.purge(dlq, "q", 500)
+    assert [e] = BackoffDLQ.peek(dlq, "q", 10)
+    assert e.id == b
+
+    # an unknown queue purges nothing
+    assert {:ok, 0} = BackoffDLQ.purge(dlq, "nope", 0)
+  end
+
+  test "peek and ready entries carry the error_reason and metadata given at push", %{dlq: dlq} do
+    meta = %{src: "web", attempt: 2}
+    {:ok, id} = BackoffDLQ.push(dlq, "q", %{body: "hi"}, {:http, 503}, meta)
+
+    assert [e] = BackoffDLQ.peek(dlq, "q", 10)
+    assert e.id == id
+    assert e.message == %{body: "hi"}
+    assert e.error_reason == {:http, 503}
+    assert e.metadata == meta
+
+    assert [r] = BackoffDLQ.ready(dlq, "q", 10)
+    assert r.error_reason == {:http, 503}
+    assert r.metadata == meta
+
+    # the original error_reason survives a failed retry with a different reason
+    assert {:error, :other} = BackoffDLQ.retry(dlq, "q", id, fn _ -> {:error, :other} end)
+    assert [e2] = BackoffDLQ.peek(dlq, "q", 10)
+    assert e2.error_reason == {:http, 503}
+    assert e2.metadata == meta
+  end
 end
 ```

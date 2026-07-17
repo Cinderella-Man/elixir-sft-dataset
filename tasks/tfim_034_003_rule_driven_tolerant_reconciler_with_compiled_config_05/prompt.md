@@ -746,5 +746,57 @@ defmodule TolerantReconcilerTest do
     assert entry.differences == %{amount: %{left: 99.0, right: 10.0, rule: {:numeric, 0.01}}}
     assert TolerantReconciler.field_summary(report) == %{amount: 1}
   end
+
+  test "numeric rule treats a difference exactly equal to the tolerance as equal" do
+    config = config!(key_fields: [:id], rules: [amount: {:numeric, 0.5}])
+
+    report =
+      TolerantReconciler.run(config, [%{id: 1, amount: 10.0}], [%{id: 1, amount: 10.5}])
+
+    [entry] = report.matched
+    assert entry.differences == %{}
+  end
+
+  test "with no compare_fields a field present only in the right record is still compared" do
+    config = config!(key_fields: [:id])
+
+    report = TolerantReconciler.run(config, [%{id: 1}], [%{id: 1, extra: "new"}])
+
+    [entry] = report.matched
+    assert entry.differences == %{extra: %{left: nil, right: "new", rule: :exact}}
+    assert TolerantReconciler.field_summary(report) == %{extra: 1}
+  end
+
+  test "compile rejects a rules list whose pairs are not keyed by atoms" do
+    assert TolerantReconciler.compile(key_fields: [:id], rules: [{"name", :exact}]) ==
+             {:error, :invalid_rules}
+
+    assert TolerantReconciler.compile(key_fields: [:id], rules: [:exact]) ==
+             {:error, :invalid_rules}
+  end
+
+  test "case_insensitive rule reports no difference for equal non-binary values" do
+    config = config!(key_fields: [:id], rules: [name: :case_insensitive])
+
+    report = TolerantReconciler.run(config, [%{id: 1, name: :alice}], [%{id: 1, name: :alice}])
+
+    [entry] = report.matched
+    assert entry.differences == %{}
+  end
+
+  test "numeric rule reports no difference for equal non-number values" do
+    config = config!(key_fields: [:id], rules: [amount: {:numeric, 0.01}])
+
+    report = TolerantReconciler.run(config, [%{id: 1, amount: "n/a"}], [%{id: 1, amount: "n/a"}])
+
+    [entry] = report.matched
+    assert entry.differences == %{}
+    assert TolerantReconciler.field_summary(report) == %{}
+  end
+
+  test "compile rejects compare_fields that is not a list at all" do
+    assert TolerantReconciler.compile(key_fields: [:id], compare_fields: :name) ==
+             {:error, :invalid_compare_fields}
+  end
 end
 ```

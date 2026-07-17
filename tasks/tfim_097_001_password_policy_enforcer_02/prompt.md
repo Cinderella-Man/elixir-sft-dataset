@@ -162,7 +162,9 @@ defmodule PasswordPolicy do
          password,
          %{username: username, max_username_similarity: threshold}
        ) do
-    dist = levenshtein(String.downcase(password), String.downcase(username))
+    # The spec calls for the literal Levenshtein distance between the password and
+    # the username: no case folding is applied to either side.
+    dist = levenshtein(password, username)
     if dist > threshold, do: :ok, else: {:violation, :too_similar_to_username}
   end
 
@@ -453,6 +455,47 @@ defmodule PasswordPolicyEnforcerTest do
       })
 
     assert result == :ok
+  end
+
+  test "username similarity uses literal Levenshtein distance without case folding" do
+    # Literal distance("ALICE1!x", "alice") == 8 (no character matches, lengths 8 vs 5),
+    # which is strictly greater than the default threshold of 3, so the password passes.
+    result = PasswordPolicy.validate("ALICE1!x", %{username: "alice"})
+
+    assert result == :ok
+  end
+
+  test "max_length defaults to 128 when the option is omitted" do
+    too_long = "Aa1!" <> String.duplicate("x", 125)
+    assert {:error, errs} = PasswordPolicy.validate(too_long, %{username: "someuser"})
+    assert Enum.sort(errs) == Enum.sort([:too_long])
+
+    at_limit = "Aa1!" <> String.duplicate("x", 124)
+    assert PasswordPolicy.validate(at_limit, %{username: "someuser"}) == :ok
+  end
+
+  test "max_username_similarity defaults to 3 when the option is omitted" do
+    # distance("Xyz9!abc", "Xyz9!qrs") == 3, i.e. exactly at the default threshold.
+    assert {:error, errs} = PasswordPolicy.validate("Xyz9!abc", %{username: "Xyz9!qrs"})
+    assert Enum.sort(errs) == Enum.sort([:too_similar_to_username])
+
+    # distance("Xyz9!abc", "Xyz9!qrst") == 4, strictly greater than the default threshold.
+    assert PasswordPolicy.validate("Xyz9!abc", %{username: "Xyz9!qrst"}) == :ok
+  end
+
+  test "require_uppercase defaults to true when the option is omitted" do
+    assert {:error, errs} = PasswordPolicy.validate("abcdefg1!", %{username: "zzzzzzzz"})
+    assert Enum.sort(errs) == Enum.sort([:no_uppercase])
+  end
+
+  test "require_digit defaults to true when the option is omitted" do
+    assert {:error, errs} = PasswordPolicy.validate("Abcdefg!", %{username: "zzzzzzzz"})
+    assert Enum.sort(errs) == Enum.sort([:no_digit])
+  end
+
+  test "require_special defaults to true when the option is omitted" do
+    assert {:error, errs} = PasswordPolicy.validate("Abcdef12", %{username: "zzzzzzzz"})
+    assert Enum.sort(errs) == Enum.sort([:no_special])
   end
 end
 ```

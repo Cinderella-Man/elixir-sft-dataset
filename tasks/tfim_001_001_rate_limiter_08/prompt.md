@@ -506,5 +506,69 @@ defmodule RateLimiterTest do
     assert {:ok, 4} = RateLimiter.check(rl, "brand:new", 5, 1_000)
     assert Process.alive?(rl)
   end
+
+  test "keys are compared by value across term types", %{rl: rl} do
+    # A tuple key and an equal tuple share one bucket (compared by value).
+    assert {:ok, 1} = RateLimiter.check(rl, {:user, 1}, 2, 1_000)
+    assert {:ok, 0} = RateLimiter.check(rl, {:user, 1}, 2, 1_000)
+    assert {:error, :rate_limited, _} = RateLimiter.check(rl, {:user, 1}, 2, 1_000)
+
+    # An integer key and an atom key are independent from the tuple and each other.
+    assert {:ok, 1} = RateLimiter.check(rl, 42, 2, 1_000)
+    assert {:ok, 1} = RateLimiter.check(rl, :admin, 2, 1_000)
+
+    # A different-valued tuple is its own bucket, unaffected by the exhausted one.
+    assert {:ok, 1} = RateLimiter.check(rl, {:user, 2}, 2, 1_000)
+  end
+
+  test "pruning uses the window_ms of the current call not a stored one", %{rl: rl} do
+    # Record one timestamp at time 0 under a 1000ms window.
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 1_000)
+
+    # At time 600 a check with a narrower 500ms window prunes the time-0 entry
+    # (0 > 600 - 500 is false), so the request must be allowed. Had the stored
+    # 1000ms window governed, the entry would still be active and this would deny.
+    Clock.advance(600)
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 1, 500)
+  end
+
+  test "cleanup prunes using the most recently seen window for a key", %{rl: rl} do
+    # First seen with a narrow 500ms window at time 0.
+    assert {:ok, 1} = RateLimiter.check(rl, "k", 2, 500)
+
+    # Re-seen with a much wider 5000ms window at time 100; stored window becomes 5000.
+    Clock.advance(100)
+    assert {:ok, 0} = RateLimiter.check(rl, "k", 2, 5_000)
+
+    # At time 1000 a sweep must prune with the last-seen 5000ms window, keeping both
+    # entries. Using the stale 500ms window would drop the key entirely.
+    Clock.advance(900)
+    send(rl, :cleanup)
+
+    # Both time-0 and time-100 entries are still active under 5000ms, so a limit of
+    # 2 is now exhausted; retry_after is oldest(0) + 5000 - 1000 = 4000.
+    assert {:error, :rate_limited, 4_000} = RateLimiter.check(rl, "k", 2, 5_000)
+  end
+
+  test "check/4 raises on non-integer limits", %{rl: rl} do
+    assert_raise FunctionClauseError, fn ->
+      RateLimiter.check(rl, "k", 2.0, 1_000)
+    end
+
+    assert_raise FunctionClauseError, fn ->
+      RateLimiter.check(rl, "k", 2, 1_000.0)
+    end
+
+    assert Process.alive?(rl)
+  end
+
+  test "start_link with no arguments starts an empty server" do
+    {:ok, pid} = RateLimiter.start_link()
+    assert is_pid(pid)
+
+    # Freshly started with zero keys tracked: the first check for any key is
+    # allowed with remaining = max - 1, independent of the (real) clock value.
+    assert {:ok, 4} = RateLimiter.check(pid, "fresh", 5, 1_000)
+  end
 end
 ```

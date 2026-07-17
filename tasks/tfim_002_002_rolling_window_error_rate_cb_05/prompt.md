@@ -508,5 +508,81 @@ defmodule RollingRateCircuitBreakerTest do
     for _ <- 1..4, do: RollingRateCircuitBreaker.call(cb, fn -> nil end)
     assert :open = RollingRateCircuitBreaker.state(cb)
   end
+
+  test "call/2 on an expired open breaker performs the transition and runs a probe", %{cb: cb} do
+    for _ <- 1..3, do: RollingRateCircuitBreaker.call(cb, ok_fn())
+    for _ <- 1..3, do: RollingRateCircuitBreaker.call(cb, err_fn())
+    assert :open = RollingRateCircuitBreaker.state(cb)
+
+    # Timeout elapses but nobody calls state/1 — call/2 itself must flip and probe.
+    Clock.advance(1_000)
+    tracker = self()
+
+    assert {:ok, :probed} =
+             RollingRateCircuitBreaker.call(cb, fn ->
+               send(tracker, :probe_ran)
+               {:ok, :probed}
+             end)
+
+    assert_received :probe_ran
+    assert :closed = RollingRateCircuitBreaker.state(cb)
+  end
+
+  test "the tripping call still returns its own func result", %{cb: cb} do
+    for _ <- 1..3, do: RollingRateCircuitBreaker.call(cb, ok_fn())
+    for _ <- 1..2, do: RollingRateCircuitBreaker.call(cb, err_fn())
+    assert :closed = RollingRateCircuitBreaker.state(cb)
+
+    # This 6th outcome pushes 3/6 = 0.5 → trip, yet must return the func result.
+    assert {:error, :failure} = RollingRateCircuitBreaker.call(cb, err_fn())
+    assert :open = RollingRateCircuitBreaker.state(cb)
+  end
+
+  test "min_calls_in_window above window_size disables automatic tripping" do
+    cb = start_cb(window_size: 5, min_calls_in_window: 10, error_rate_threshold: 0.5)
+
+    for _ <- 1..30, do: RollingRateCircuitBreaker.call(cb, err_fn())
+    assert :closed = RollingRateCircuitBreaker.state(cb)
+  end
+
+  test "reset on a closed breaker discards accumulated window failures", %{cb: cb} do
+    # 5 errors: below min_calls (6), so still closed but the window is dirty.
+    for _ <- 1..5, do: RollingRateCircuitBreaker.call(cb, err_fn())
+    assert :closed = RollingRateCircuitBreaker.state(cb)
+
+    assert :ok = RollingRateCircuitBreaker.reset(cb)
+
+    # Had reset been a no-op, 5 + 5 = 10 errors at 100% would have tripped.
+    for _ <- 1..5, do: RollingRateCircuitBreaker.call(cb, err_fn())
+    assert :closed = RollingRateCircuitBreaker.state(cb)
+  end
+
+  test "state on a half_open breaker never consumes the sole probe slot", %{cb: cb} do
+    for _ <- 1..3, do: RollingRateCircuitBreaker.call(cb, ok_fn())
+    for _ <- 1..3, do: RollingRateCircuitBreaker.call(cb, err_fn())
+    Clock.advance(1_000)
+
+    # Repeated state/1 in half_open must not use up the single probe slot.
+    assert :half_open = RollingRateCircuitBreaker.state(cb)
+    assert :half_open = RollingRateCircuitBreaker.state(cb)
+    assert :half_open = RollingRateCircuitBreaker.state(cb)
+
+    tracker = self()
+
+    assert {:ok, :ran} =
+             RollingRateCircuitBreaker.call(cb, fn ->
+               send(tracker, :probe_ran)
+               {:ok, :ran}
+             end)
+
+    assert_received :probe_ran
+    assert :closed = RollingRateCircuitBreaker.state(cb)
+  end
+
+  test "start_link raises when the required name option is absent" do
+    assert_raise KeyError, fn ->
+      RollingRateCircuitBreaker.start_link(window_size: 5, clock: &Clock.now/0)
+    end
+  end
 end
 ```

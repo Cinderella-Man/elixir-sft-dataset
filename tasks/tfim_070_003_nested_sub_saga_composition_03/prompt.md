@@ -283,5 +283,111 @@ defmodule SagaTest do
     assert ctx.seed == 3
     assert ctx.a == 6
   end
+
+  test "steps after a failing leaf never have their actions invoked" do
+    me = self()
+
+    result =
+      Saga.new()
+      |> Saga.step(:a, fn _ -> {:ok, 1} end, fn _ -> :ua end)
+      |> Saga.step(:b, fn _ -> {:error, :halt} end, fn _ -> :ub end)
+      |> Saga.step(
+        :c,
+        fn _ ->
+          send(me, :c_ran)
+          {:ok, 3}
+        end,
+        fn _ -> :uc end
+      )
+      |> Saga.execute(%{})
+
+    assert {:error, [:b], :halt, [a: :ua]} = result
+    refute_receive :c_ran, 50
+  end
+
+  test "failing nest reports inner results first then completed outer nest and leaf" do
+    first =
+      Saga.new()
+      |> Saga.step(:p, fn _ -> {:ok, 1} end, fn _ -> :up end)
+      |> Saga.step(:q, fn _ -> {:ok, 2} end, fn _ -> :uq end)
+
+    second =
+      Saga.new()
+      |> Saga.step(:r, fn _ -> {:ok, 3} end, fn _ -> :ur end)
+      |> Saga.step(:s, fn _ -> {:error, :sfail} end, fn _ -> :us end)
+
+    result =
+      Saga.new()
+      |> Saga.step(:top, fn _ -> {:ok, :t} end, fn _ -> :utop end)
+      |> Saga.nest(:one, first)
+      |> Saga.nest(:two, second)
+      |> Saga.execute(%{})
+
+    assert {:error, [:two, :s], :sfail, comp} = result
+    assert comp == [two: [r: :ur], one: [q: :uq, p: :up], top: :utop]
+  end
+
+  test "a raising compensation inside a nested saga still lets sibling compensations run" do
+    sub =
+      Saga.new()
+      |> Saga.step(:x, fn _ -> {:ok, 1} end, fn _ -> :ux end)
+      |> Saga.step(:y, fn _ -> {:ok, 2} end, fn _ -> raise "inner boom" end)
+
+    result =
+      Saga.new()
+      |> Saga.step(:a, fn _ -> {:ok, :aa} end, fn _ -> :ua end)
+      |> Saga.nest(:child, sub)
+      |> Saga.step(:last, fn _ -> {:error, :late} end, fn _ -> :ulast end)
+      |> Saga.execute(%{})
+
+    assert {:error, [:last], :late, comp} = result
+    assert [{:child, inner}, {:a, :ua}] = comp
+    assert match?({:exception, %RuntimeError{message: "inner boom"}, _}, inner[:y])
+    assert inner[:x] == :ux
+  end
+
+  test "recorded compensation exception carries the raised struct and a stacktrace" do
+    result =
+      Saga.new()
+      |> Saga.step(:a, fn _ -> {:ok, 1} end, fn _ -> raise ArgumentError, "kaput" end)
+      |> Saga.step(:b, fn _ -> {:error, :fail} end, fn _ -> :ub end)
+      |> Saga.execute(%{})
+
+    assert {:error, [:b], :fail, comp} = result
+    assert {:exception, exception, stack} = comp[:a]
+    assert %ArgumentError{message: "kaput"} = exception
+    assert is_list(stack)
+    assert stack != []
+    assert Enum.all?(stack, &is_tuple/1)
+  end
+
+  test "a compensation returning an error tuple is recorded without changing the failure" do
+    result =
+      Saga.new()
+      |> Saga.step(:a, fn _ -> {:ok, 1} end, fn _ -> {:error, :comp_broke} end)
+      |> Saga.step(:b, fn _ -> {:ok, 2} end, fn _ -> :ub end)
+      |> Saga.step(:c, fn _ -> {:error, :real} end, fn _ -> :uc end)
+      |> Saga.execute(%{})
+
+    assert {:error, [:c], :real, comp} = result
+    assert comp == [b: :ub, a: {:error, :comp_broke}]
+  end
+
+  test "a step after a nested step reads the sub-saga context under the nest name" do
+    sub =
+      Saga.new()
+      |> Saga.step(:x, fn _ -> {:ok, 7} end, fn _ -> :ux end)
+
+    result =
+      Saga.new()
+      |> Saga.step(:seedy, fn _ -> {:ok, 2} end, fn _ -> :us end)
+      |> Saga.nest(:child, sub)
+      |> Saga.step(:total, fn ctx -> {:ok, ctx.child.x * ctx.seedy} end, fn _ -> :ut end)
+      |> Saga.execute(%{})
+
+    assert {:ok, ctx} = result
+    assert ctx.total == 14
+    assert ctx.child.seedy == 2
+  end
 end
 ```

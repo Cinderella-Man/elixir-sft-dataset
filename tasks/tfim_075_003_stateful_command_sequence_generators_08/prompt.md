@@ -438,5 +438,121 @@ defmodule CommandGeneratorsTest do
            "no :withdraw was ever generated at a modeled balance of exactly 1 " <>
              "across 4000 seeded samples"
   end
+
+  test "withdrawals attain the documented upper endpoint: the whole modeled balance" do
+    Process.put(:withdraw_full_balance, false)
+
+    {:ok, _} =
+      StreamData.check_all(
+        CommandGenerators.account_program(),
+        [initial_seed: {201, 202, 203}, max_runs: 3000],
+        fn cmds ->
+          Enum.reduce(cmds, 0, fn
+            {:deposit, a}, bal ->
+              bal + a
+
+            {:withdraw, a}, bal ->
+              if a == bal and bal > 1, do: Process.put(:withdraw_full_balance, true)
+              bal - a
+          end)
+
+          {:ok, cmds}
+        end
+      )
+
+    assert Process.get(:withdraw_full_balance),
+           "no :withdraw ever drew the documented upper endpoint of its 1..current_balance " <>
+             "range (amount == modeled balance > 1) across 3000 seeded samples"
+  end
+
+  test "push and clear are both offered on an empty modeled stack" do
+    Process.put(:empty_stack_push, false)
+    Process.put(:empty_stack_clear, false)
+
+    {:ok, _} =
+      StreamData.check_all(
+        CommandGenerators.stack_program(),
+        [initial_seed: {31, 32, 33}, max_runs: 600],
+        fn cmds ->
+          Enum.reduce(cmds, 0, fn cmd, size ->
+            case cmd do
+              {:push, _} ->
+                if size == 0, do: Process.put(:empty_stack_push, true)
+                size + 1
+
+              :clear ->
+                if size == 0, do: Process.put(:empty_stack_clear, true)
+                0
+
+              :pop ->
+                size - 1
+
+              :peek ->
+                size
+            end
+          end)
+
+          {:ok, cmds}
+        end
+      )
+
+    assert Process.get(:empty_stack_push),
+           "no {:push, _} was ever generated on an empty modeled stack across 600 samples"
+
+    assert Process.get(:empty_stack_clear),
+           "no :clear was ever generated on an empty modeled stack across 600 samples"
+  end
+
+  test "the stack command set is fully reachable: peek and clear are both generated" do
+    Process.put(:stack_cmd_kinds, MapSet.new())
+
+    {:ok, _} =
+      StreamData.check_all(
+        CommandGenerators.stack_program(),
+        [initial_seed: {41, 42, 43}, max_runs: 600],
+        fn cmds ->
+          kinds =
+            Enum.reduce(cmds, Process.get(:stack_cmd_kinds), fn
+              {:push, _}, acc -> MapSet.put(acc, :push)
+              cmd, acc -> MapSet.put(acc, cmd)
+            end)
+
+          Process.put(:stack_cmd_kinds, kinds)
+          {:ok, cmds}
+        end
+      )
+
+    kinds = Process.get(:stack_cmd_kinds)
+
+    for kind <- [:push, :pop, :peek, :clear] do
+      assert kind in kinds, "the documented command #{inspect(kind)} was never generated"
+    end
+  end
+
+  test "withdrawals attain the documented lower endpoint 1 while the balance exceeds 1" do
+    Process.put(:withdraw_amount_one, false)
+
+    {:ok, _} =
+      StreamData.check_all(
+        CommandGenerators.account_program(),
+        [initial_seed: {51, 52, 53}, max_runs: 3000],
+        fn cmds ->
+          Enum.reduce(cmds, 0, fn
+            {:deposit, a}, bal ->
+              bal + a
+
+            {:withdraw, a}, bal ->
+              if a == 1 and bal > 1, do: Process.put(:withdraw_amount_one, true)
+              bal - a
+          end)
+
+          {:ok, cmds}
+        end
+      )
+
+    assert Process.get(:withdraw_amount_one),
+           "no :withdraw of the documented lower endpoint amount 1 was ever generated at a " <>
+             "modeled balance greater than 1 across 3000 seeded samples"
+  end
 end
 ```

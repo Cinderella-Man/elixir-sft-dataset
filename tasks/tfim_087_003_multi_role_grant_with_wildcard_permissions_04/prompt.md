@@ -177,5 +177,51 @@ defmodule RbacTest do
       refute Rbac.permitted?([:viewer], :settings, :update, @roles)
     end
   end
+
+  test "map principal with only :grants key defaults roles to empty and honors grants" do
+    principal = %{grants: ["reports:export"]}
+    assert Rbac.permitted?(principal, :reports, :export, @roles)
+    refute Rbac.permitted?(principal, :posts, :read, @roles)
+    assert Rbac.effective_permissions(principal, @roles) == MapSet.new(["reports:export"])
+  end
+
+  test "overlapping role patterns are unioned without duplicates" do
+    assert Rbac.effective_permissions([:viewer, :editor], @roles) ==
+             MapSet.new([
+               "posts:read",
+               "posts:write",
+               "comments:read",
+               "comments:write"
+             ])
+  end
+
+  test "effective_permissions of roles plus grants is exactly the merged set" do
+    principal = %{roles: [:moderator], grants: ["comments:*", "billing:refund"]}
+
+    assert Rbac.effective_permissions(principal, @roles) ==
+             MapSet.new(["comments:*", "billing:refund"])
+  end
+
+  test "unknown role alongside a known role keeps the known role's permissions" do
+    principal = [:viewer, :ghost]
+
+    assert Rbac.effective_permissions(principal, @roles) ==
+             MapSet.new(["posts:read", "comments:read"])
+
+    assert Rbac.permitted?(principal, :posts, :read, @roles)
+    refute Rbac.permitted?(principal, :posts, :write, @roles)
+  end
+
+  test "pattern with more than two segments never matches a two-segment target" do
+    roles = %{odd: ["posts:read:extra", "*:*:*"]}
+    refute Rbac.permitted?([:odd], :posts, :read, roles)
+    refute Rbac.permitted?([:odd], :anything, :whatever, roles)
+  end
+
+  test "empty role list principal is denied everything" do
+    assert Rbac.effective_permissions([], @roles) == MapSet.new()
+    refute Rbac.permitted?([], :posts, :read, @roles)
+    refute Rbac.permitted?(%{roles: [], grants: []}, :posts, :read, @roles)
+  end
 end
 ```

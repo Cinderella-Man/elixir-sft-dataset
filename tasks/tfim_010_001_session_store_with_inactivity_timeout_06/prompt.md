@@ -598,5 +598,30 @@ defmodule SessionStoreTest do
     assert {:ok, [1, 2, 3]} = SessionStore.get(store, id2)
     assert {:ok, {:tuple, :data}} = SessionStore.get(store, id3)
   end
+
+  test "default timeout_ms is 30 minutes when the option is omitted" do
+    {:ok, store} =
+      SessionStore.start_link(clock: &Clock.now/0, cleanup_interval_ms: :infinity)
+
+    {:ok, id_a} = SessionStore.create(store, %{user: "a"})
+    {:ok, id_b} = SessionStore.create(store, %{user: "b"})
+
+    # Just under 30 minutes: still alive (upper bound on the default).
+    Clock.advance(1_799_999)
+    assert {:ok, %{user: "a"}} = SessionStore.get(store, id_a)
+
+    # Just past 30 minutes from creation: expired (lower bound on the default).
+    Clock.advance(2)
+    assert {:error, :not_found} = SessionStore.get(store, id_b)
+  end
+
+  test "session ids are unpadded url-safe base64 of 16 random bytes", %{store: store} do
+    {:ok, id} = SessionStore.create(store, %{user: "alice"})
+
+    # 16 bytes base64-encoded without padding is exactly 22 characters.
+    assert String.length(id) == 22
+    refute String.contains?(id, "=")
+    assert id =~ ~r/\A[A-Za-z0-9_-]+\z/
+  end
 end
 ```

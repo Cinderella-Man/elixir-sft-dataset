@@ -697,5 +697,93 @@ defmodule CancellablePriorityQueueTest do
     tasks = CancellablePriorityQueue.processed(pq2) |> Enum.map(&elem(&1, 0))
     assert tasks == ["blocker", "medium", "low"]
   end
+
+  test "cancel on the task currently being processed returns not_found" do
+    parent = self()
+
+    {:ok, pq2} =
+      CancellablePriorityQueue.start_link(
+        processor: fn task ->
+          send(parent, {:started, task, self()})
+
+          receive do
+            :release -> :ok
+          end
+
+          {:processed, task}
+        end
+      )
+
+    {:ok, ref} = CancellablePriorityQueue.enqueue(pq2, "in_flight", 0)
+
+    assert_receive {:started, "in_flight", worker}, 1_000
+    assert {:error, :not_found} = CancellablePriorityQueue.cancel(pq2, ref)
+
+    send(worker, :release)
+    assert :ok = CancellablePriorityQueue.drain(pq2)
+
+    tasks = CancellablePriorityQueue.processed(pq2) |> Enum.map(&elem(&1, 0))
+    assert tasks == ["in_flight"]
+  end
+
+  test "omitting the processor option defaults to the identity function" do
+    {:ok, pq2} = CancellablePriorityQueue.start_link([])
+
+    CancellablePriorityQueue.enqueue(pq2, "plain", 0)
+    CancellablePriorityQueue.enqueue(pq2, 42, 1)
+    assert :ok = CancellablePriorityQueue.drain(pq2)
+
+    assert CancellablePriorityQueue.processed(pq2) == [{"plain", "plain"}, {42, 42}]
+  end
+
+  test "start_link registers the process under the given name option" do
+    name = :cancellable_priority_queue_named_audit
+    {:ok, pid} = CancellablePriorityQueue.start_link(name: name, processor: fn t -> {:ok, t} end)
+
+    assert Process.whereis(name) == pid
+
+    assert {:ok, ref} = CancellablePriorityQueue.enqueue(name, "via_name", 0)
+    assert is_reference(ref)
+    assert :ok = CancellablePriorityQueue.drain(name)
+
+    assert CancellablePriorityQueue.processed(name) == [{"via_name", {:ok, "via_name"}}]
+    assert CancellablePriorityQueue.status(name) == %{pending: 0, by_priority: %{}, cancelled: 0}
+  end
+
+  test "a priority level whose tasks were all cancelled disappears from by_priority" do
+    parent = self()
+
+    {:ok, pq2} =
+      CancellablePriorityQueue.start_link(
+        processor: fn task ->
+          send(parent, {:started, task, self()})
+
+          receive do
+            :release -> :ok
+          end
+
+          {:processed, task}
+        end
+      )
+
+    CancellablePriorityQueue.enqueue(pq2, "blocker", 0)
+    assert_receive {:started, "blocker", worker}, 1_000
+
+    {:ok, ref_a} = CancellablePriorityQueue.enqueue(pq2, "a", 3)
+    {:ok, ref_b} = CancellablePriorityQueue.enqueue(pq2, "b", 3)
+    CancellablePriorityQueue.enqueue(pq2, "c", 7)
+
+    assert :ok = CancellablePriorityQueue.cancel(pq2, ref_a)
+    assert :ok = CancellablePriorityQueue.cancel(pq2, ref_b)
+
+    status = CancellablePriorityQueue.status(pq2)
+    assert status == %{pending: 1, by_priority: %{7 => 1}, cancelled: 2}
+    assert {:ok, "c", 7} = CancellablePriorityQueue.peek(pq2)
+
+    send(worker, :release)
+    assert_receive {:started, "c", worker_c}, 1_000
+    send(worker_c, :release)
+    assert :ok = CancellablePriorityQueue.drain(pq2)
+  end
 end
 ```

@@ -251,5 +251,68 @@ defmodule CartTest do
   test "empty cart charges no shipping and zero totals" do
     # TODO
   end
+
+  test "shipping is waived when the discounted subtotal exactly equals the threshold" do
+    cart = Cart.new(shipping_flat: 6.5, free_shipping_threshold: 100.0)
+    {:ok, cart} = Cart.add_item(cart, "a", 4, 25.0)
+    totals = Cart.calculate_totals(cart)
+    assert_in_delta totals.subtotal, 100.0, 0.001
+    assert_in_delta totals.shipping, 0.0, 0.001
+    assert_in_delta totals.grand_total, 100.0, 0.001
+  end
+
+  test "threshold compares against the discounted subtotal, not the undiscounted one" do
+    cart = Cart.new(shipping_flat: 4.0, free_shipping_threshold: 100.0)
+    {:ok, cart} = Cart.add_item(cart, "a", 10, 10.5)
+    totals = Cart.calculate_totals(cart)
+    assert_in_delta totals.subtotal, 99.75, 0.001
+    assert_in_delta totals.shipping, 4.0, 0.001
+  end
+
+  test "add_item rejects non-integer quantities" do
+    cart = Cart.new()
+    assert {:error, :invalid_quantity} = Cart.add_item(cart, "p", 2.5, 5.0)
+    assert {:error, :invalid_quantity} = Cart.add_item(cart, "p", 1.0, 5.0)
+    assert {:error, :invalid_quantity} = Cart.add_item(cart, "p", "3", 5.0)
+    assert Cart.calculate_totals(cart).items == []
+  end
+
+  test "each totals item map carries the unit_price and every documented key" do
+    cart = Cart.new()
+    {:ok, cart} = Cart.add_item(cart, "a", 3, 12.5)
+    {:ok, cart} = Cart.add_item(cart, "a", 7, 12.5)
+    [item] = Cart.calculate_totals(cart).items
+    assert item.product_id == "a"
+    assert item.quantity == 10
+    assert item.unit_price == 12.5
+    assert item.discount_rate == 0.05
+    assert_in_delta item.line_total, 118.75, 0.001
+
+    assert Map.keys(item) |> Enum.sort() ==
+             [:discount_rate, :line_total, :product_id, :quantity, :unit_price]
+  end
+
+  test "a nil threshold never waives shipping no matter how large the subtotal" do
+    cart = Cart.new(shipping_flat: 7.5)
+    {:ok, cart} = Cart.add_item(cart, "a", 100, 500.0)
+    totals = Cart.calculate_totals(cart)
+    assert_in_delta totals.subtotal, 42_500.0, 0.001
+    assert_in_delta totals.shipping, 7.5, 0.001
+    assert_in_delta totals.tax, 0.0, 0.001
+    assert_in_delta totals.grand_total, 42_507.5, 0.001
+  end
+
+  test "highest applicable tier wins regardless of tier list order" do
+    cart = Cart.new(discount_tiers: [{50, 0.15}, {10, 0.05}, {25, 0.10}])
+    {:ok, cart} = Cart.add_item(cart, "a", 60, 10.0)
+    {:ok, cart} = Cart.add_item(cart, "b", 26, 10.0)
+    items = Cart.calculate_totals(cart).items
+    a = Enum.find(items, &(&1.product_id == "a"))
+    b = Enum.find(items, &(&1.product_id == "b"))
+    assert a.discount_rate == 0.15
+    assert b.discount_rate == 0.10
+    assert_in_delta a.line_total, 510.0, 0.001
+    assert_in_delta b.line_total, 234.0, 0.001
+  end
 end
 ```

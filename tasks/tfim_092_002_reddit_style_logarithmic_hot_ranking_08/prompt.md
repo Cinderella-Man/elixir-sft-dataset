@@ -225,5 +225,66 @@ defmodule RankingTest do
     only = item(id: :only, upvotes: 3, created_at: @epoch)
     assert Ranking.rank([only], opts()) == [only]
   end
+
+  test "score uses the default epoch when :epoch is not given" do
+    # net 10 -> order 1.0 ; created exactly at the default epoch -> time term 0.0
+    at_default_epoch = item(upvotes: 10, created_at: 1_134_028_003)
+    assert_in_delta Ranking.score(at_default_epoch), 1.0, 1.0e-9
+
+    # one default-divisor of seconds later -> +1.0 from the time term
+    later = item(upvotes: 10, created_at: 1_134_028_003 + 45_000)
+    assert_in_delta Ranking.score(later), 2.0, 1.0e-9
+  end
+
+  test "score uses the default divisor of 45_000 when :divisor is not given" do
+    # net 1 -> order 0.0 ; 45_000 seconds after the given epoch -> +1.0
+    it = item(upvotes: 1, created_at: @epoch + 45_000)
+    assert_in_delta Ranking.score(it, epoch: @epoch), 1.0, 1.0e-9
+
+    # 90_000 seconds -> +2.0 under the default divisor
+    it2 = item(upvotes: 1, created_at: @epoch + 90_000)
+    assert_in_delta Ranking.score(it2, epoch: @epoch), 2.0, 1.0e-9
+  end
+
+  test "score is rounded to exactly 7 decimal places" do
+    # net 1 -> order 0.0 ; 1 second / divisor 3 -> 0.333333... -> 0.3333333
+    it = item(upvotes: 1, created_at: @epoch + 1)
+    assert Ranking.score(it, epoch: @epoch, divisor: 3) === 0.3333333
+
+    # 2 seconds / divisor 3 -> 0.666666... -> 0.6666667 (rounds up at the 7th place)
+    it2 = item(upvotes: 1, created_at: @epoch + 2)
+    assert Ranking.score(it2, epoch: @epoch, divisor: 3) === 0.6666667
+  end
+
+  test "divisor magnitude flips whether time or votes dominate the ranking" do
+    votes = item(id: :votes, upvotes: 100, created_at: @epoch)
+    fresh = item(id: :fresh, upvotes: 1, created_at: @epoch + 45_000)
+
+    # small divisor: 45_000 seconds is worth 3.0, beating the 2.0 vote term
+    assert ids(Ranking.rank([votes, fresh], epoch: @epoch, divisor: 15_000)) == [:fresh, :votes]
+
+    # large divisor: 45_000 seconds is worth only 0.1, so votes win
+    assert ids(Ranking.rank([fresh, votes], epoch: @epoch, divisor: 450_000)) == [:votes, :fresh]
+  end
+
+  test "items created before the epoch get a negative time term" do
+    # net 1 -> order 0.0 ; -90_000 / 45_000 -> -2.0
+    before = item(upvotes: 1, created_at: @epoch - 90_000)
+    assert_in_delta Ranking.score(before, opts()), -2.0, 1.0e-9
+
+    # net 10 -> order 1.0 ; -45_000 / 45_000 -> -1.0 -> total 0.0
+    mixed = item(upvotes: 10, created_at: @epoch - 45_000)
+    assert_in_delta Ranking.score(mixed, opts()), 0.0, 1.0e-9
+  end
+
+  test "extra item keys are ignored and returned untouched by rank" do
+    a = item(id: :a, upvotes: 10, created_at: @epoch) |> Map.merge(%{title: "a", tags: [:x]})
+
+    b =
+      item(id: :b, upvotes: 1000, created_at: @epoch) |> Map.merge(%{author: "b", score: :bogus})
+
+    assert_in_delta Ranking.score(a, opts()), 1.0, 1.0e-9
+    assert Ranking.rank([a, b], opts()) == [b, a]
+  end
 end
 ```

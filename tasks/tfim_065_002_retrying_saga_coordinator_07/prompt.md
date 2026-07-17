@@ -279,5 +279,89 @@ defmodule RetrySagaTest do
     assert {:ok, %{x: 1}} = RetrySaga.execute(RetrySaga.new(), %{x: 1})
     assert Recorder.events() == []
   end
+
+  test "the reported error is the reason from the final attempt, not the first" do
+    saga =
+      RetrySaga.new()
+      |> RetrySaga.step(:a, flaky_action(:a, 0, 1), comp(:a))
+      |> RetrySaga.step(:b, flaky_action(:b, 5, :never), comp(:b), max_attempts: 3)
+
+    assert {:error, err} = RetrySaga.execute(saga, %{})
+    assert err.step == :b
+    # flaky_action reports {:attempt, n}; the last of 3 attempts is n == 3.
+    assert err.error == {:attempt, 3}
+    assert err.attempts == 3
+    assert Recorder.actions(:b) == 3
+  end
+
+  test "the error map carries exactly the five documented keys" do
+    saga =
+      RetrySaga.new()
+      |> RetrySaga.step(:a, flaky_action(:a, 0, 1), comp(:a))
+      |> RetrySaga.step(:b, always_fail(:b, :nope), comp(:b))
+
+    assert {:error, err} = RetrySaga.execute(saga, %{})
+
+    assert err |> Map.keys() |> Enum.sort() ==
+             [:attempts, :compensated, :compensations, :error, :step]
+  end
+
+  test "an early step's compensation sees results stored by later completed steps" do
+    seen = fn name ->
+      fn ctx ->
+        Recorder.record({:comp_saw, name, Map.take(ctx, [:a, :b, :c, :start])})
+        {:ok, :undone}
+      end
+    end
+
+    saga =
+      RetrySaga.new()
+      |> RetrySaga.step(:a, flaky_action(:a, 0, 1), seen.(:a))
+      |> RetrySaga.step(:b, flaky_action(:b, 0, 2), seen.(:b))
+      |> RetrySaga.step(:c, always_fail(:c, :boom), comp(:c))
+
+    assert {:error, _err} = RetrySaga.execute(saga, %{start: :ctx})
+
+    assert {:comp_saw, :a, %{a: 1, b: 2, start: :ctx}} in Recorder.events()
+    assert {:comp_saw, :b, %{a: 1, b: 2, start: :ctx}} in Recorder.events()
+  end
+
+  test "the starting context is preserved alongside the merged step results" do
+    saga =
+      RetrySaga.new()
+      |> RetrySaga.step(:reserve, flaky_action(:reserve, 1, :r1), comp(:reserve), max_attempts: 2)
+      |> RetrySaga.step(:charge, fn ctx -> {:ok, {ctx.order_id, ctx.reserve}} end, comp(:charge))
+
+    assert {:ok, ctx} = RetrySaga.execute(saga, %{order_id: 42, extra: :kept})
+    assert ctx == %{order_id: 42, extra: :kept, reserve: :r1, charge: {42, :r1}}
+  end
+
+  test "a non-integer max_attempts raises ArgumentError" do
+    ok = fn _ -> {:ok, 1} end
+    undo = fn _ -> {:ok, :undone} end
+
+    for bad <- [:lots, 2.0, nil, -1, "3"] do
+      assert_raise ArgumentError, fn ->
+        RetrySaga.step(RetrySaga.new(), :a, ok, undo, max_attempts: bad)
+      end
+    end
+  end
+
+  test "no later action is interleaved between a step's retry attempts" do
+    saga =
+      RetrySaga.new()
+      |> RetrySaga.step(:a, flaky_action(:a, 2, :done), comp(:a), max_attempts: 3)
+      |> RetrySaga.step(:b, flaky_action(:b, 1, :ok), comp(:b), max_attempts: 2)
+
+    assert {:ok, _ctx} = RetrySaga.execute(saga, %{})
+
+    assert Recorder.events() == [
+             {:action, :a},
+             {:action, :a},
+             {:action, :a},
+             {:action, :b},
+             {:action, :b}
+           ]
+  end
 end
 ```

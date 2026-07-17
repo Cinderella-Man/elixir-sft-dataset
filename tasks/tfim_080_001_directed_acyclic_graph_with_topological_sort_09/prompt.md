@@ -439,5 +439,87 @@ defmodule DAGTest do
     assert :y in DAG.successors(dag, :x)
     assert :z in DAG.successors(dag, :x)
   end
+
+  test "vertices may be arbitrary terms and still sort and link correctly" do
+    a = {:job, "compile", 1}
+    b = %{name: "link", tags: [1, 2]}
+    c = "release"
+
+    dag =
+      DAG.new()
+      |> DAG.add_vertex(a)
+      |> DAG.add_vertex(b)
+      |> DAG.add_vertex(c)
+
+    {:ok, dag} = DAG.add_edge(dag, a, b)
+    {:ok, dag} = DAG.add_edge(dag, b, c)
+
+    assert {:ok, order} = DAG.topological_sort(dag)
+    assert order == [a, b, c]
+    assert DAG.successors(dag, a) == [b]
+    assert DAG.predecessors(dag, c) == [b]
+  end
+
+  test "an edge rejected as a cycle leaves the graph completely unmodified" do
+    dag =
+      DAG.new()
+      |> DAG.add_vertex(:a)
+      |> DAG.add_vertex(:b)
+      |> DAG.add_vertex(:c)
+
+    {:ok, dag} = DAG.add_edge(dag, :a, :b)
+    {:ok, dag} = DAG.add_edge(dag, :b, :c)
+
+    assert {:error, :cycle} = DAG.add_edge(dag, :c, :a)
+
+    assert DAG.successors(dag, :c) == []
+    assert DAG.predecessors(dag, :a) == []
+    assert {:ok, [:a, :b, :c]} = DAG.topological_sort(dag)
+  end
+
+  test "add_edge/3 does not succeed when either endpoint is missing" do
+    dag = DAG.new() |> DAG.add_vertex(:a)
+
+    refute match?({:ok, _}, DAG.add_edge(dag, :a, :ghost))
+    refute match?({:ok, _}, DAG.add_edge(dag, :ghost, :a))
+
+    assert {:ok, [:a]} = DAG.topological_sort(dag)
+    assert DAG.successors(dag, :a) == []
+    assert DAG.predecessors(dag, :a) == []
+  end
+
+  test "re-adding an existing vertex preserves its existing edges" do
+    dag =
+      DAG.new()
+      |> DAG.add_vertex(:a)
+      |> DAG.add_vertex(:b)
+
+    {:ok, dag} = DAG.add_edge(dag, :a, :b)
+
+    re_added = dag |> DAG.add_vertex(:a) |> DAG.add_vertex(:b)
+
+    assert re_added == dag
+    assert DAG.successors(re_added, :a) == [:b]
+    assert DAG.predecessors(re_added, :b) == [:a]
+    assert {:ok, [:a, :b]} = DAG.topological_sort(re_added)
+  end
+
+  test "structurally equal compound vertices count as one vertex" do
+    key = {:pkg, "hex", %{opt: [:only, :dev]}}
+    same = {:pkg, "hex", %{opt: [:only, :dev]}}
+
+    dag =
+      DAG.new()
+      |> DAG.add_vertex(key)
+      |> DAG.add_vertex(same)
+      |> DAG.add_vertex(:tail)
+
+    {:ok, dag} = DAG.add_edge(dag, same, :tail)
+
+    assert {:ok, order} = DAG.topological_sort(dag)
+    assert length(order) == 2
+    assert DAG.successors(dag, key) == [:tail]
+    assert DAG.predecessors(dag, :tail) == [key]
+  end
 end
 ```

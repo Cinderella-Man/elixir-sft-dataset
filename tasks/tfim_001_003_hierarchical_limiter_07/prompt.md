@@ -16,8 +16,13 @@ defmodule HierarchicalLimiter do
   first).  For each incoming `check/3` call, every tier counts how many
   recorded timestamps fall within its own window.  If any tier's count has
   already reached its limit, the request is rejected and the tightest
-  offending tier is reported — "tightest" meaning the tier whose oldest
-  in-window timestamp is farthest from expiring (longest retry_after).
+  offending tier is reported — "tightest" meaning the tier the caller must
+  wait longest on (longest retry_after).
+
+  A tier's retry_after is the time until enough of its oldest in-window
+  timestamps expire that the tier would admit a new request.  When a tier is
+  over its limit by more than one entry, that means waiting for several of the
+  oldest entries to leave the window — not merely the single oldest.
 
   Rejected requests do **not** record a new timestamp, so they don't consume
   budget under any tier.
@@ -77,7 +82,7 @@ defmodule HierarchicalLimiter do
 
   On failure, returns `{:error, :rate_limited, tier_name, retry_after_ms}`
   identifying the tier that kept the request out for the longest and the wait
-  (in milliseconds) until that tier's oldest in-window timestamp expires.
+  (in milliseconds) until that tier would admit a new request.
   """
   @spec check(GenServer.server(), term(), [{atom(), pos_integer(), pos_integer()}, ...]) ::
           {:ok, %{atom() => non_neg_integer()}}
@@ -194,11 +199,14 @@ defmodule HierarchicalLimiter do
           # `count + 1` will exist, leaving `max_requests - count - 1` headroom.
           {:pass, name, max_requests - count - 1}
         else
-          # Tier saturated.  The oldest in-window timestamp is the last one
-          # in the truncated list (timestamps are newest-first).  Wait until
-          # it exits the window.
-          oldest = List.last(in_window)
-          retry_after = max(oldest + window_ms - now, 1)
+          # Tier saturated.  To admit a new request the in-window count must
+          # drop to `max_requests - 1`, so the `count - max_requests + 1`
+          # oldest timestamps must leave the window.  Wait until the newest of
+          # those (the k-th oldest) expires.  When over by exactly one, k = 1,
+          # i.e. just the single oldest entry.
+          k = count - max_requests + 1
+          nth_oldest = in_window |> Enum.reverse() |> Enum.at(k - 1)
+          retry_after = max(nth_oldest + window_ms - now, 1)
           {:fail, name, retry_after}
         end
       end)
@@ -464,6 +472,33 @@ defmodule HierarchicalLimiterTest do
     tiers = [{:per_sec, 1, 1_000}]
     assert {:ok, %{per_sec: 0}} = HierarchicalLimiter.check(name, "k", tiers)
     assert {:error, :rate_limited, :per_sec, _} = HierarchicalLimiter.check(name, "k", tiers)
+  end
+
+  test "retry_after actually elapses to an admitted request", %{hl: hl} do
+    wide = [{:t, 5, 1_000}]
+
+    # Fill the shared timestamp list with 5 staggered entries (t = 0,100,..,400).
+    assert {:ok, %{t: 4}} = HierarchicalLimiter.check(hl, "k", wide)
+    Clock.advance(100)
+    assert {:ok, %{t: 3}} = HierarchicalLimiter.check(hl, "k", wide)
+    Clock.advance(100)
+    assert {:ok, %{t: 2}} = HierarchicalLimiter.check(hl, "k", wide)
+    Clock.advance(100)
+    assert {:ok, %{t: 1}} = HierarchicalLimiter.check(hl, "k", wide)
+    Clock.advance(100)
+    assert {:ok, %{t: 0}} = HierarchicalLimiter.check(hl, "k", wide)
+
+    # Same shared list, now evaluated against a tighter cap of 2 (4 entries over).
+    narrow = [{:t, 2, 1_000}]
+
+    assert {:error, :rate_limited, :t, retry} =
+             HierarchicalLimiter.check(hl, "k", narrow)
+
+    # The contract fixes retry as the wait until this tier admits a new request.
+    # After exactly that wait the tier must accept — waiting only for the single
+    # oldest entry to expire (retry = 600) leaves the tier still saturated.
+    Clock.advance(retry)
+    assert {:ok, _} = HierarchicalLimiter.check(hl, "k", narrow)
   end
 end
 ```

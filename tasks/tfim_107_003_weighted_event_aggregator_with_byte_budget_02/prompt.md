@@ -308,5 +308,62 @@ defmodule WeightedAggregatorTest do
 
     assert Process.alive?(agg)
   end
+
+  test "a time-triggered flush leaves an empty buffer and zero accumulated weight" do
+    agg = start_agg(max_bytes: 10, interval_ms: 200, size_fn: fn n -> n end)
+
+    # 9 < 10 stays buffered until the interval elapses.
+    WeightedAggregator.push(agg, 9)
+    assert_receive {:flushed, [9]}, 500
+
+    # If the weight survived the time flush, 9 + 9 = 18 >= 10 would flush at once.
+    WeightedAggregator.push(agg, 9)
+    refute_receive {:flushed, _}, 100
+
+    # A fresh buffer starting from zero: 9 + 1 = 10 >= 10 flushes exactly here.
+    WeightedAggregator.push(agg, 1)
+    assert_receive {:flushed, [9, 1]}, 500
+  end
+
+  test "the default byte budget is 1_048_576" do
+    agg = start_agg(interval_ms: 5_000)
+
+    big = :binary.copy("a", 1_048_575)
+
+    # One byte under the default budget: strictly below, so no flush.
+    WeightedAggregator.push(agg, big)
+    refute_receive {:flushed, _}, 100
+
+    # 1_048_575 + 1 = 1_048_576 >= the default budget -> flush.
+    WeightedAggregator.push(agg, "b")
+    assert_receive {:flushed, [^big, "b"]}, 500
+  end
+
+  test "events can be pushed through a registered name" do
+    start_agg(
+      name: :weighted_aggregator_named_target,
+      max_bytes: 10,
+      interval_ms: 5_000,
+      size_fn: fn n -> n end
+    )
+
+    WeightedAggregator.push(:weighted_aggregator_named_target, 4)
+    refute_receive {:flushed, _}, 80
+
+    WeightedAggregator.push(:weighted_aggregator_named_target, 6)
+    assert_receive {:flushed, [4, 6]}, 500
+  end
+
+  test "push returns :ok for both a buffering and a flushing event" do
+    agg = start_agg(max_bytes: 10, interval_ms: 5_000, size_fn: fn n -> n end)
+
+    # Buffering-only push.
+    assert :ok = WeightedAggregator.push(agg, 3)
+    refute_receive {:flushed, _}, 80
+
+    # Push that triggers a flush must also just return :ok.
+    assert :ok = WeightedAggregator.push(agg, 7)
+    assert_receive {:flushed, [3, 7]}, 500
+  end
 end
 ```

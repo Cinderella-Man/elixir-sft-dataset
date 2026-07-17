@@ -10,8 +10,14 @@ test so the harness passes for a correct implementation of the module.
 defmodule IdempotentPayments do
   @moduledoc """
   A GenServer that simulates an idempotent payment processing system with
-  in-memory storage. Idempotency keys are remembered for a configurable TTL and
-  purged periodically. Payment records themselves are never removed.
+  in-memory storage.
+
+  Payments are stored in memory and given sequential ids (`"pay_1"`, `"pay_2"`,
+  ...). When an idempotency key is supplied, the response produced for that key
+  is cached until `now + ttl_ms`; replaying the key inside that window returns
+  the original response verbatim and creates no new payment record. A periodic
+  `:cleanup` sweep purges only entries whose expiry has been reached. Payment
+  records themselves are never removed.
   """
 
   use GenServer
@@ -23,23 +29,49 @@ defmodule IdempotentPayments do
   # Public API
   # ---------------------------------------------------------------------------
 
+  @doc """
+  Starts the payment server.
+
+  Options:
+
+    * `:clock` — zero-arity function returning the current time in milliseconds
+      (default `fn -> System.monotonic_time(:millisecond) end`).
+    * `:ttl_ms` — how long idempotency keys are remembered (default 86_400_000).
+    * `:cleanup_interval_ms` — how often expired idempotency entries are purged
+      (default 60_000). Pass `:infinity` to disable automatic cleanup.
+  """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
   end
 
   @doc """
-  Processes a payment. When `idempotency_key` is provided and still cached (not
-  expired), returns the exact original response without creating a new record.
+  Processes a payment.
+
+  When `idempotency_key` is provided and still cached (its expiry has not been
+  reached), returns the exact original response and creates no new record.
+  Otherwise the payment is processed, and — when a key was given — the result is
+  cached for a fresh TTL window. Missing `:amount`, `:currency` or `:recipient`
+  yields `{:error, :invalid_params}`, which is cached like any other response.
   """
+  @spec process_payment(GenServer.server(), map(), String.t() | nil) ::
+          {:ok, map()} | {:error, :invalid_params}
   def process_payment(server, params, idempotency_key \\ nil) do
     GenServer.call(server, {:process_payment, params, idempotency_key})
   end
 
+  @doc """
+  Returns every payment record created so far, in creation order.
+  """
+  @spec get_payments(GenServer.server()) :: [map()]
   def get_payments(server) do
     GenServer.call(server, :get_payments)
   end
 
+  @doc """
+  Looks up a single payment record by its id.
+  """
+  @spec get_payment(GenServer.server(), String.t()) :: {:ok, map()} | {:error, :not_found}
   def get_payment(server, id) do
     GenServer.call(server, {:get_payment, id})
   end
@@ -158,10 +190,10 @@ defmodule IdempotentPayments do
       Map.has_key?(params, :recipient)
   end
 
-  defp schedule_cleanup(:infinity), do: :ok
-
-  defp schedule_cleanup(interval) when is_integer(interval) do
-    Process.send_after(self(), :cleanup, interval)
+  defp schedule_cleanup(interval) do
+    if interval != :infinity do
+      Process.send_after(self(), :cleanup, interval)
+    end
   end
 end
 ```
@@ -294,6 +326,21 @@ defmodule IdempotentPaymentsTest do
     # TODO
   end
 
+  test "key is expired exactly at its expiry timestamp", %{pid: pid} do
+    key = "idem-exact-boundary"
+
+    {:ok, first} = IdempotentPayments.process_payment(pid, @valid_params, key)
+
+    # The entry was cached at t=0 with ttl_ms 10_000, so it expires at t=10_000.
+    # At that exact instant the key is no longer remembered.
+    Clock.advance(10_000)
+
+    {:ok, second} = IdempotentPayments.process_payment(pid, @valid_params, key)
+
+    assert second.id != first.id
+    assert length(IdempotentPayments.get_payments(pid)) == 2
+  end
+
   # -------------------------------------------------------
   # Invalid params
   # -------------------------------------------------------
@@ -365,6 +412,27 @@ defmodule IdempotentPaymentsTest do
     assert Process.alive?(pid)
   end
 
+  test "cleanup purges an entry that reached its expiry timestamp exactly", %{pid: pid} do
+    key = "sweep-boundary"
+
+    {:ok, first} = IdempotentPayments.process_payment(pid, @valid_params, key)
+
+    # Entry cached at t=0 expires at t=10_000. Sweep at exactly that instant:
+    # the entry has expired and must be purged.
+    Clock.set(10_000)
+    send(pid, :cleanup)
+    # Ordered call: guarantees the sweep above has been handled already.
+    assert length(IdempotentPayments.get_payments(pid)) == 1
+
+    # The clock is injected, so move it back inside the original TTL window.
+    # Had the sweep wrongly kept the entry, this replay would be a cache hit.
+    Clock.set(5_000)
+
+    {:ok, second} = IdempotentPayments.process_payment(pid, @valid_params, key)
+    assert second.id != first.id
+    assert length(IdempotentPayments.get_payments(pid)) == 2
+  end
+
   # -------------------------------------------------------
   # Interleaved operations
   # -------------------------------------------------------
@@ -397,6 +465,152 @@ defmodule IdempotentPaymentsTest do
 
     ids = [r1.id, r2.id, r3.id]
     assert ids == Enum.uniq(ids)
+  end
+
+  test "counter-based ids start at pay_1 and increment by one per record", %{pid: pid} do
+    {:ok, r1} = IdempotentPayments.process_payment(pid, @valid_params)
+    {:ok, r2} = IdempotentPayments.process_payment(pid, @valid_params, "seq-key")
+    # Cache hit: must not consume an id.
+    {:ok, r2_replay} = IdempotentPayments.process_payment(pid, @valid_params, "seq-key")
+    {:ok, r3} = IdempotentPayments.process_payment(pid, @valid_params)
+
+    assert r1.id == "pay_1"
+    assert r2.id == "pay_2"
+    assert r2_replay.id == "pay_2"
+    assert r3.id == "pay_3"
+
+    ids = pid |> IdempotentPayments.get_payments() |> Enum.map(& &1.id)
+    assert ids == ["pay_1", "pay_2", "pay_3"]
+
+    assert {:ok, found} = IdempotentPayments.get_payment(pid, "pay_2")
+    assert found.id == "pay_2"
+  end
+
+  test "cleanup keeps idempotency entries that have not expired yet", %{pid: pid} do
+    {:ok, old_resp} = IdempotentPayments.process_payment(pid, @valid_params, "old-key")
+
+    Clock.advance(6_000)
+    {:ok, fresh_resp} = IdempotentPayments.process_payment(pid, @valid_params, "fresh-key")
+
+    # now = 11_000: "old-key" expired at 10_000, "fresh-key" expires at 16_000
+    Clock.advance(5_000)
+    send(pid, :cleanup)
+
+    # The unexpired entry must survive the sweep: replay is still a cache hit.
+    assert {:ok, ^fresh_resp} =
+             IdempotentPayments.process_payment(pid, @valid_params, "fresh-key")
+
+    # The expired entry is gone: replay reprocesses into a brand new record.
+    assert {:ok, replay} = IdempotentPayments.process_payment(pid, @valid_params, "old-key")
+    assert replay.id != old_resp.id
+
+    ids = pid |> IdempotentPayments.get_payments() |> Enum.map(& &1.id)
+    assert length(ids) == 3
+    assert old_resp.id in ids
+    assert fresh_resp.id in ids
+  end
+
+  test "cached error replays even when the replay carries valid params", %{pid: pid} do
+    key = "idem-error-then-valid"
+
+    assert {:error, :invalid_params} =
+             IdempotentPayments.process_payment(pid, %{amount: 100}, key)
+
+    # Same key, now with fully valid params: the cached error must win, and no
+    # payment record may be created.
+    assert {:error, :invalid_params} =
+             IdempotentPayments.process_payment(pid, @valid_params, key)
+
+    assert IdempotentPayments.get_payments(pid) == []
+  end
+
+  test "response after expiry is re-cached under the same key with a fresh TTL", %{pid: pid} do
+    key = "idem-recache"
+
+    {:ok, first} = IdempotentPayments.process_payment(pid, @valid_params, key)
+
+    Clock.advance(10_001)
+    {:ok, second} = IdempotentPayments.process_payment(pid, @valid_params, key)
+    assert second.id != first.id
+
+    # The second response must now be cached for a full fresh TTL window.
+    Clock.advance(9_999)
+    assert {:ok, ^second} = IdempotentPayments.process_payment(pid, @valid_params, key)
+    assert length(IdempotentPayments.get_payments(pid)) == 2
+  end
+
+  test "created_at is taken from the injected clock at processing time", %{pid: pid} do
+    Clock.set(777_000)
+    {:ok, first} = IdempotentPayments.process_payment(pid, @valid_params)
+    assert first.created_at == 777_000
+
+    Clock.set(1_234_567)
+    {:ok, second} = IdempotentPayments.process_payment(pid, @valid_params, "clock-key")
+    assert second.created_at == 1_234_567
+
+    assert {:ok, stored} = IdempotentPayments.get_payment(pid, second.id)
+    assert stored.created_at == 1_234_567
+  end
+
+  test "default ttl_ms remembers idempotency keys for 24 hours", %{pid: _pid} do
+    {:ok, server} =
+      IdempotentPayments.start_link(clock: &Clock.now/0, cleanup_interval_ms: :infinity)
+
+    {:ok, first} = IdempotentPayments.process_payment(server, @valid_params, "default-ttl")
+
+    Clock.advance(86_399_999)
+
+    assert {:ok, ^first} =
+             IdempotentPayments.process_payment(server, @valid_params, "default-ttl")
+
+    assert length(IdempotentPayments.get_payments(server)) == 1
+
+    Clock.advance(2)
+    {:ok, later} = IdempotentPayments.process_payment(server, @valid_params, "default-ttl")
+    assert later.id != first.id
+    assert length(IdempotentPayments.get_payments(server)) == 2
+  end
+
+  # -------------------------------------------------------
+  # Automatic cleanup scheduling
+  # -------------------------------------------------------
+
+  test "cleanup_interval_ms sweeps expired entries without an explicit message" do
+    {:ok, server} =
+      IdempotentPayments.start_link(
+        clock: &Clock.now/0,
+        ttl_ms: 10_000,
+        cleanup_interval_ms: 20
+      )
+
+    {:ok, first} = IdempotentPayments.process_payment(server, @valid_params, "auto-key")
+
+    # The entry expires at 10_000; leave the clock there long enough for several
+    # scheduled sweeps to fire on their own.
+    Clock.set(10_001)
+    Process.sleep(150)
+
+    # Rewind the injected clock: the entry, if it had survived, would still be a
+    # live cache hit. A new record proves an automatic sweep purged it.
+    Clock.set(0)
+
+    {:ok, second} = IdempotentPayments.process_payment(server, @valid_params, "auto-key")
+    assert second.id != first.id
+    assert length(IdempotentPayments.get_payments(server)) == 2
+  end
+
+  test "cleanup_interval_ms :infinity disables automatic sweeps", %{pid: pid} do
+    {:ok, first} = IdempotentPayments.process_payment(pid, @valid_params, "infinity-key")
+
+    Clock.set(10_001)
+    Process.sleep(150)
+
+    # No sweep can have run, so rewinding the clock restores the cache hit.
+    Clock.set(0)
+
+    assert {:ok, ^first} = IdempotentPayments.process_payment(pid, @valid_params, "infinity-key")
+    assert length(IdempotentPayments.get_payments(pid)) == 1
+    assert Process.alive?(pid)
   end
 end
 ```

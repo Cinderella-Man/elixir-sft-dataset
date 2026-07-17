@@ -477,5 +477,65 @@ defmodule SoftCrud.DocumentsTest do
       assert c.lock_version == 3
     end
   end
+
+  test "string-keyed attrs are accepted by create and update", %{srv: srv} do
+    assert {:ok, doc} = Documents.create_document(srv, %{"title" => "S", "content" => "C"})
+    assert doc.title == "S"
+    assert doc.content == "C"
+    assert doc.lock_version == 0
+
+    assert {:ok, up} = Documents.update_document(srv, doc.id, %{"content" => "C2"}, 0)
+    assert up.content == "C2"
+    assert up.title == "S"
+    assert up.lock_version == 1
+  end
+
+  test "list with include_deleted: true returns every document sorted by id", %{srv: srv} do
+    a = create(srv, %{title: "a"})
+    b = create(srv, %{title: "b"})
+    c = create(srv, %{title: "c"})
+    {:ok, _} = Documents.soft_delete_document(srv, b.id, 0)
+
+    ids =
+      srv
+      |> Documents.list_documents(include_deleted: true)
+      |> Enum.map(& &1.id)
+
+    assert ids == [a.id, b.id, c.id]
+    assert ids == Enum.sort(ids)
+  end
+
+  test "soft delete of a deleted doc with a stale version reports stale first", %{srv: srv} do
+    doc = create(srv)
+    {:ok, _} = Documents.soft_delete_document(srv, doc.id, 0)
+
+    assert {:error, :stale_version, 1} = Documents.soft_delete_document(srv, doc.id, 0)
+  end
+
+  test "update of a soft-deleted doc reports not_found even when version is stale", %{srv: srv} do
+    doc = create(srv)
+    {:ok, _} = Documents.soft_delete_document(srv, doc.id, 0)
+
+    assert {:error, :not_found} = Documents.update_document(srv, doc.id, %{title: "x"}, 0)
+  end
+
+  test "create rejects blank content and stores nothing", %{srv: srv} do
+    assert {:error, e} = Documents.create_document(srv, %{title: "A", content: ""})
+    assert e[:content]
+    assert Documents.list_documents(srv, include_deleted: true) == []
+  end
+
+  test "rejected stale update leaves the stored document untouched", %{srv: srv} do
+    doc = create(srv, %{title: "keep", content: "same"})
+    {:ok, _} = Documents.update_document(srv, doc.id, %{title: "v1"}, 0)
+
+    assert {:error, :stale_version, 1} =
+             Documents.update_document(srv, doc.id, %{title: "v2", content: "other"}, 0)
+
+    assert {:ok, cur} = Documents.get_document(srv, doc.id)
+    assert cur.title == "v1"
+    assert cur.content == "same"
+    assert cur.lock_version == 1
+  end
 end
 ```

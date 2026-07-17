@@ -67,16 +67,19 @@ defmodule Money do
 
   @doc """
   Splits a money value evenly among `n` parties (a positive integer),
-  distributing the remainder to the first `rem(amount, n)` parties.
+  distributing the remainder to the first `rem(amount, n)` parties so the
+  shares always sum back to the original amount, including negative amounts.
   """
   @spec split(t(), pos_integer()) :: [t()]
   def split(%__MODULE__{amount: amount, currency: currency}, n)
       when is_integer(n) and n > 0 do
     base = div(amount, n)
     remainder = rem(amount, n)
+    step = if remainder < 0, do: -1, else: 1
+    extras = abs(remainder)
 
     Enum.map(0..(n - 1), fn i ->
-      cents = if i < remainder, do: base + 1, else: base
+      cents = if i < extras, do: base + step, else: base
       %__MODULE__{amount: cents, currency: currency}
     end)
   end
@@ -275,6 +278,46 @@ defmodule MoneyTest do
 
     parts = Money.split(total, 4)
     assert Enum.sum(Enum.map(parts, & &1.amount)) == 2050
+  end
+
+  test "split/2 shares sum back to the original for a negative amount" do
+    parts = Money.split(Money.new(-1000, :USD), 3)
+    amounts = Enum.map(parts, & &1.amount)
+    assert length(amounts) == 3
+    assert Enum.all?(parts, &(&1.currency == :USD))
+    assert Enum.sum(amounts) == -1000
+  end
+
+  test "multiply/2 rounds negative halves away from zero" do
+    assert Money.multiply(Money.new(-101, :USD), 0.5).amount == -51
+    assert Money.multiply(Money.new(-1, :USD), 0.5).amount == -1
+    assert Money.multiply(Money.new(1, :USD), 0.5).amount == 1
+  end
+
+  test "split/2 raises for a float n and for a negative n" do
+    assert_raise ArgumentError, fn -> Money.split(Money.new(100, :USD), 2.0) end
+    assert_raise ArgumentError, fn -> Money.split(Money.new(100, :USD), -3) end
+    assert_raise ArgumentError, fn -> Money.split(Money.new(100, :USD), :two) end
+  end
+
+  test "new/2 returns a struct carrying exactly the amount and currency fields" do
+    m = Money.new(7, :GBP)
+    # Map key iteration order is an implementation detail; compare as a set.
+    assert Enum.sort(Map.keys(Map.from_struct(m))) == [:amount, :currency]
+    assert m.__struct__ == Money
+  end
+
+  test "convert/3 raises for an unknown currency even when source and target match" do
+    assert_raise ArgumentError, fn -> Money.convert(Money.new(100, :JPY), :JPY, @rates) end
+    assert_raise ArgumentError, fn -> Money.convert(Money.new(100, :CHF), :JPY, @rates) end
+  end
+
+  test "multiply convert and total always store integer cents" do
+    assert is_integer(Money.multiply(Money.new(101, :USD), 1.5).amount)
+    assert is_integer(Money.convert(Money.new(37, :EUR), :GBP, @rates).amount)
+    mixed = [Money.new(100, :USD), Money.new(33, :EUR), Money.new(7, :GBP)]
+    assert is_integer(Money.total(mixed, :GBP, @rates).amount)
+    assert is_integer(Money.total([], :EUR, @rates).amount)
   end
 end
 ```

@@ -283,5 +283,32 @@ defmodule MoneyTest do
     parts = Money.allocate(total, [1, 1, 1])
     assert Enum.sum(Enum.map(parts, & &1.amount)) == 2600
   end
+
+  test "new/2 produces a struct carrying exactly the amount and currency fields" do
+    keys =
+      Money.new(100, :USD)
+      |> Map.from_struct()
+      |> Map.keys()
+      |> Enum.sort()
+
+    assert keys == [:amount, :currency]
+  end
+
+  test "split/2 raises when n is a non-integer number" do
+    assert_raise ArgumentError, fn -> Money.split(Money.new(100, :USD), 3.0) end
+    assert_raise ArgumentError, fn -> Money.split(Money.new(100, :USD), :three) end
+  end
+
+  test "allocate/2 accepts zero weights and still pays remainder to the earliest party" do
+    parts = Money.allocate(Money.new(10, :USD), [0, 1, 1, 1])
+    amounts = Enum.map(parts, & &1.amount)
+    assert amounts == [1, 3, 3, 3]
+    assert Enum.sum(amounts) == 10
+  end
+
+  test "multiply/2 rounds a negative half away from zero" do
+    assert Money.multiply(Money.new(101, :USD), -0.5).amount == -51
+    assert Money.multiply(Money.new(-101, :USD), 0.5).amount == -51
+  end
 end
 ```

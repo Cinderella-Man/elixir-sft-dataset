@@ -389,5 +389,118 @@ defmodule BoundedRunnerTest do
       BoundedRunner.start_link(name: :bad, max_concurrency: 0)
     end
   end
+
+  test "default max_concurrency admits four tasks at once but not a fifth" do
+    parent = self()
+    start_supervised!({BoundedRunner, name: :default_runner})
+
+    for i <- 1..5 do
+      id = :"d#{i}"
+
+      BoundedRunner.submit(:default_runner, id,
+        func: fn ->
+          send(parent, {:started, id, self()})
+
+          receive do
+            :go -> id
+          end
+        end
+      )
+    end
+
+    runner = Task.async(fn -> BoundedRunner.run_all(:default_runner) end)
+
+    pids =
+      for _ <- 1..4 do
+        assert_receive {:started, _id, pid}, 500
+        pid
+      end
+
+    refute_receive {:started, _, _}, 200
+
+    Enum.each(pids, &send(&1, :go))
+    assert_receive {:started, _id, fifth}, 500
+    send(fifth, :go)
+
+    assert {:ok, results} = Task.await(runner, 2000)
+    assert map_size(results) == 5
+  end
+
+  test "a finishing task hands its slot to a waiting ready task" do
+    parent = self()
+    start_runner(2)
+
+    for i <- 1..3 do
+      id = :"slot_#{i}"
+
+      BoundedRunner.submit(:runner, id,
+        func: fn ->
+          send(parent, {:started, id, self()})
+
+          receive do
+            :go -> id
+          end
+        end
+      )
+    end
+
+    runner = Task.async(fn -> BoundedRunner.run_all(:runner) end)
+
+    assert_receive {:started, _, first}, 500
+    assert_receive {:started, _, second}, 500
+    refute_receive {:started, _, _}, 200
+
+    send(first, :go)
+    assert_receive {:started, _, third}, 500
+
+    send(second, :go)
+    send(third, :go)
+
+    assert {:ok, results} = Task.await(runner, 2000)
+    assert map_size(results) == 3
+  end
+
+  test "submitting alone never executes a task func" do
+    parent = self()
+    start_runner(2)
+
+    BoundedRunner.submit(:runner, :lazy,
+      func: fn ->
+        send(parent, :ran)
+        :done
+      end
+    )
+
+    refute_receive :ran, 300
+    assert Tracker.events() == []
+
+    assert {:ok, %{lazy: :done}} = BoundedRunner.run_all(:runner)
+    assert_receive :ran, 500
+  end
+
+  test "non-integer max_concurrency raises" do
+    assert_raise ArgumentError, fn ->
+      BoundedRunner.start_link(name: :bad_float, max_concurrency: 2.0)
+    end
+  end
+
+  test "a cycle prevents even independent tasks from running" do
+    start_runner(2)
+    BoundedRunner.submit(:runner, :free, func: task(:free))
+    BoundedRunner.submit(:runner, :x, depends_on: [:y], func: task(:x))
+    BoundedRunner.submit(:runner, :y, depends_on: [:x], func: task(:y))
+
+    assert {:error, {:cycle, involved}} = BoundedRunner.run_all(:runner)
+    assert :x in involved and :y in involved
+    assert Tracker.events() == []
+  end
+
+  test "resubmitting replaces the previous dependency list" do
+    start_runner(2)
+    BoundedRunner.submit(:runner, :solo, depends_on: [:ghost], func: task(:solo, 0, :one))
+    BoundedRunner.submit(:runner, :solo, func: task(:solo, 0, :two))
+
+    assert {:ok, %{solo: :two}} = BoundedRunner.run_all(:runner)
+  end
 end
 ```

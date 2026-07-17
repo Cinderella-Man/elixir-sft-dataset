@@ -549,5 +549,83 @@ defmodule SoftCrud.DocumentsTest do
       assert {:error, :not_found} = Documents.get_document(srv, doc.id, include_deleted: true)
     end
   end
+
+  test "default retention_ms keeps a trashed doc restorable until 30 days have elapsed" do
+    {:ok, clock} = Agent.start_link(fn -> 0 end)
+    now = fn -> Agent.get(clock, & &1) end
+    {:ok, srv} = Documents.start_link(clock: now)
+    {:ok, doc} = Documents.create_document(srv, %{title: "T", content: "C"})
+    {:ok, _} = Documents.soft_delete_document(srv, doc.id)
+
+    thirty_days = 30 * 24 * 60 * 60 * 1000
+    Agent.update(clock, fn _ -> thirty_days - 1 end)
+    assert {:ok, restored} = Documents.restore_document(srv, doc.id)
+    assert restored.deleted_at == nil
+
+    {:ok, _} = Documents.soft_delete_document(srv, doc.id)
+    Agent.update(clock, fn t -> t + thirty_days end)
+    assert {:error, :expired} = Documents.restore_document(srv, doc.id)
+  end
+
+  test "purge_document hard-deletes an expired document", %{srv: srv, advance: advance} do
+    doc = create(srv, %{title: "gone"})
+    {:ok, _} = Documents.soft_delete_document(srv, doc.id)
+    advance.(1000)
+    assert {:error, :expired} = Documents.restore_document(srv, doc.id)
+
+    assert {:ok, purged} = Documents.purge_document(srv, doc.id)
+    assert purged.id == doc.id
+    assert {:error, :not_found} = Documents.get_document(srv, doc.id, include_deleted: true)
+    assert {:ok, 0} = Documents.purge_expired(srv)
+  end
+
+  test "soft_delete_document is a no-op on an expired document", %{srv: srv, advance: advance} do
+    doc = create(srv)
+    {:ok, del} = Documents.soft_delete_document(srv, doc.id)
+    advance.(1000)
+
+    assert {:ok, again} = Documents.soft_delete_document(srv, doc.id)
+    assert again.deleted_at == del.deleted_at
+
+    # the deadline must not be pushed forward: it stays expired, not restorable
+    assert {:error, :expired} = Documents.restore_document(srv, doc.id)
+    assert {:ok, 1} = Documents.purge_expired(srv)
+  end
+
+  test "update_document returns not_found for an expired document", %{srv: srv, advance: advance} do
+    doc = create(srv, %{title: "Old", content: "Keep"})
+    {:ok, _} = Documents.soft_delete_document(srv, doc.id)
+    advance.(1000)
+
+    assert {:error, :not_found} = Documents.update_document(srv, doc.id, %{title: "New"})
+    assert {:ok, got} = Documents.get_document(srv, doc.id, include_deleted: true)
+    assert got.title == "Old"
+  end
+
+  test "document one millisecond short of the retention window is still restorable",
+       %{srv: srv, advance: advance} do
+    doc = create(srv)
+    {:ok, _} = Documents.soft_delete_document(srv, doc.id)
+    advance.(999)
+
+    assert {:ok, 0} = Documents.purge_expired(srv)
+    assert {:ok, restored} = Documents.restore_document(srv, doc.id)
+    assert restored.deleted_at == nil
+    assert {:ok, _} = Documents.get_document(srv, doc.id)
+  end
+
+  test "list_documents with include_deleted returns expired docs sorted by id",
+       %{srv: srv, advance: advance} do
+    expired = create(srv, %{title: "expired"})
+    {:ok, _} = Documents.soft_delete_document(srv, expired.id)
+    advance.(1000)
+    trashed = create(srv, %{title: "trashed"})
+    {:ok, _} = Documents.soft_delete_document(srv, trashed.id)
+    active = create(srv, %{title: "active"})
+
+    ids = Documents.list_documents(srv, include_deleted: true) |> Enum.map(& &1.id)
+    assert ids == Enum.sort([expired.id, trashed.id, active.id])
+    assert Documents.list_documents(srv) |> Enum.map(& &1.id) == [active.id]
+  end
 end
 ```

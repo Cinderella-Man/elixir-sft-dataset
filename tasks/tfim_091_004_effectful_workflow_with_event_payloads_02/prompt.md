@@ -285,5 +285,104 @@ defmodule WorkflowTest do
     assert Workflow.can?(rec, :submit) == true
     assert rec.state == :draft
   end
+
+  test "invalid edge reports invalid_transition even when the guard would fail" do
+    rec = draft()
+
+    assert {:error, :invalid_transition, :draft, :approve} =
+             Workflow.transition(rec, :approve, %{})
+
+    assert {:error, :invalid_transition, :draft, :reject} =
+             Workflow.transition(rec, :reject, %{reason: ""})
+
+    {:ok, rejected} = Workflow.transition(submitted(), :reject, %{reason: "dup"})
+
+    assert {:error, :invalid_transition, :rejected, :approve} =
+             Workflow.transition(rejected, :approve, %{approver: nil})
+  end
+
+  test "rejected and cancelled records built via the API reject every event" do
+    {:ok, rejected} = Workflow.transition(submitted(), :reject, %{reason: "dup"})
+
+    {:ok, rec} = Workflow.transition(submitted(), :approve, %{approver: "m"})
+    {:ok, rec} = Workflow.transition(rec, :start)
+    {:ok, cancelled} = Workflow.transition(rec, :cancel, %{reason: "stop"})
+
+    events = [:submit, :approve, :reject, :start, :complete, :cancel]
+
+    for event <- events do
+      assert {:error, :invalid_transition, :rejected, ^event} =
+               Workflow.transition(rejected, event, %{approver: "x", reason: "y"})
+
+      assert {:error, :invalid_transition, :cancelled, ^event} =
+               Workflow.transition(cancelled, event, %{approver: "x", reason: "y"})
+
+      assert Workflow.can?(rejected, event, %{approver: "x", reason: "y"}) == false
+      assert Workflow.can?(cancelled, event, %{approver: "x", reason: "y"}) == false
+    end
+  end
+
+  test "cancel with a non-binary reason succeeds without stamping cancelled_reason" do
+    rec = Workflow.new(%{items: [:a], note: "keep"})
+    {:ok, rec} = Workflow.transition(rec, :submit)
+    {:ok, rec} = Workflow.transition(rec, :approve, %{approver: "m"})
+    {:ok, rec} = Workflow.transition(rec, :start)
+
+    {:ok, done} = Workflow.transition(rec, :cancel, %{reason: 123})
+    assert done.state == :cancelled
+    refute Map.has_key?(done, :cancelled_reason)
+    assert done.note == "keep"
+    assert done.items == [:a]
+
+    {:ok, done2} = Workflow.transition(rec, :cancel, %{reason: nil})
+    assert done2.state == :cancelled
+    refute Map.has_key?(done2, :cancelled_reason)
+  end
+
+  test "reject guard rejects nil and non-binary reasons in the payload" do
+    rec = submitted()
+
+    for bad <- [%{reason: nil}, %{reason: 123}, %{reason: :duplicate}, %{reason: ["a"]}] do
+      assert {:error, :guard_failed, :submitted, :reject} =
+               Workflow.transition(rec, :reject, bad)
+
+      assert Workflow.can?(rec, :reject, bad) == false
+    end
+
+    refute Map.has_key?(rec, :rejection_reason)
+  end
+
+  test "approve, reject and complete effects preserve untouched fields" do
+    base = Workflow.new(%{items: [:a], note: "hi", meta: %{c: "acme"}})
+    {:ok, sub} = Workflow.transition(base, :submit)
+
+    {:ok, rej} = Workflow.transition(sub, :reject, %{reason: "dup"})
+    assert rej.rejection_reason == "dup"
+    assert rej.note == "hi"
+    assert rej.meta == %{c: "acme"}
+    assert rej.items == [:a]
+
+    {:ok, rec} = Workflow.transition(sub, :approve, %{approver: "manager"})
+    assert rec.approved_by == "manager"
+    assert rec.note == "hi"
+    assert rec.meta == %{c: "acme"}
+
+    {:ok, rec} = Workflow.transition(rec, :start)
+    {:ok, rec} = Workflow.transition(rec, :complete, %{approver: "ignored"})
+    assert rec.completed == true
+    assert rec.approved_by == "manager"
+    assert rec.note == "hi"
+    assert rec.items == [:a]
+  end
+
+  test "can?/3 is false for wrong-stage and unknown events" do
+    rec = draft()
+
+    assert Workflow.can?(rec, :approve, %{approver: "m"}) == false
+    assert Workflow.can?(rec, :complete) == false
+    assert Workflow.can?(rec, :teleport, %{approver: "m"}) == false
+    assert Workflow.can?(Workflow.new(%{items: []}), :submit) == false
+    assert Workflow.can?(rec, :submit, %{ignored: 1}) == true
+  end
 end
 ```

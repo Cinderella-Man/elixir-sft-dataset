@@ -589,5 +589,21 @@ defmodule CounterTest do
     Counter.decrement(c, :a)
     assert Counter.value(c) == 1
   end
+
+  test "start_link registers the process under the given :name" do
+    name = :"counter_name_#{System.unique_integer([:positive])}"
+    {:ok, _pid} = Counter.start_link(name: name)
+    assert :ok = Counter.increment(name, :a, 3)
+    assert :ok = Counter.decrement(name, :a, 1)
+    assert Counter.value(name) == 2
+    assert Counter.state(name) == %{p: %{a: 3}, n: %{a: 1}}
+  end
+
+  test "documented example yields the exact state map and value", %{c: c} do
+    Counter.increment(c, :a, 3)
+    Counter.decrement(c, :a, 1)
+    assert Counter.state(c) == %{p: %{a: 3}, n: %{a: 1}}
+    assert Counter.value(c) == 2
+  end
 end
 ```

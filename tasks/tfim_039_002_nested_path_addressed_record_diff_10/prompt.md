@@ -214,5 +214,74 @@ defmodule NestedRecordDiffTest do
     assert changes_for(NestedRecordDiff.diff(old, new).changed, 1) ==
              %{"home.city" => {"NYC", "LA"}, "work.city" => {"NJ", "SF"}}
   end
+
+  test "map appearing where the field was absent reports the whole map at the field path" do
+    old = [%{id: 1, name: "A"}]
+    new = [%{id: 1, name: "A", address: %{city: "NYC", zip: "10001"}}]
+
+    assert changes_for(NestedRecordDiff.diff(old, new).changed, 1) ==
+             %{"address" => {:missing, %{city: "NYC", zip: "10001"}}}
+  end
+
+  test "scalar replaced by a map reports the whole value at the field path" do
+    old = [%{id: 1, address: "unknown"}]
+    new = [%{id: 1, address: %{city: "NYC"}}]
+
+    assert changes_for(NestedRecordDiff.diff(old, new).changed, 1) ==
+             %{"address" => {"unknown", %{city: "NYC"}}}
+  end
+
+  test "top-level leaf added and removed both use :missing on the absent side" do
+    old = [%{id: 1, name: "A"}, %{id: 2, name: "B", nickname: "Bee"}]
+    new = [%{id: 1, name: "A", nickname: "Ace"}, %{id: 2, name: "B"}]
+
+    %{changed: changed} = NestedRecordDiff.diff(old, new)
+
+    assert changes_for(changed, 1) == %{"nickname" => {:missing, "Ace"}}
+    assert changes_for(changed, 2) == %{"nickname" => {"Bee", :missing}}
+  end
+
+  test "default key is :id even when records also carry a uuid field" do
+    old = [%{id: 1, uuid: "aaa", meta: %{v: 1}}]
+    new = [%{id: 1, uuid: "bbb", meta: %{v: 2}}]
+
+    %{added: added, removed: removed, changed: changed} = NestedRecordDiff.diff(old, new)
+
+    assert added == []
+    assert removed == []
+    assert length(changed) == 1
+    assert hd(changed).id == 1
+    assert hd(changed).changes == %{"uuid" => {"aaa", "bbb"}, "meta.v" => {1, 2}}
+  end
+
+  test "nested map replaced by a scalar deeper down does not recurse" do
+    old = [%{id: 1, a: %{b: %{c: 1, d: 2}}}]
+    new = [%{id: 1, a: %{b: 5}}]
+
+    assert changes_for(NestedRecordDiff.diff(old, new).changed, 1) ==
+             %{"a.b" => {%{c: 1, d: 2}, 5}}
+  end
+
+  test "added, removed and changed records are reported together in one diff" do
+    old = [
+      %{id: 1, a: %{b: 1}},
+      %{id: 2, a: %{b: 2}},
+      %{id: 3, a: %{b: 3}}
+    ]
+
+    new = [
+      %{id: 1, a: %{b: 1}},
+      %{id: 3, a: %{b: 30}},
+      %{id: 4, a: %{b: 4}}
+    ]
+
+    %{added: added, removed: removed, changed: changed} = NestedRecordDiff.diff(old, new)
+
+    assert added == [%{id: 4, a: %{b: 4}}]
+    assert removed == [%{id: 2, a: %{b: 2}}]
+    assert length(changed) == 1
+    assert hd(changed).id == 3
+    assert hd(changed).changes == %{"a.b" => {3, 30}}
+  end
 end
 ```

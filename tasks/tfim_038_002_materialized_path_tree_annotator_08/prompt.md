@@ -390,5 +390,48 @@ defmodule TreePathsTest do
     assert {:ok, nodes} = TreePaths.build([%{id: 1, parent_id: nil}])
     assert {:error, :not_found} = TreePaths.subtree(nodes, 999)
   end
+
+  test "cycle unreachable from any root still returns an error" do
+    items = [
+      %{id: 1, parent_id: nil},
+      %{id: 2, parent_id: 1},
+      %{id: :x, parent_id: :y},
+      %{id: :y, parent_id: :x}
+    ]
+
+    assert {:error, {:cycle_detected, cycle_ids}} = TreePaths.build(items)
+    assert Enum.sort(cycle_ids) == [:x, :y]
+  end
+
+  test "promoted orphans keep their input position among real roots" do
+    items = [
+      %{id: :a, parent_id: nil},
+      %{id: :orphan, parent_id: :missing},
+      %{id: :b, parent_id: nil},
+      %{id: :kid, parent_id: :orphan}
+    ]
+
+    assert {:ok, nodes} = TreePaths.build(items, orphan_strategy: :raise_to_root)
+    assert ids(nodes) == [:a, :orphan, :kid, :b]
+
+    [_a, orphan, kid, _b] = nodes
+    assert orphan.depth == 0 and orphan.path == [:orphan]
+    assert kid.depth == 1 and kid.path == [:orphan, :kid]
+  end
+
+  test "subtree of a root spans grandchildren and excludes other roots" do
+    items = [
+      %{id: 1, parent_id: nil},
+      %{id: 2, parent_id: 1},
+      %{id: 3, parent_id: 2},
+      %{id: 4, parent_id: nil},
+      %{id: 5, parent_id: 4}
+    ]
+
+    assert {:ok, nodes} = TreePaths.build(items)
+    assert {:ok, slice} = TreePaths.subtree(nodes, 1)
+    assert ids(slice) == [1, 2, 3]
+    assert Enum.map(slice, & &1.depth) == [0, 1, 2]
+  end
 end
 ```

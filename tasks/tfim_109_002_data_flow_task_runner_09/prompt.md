@@ -23,12 +23,14 @@ defmodule DataFlowRunner do
 
   # ── Public API ──────────────────────────────────────────────────────────
 
+  @spec start_link(keyword()) :: GenServer.on_start()
+  @doc "Starts the runner. Accepts a `:name` option used for process registration."
   def start_link(opts) do
     name = Keyword.get(opts, :name)
     GenServer.start_link(__MODULE__, %{}, name: name)
   end
 
-  @spec submit(GenServer.server(), term(), keyword()) :: :ok | {:error, atom()}
+  @spec submit(GenServer.server(), term(), keyword()) :: :ok
   @doc "Submits `task_id` with its dependencies/opts to runner `name`. Returns `:ok`."
   def submit(name, task_id, opts) do
     depends_on = Keyword.get(opts, :depends_on, [])
@@ -48,6 +50,18 @@ defmodule DataFlowRunner do
     GenServer.call(name, {:submit, task_id, depends_on, func})
   end
 
+  @spec run_all(GenServer.server()) ::
+          {:ok, map()}
+          | {:error, {:cycle, [term()]}}
+          | {:error, {:unknown_dependencies, [term()]}}
+  @doc """
+  Validates the dependency graph and executes every submitted task.
+
+  Returns `{:ok, results}` on success, `{:error, {:cycle, involved}}` when the
+  graph contains a cycle, or `{:error, {:unknown_dependencies, missing}}` when a
+  task references a dependency that was never submitted. In both error cases no
+  task is executed.
+  """
   def run_all(name) do
     GenServer.call(name, :run_all, :infinity)
   end
@@ -114,7 +128,7 @@ defmodule DataFlowRunner do
 
     case ready do
       [] ->
-        {:error, {:cycle, Map.keys(in_degree)}}
+        {:error, {:cycle, cycle_nodes(Map.keys(in_degree), dependents)}}
 
       _ ->
         remaining = Map.drop(in_degree, ready)
@@ -132,6 +146,32 @@ defmodule DataFlowRunner do
           end)
 
         build_layers(remaining, dependents, [ready | layers])
+    end
+  end
+
+  # ── Cycle extraction ────────────────────────────────────────────────────
+
+  # The tasks left over when Kahn's algorithm stalls include both the tasks on a
+  # cycle and their downstream dependents. Repeatedly dropping tasks that nothing
+  # in the remaining set depends on leaves only the tasks on a cycle.
+  defp cycle_nodes(ids, dependents) do
+    ids |> MapSet.new() |> prune_downstream(dependents)
+  end
+
+  defp prune_downstream(set, dependents) do
+    next =
+      set
+      |> Enum.filter(fn id ->
+        dependents
+        |> Map.get(id, [])
+        |> Enum.any?(&MapSet.member?(set, &1))
+      end)
+      |> MapSet.new()
+
+    if MapSet.size(next) == MapSet.size(set) do
+      Enum.to_list(next)
+    else
+      prune_downstream(next, dependents)
     end
   end
 
@@ -310,6 +350,69 @@ defmodule DataFlowRunnerTest do
     assert_raise ArgumentError, fn ->
       DataFlowRunner.submit(:runner, :a, func: fn -> :zero end)
     end
+  end
+
+  test "submitting alone executes nothing before run_all is called" do
+    DataFlowRunner.submit(:runner, :s1, func: rec(:s1, 0, fn _ -> 1 end))
+
+    DataFlowRunner.submit(:runner, :s2,
+      depends_on: [:s1],
+      func: rec(:s2, 0, fn %{s1: v} -> v end)
+    )
+
+    assert Recorder.events() == []
+
+    assert {:ok, %{s1: 1, s2: 1}} = DataFlowRunner.run_all(:runner)
+    assert Recorder.started_at(:s1) != nil
+  end
+
+  test "cycle report lists only the tasks participating in the cycle" do
+    DataFlowRunner.submit(:runner, :a, depends_on: [:b], func: fn _ -> 1 end)
+    DataFlowRunner.submit(:runner, :b, depends_on: [:a], func: fn _ -> 2 end)
+    DataFlowRunner.submit(:runner, :downstream, depends_on: [:a], func: fn _ -> 3 end)
+
+    assert {:error, {:cycle, involved}} = DataFlowRunner.run_all(:runner)
+    assert Enum.sort(involved) == [:a, :b]
+  end
+
+  test "input map excludes results of tasks that were not declared as dependencies" do
+    DataFlowRunner.submit(:runner, :a, func: fn _ -> 1 end)
+    DataFlowRunner.submit(:runner, :b, func: fn _ -> 2 end)
+    DataFlowRunner.submit(:runner, :c, depends_on: [:a], func: fn inputs -> inputs end)
+
+    assert {:ok, results} = DataFlowRunner.run_all(:runner)
+    assert results.c == %{a: 1}
+  end
+
+  test "a cycle prevents an otherwise runnable independent task from executing" do
+    DataFlowRunner.submit(:runner, :x, depends_on: [:y], func: rec(:x, 0, fn _ -> 1 end))
+    DataFlowRunner.submit(:runner, :y, depends_on: [:x], func: rec(:y, 0, fn _ -> 2 end))
+    DataFlowRunner.submit(:runner, :free, func: rec(:free, 0, fn _ -> :ran end))
+
+    assert {:error, {:cycle, _}} = DataFlowRunner.run_all(:runner)
+    assert Recorder.events() == []
+    assert Recorder.started_at(:free) == nil
+  end
+
+  test "resubmitting replaces the previous dependency list, not just the func" do
+    DataFlowRunner.submit(:runner, :a, func: fn _ -> 1 end)
+    DataFlowRunner.submit(:runner, :b, depends_on: [:a, :ghost], func: fn _ -> :old end)
+    DataFlowRunner.submit(:runner, :b, func: fn inputs -> {:new, inputs} end)
+
+    assert {:ok, results} = DataFlowRunner.run_all(:runner)
+    assert results == %{a: 1, b: {:new, %{}}}
+  end
+
+  test "non-atom task ids such as strings and tuples are supported" do
+    DataFlowRunner.submit(:runner, "src", func: fn _ -> 7 end)
+
+    DataFlowRunner.submit(:runner, {:sink, 1},
+      depends_on: ["src"],
+      func: fn inputs -> Map.fetch!(inputs, "src") * 2 end
+    )
+
+    assert {:ok, results} = DataFlowRunner.run_all(:runner)
+    assert results == %{"src" => 7, {:sink, 1} => 14}
   end
 end
 ```

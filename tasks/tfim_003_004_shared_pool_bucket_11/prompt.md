@@ -563,5 +563,60 @@ defmodule SharedPoolBucketTest do
     send(sp, :cleanup)
     assert {:ok, 6} = SharedPoolBucket.key_level(sp, "cl3", 9, 3.0)
   end
+
+  test "sub-millisecond key shortage still reports a 1 ms retry_after", %{sp: sp} do
+    # cap 1, rate 2000/s: drain the single token, leaving free 0.
+    assert {:ok, 0, _} = SharedPoolBucket.acquire(sp, "fast", 1, 2000.0, 1)
+
+    # Deficit 1 at 2000 tokens/s needs 0.5 ms — sub-millisecond — must floor up to 1.
+    assert {:error, :key_empty, 1} = SharedPoolBucket.acquire(sp, "fast", 1, 2000.0, 1)
+  end
+
+  test "invalid acquire neither drains an existing bucket nor creates a new one", %{sp: sp} do
+    # Establish a known drained state on an existing bucket.
+    assert {:ok, 4, 9} = SharedPoolBucket.acquire(sp, "alice", 5, 1.0)
+
+    # Invalid tokens raises and must not touch any existing state.
+    assert_raise FunctionClauseError, fn ->
+      SharedPoolBucket.acquire(sp, "alice", 5, 1.0, 0)
+    end
+
+    # Existing bucket untouched (still 4, not drained further); global untouched.
+    assert {:ok, 4} = SharedPoolBucket.key_level(sp, "alice", 5, 1.0)
+    assert {:ok, 9} = SharedPoolBucket.global_level(sp)
+
+    # A never-seen bucket targeted by an invalid call must not be created: a later
+    # query with a different capacity still reports a fresh, full bucket.
+    assert_raise FunctionClauseError, fn ->
+      SharedPoolBucket.acquire(sp, "ghost", 0, 1.0, 1)
+    end
+
+    assert {:ok, 100} = SharedPoolBucket.key_level(sp, "ghost", 100, 1.0)
+  end
+
+  test "global_empty rejection leaves the global pool balance untouched", %{sp: sp} do
+    # Per-key never blocks (cap 100). Drain global from 10 down to 2.
+    assert {:ok, _, 2} = SharedPoolBucket.acquire(sp, "big", 100, 100.0, 8)
+
+    # Ask for 5 globally: per-key admits, global (2) is short -> :global_empty.
+    assert {:error, :global_empty, _} = SharedPoolBucket.acquire(sp, "big2", 100, 100.0, 5)
+
+    # Nothing drained: the global pool is still at 2 (no time advanced).
+    assert {:ok, 2} = SharedPoolBucket.global_level(sp)
+  end
+
+  test "name option registers the process under the given name" do
+    {:ok, _pid} =
+      SharedPoolBucket.start_link(
+        name: :spb_named,
+        global_capacity: 10,
+        global_refill_rate: 1.0,
+        clock: &Clock.now/0,
+        cleanup_interval_ms: :infinity
+      )
+
+    assert {:ok, 4, 9} = SharedPoolBucket.acquire(:spb_named, "alice", 5, 0.5)
+    assert {:ok, 9} = SharedPoolBucket.global_level(:spb_named)
+  end
 end
 ```

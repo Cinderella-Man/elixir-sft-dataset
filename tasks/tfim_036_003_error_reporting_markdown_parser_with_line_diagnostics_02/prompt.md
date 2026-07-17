@@ -267,5 +267,90 @@ defmodule MarkdownReportTest do
     assert %{categories: [%{category: "Category", items: [%{name: "Item"}]}], errors: []} =
              parse(md)
   end
+
+  test "suppression of a duplicate section ends at the next distinct heading" do
+    md = """
+    ## A
+    - **x**: d
+    ## A
+    - **suppressed**: gone
+    ## B
+    - **y**: d2
+    """
+
+    %{categories: cats, errors: errors} = parse(md)
+
+    assert cats == [
+             %{category: "A", items: [%{name: "x", description: "d", tags: []}]},
+             %{category: "B", items: [%{name: "y", description: "d2", tags: []}]}
+           ]
+
+    assert errors == [%{line: 3, content: "## A", reason: :duplicate_category}]
+  end
+
+  test "duplicate category is detected by trimmed title comparison" do
+    md = "## A\n- **x**: d\n##   A  \n- **y**: d2\n"
+
+    %{categories: cats, errors: errors} = parse(md)
+
+    assert cats == [%{category: "A", items: [%{name: "x", description: "d", tags: []}]}]
+    assert errors == [%{line: 3, content: "##   A", reason: :duplicate_category}]
+  end
+
+  test "error content has trailing whitespace trimmed off the original line" do
+    md = "## H\n- broken bullet   \n###  Deep   \n"
+
+    %{errors: errors} = parse(md)
+
+    assert errors == [
+             %{line: 2, content: "- broken bullet", reason: :malformed_item},
+             %{line: 3, content: "###  Deep", reason: :unsupported_heading}
+           ]
+  end
+
+  test "multiple categories and their items keep document order" do
+    md = """
+    ## First
+    - **a1**: one
+    - **a2**: two (t)
+    ## Second
+    - **b1**: three
+    """
+
+    %{categories: cats, errors: errors} = parse(md)
+
+    assert Enum.map(cats, & &1.category) == ["First", "Second"]
+    assert Enum.map(hd(cats).items, & &1.name) == ["a1", "a2"]
+    assert Enum.map(List.last(cats).items, & &1.name) == ["b1"]
+    assert errors == []
+  end
+
+  test "category title is trimmed of surrounding whitespace" do
+    md = "##   Spaced Title   \n- **i**: d\n"
+
+    %{categories: [cat], errors: errors} = parse(md)
+
+    assert cat.category == "Spaced Title"
+    assert Enum.map(cat.items, & &1.name) == ["i"]
+    assert errors == []
+  end
+
+  test "blank lines and arbitrary prose produce no errors" do
+    md = """
+    ## H
+
+    Some introductory prose.
+    Another paragraph mentioning - a dash mid-sentence.
+
+    - **i**: d (a)
+
+    Closing prose.
+    """
+
+    %{categories: [%{items: items}], errors: errors} = parse(md)
+
+    assert Enum.map(items, & &1.name) == ["i"]
+    assert errors == []
+  end
 end
 ```

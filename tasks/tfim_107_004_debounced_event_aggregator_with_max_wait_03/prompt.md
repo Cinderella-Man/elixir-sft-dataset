@@ -254,5 +254,80 @@ defmodule DebounceAggregatorTest do
     DebounceAggregator.push(agg, :e)
     assert_receive {:flushed, [:e]}, 500
   end
+
+  test "a batch that follows a max-wait flush gets a fresh max-wait timer" do
+    agg = start_agg(idle_ms: 400, max_wait_ms: 250, batch_size: 1_000_000)
+
+    # First batch ends on its max-wait cap (250 < idle 400).
+    DebounceAggregator.push(agg, :a)
+    assert_receive {:flushed, [:a]}, 600
+
+    # Second batch: push faster than idle_ms so the idle timer can never fire.
+    # Only a freshly armed max-wait timer can end this batch.
+    DebounceAggregator.push(agg, :b)
+    Process.sleep(100)
+    DebounceAggregator.push(agg, :c)
+    Process.sleep(100)
+    DebounceAggregator.push(agg, :d)
+
+    assert_receive {:flushed, [:b, :c, :d]}, 500
+  end
+
+  test "default batch_size of infinity applies no size trigger" do
+    agg = start_agg(idle_ms: 150, max_wait_ms: 5_000)
+
+    for event <- [:a, :b, :c, :d, :e], do: DebounceAggregator.push(agg, event)
+
+    # No size flush may split the burst; the whole burst coalesces on idle.
+    assert_receive {:flushed, [:a, :b, :c, :d, :e]}, 500
+    refute_receive {:flushed, _}, 200
+  end
+
+  test "registers under :name and accepts pushes addressed to that name" do
+    start_agg(name: :promise_named_aggregator, idle_ms: 120, max_wait_ms: 5_000)
+
+    assert is_pid(Process.whereis(:promise_named_aggregator))
+
+    DebounceAggregator.push(:promise_named_aggregator, :a)
+    DebounceAggregator.push(:promise_named_aggregator, :b)
+
+    assert_receive {:flushed, [:a, :b]}, 500
+  end
+
+  test "default on_flush is a no-op that does not crash the aggregator" do
+    agg = start_supervised!({DebounceAggregator, [idle_ms: 80, max_wait_ms: 200]})
+    ref = Process.monitor(agg)
+
+    DebounceAggregator.push(agg, :a)
+    DebounceAggregator.push(agg, :b)
+
+    # The default flush callback must swallow the batch without dying.
+    refute_receive {:DOWN, ^ref, :process, _, _}, 400
+    assert Process.alive?(agg)
+
+    # And the aggregator keeps accepting work after the no-op flush.
+    assert DebounceAggregator.push(agg, :c) == :ok
+    refute_receive {:DOWN, ^ref, :process, _, _}, 300
+  end
+
+  test "push returns :ok immediately without waiting for a flush" do
+    agg = start_agg(idle_ms: 5_000, max_wait_ms: 5_000, batch_size: 1_000_000)
+
+    assert DebounceAggregator.push(agg, :a) == :ok
+    assert DebounceAggregator.push(agg, :b) == :ok
+
+    # Neither timer has expired, so push clearly did not block on a flush.
+    refute_receive {:flushed, _}, 150
+  end
+
+  test "batch_size of one flushes every event as its own batch" do
+    agg = start_agg(idle_ms: 5_000, max_wait_ms: 5_000, batch_size: 1)
+
+    DebounceAggregator.push(agg, :a)
+    DebounceAggregator.push(agg, :b)
+
+    assert_receive {:flushed, [:a]}, 500
+    assert_receive {:flushed, [:b]}, 500
+  end
 end
 ```

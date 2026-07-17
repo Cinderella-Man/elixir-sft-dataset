@@ -294,5 +294,81 @@ defmodule CartTest do
     assert_in_delta totals.discounted_subtotal, totals.subtotal, 0.001
     assert totals.coupons == []
   end
+
+  test "min_subtotal is compared against the subtotal after per-item bulk discounts" do
+    cart = Cart.new(tax_rate: 0.0)
+    {:ok, cart} = Cart.add_item(cart, "bulk", 10, 10.0)
+    # raw 10 x 10.0 = 100.0, but the bulk discount drops the subtotal to 90.0
+    assert_in_delta Cart.calculate_totals(cart).subtotal, 90.0, 0.001
+
+    assert {:error, :below_minimum} =
+             Cart.apply_coupon(cart, %{
+               code: "MIN100",
+               type: :fixed,
+               value: 5.0,
+               min_subtotal: 100.0
+             })
+  end
+
+  test "coupon whose min_subtotal exactly equals the subtotal is accepted" do
+    cart = Cart.new(tax_rate: 0.0)
+    {:ok, cart} = Cart.add_item(cart, "a", 1, 100.0)
+
+    {:ok, cart} =
+      Cart.apply_coupon(cart, %{
+        code: "EXACT",
+        type: :percentage,
+        value: 0.10,
+        min_subtotal: 100.0
+      })
+
+    totals = Cart.calculate_totals(cart)
+    assert totals.coupons == ["EXACT"]
+    assert_in_delta totals.discount, 10.0, 0.001
+  end
+
+  test "remove_item drops the product entirely and is a no-op for an absent product" do
+    cart = Cart.new(tax_rate: 0.0)
+    {:ok, cart} = Cart.add_item(cart, "a", 2, 10.0)
+    {:ok, cart} = Cart.add_item(cart, "b", 3, 5.0)
+
+    removed = Cart.remove_item(cart, "a")
+    ids = Enum.map(Cart.calculate_totals(removed).items, & &1.product_id)
+    assert ids == ["b"]
+    assert_in_delta Cart.calculate_totals(removed).subtotal, 15.0, 0.001
+
+    same = Cart.remove_item(removed, "ghost")
+    assert Cart.calculate_totals(same) == Cart.calculate_totals(removed)
+  end
+
+  test "repeated add_item calls sum quantities and can cross the bulk threshold" do
+    cart = Cart.new(tax_rate: 0.0)
+    {:ok, cart} = Cart.add_item(cart, "p", 4, 10.0)
+    {:ok, cart} = Cart.add_item(cart, "p", 6, 10.0)
+
+    [item] = Cart.calculate_totals(cart).items
+    assert item.quantity == 10
+    assert item.discount_rate == 0.1
+    assert_in_delta item.line_total, 90.0, 0.001
+  end
+
+  test "add_item rejects non-integer and negative quantities" do
+    cart = Cart.new(tax_rate: 0.0)
+    assert {:error, :invalid_quantity} = Cart.add_item(cart, "p", 1.5, 10.0)
+    assert {:error, :invalid_quantity} = Cart.add_item(cart, "p", -3, 10.0)
+    assert {:error, :invalid_quantity} = Cart.add_item(cart, "p", :two, 10.0)
+  end
+
+  test "update_quantity rejects a negative quantity and leaves the cart usable" do
+    cart = Cart.new()
+    {:ok, cart} = Cart.add_item(cart, "p", 2, 10.0)
+    assert {:error, :invalid_quantity} = Cart.update_quantity(cart, "p", -1)
+
+    totals = Cart.calculate_totals(cart)
+    assert_in_delta totals.subtotal, 20.0, 0.001
+    # :tax_rate defaults to 0.0, so no tax is added
+    assert_in_delta totals.tax, 0.0, 0.001
+    assert_in_delta totals.grand_total, 20.0, 0.001
+  end
 end
 ```

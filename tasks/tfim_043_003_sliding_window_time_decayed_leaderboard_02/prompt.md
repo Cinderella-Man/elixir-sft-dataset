@@ -236,5 +236,71 @@ defmodule SlidingWindowLeaderboardTest do
     SlidingWindowLeaderboard.record(a, "alice", 5, 10_000)
     assert {:error, :not_found} = SlidingWindowLeaderboard.score(b, "alice", 10_000)
   end
+
+  test "prune deletes the event exactly at the cutoff but keeps cutoff+1", %{board: board} do
+    # window 1000, prune at now = 10_000 -> cutoff 9_000
+    :ok = SlidingWindowLeaderboard.record(board, "alice", 42, 9_000)
+    :ok = SlidingWindowLeaderboard.record(board, "bob", 7, 9_001)
+
+    assert 1 = SlidingWindowLeaderboard.prune(board, 10_000)
+    assert {:error, :not_found} = SlidingWindowLeaderboard.score(board, "alice", 10_000)
+    assert {:ok, 7} = SlidingWindowLeaderboard.score(board, "bob", 10_000)
+  end
+
+  test "a player whose active events sum to zero is found, not :not_found", %{board: board} do
+    :ok = SlidingWindowLeaderboard.record(board, "zed", 0, 10_000)
+    :ok = SlidingWindowLeaderboard.record(board, "nel", 5, 10_000)
+    :ok = SlidingWindowLeaderboard.record(board, "nel", -5, 10_100)
+
+    assert {:ok, 0} = SlidingWindowLeaderboard.score(board, "zed", 10_500)
+    assert {:ok, 0} = SlidingWindowLeaderboard.score(board, "nel", 10_500)
+    assert {:ok, 1, 0} = SlidingWindowLeaderboard.rank(board, "zed", 10_500)
+    assert {"zed", 0} in SlidingWindowLeaderboard.top(board, 5, 10_500)
+  end
+
+  test "new/2 rejects a non-positive or non-integer window_ms" do
+    name = :"swguard_#{:erlang.unique_integer([:positive])}"
+
+    assert_raise FunctionClauseError, fn -> SlidingWindowLeaderboard.new(name, 0) end
+    assert_raise FunctionClauseError, fn -> SlidingWindowLeaderboard.new(name, -1) end
+    assert_raise FunctionClauseError, fn -> SlidingWindowLeaderboard.new(name, 100.0) end
+    assert_raise FunctionClauseError, fn -> SlidingWindowLeaderboard.new("not_atom", 100) end
+  end
+
+  test "record accepts float points and they sum into the active score", %{board: board} do
+    assert :ok = SlidingWindowLeaderboard.record(board, "alice", 1.5, 10_000)
+    assert :ok = SlidingWindowLeaderboard.record(board, "alice", 2.25, 10_100)
+
+    assert {:ok, 3.75} = SlidingWindowLeaderboard.score(board, "alice", 10_500)
+    assert [{"alice", 3.75}] = SlidingWindowLeaderboard.top(board, 3, 10_500)
+
+    assert_raise FunctionClauseError, fn ->
+      SlidingWindowLeaderboard.record(board, "alice", "five", 10_000)
+    end
+  end
+
+  test "rank recomputes as the window slides and leaders expire", %{board: board} do
+    SlidingWindowLeaderboard.record(board, "alice", 100, 10_000)
+    SlidingWindowLeaderboard.record(board, "bob", 50, 10_800)
+    SlidingWindowLeaderboard.record(board, "carol", 50, 10_800)
+
+    assert {:ok, 1, 100} = SlidingWindowLeaderboard.rank(board, "alice", 10_900)
+    assert {:ok, 2, 50} = SlidingWindowLeaderboard.rank(board, "bob", 10_900)
+
+    # cutoff at 11_100 = 10_100, so alice's only event has expired
+    assert {:error, :not_found} = SlidingWindowLeaderboard.rank(board, "alice", 11_100)
+    assert {:ok, 1, 50} = SlidingWindowLeaderboard.rank(board, "bob", 11_100)
+    assert {:ok, 1, 50} = SlidingWindowLeaderboard.rank(board, "carol", 11_100)
+  end
+
+  test "prune returns 0 and keeps every event when nothing has expired", %{board: board} do
+    SlidingWindowLeaderboard.record(board, "alice", 5, 10_000)
+    SlidingWindowLeaderboard.record(board, "bob", 9, 10_400)
+
+    assert 0 = SlidingWindowLeaderboard.prune(board, 10_500)
+    assert {:ok, 5} = SlidingWindowLeaderboard.score(board, "alice", 10_500)
+    assert [{"bob", 9}, {"alice", 5}] = SlidingWindowLeaderboard.top(board, 5, 10_500)
+    assert 0 = SlidingWindowLeaderboard.prune(board, 10_500)
+  end
 end
 ```

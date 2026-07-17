@@ -274,5 +274,79 @@ defmodule MaxWaitDebouncerTest do
     assert Process.alive?(pid)
     assert Process.whereis(name) == pid
   end
+
+  test "a second call restarts the delay window instead of firing at the first call's deadline" do
+    # delay=200, max=5000 (max can never bind here). The second call lands at
+    # ~t=150, so an implementation that resets the timer fires at ~350. One that
+    # kept the original deadline would fire at ~200, inside the refute window.
+    MaxWaitDebouncer.call("k", 200, 5000, notify(:reset))
+    refute_receive :reset, 150
+    MaxWaitDebouncer.call("k", 200, 5000, notify(:reset))
+    refute_receive :reset, 150
+
+    assert_receive :reset, 300
+  end
+
+  test "a max-wait fire runs the newest func, not the one that opened the burst" do
+    # delay=150, max=200. Second call at ~t=100 leaves 100ms of max window, so
+    # fire_in = min(150, 100) = 100 and the fire at ~t=200 is the max-wait one.
+    MaxWaitDebouncer.call("k", 150, 200, notify({:ran, 1}))
+    refute_receive {:ran, _}, 100
+    MaxWaitDebouncer.call("k", 150, 200, notify({:ran, 2}))
+
+    assert_receive {:ran, 2}, 250
+    refute_received {:ran, 1}
+  end
+
+  test "after a max-wait fire the next call gets a full fresh window, not the expired one" do
+    # Force a max-wait fire at ~t=200 (delay=150, max=200, second call at ~100).
+    MaxWaitDebouncer.call("k", 150, 200, notify(:burst_one))
+    refute_receive :burst_one, 100
+    MaxWaitDebouncer.call("k", 150, 200, notify(:burst_one))
+    assert_receive :burst_one, 250
+
+    # Fresh burst: delay=300, max=300 must fire ~300ms from now. If the old
+    # first_call_at survived the fire, remaining_until_max would already be
+    # ~0-100ms and this would fire almost immediately, inside the refute window.
+    MaxWaitDebouncer.call("k", 300, 300, notify(:burst_two))
+    refute_receive :burst_two, 200
+    assert_receive :burst_two, 350
+  end
+
+  test "a key's burst-start time does not leak into another key's max-wait window" do
+    MaxWaitDebouncer.call("a", 150, 200, notify({:k, :a}))
+    refute_receive {:k, :a}, 120
+
+    # "b" opens its own burst at ~t=120, so its max deadline is ~t=420. If it
+    # shared "a"'s burst start (~t=0) the remaining window would be ~180ms and
+    # "b" would fire at ~t=300, inside the refute window below.
+    MaxWaitDebouncer.call("b", 300, 300, notify({:k, :b}))
+
+    assert_receive {:k, :a}, 200
+    refute_receive {:k, :b}, 200
+    assert_receive {:k, :b}, 250
+  end
+
+  test "a call after flush starts a fresh burst with an untouched max-wait window" do
+    # Both durations respect the `max_ms >= delay_ms` contract; the flush below
+    # runs the pending func long before either bound would fire it.
+    MaxWaitDebouncer.call("k", 500, 500, notify(:pending))
+    assert :ok = MaxWaitDebouncer.flush("k")
+    assert_receive :pending, 200
+
+    # If flush left the burst start behind, the ~300ms max window would already
+    # be spent and this call would fire near-immediately instead of at ~+250.
+    MaxWaitDebouncer.call("k", 250, 300, notify(:refreshed))
+    refute_receive :refreshed, 150
+    assert_receive :refreshed, 300
+  end
+
+  test "call/4 rejects a max_ms smaller than delay_ms" do
+    assert_raise FunctionClauseError, fn ->
+      MaxWaitDebouncer.call("k", 200, 100, notify(:never))
+    end
+
+    refute_receive :never, 400
+  end
 end
 ```

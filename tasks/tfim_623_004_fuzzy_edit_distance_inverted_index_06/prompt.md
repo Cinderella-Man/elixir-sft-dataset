@@ -574,5 +574,65 @@ defmodule FuzzyIndexTest do
     :ok = FuzzyIndex.index(:fuzzy_index_reg, "doc1", "hello world")
     assert length(FuzzyIndex.search(:fuzzy_index_reg, "hello")) == 1
   end
+
+  test "repeated query terms do not multiply a document's score", %{idx: idx} do
+    :ok = FuzzyIndex.index(idx, "doc1", "data data")
+
+    [once] = FuzzyIndex.search(idx, "data")
+    [thrice] = FuzzyIndex.search(idx, "data data data")
+
+    # exact "data" (similarity 2) occurring twice → 2 * 2 = 4, counted a single time
+    assert once.score == 4
+    assert thrice.score == 4
+  end
+
+  test "contribution takes the max over matching terms rather than summing them", %{idx: idx} do
+    :ok = FuzzyIndex.index(idx, "doc1", "color colour")
+
+    [result] = FuzzyIndex.search(idx, "color")
+
+    # exact "color" → 2 * 1 = 2 ; near "colour" → 1 * 1 = 1 ; max is 2, not the sum 3
+    assert result.score == 2
+  end
+
+  test "limit keeps the highest scoring results, not arbitrary ones", %{idx: idx} do
+    :ok = FuzzyIndex.index(idx, "low", "keyword")
+    :ok = FuzzyIndex.index(idx, "mid", "keyword keyword")
+    :ok = FuzzyIndex.index(idx, "high", "keyword keyword keyword")
+
+    assert Enum.map(FuzzyIndex.search(idx, "keyword", limit: 1), & &1.id) == ["high"]
+    assert Enum.map(FuzzyIndex.search(idx, "keyword", limit: 2), & &1.id) == ["high", "mid"]
+  end
+
+  test "similarity scales with max_distance for exact and maximally distant matches", %{idx: idx} do
+    :ok = FuzzyIndex.index(idx, "doc1", "banana")
+
+    # exact match at max_distance 2 → similarity 3, count 1 → score 3
+    [exact] = FuzzyIndex.search(idx, "banana", max_distance: 2)
+    assert exact.score == 3
+
+    # "bana" is distance 2 from "banana", the maximum allowed → similarity 1 → score 1
+    [edge] = FuzzyIndex.search(idx, "bana", max_distance: 2)
+    assert edge.score == 1
+  end
+
+  test "every documented default stop word is dropped during tokenization", %{idx: idx} do
+    text =
+      "the a an is are was were in on at to of and or it this that for with as by " <>
+        "not be has had have do does did but if from marker"
+
+    :ok = FuzzyIndex.index(idx, "doc1", text)
+
+    assert FuzzyIndex.stats(idx).term_count == 1
+    assert FuzzyIndex.terms_like(idx, "marker", 0) == ["marker"]
+  end
+
+  test "uppercase text and uppercase queries match each other", %{idx: idx} do
+    :ok = FuzzyIndex.index(idx, "doc1", "HELLO World")
+
+    assert Enum.map(FuzzyIndex.search(idx, "HELLO"), & &1.id) == ["doc1"]
+    assert Enum.map(FuzzyIndex.search(idx, "WoRlD"), & &1.id) == ["doc1"]
+    assert FuzzyIndex.terms_like(idx, "HELLO", 0) == ["hello"]
+  end
 end
 ```

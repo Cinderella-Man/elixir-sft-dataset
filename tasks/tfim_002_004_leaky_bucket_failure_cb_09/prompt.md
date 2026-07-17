@@ -486,5 +486,82 @@ defmodule LeakyBucketCircuitBreakerTest do
     assert :closed = LeakyBucketCircuitBreaker.state(cb)
     assert 0.0 == LeakyBucketCircuitBreaker.bucket_level(cb)
   end
+
+  test "an unexpected return shape counts as a failure and fills the bucket", %{cb: cb} do
+    weird = fn -> :not_a_tuple end
+    LeakyBucketCircuitBreaker.call(cb, weird)
+    assert 1.0 == LeakyBucketCircuitBreaker.bucket_level(cb)
+
+    for _ <- 1..4, do: LeakyBucketCircuitBreaker.call(cb, weird)
+    assert :open = LeakyBucketCircuitBreaker.state(cb)
+  end
+
+  test "default bucket_capacity of 5.0 trips on the fifth failure", %{cb: _cb} do
+    {:ok, _pid} =
+      LeakyBucketCircuitBreaker.start_link(
+        name: :default_cap_cb,
+        leak_rate_per_sec: 1.0,
+        failure_weight: 1.0,
+        reset_timeout_ms: 1_000,
+        clock: &Clock.now/0
+      )
+
+    for _ <- 1..4, do: LeakyBucketCircuitBreaker.call(:default_cap_cb, err_fn())
+    assert :closed = LeakyBucketCircuitBreaker.state(:default_cap_cb)
+
+    LeakyBucketCircuitBreaker.call(:default_cap_cb, err_fn())
+    assert :open = LeakyBucketCircuitBreaker.state(:default_cap_cb)
+  end
+
+  test "default reset_timeout_ms of 30_000 keeps circuit open until 30s elapse", %{cb: _cb} do
+    {:ok, _pid} =
+      LeakyBucketCircuitBreaker.start_link(
+        name: :default_rt_cb,
+        bucket_capacity: 5.0,
+        leak_rate_per_sec: 1.0,
+        failure_weight: 1.0,
+        clock: &Clock.now/0
+      )
+
+    for _ <- 1..5, do: LeakyBucketCircuitBreaker.call(:default_rt_cb, err_fn())
+    assert :open = LeakyBucketCircuitBreaker.state(:default_rt_cb)
+
+    Clock.advance(29_999)
+    assert :open = LeakyBucketCircuitBreaker.state(:default_rt_cb)
+
+    Clock.advance(1)
+    assert :half_open = LeakyBucketCircuitBreaker.state(:default_rt_cb)
+  end
+
+  test "default leak_rate_per_sec of 1.0 leaks one drop per second", %{cb: _cb} do
+    {:ok, _pid} =
+      LeakyBucketCircuitBreaker.start_link(
+        name: :default_leak_cb,
+        bucket_capacity: 5.0,
+        failure_weight: 1.0,
+        reset_timeout_ms: 1_000,
+        clock: &Clock.now/0
+      )
+
+    for _ <- 1..3, do: LeakyBucketCircuitBreaker.call(:default_leak_cb, err_fn())
+    assert 3.0 == LeakyBucketCircuitBreaker.bucket_level(:default_leak_cb)
+
+    Clock.advance(1_000)
+    assert 2.0 == LeakyBucketCircuitBreaker.bucket_level(:default_leak_cb)
+  end
+
+  test "default failure_weight of 1.0 adds one drop per failure", %{cb: _cb} do
+    {:ok, _pid} =
+      LeakyBucketCircuitBreaker.start_link(
+        name: :default_wt_cb,
+        bucket_capacity: 5.0,
+        leak_rate_per_sec: 1.0,
+        reset_timeout_ms: 1_000,
+        clock: &Clock.now/0
+      )
+
+    LeakyBucketCircuitBreaker.call(:default_wt_cb, err_fn())
+    assert 1.0 == LeakyBucketCircuitBreaker.bucket_level(:default_wt_cb)
+  end
 end
 ```

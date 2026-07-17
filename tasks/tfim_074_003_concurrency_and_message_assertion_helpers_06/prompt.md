@@ -526,5 +526,74 @@ defmodule AssertHelpersTest do
     assert error.message =~ "100"
     assert error.message =~ ":unexpected"
   end
+
+  test "assert_next_message timeout failure shows the expected term and the wait" do
+    result =
+      try do
+        assert_next_message(:never_arrives, 50)
+        :no_failure
+      rescue
+        e in ExUnit.AssertionError -> e.message
+      end
+
+    refute result == :no_failure
+    assert result =~ ":never_arrives"
+    assert result =~ "50"
+  end
+
+  test "assert_process_exits failure shows the pid, its liveness and the wait" do
+    pid = spawn(fn -> Process.sleep(:infinity) end)
+
+    result =
+      try do
+        assert_process_exits(pid, 50)
+        :no_failure
+      rescue
+        e in ExUnit.AssertionError -> e.message
+      end
+
+    Process.exit(pid, :kill)
+
+    refute result == :no_failure
+    assert result =~ inspect(pid)
+    # Strip the pid text so its digits cannot satisfy the wait/liveness checks.
+    without_pid = String.replace(result, inspect(pid), "")
+    assert without_pid =~ "true"
+    assert without_pid =~ "50"
+  end
+
+  test "assert_next_message consumes the message it matched" do
+    send(self(), :consumed_by_macro)
+    assert_next_message(:consumed_by_macro, 200)
+    # If the matched message were left behind, this window would catch it.
+    assert_no_message(50)
+  end
+
+  test "the three assertion entry points are macros at both documented arities" do
+    assert macro_exported?(AssertHelpers, :assert_next_message, 1)
+    assert macro_exported?(AssertHelpers, :assert_next_message, 2)
+    assert macro_exported?(AssertHelpers, :assert_no_message, 0)
+    assert macro_exported?(AssertHelpers, :assert_no_message, 1)
+    assert macro_exported?(AssertHelpers, :assert_process_exits, 1)
+    assert macro_exported?(AssertHelpers, :assert_process_exits, 2)
+
+    refute function_exported?(AssertHelpers, :assert_next_message, 2)
+    refute function_exported?(AssertHelpers, :assert_no_message, 1)
+    refute function_exported?(AssertHelpers, :assert_process_exits, 2)
+  end
+
+  test "next_message/1 returns :ok for an already queued matching message" do
+    send(self(), {:queued, 7})
+    assert AssertHelpers.next_message({:queued, 7}) == :ok
+  end
+
+  test "process_exits/1 returns :ok for a process that has already terminated" do
+    pid = spawn(fn -> :ok end)
+    ref = Process.monitor(pid)
+    assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 500
+    refute Process.alive?(pid)
+
+    assert AssertHelpers.process_exits(pid) == :ok
+  end
 end
 ```

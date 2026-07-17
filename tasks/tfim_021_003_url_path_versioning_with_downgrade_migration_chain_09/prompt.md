@@ -295,5 +295,84 @@ defmodule PathVersionApi.RouterTest do
     conn = call("/api/v1/widgets/1")
     assert conn.status == 404
   end
+
+  test "400 body carries the exact unsupported-version error payload" do
+    conn = call("/api/v4/users/1")
+
+    assert conn.status == 400
+
+    assert json_body(conn) == %{
+             "error" => "unsupported version",
+             "supported" => ["v1", "v2", "v3"]
+           }
+  end
+
+  test "404 body for a missing user is exactly the not-found payload" do
+    for version <- ["v1", "v2", "v3"] do
+      conn = call("/api/#{version}/users/nope")
+
+      assert conn.status == 404
+      assert json_body(conn) == %{"error" => "not found"}
+    end
+  end
+
+  test "render/3 for v3 returns the canonical document verbatim with no steps applied" do
+    user = %{
+      first_name: "Zoe",
+      last_name: "Lin",
+      email: "zoe@example.com",
+      created_at: "2023-03-03T00:00:00Z",
+      country: "SG"
+    }
+
+    assert PathVersionApi.Migrations.render("v3", "42", user) ==
+             %{
+               id: "42",
+               name: %{first: "Zoe", last: "Lin"},
+               email: "zoe@example.com",
+               created_at: "2023-03-03T00:00:00Z",
+               country: "SG"
+             }
+  end
+
+  test "render/3 for v2 applies exactly the one downgrade step" do
+    user = %{
+      first_name: "Zoe",
+      last_name: "Lin",
+      email: "zoe@example.com",
+      created_at: "2023-03-03T00:00:00Z",
+      country: "SG"
+    }
+
+    assert PathVersionApi.Migrations.render("v2", "42", user) ==
+             %{
+               id: "42",
+               first_name: "Zoe",
+               last_name: "Lin",
+               email: "zoe@example.com",
+               created_at: "2023-03-03T00:00:00Z"
+             }
+  end
+
+  test "the unmatched-route response is also json encoded" do
+    conn = call("/api/v1/widgets/1")
+
+    assert content_type(conn) =~ "application/json"
+    assert json_body(conn) == %{"error" => "not found"}
+  end
+
+  test "every supported version is renderable and no other version is accepted" do
+    for version <- PathVersionApi.Migrations.supported() do
+      assert call("/api/#{version}/users/1").status == 200
+    end
+
+    # Note: an empty version segment is not testable here — Plug collapses
+    # "/api//users/1" to path_info ["api", "users", "1"], which is a different
+    # route entirely rather than a request carrying an empty version.
+    for version <- ["V1", "v0", "1", "v10", "v3.1", "v"] do
+      refute version in PathVersionApi.Migrations.supported()
+      assert call("/api/#{version}/users/1").status == 400
+    end
+  end
 end
 ```

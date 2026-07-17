@@ -437,5 +437,75 @@ defmodule WebhookReceiverReplayTest do
 
     assert conn.status == 404
   end
+
+  test "expired timestamp with a bad signature reports timestamp_expired", %{opts: opts} do
+    payload = build_event("evt_order")
+    ts = @now - 1000
+    hdr = header(ts, payload, "wrong_secret_entirely")
+    conn = post_webhook(opts, payload, [{"stripe-signature", hdr}])
+    assert conn.status == 401
+    assert json_body(conn)["error"] == "timestamp_expired"
+  end
+
+  test "tolerance defaults to 300 seconds when the option is omitted", %{store: store} do
+    opts = [secret: @secret, store: store, now: @now]
+
+    inside = build_event("evt_default_in")
+    hdr_in = header(@now - 300, inside, @secret)
+    conn_in = post_webhook(opts, inside, [{"stripe-signature", hdr_in}])
+    assert conn_in.status == 200
+    assert json_body(conn_in)["status"] == "received"
+
+    outside = build_event("evt_default_out")
+    hdr_out = header(@now - 301, outside, @secret)
+    conn_out = post_webhook(opts, outside, [{"stripe-signature", hdr_out}])
+    assert conn_out.status == 401
+    assert json_body(conn_out)["error"] == "timestamp_expired"
+  end
+
+  test "future timestamp exactly at the tolerance edge is accepted, one past it expires",
+       %{opts: opts} do
+    edge = build_event("evt_future_edge")
+
+    conn_edge =
+      post_webhook(opts, edge, [{"stripe-signature", header(@now + 300, edge, @secret)}])
+
+    assert conn_edge.status == 200
+    assert json_body(conn_edge)["status"] == "received"
+
+    past = build_event("evt_future_past")
+
+    conn_past =
+      post_webhook(opts, past, [{"stripe-signature", header(@now + 301, past, @secret)}])
+
+    assert conn_past.status == 401
+    assert json_body(conn_past)["error"] == "timestamp_expired"
+  end
+
+  test "Store.store_event/3 reports created then duplicate and keeps first payload",
+       %{store: store} do
+    assert {:ok, :created} = WebhookReceiver.Store.store_event(store, "evt_sv", %{"n" => 1})
+    assert {:ok, :duplicate} = WebhookReceiver.Store.store_event(store, "evt_sv", %{"n" => 2})
+    assert {:ok, event} = WebhookReceiver.Store.get_event(store, "evt_sv")
+    assert event.payload == %{"n" => 1}
+    assert event.status == :pending
+    assert length(WebhookReceiver.Store.all_events(store)) == 1
+  end
+
+  test "Store.get_event/2 returns :error for an unknown event id", %{store: store} do
+    assert WebhookReceiver.Store.get_event(store, "evt_never_stored") == :error
+  end
+
+  test "all_events returns every distinct stored event as a list", %{opts: opts, store: store} do
+    for id <- ["evt_a1", "evt_a2", "evt_a3"] do
+      payload = build_event(id)
+      conn = post_webhook(opts, payload, [{"stripe-signature", header(@now, payload, @secret)}])
+      assert conn.status == 200
+    end
+
+    events = WebhookReceiver.Store.all_events(store)
+    assert is_list(events)
+    assert Enum.sort(Enum.map(events, & &1.event_id)) == ["evt_a1", "evt_a2", "evt_a3"]
+  end
 end
 ```

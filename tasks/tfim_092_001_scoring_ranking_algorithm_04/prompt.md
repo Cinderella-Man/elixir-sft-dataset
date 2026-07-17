@@ -288,5 +288,45 @@ defmodule RankingTest do
     only = item(id: :only, upvotes: 3)
     assert Ranking.rank([only], now: @now) == [only]
   end
+
+  test "a partial weights map is merged over the defaults, leaving other weights at 1.0" do
+    # net = 10 ; recency weight zeroed ; engagement = 5/100 = 0.05
+    # score = 1.0*10 + 0.0*recency + 1.0*0.05 = 10.05
+    it =
+      item(
+        upvotes: 10,
+        downvotes: 0,
+        created_at: @now - 12 * @hour,
+        view_count: 100,
+        comment_count: 5
+      )
+
+    assert_in_delta Ranking.score(it, now: @now, weights: %{recency: 0.0}), 10.05, 1.0e-9
+  end
+
+  test "half_life_hours defaults to 12 when the option is omitted" do
+    w = %{votes: 0.0, recency: 1.0, engagement: 0.0}
+
+    aged = item(created_at: @now - 12 * @hour)
+    double_aged = item(created_at: @now - 24 * @hour)
+
+    assert_in_delta Ranking.score(aged, now: @now, weights: w), 0.5, 1.0e-9
+    assert_in_delta Ranking.score(double_aged, now: @now, weights: w), 0.25, 1.0e-9
+  end
+
+  test "rank passes half_life_hours through to scoring and it can change the order" do
+    w = %{votes: 0.1, recency: 1.0, engagement: 0.0}
+
+    old = item(id: :old, upvotes: 5, created_at: @now - 24 * @hour)
+    fresh = item(id: :fresh, upvotes: 0, created_at: @now)
+
+    # Short half-life: the old item's recency collapses -> 0.5 vs 1.0.
+    short = ids(Ranking.rank([old, fresh], now: @now, weights: w, half_life_hours: 1))
+    assert short == [:fresh, :old]
+
+    # Long half-life: the old item keeps most of its recency -> ~1.207 vs 1.0.
+    long = ids(Ranking.rank([old, fresh], now: @now, weights: w, half_life_hours: 48))
+    assert long == [:old, :fresh]
+  end
 end
 ```

@@ -323,5 +323,106 @@ defmodule ParallelJsonStreamerTest do
     assert growth < file_size
     assert is_float(stats.throughput) and stats.throughput > 0.0
   end
+
+  test "identical repeated items each invoke the handler exactly once", %{
+    path: path,
+    collector: c
+  } do
+    write_array(path, for(_ <- 1..3, do: valid(%{"id" => 7, "value" => "same"})))
+
+    assert {:ok, stats} =
+             ParallelJsonStreamer.process(path, Collector.handler(c), max_concurrency: 4)
+
+    assert stats.processed == 3
+    assert stats.errors == 0
+
+    assert Collector.items(c) == [
+             %{"id" => 7, "value" => "same"},
+             %{"id" => 7, "value" => "same"},
+             %{"id" => 7, "value" => "same"}
+           ]
+  end
+
+  test "trims surrounding whitespace and skips blank lines", %{path: path, collector: c} do
+    body =
+      "[\n" <>
+        "   {\"id\":1,\"value\":\"a\"},\n" <>
+        "   \n" <>
+        "\t{\"id\":2,\"value\":\"b\"}\n" <>
+        "  ]  \n"
+
+    File.write!(path, body)
+
+    assert {:ok, stats} =
+             ParallelJsonStreamer.process(path, Collector.handler(c), max_concurrency: 4)
+
+    assert stats.processed == 2
+    assert stats.errors == 0
+    assert Collector.items(c) == [%{"id" => 1, "value" => "a"}, %{"id" => 2, "value" => "b"}]
+  end
+
+  test "strips only one trailing comma and keeps commas inside values", %{
+    path: path,
+    collector: c
+  } do
+    write_array(path, [valid("a,b"), valid("mid,"), valid(%{"k" => "x,"}), valid("trailing,")])
+
+    assert {:ok, stats} =
+             ParallelJsonStreamer.process(path, Collector.handler(c), max_concurrency: 4)
+
+    assert stats.processed == 4
+    assert stats.errors == 0
+    assert Collector.items(c) == ["a,b", "mid,", %{"k" => "x,"}, "trailing,"]
+  end
+
+  test "malformed first and last elements do not abort processing", %{path: path, collector: c} do
+    write_array(path, ["{oops", valid(%{"id" => 1}), valid(%{"id" => 2}), "nope}"])
+
+    assert {:ok, stats} =
+             ParallelJsonStreamer.process(path, Collector.handler(c), max_concurrency: 4)
+
+    assert stats.processed == 2
+    assert stats.errors == 2
+    assert Enum.map(Collector.items(c), & &1["id"]) == [1, 2]
+  end
+
+  test "throughput equals processed over elapsed seconds", %{path: path, collector: c} do
+    write_array(path, for(i <- 1..200, do: valid(%{"id" => i})))
+
+    assert {:ok, stats} =
+             ParallelJsonStreamer.process(path, Collector.handler(c), max_concurrency: 4)
+
+    assert stats.processed == 200
+    assert is_float(stats.throughput)
+
+    expected =
+      if stats.elapsed_ms == 0 do
+        0.0
+      else
+        stats.processed / (stats.elapsed_ms / 1000)
+      end
+
+    assert_in_delta stats.throughput, expected, 0.000001
+  end
+
+  test "handler return values are ignored and all items still run", %{path: path} do
+    write_array(path, for(i <- 1..3, do: valid(%{"id" => i})))
+
+    parent = self()
+
+    handler = fn item ->
+      send(parent, {:seen, item["id"]})
+      {:error, :handler_says_no}
+    end
+
+    assert {:ok, stats} = ParallelJsonStreamer.process(path, handler, max_concurrency: 2)
+
+    assert stats.processed == 3
+    assert stats.errors == 0
+    assert_receive {:seen, 1}, 500
+    assert_receive {:seen, 2}, 500
+    assert_receive {:seen, 3}, 500
+    refute_receive {:seen, _}, 50
+  end
 end
 ```

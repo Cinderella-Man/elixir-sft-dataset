@@ -15,6 +15,9 @@ defmodule Pipeline do
   halts only that item (recording it as a failure); the batch continues with the
   remaining items. The final report separates successes from failures and
   aggregates per-stage execution counts and timing.
+
+  Stage statistics are tracked per pipeline position, so two stages that share a
+  name keep independent counters.
   """
 
   defstruct stages: []
@@ -39,11 +42,13 @@ defmodule Pipeline do
   """
   @spec run(t(), [any()]) :: {:ok, map()}
   def run(%__MODULE__{stages: stages}, inputs) when is_list(inputs) do
+    indexed_stages = Enum.with_index(stages)
+
     {successes, failures, stats} =
       inputs
       |> Enum.with_index()
       |> Enum.reduce({[], [], %{}}, fn {input, index}, {succ, fail, stats} ->
-        case process_item(stages, input, stats) do
+        case process_item(indexed_stages, input, stats) do
           {:ok, result, stats2} ->
             {[%{index: index, result: result} | succ], fail, stats2}
 
@@ -52,7 +57,10 @@ defmodule Pipeline do
         end
       end)
 
-    stage_stats = Enum.map(stages, fn {name, _fun} -> stat_entry(name, stats) end)
+    stage_stats =
+      Enum.map(indexed_stages, fn {{name, _fun}, position} ->
+        stat_entry(name, position, stats)
+      end)
 
     {:ok,
      %{
@@ -66,9 +74,9 @@ defmodule Pipeline do
 
   defp process_item([], value, stats), do: {:ok, value, stats}
 
-  defp process_item([{name, fun} | rest], value, stats) do
+  defp process_item([{{name, fun}, position} | rest], value, stats) do
     {duration, result} = :timer.tc(fn -> fun.(value) end)
-    stats = bump(stats, name, duration)
+    stats = bump(stats, position, duration)
 
     case result do
       {:ok, next_value} ->
@@ -83,14 +91,14 @@ defmodule Pipeline do
     end
   end
 
-  defp bump(stats, name, duration) do
-    Map.update(stats, name, {1, duration}, fn {count, total} ->
+  defp bump(stats, position, duration) do
+    Map.update(stats, position, {1, duration}, fn {count, total} ->
       {count + 1, total + duration}
     end)
   end
 
-  defp stat_entry(name, stats) do
-    {executions, total_duration_us} = Map.get(stats, name, {0, 0})
+  defp stat_entry(name, position, stats) do
+    {executions, total_duration_us} = Map.get(stats, position, {0, 0})
     %{stage: name, executions: executions, total_duration_us: total_duration_us}
   end
 end
@@ -212,6 +220,73 @@ defmodule PipelineTest do
 
     stats = Map.new(report.stage_stats, fn s -> {s.stage, s.executions} end)
     assert stats == %{first: 1, second: 0}
+  end
+
+  test "duplicate stage names keep per-entry execution counts independent" do
+    pipeline =
+      Pipeline.new()
+      |> Pipeline.stage(:same, ok_stage(&(&1 + 1)))
+      |> Pipeline.stage(:same, ok_stage(&(&1 * 2)))
+
+    assert {:ok, report} = Pipeline.run(pipeline, [1])
+
+    assert report.successes == [%{index: 0, result: 4}]
+    assert Enum.map(report.stage_stats, & &1.stage) == [:same, :same]
+    assert Enum.map(report.stage_stats, & &1.executions) == [1, 1]
+  end
+
+  test "a halted item never invokes any later stage function" do
+    parent = self()
+
+    later = fn v ->
+      send(parent, {:later_ran, v})
+      {:ok, v}
+    end
+
+    pipeline =
+      Pipeline.new()
+      |> Pipeline.stage(:guard, fn v -> if v == :bomb, do: {:error, :boom}, else: {:ok, v} end)
+      |> Pipeline.stage(:later, later)
+
+    assert {:ok, report} = Pipeline.run(pipeline, [:bomb])
+
+    assert report.failures == [%{index: 0, stage: :guard, reason: :boom}]
+    assert report.successes == []
+    refute_receive {:later_ran, _}, 50
+  end
+
+  test "multiple failures are listed in input index order" do
+    guard = fn v -> if rem(v, 2) == 0, do: {:error, {:even, v}}, else: {:ok, v} end
+
+    pipeline = Pipeline.new() |> Pipeline.stage(:parity, guard)
+
+    assert {:ok, report} = Pipeline.run(pipeline, [2, 1, 4, 3, 6])
+
+    assert report.failures == [
+             %{index: 0, stage: :parity, reason: {:even, 2}},
+             %{index: 2, stage: :parity, reason: {:even, 4}},
+             %{index: 4, stage: :parity, reason: {:even, 6}}
+           ]
+
+    assert report.successes == [%{index: 1, result: 1}, %{index: 3, result: 3}]
+  end
+
+  test "stage/3 rejects a non-atom stage name" do
+    assert_raise FunctionClauseError, fn ->
+      Pipeline.stage(Pipeline.new(), "not_an_atom", ok_stage(& &1))
+    end
+  end
+
+  test "stage/3 rejects a function whose arity is not one" do
+    assert_raise FunctionClauseError, fn ->
+      Pipeline.stage(Pipeline.new(), :bad_arity, fn a, b -> {:ok, {a, b}} end)
+    end
+  end
+
+  test "run/2 rejects inputs that are not a list" do
+    pipeline = Pipeline.new() |> Pipeline.stage(:noop, ok_stage(& &1))
+
+    assert_raise FunctionClauseError, fn -> Pipeline.run(pipeline, :not_a_list) end
   end
 end
 ```

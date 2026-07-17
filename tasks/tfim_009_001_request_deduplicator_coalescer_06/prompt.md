@@ -338,5 +338,19 @@ defmodule DedupTest do
     assert counts["b"] == 1
     assert counts["c"] == 1
   end
+
+  test "registers under the :name option and is callable by that name" do
+    name = :"dedup_named_#{System.unique_integer([:positive])}"
+    {:ok, _pid} = Dedup.start_link(name: name)
+    assert {:ok, 7} = Dedup.execute(name, "k", fn -> {:ok, 7} end)
+  end
+
+  test "key is cleared after a raised exception, allowing a fresh call", %{dd: dd} do
+    assert {:error, {:exception, %RuntimeError{message: "boom"}}} =
+             Dedup.execute(dd, "k", fn -> raise "boom" end)
+
+    # The raise is a failure, so the key must be cleared for a fresh run.
+    assert {:ok, :after_raise} = Dedup.execute(dd, "k", fn -> {:ok, :after_raise} end)
+  end
 end
 ```

@@ -385,5 +385,109 @@ defmodule BudgetPromoCodesTest do
     assert {:error, :expired} = BudgetPromoCodes.apply_code("WIN", 10_000)
     assert {:ok, 4_500} = BudgetPromoCodes.remaining_budget("WIN")
   end
+
+  test "order total exactly equal to min_order_total is accepted" do
+    {:ok, _} =
+      BudgetPromoCodes.create(%{
+        code: "EQ",
+        type: :fixed_amount,
+        value: 500,
+        budget: 1_000,
+        min_order_total: 5_000
+      })
+
+    assert {:error, :below_min_order} = BudgetPromoCodes.apply_code("EQ", 4_999)
+    assert {:ok, 500} = BudgetPromoCodes.apply_code("EQ", 5_000)
+    assert {:ok, 500} = BudgetPromoCodes.remaining_budget("EQ")
+    assert {:ok, 500} = BudgetPromoCodes.dispensed("EQ")
+  end
+
+  test "user_id does not grant a separate budget or extra uses" do
+    {:ok, _} =
+      BudgetPromoCodes.create(%{
+        code: "UID",
+        type: :fixed_amount,
+        value: 600,
+        budget: 1_000,
+        max_uses: 2
+      })
+
+    assert {:ok, 600} = BudgetPromoCodes.apply_code("UID", 10_000, user_id: "alice")
+    # second user draws from the SAME shared budget, clipped to what is left
+    assert {:ok, 400} = BudgetPromoCodes.apply_code("UID", 10_000, user_id: "bob")
+    assert {:ok, 0} = BudgetPromoCodes.remaining_budget("UID")
+    # total uses are counted across users, not per user
+    assert {:error, :max_uses_exceeded} =
+             BudgetPromoCodes.apply_code("UID", 10_000, user_id: "carol")
+
+    assert {:ok, 1_000} = BudgetPromoCodes.dispensed("UID")
+  end
+
+  test "failed applications do not consume a use" do
+    {:ok, _} =
+      BudgetPromoCodes.create(%{
+        code: "FAIL",
+        type: :fixed_amount,
+        value: 100,
+        budget: 1_000,
+        max_uses: 1,
+        min_order_total: 5_000
+      })
+
+    assert {:error, :below_min_order} = BudgetPromoCodes.apply_code("FAIL", 100)
+    assert {:error, :below_min_order} = BudgetPromoCodes.apply_code("FAIL", 4_999, user_id: "u1")
+    # the single permitted use must still be available
+    assert {:ok, 100} = BudgetPromoCodes.apply_code("FAIL", 5_000)
+    assert {:error, :max_uses_exceeded} = BudgetPromoCodes.apply_code("FAIL", 5_000)
+    assert {:ok, 100} = BudgetPromoCodes.dispensed("FAIL")
+    assert {:ok, 900} = BudgetPromoCodes.remaining_budget("FAIL")
+  end
+
+  test "fixed amount discount is capped at the order total" do
+    {:ok, _} = BudgetPromoCodes.create(%{code: "CAP", type: :fixed_amount, value: 5_000})
+    assert {:ok, 3_000} = BudgetPromoCodes.apply_code("CAP", 3_000)
+    assert {:ok, 0} = BudgetPromoCodes.apply_code("CAP", 0)
+    assert {:ok, 3_000} = BudgetPromoCodes.dispensed("CAP")
+  end
+
+  test "percentage discount rounds fractional cents" do
+    {:ok, _} = BudgetPromoCodes.create(%{code: "RND", type: :percentage, value: 10})
+    # 105 * 10 / 100 = 10.5 -> 11
+    assert {:ok, 11} = BudgetPromoCodes.apply_code("RND", 105)
+
+    {:ok, _} = BudgetPromoCodes.create(%{code: "RND3", type: :percentage, value: 33})
+    # 101 * 33 / 100 = 33.33 -> 33
+    assert {:ok, 33} = BudgetPromoCodes.apply_code("RND3", 101)
+    assert {:ok, 11} = BudgetPromoCodes.dispensed("RND")
+  end
+
+  test "earlier checks win over later failures for the same application" do
+    {:ok, _} =
+      BudgetPromoCodes.create(%{
+        code: "PREC",
+        type: :fixed_amount,
+        value: 100,
+        budget: 0,
+        max_uses: 0,
+        min_order_total: 10_000,
+        valid_until: @past
+      })
+
+    assert {:error, :expired} = BudgetPromoCodes.apply_code("PREC", 1)
+
+    {:ok, _} =
+      BudgetPromoCodes.create(%{
+        code: "PREC2",
+        type: :percentage,
+        value: 10,
+        budget: 0,
+        max_uses: 0,
+        min_order_total: 10_000,
+        valid_from: @future,
+        valid_until: @past
+      })
+
+    assert {:error, :not_yet_valid} = BudgetPromoCodes.apply_code("PREC2", 1)
+  end
 end
 ```

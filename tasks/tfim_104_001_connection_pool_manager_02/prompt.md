@@ -305,6 +305,23 @@ defmodule PoolTest do
     {pid, result}
   end
 
+  # Spawns a process that reports its checkout result under `tag` and then
+  # stays alive, so that it keeps owning any connection it was handed (a dead
+  # owner would have its connection reclaimed by the pool's monitor).
+  defp spawn_waiter(pool, tag, timeout) do
+    parent = self()
+
+    spawn(fn ->
+      send(parent, {tag, Pool.checkout(pool, timeout)})
+
+      receive do
+        :release -> :ok
+      after
+        5_000 -> :ok
+      end
+    end)
+  end
+
   defp counting_create do
     {:ok, counter} = Agent.start_link(fn -> 0 end)
 
@@ -422,12 +439,7 @@ defmodule PoolTest do
     {:ok, c1} = Pool.checkout(:pool_wait, 100)
     {:ok, _c2} = Pool.checkout(:pool_wait, 100)
 
-    parent = self()
-
-    _waiter =
-      spawn(fn ->
-        send(parent, {:result, Pool.checkout(:pool_wait, 1_000)})
-      end)
+    _waiter = spawn_waiter(:pool_wait, :result, 1_000)
 
     # Let the waiter block on an exhausted pool.
     Process.sleep(50)
@@ -466,12 +478,7 @@ defmodule PoolTest do
 
     {holder, {:ok, _}} = spawn_holder(:pool_crash_wait, 1_000)
 
-    parent = self()
-
-    _waiter =
-      spawn(fn ->
-        send(parent, {:result, Pool.checkout(:pool_crash_wait, 1_000)})
-      end)
+    _waiter = spawn_waiter(:pool_crash_wait, :result, 1_000)
 
     # Ensure the waiter is blocked before the holder dies.
     Process.sleep(50)
@@ -480,6 +487,118 @@ defmodule PoolTest do
     Process.exit(holder, :kill)
 
     assert_receive {:result, {:ok, _conn}}, 1_000
+  end
+
+  test "checkin hands the connection to the longest-waiting caller first" do
+    start_supervised!({Pool, name: :pool_fifo, min_size: 0, max_size: 1})
+
+    assert {:ok, c1} = Pool.checkout(:pool_fifo, 100)
+
+    # Both waiters stay alive after reporting, so the connection handed to the
+    # first one is *not* reclaimed (and thus never reaches the second waiter).
+    _first = spawn_waiter(:pool_fifo, :first_waiter, 2_000)
+    # Bounded wait: the first waiter must be blocked (and enqueued) before the second.
+    refute_receive {:first_waiter, _}, 200
+
+    _second = spawn_waiter(:pool_fifo, :second_waiter, 2_000)
+    refute_receive {:second_waiter, _}, 200
+
+    assert :ok = Pool.checkin(:pool_fifo, c1)
+
+    assert_receive {:first_waiter, {:ok, ^c1}}, 1_000
+    refute_receive {:second_waiter, _}, 200
+  end
+
+  test "a timed-out waiter is retired and never receives a later connection" do
+    start_supervised!({Pool, name: :pool_stale, min_size: 0, max_size: 1})
+
+    {holder, {:ok, _conn}} = spawn_holder(:pool_stale, 1_000)
+    parent = self()
+
+    spawn(fn ->
+      send(parent, {:waiter_result, Pool.checkout(:pool_stale, 50)})
+
+      receive do
+        late -> send(parent, {:late, late})
+      after
+        1_000 -> :ok
+      end
+    end)
+
+    assert_receive {:waiter_result, {:error, :timeout}}, 1_000
+
+    # The holder exits, freeing the only connection: the retired waiter must not act.
+    send(holder, :release)
+    refute_receive {:late, _}, 300
+
+    assert %{available: 1, in_use: 0, total: 1} = Pool.stats(:pool_stale)
+    assert {:ok, _reused} = Pool.checkout(:pool_stale, 100)
+  end
+
+  test "max_size defaults to 10 and min_size defaults to 0" do
+    start_supervised!({Pool, name: :pool_defaults})
+
+    assert %{available: 0, in_use: 0, total: 0, max: 10, min: 0} = Pool.stats(:pool_defaults)
+
+    conns = for _ <- 1..10, do: Pool.checkout(:pool_defaults, 100)
+    assert Enum.all?(conns, &match?({:ok, _conn}, &1))
+    assert conns |> Enum.uniq() |> length() == 10
+
+    assert {:error, :timeout} = Pool.checkout(:pool_defaults, 50)
+    assert %{total: 10, in_use: 10, max: 10, min: 0} = Pool.stats(:pool_defaults)
+  end
+
+  test "timeout 0 fails at once at capacity and succeeds once a connection is free" do
+    start_supervised!({Pool, name: :pool_zero, min_size: 0, max_size: 1})
+
+    assert {:ok, c} = Pool.checkout(:pool_zero, 100)
+    assert {:error, :timeout} = Pool.checkout(:pool_zero, 0)
+
+    assert :ok = Pool.checkin(:pool_zero, c)
+    assert {:ok, ^c} = Pool.checkout(:pool_zero, 0)
+  end
+
+  test "min_size equal to max_size fills the pool eagerly and never grows further" do
+    {counter, create} = counting_create()
+
+    start_supervised!({Pool, name: :pool_eq, min_size: 2, max_size: 2, create: create})
+
+    assert created(counter) == 2
+    assert %{available: 2, in_use: 0, total: 2, max: 2, min: 2} = Pool.stats(:pool_eq)
+
+    assert {:ok, a} = Pool.checkout(:pool_eq, 100)
+    assert {:ok, b} = Pool.checkout(:pool_eq, 100)
+    assert a != b
+
+    assert {:error, :timeout} = Pool.checkout(:pool_eq, 50)
+    assert created(counter) == 2
+  end
+
+  test "every connection held by a crashed process is reclaimed" do
+    start_supervised!({Pool, name: :pool_crash_many, min_size: 0, max_size: 2})
+
+    parent = self()
+
+    holder =
+      spawn(fn ->
+        {:ok, c1} = Pool.checkout(:pool_crash_many, 1_000)
+        {:ok, c2} = Pool.checkout(:pool_crash_many, 1_000)
+        send(parent, {:held, self(), c1, c2})
+
+        receive do
+          :release -> :ok
+        end
+      end)
+
+    assert_receive {:held, ^holder, c1, c2}, 1_000
+    assert {:error, :timeout} = Pool.checkout(:pool_crash_many, 50)
+
+    Process.exit(holder, :kill)
+
+    assert {:ok, r1} = Pool.checkout(:pool_crash_many, 1_000)
+    assert {:ok, r2} = Pool.checkout(:pool_crash_many, 1_000)
+    assert Enum.sort([r1, r2]) == Enum.sort([c1, c2])
+    assert %{available: 0, in_use: 2, total: 2} = Pool.stats(:pool_crash_many)
   end
 end
 ```

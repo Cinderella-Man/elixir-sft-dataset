@@ -380,5 +380,55 @@ defmodule AutocompleteTrieTest do
     assert top == ["term50", "term49", "term48"]
     assert AutocompleteTrie.weight(t, "term25") == 25
   end
+
+  test "re-inserting after delete starts weight fresh rather than resurrecting the old weight" do
+    t =
+      AutocompleteTrie.new()
+      |> AutocompleteTrie.insert("apple", 9)
+      |> AutocompleteTrie.delete("apple")
+      |> AutocompleteTrie.insert("apple", 2)
+
+    assert AutocompleteTrie.weight(t, "apple") == 2
+    assert AutocompleteTrie.size(t) == 1
+    assert AutocompleteTrie.suggest(t, "ap", 5) == ["apple"]
+  end
+
+  test "deleting a prefix that exists only as a path is a no-op" do
+    t = AutocompleteTrie.new() |> AutocompleteTrie.insert("card", 3)
+    t2 = AutocompleteTrie.delete(t, "car")
+
+    assert AutocompleteTrie.size(t2) == 1
+    assert AutocompleteTrie.member?(t2, "card") == true
+    assert AutocompleteTrie.weight(t2, "card") == 3
+    assert AutocompleteTrie.words(t2) == ["card"]
+    assert AutocompleteTrie.suggest(t2, "ca", 5) == ["card"]
+  end
+
+  test "insert rejects non-positive and non-integer weights" do
+    t = AutocompleteTrie.new()
+
+    assert_raise FunctionClauseError, fn -> AutocompleteTrie.insert(t, "a", 0) end
+    assert_raise FunctionClauseError, fn -> AutocompleteTrie.insert(t, "a", -5) end
+    assert_raise FunctionClauseError, fn -> AutocompleteTrie.insert(t, "a", 1.5) end
+  end
+
+  test "suggest rejects a negative k" do
+    t = AutocompleteTrie.new() |> AutocompleteTrie.insert("cat", 1)
+
+    assert_raise FunctionClauseError, fn -> AutocompleteTrie.suggest(t, "ca", -1) end
+    assert AutocompleteTrie.suggest(t, "ca", 0) == []
+  end
+
+  test "accumulated weight drives suggest ranking ahead of a heavier single insert" do
+    t =
+      AutocompleteTrie.new()
+      |> AutocompleteTrie.insert("aa", 3)
+      |> AutocompleteTrie.insert("ab", 5)
+      |> AutocompleteTrie.insert("aa", 4)
+
+    assert AutocompleteTrie.weight(t, "aa") == 7
+    assert AutocompleteTrie.size(t) == 2
+    assert AutocompleteTrie.suggest(t, "a", 2) == ["aa", "ab"]
+  end
 end
 ```

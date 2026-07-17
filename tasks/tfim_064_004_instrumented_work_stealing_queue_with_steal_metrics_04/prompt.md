@@ -353,5 +353,176 @@ defmodule WorkStealQueueTest do
       assert wid >= 0 and wid < 5
     end
   end
+
+  test "default steal batch takes half of the victim's remaining queue per steal" do
+    test_pid = self()
+    items = [:block, 1, 2, 3, 4, :gate, 5, 6, 7, 8]
+
+    task =
+      Task.async(fn ->
+        WorkStealQueue.run(items, 2, fn
+          :block ->
+            send(test_pid, {:blocked, self()})
+
+            receive do
+              :release -> :released
+            end
+
+          :gate ->
+            send(test_pid, {:gated, self()})
+
+            receive do
+              :go -> :went
+            end
+
+          x ->
+            send(test_pid, {:processed, x})
+            x
+        end)
+      end)
+
+    # worker 0 owns [:block, 1, 2, 3, 4]; worker 1 owns [:gate, 5, 6, 7, 8].
+    # Both park on their first item, so worker 0's remaining queue is [1, 2, 3, 4].
+    assert_receive {:gated, gate_pid}, 2_000
+    assert_receive {:blocked, block_pid}, 2_000
+    send(gate_pid, :go)
+
+    seq =
+      for _ <- 1..8 do
+        assert_receive {:processed, x}, 2_000
+        x
+      end
+
+    # half of [1, 2, 3, 4] is 2 items, taken as one batch, then half of the rest
+    assert seq == [5, 6, 7, 8, 3, 4, 2, 1]
+
+    send(block_pid, :release)
+    %{results: results, metrics: metrics} = Task.await(task, 5_000)
+
+    assert length(results) == 10
+    assert metrics.processed == %{0 => 1, 1 => 9}
+    assert metrics.steals == %{0 => 0, 1 => 3}
+    assert metrics.stolen == %{0 => 0, 1 => 4}
+  end
+
+  test "steal_batch: 1 takes one item at a time from the back of the victim" do
+    test_pid = self()
+    items = [:block, 1, 2, 3, 4, :gate, 5, 6, 7, 8]
+
+    task =
+      Task.async(fn ->
+        WorkStealQueue.run(
+          items,
+          2,
+          fn
+            :block ->
+              send(test_pid, {:blocked, self()})
+
+              receive do
+                :release -> :released
+              end
+
+            :gate ->
+              send(test_pid, {:gated, self()})
+
+              receive do
+                :go -> :went
+              end
+
+            x ->
+              send(test_pid, {:processed, x})
+              x
+          end,
+          steal_batch: 1
+        )
+      end)
+
+    assert_receive {:gated, gate_pid}, 2_000
+    assert_receive {:blocked, block_pid}, 2_000
+    send(gate_pid, :go)
+
+    seq =
+      for _ <- 1..8 do
+        assert_receive {:processed, x}, 2_000
+        x
+      end
+
+    # victim holds [1, 2, 3, 4]; single-item steals must come off the back
+    assert seq == [5, 6, 7, 8, 4, 3, 2, 1]
+
+    send(block_pid, :release)
+    %{results: results, metrics: metrics} = Task.await(task, 5_000)
+
+    assert length(results) == 10
+    assert metrics.steals == %{0 => 0, 1 => 4}
+    assert metrics.stolen == %{0 => 0, 1 => 4}
+  end
+
+  test "steal_batch larger than the victim queue steals it whole in one operation" do
+    test_pid = self()
+    items = [:block, 1, 2, 3, 4, :gate, 5, 6, 7, 8]
+
+    task =
+      Task.async(fn ->
+        WorkStealQueue.run(
+          items,
+          2,
+          fn
+            :block ->
+              send(test_pid, {:blocked, self()})
+
+              receive do
+                :release -> :released
+              end
+
+            :gate ->
+              send(test_pid, {:gated, self()})
+
+              receive do
+                :go -> :went
+              end
+
+            x ->
+              send(test_pid, {:processed, x})
+              x
+          end,
+          steal_batch: 100
+        )
+      end)
+
+    assert_receive {:gated, gate_pid}, 2_000
+    assert_receive {:blocked, block_pid}, 2_000
+    send(gate_pid, :go)
+
+    seq =
+      for _ <- 1..8 do
+        assert_receive {:processed, x}, 2_000
+        x
+      end
+
+    # only 4 items are available, so "up to 100" means all 4 in a single steal
+    assert seq == [5, 6, 7, 8, 1, 2, 3, 4]
+
+    send(block_pid, :release)
+    %{results: results, metrics: metrics} = Task.await(task, 5_000)
+
+    assert length(results) == 10
+    assert metrics.steals == %{0 => 0, 1 => 1}
+    assert metrics.stolen == %{0 => 0, 1 => 4}
+  end
+
+  test "duplicate items each get their own result entry" do
+    items = [1, 1, 2, 2, 2, 3]
+    %{results: results, metrics: metrics} = WorkStealQueue.run(items, 3, fn x -> x * 10 end)
+
+    assert length(results) == 6
+    assert Enum.sort(processed_items(results)) == Enum.sort(items)
+
+    for %{item: item, result: result} <- results do
+      assert result == item * 10
+    end
+
+    assert metrics.processed |> Map.values() |> Enum.sum() == 6
+  end
 end
 ```

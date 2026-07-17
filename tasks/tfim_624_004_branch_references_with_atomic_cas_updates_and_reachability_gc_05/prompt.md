@@ -577,5 +577,77 @@ defmodule ObjectStoreTest do
     assert {:error, :not_found} = ObjectStore.retrieve(s, tree)
     assert ObjectStore.list_branches(s) == %{}
   end
+
+  test "start_link registers the process under a given name", %{store: _s} do
+    name = :object_store_named_test
+    {:ok, _pid} = ObjectStore.start_link(name: name)
+
+    {:ok, blob} = ObjectStore.store(name, "named-content")
+    assert {:ok, "named-content"} = ObjectStore.retrieve(name, blob)
+    assert ObjectStore.list_branches(name) == %{}
+  end
+
+  test "gc keeps a grandparent commit reachable only through a multi-hop parent chain", %{
+    store: s
+  } do
+    {:ok, tree} = ObjectStore.store(s, "tree-content")
+    {:ok, c1} = ObjectStore.commit(s, tree, nil, "one", "alice")
+    {:ok, c2} = ObjectStore.commit(s, tree, c1, "two", "alice")
+    {:ok, c3} = ObjectStore.commit(s, tree, c2, "three", "alice")
+    {:ok, _} = ObjectStore.create_branch(s, "main", c3)
+
+    assert {:ok, 0} = ObjectStore.gc(s)
+    assert {:ok, _} = ObjectStore.retrieve(s, c1)
+    assert {:ok, _} = ObjectStore.retrieve(s, c2)
+    assert {:ok, _} = ObjectStore.retrieve(s, c3)
+  end
+
+  test "gc keeps the distinct tree of an ancestor commit", %{store: s} do
+    {:ok, tree1} = ObjectStore.store(s, "old-tree")
+    {:ok, tree2} = ObjectStore.store(s, "new-tree")
+    {:ok, c1} = ObjectStore.commit(s, tree1, nil, "one", "alice")
+    {:ok, c2} = ObjectStore.commit(s, tree2, c1, "two", "alice")
+    {:ok, _} = ObjectStore.create_branch(s, "main", c2)
+
+    assert {:ok, 0} = ObjectStore.gc(s)
+    assert {:ok, "old-tree"} = ObjectStore.retrieve(s, tree1)
+    assert {:ok, "new-tree"} = ObjectStore.retrieve(s, tree2)
+  end
+
+  test "gc sweeps the old commit and its tree after a branch moves to an unrelated root", %{
+    store: s
+  } do
+    {:ok, tree1} = ObjectStore.store(s, "old-tree")
+    {:ok, tree2} = ObjectStore.store(s, "new-tree")
+    {:ok, c1} = ObjectStore.commit(s, tree1, nil, "one", "alice")
+    {:ok, c2} = ObjectStore.commit(s, tree2, nil, "unrelated root", "bob")
+    {:ok, _} = ObjectStore.create_branch(s, "main", c1)
+    {:ok, ^c2} = ObjectStore.update_branch(s, "main", c1, c2)
+
+    assert {:ok, 2} = ObjectStore.gc(s)
+    assert {:error, :not_found} = ObjectStore.retrieve(s, c1)
+    assert {:error, :not_found} = ObjectStore.retrieve(s, tree1)
+    assert {:ok, _} = ObjectStore.retrieve(s, c2)
+    assert {:ok, "new-tree"} = ObjectStore.retrieve(s, tree2)
+  end
+
+  test "gc keeps a blob that a branch points at directly", %{store: s} do
+    {:ok, blob} = ObjectStore.store(s, "branch-target")
+    {:ok, junk} = ObjectStore.store(s, "junk blob")
+    {:ok, _} = ObjectStore.create_branch(s, "b", blob)
+
+    assert {:ok, 1} = ObjectStore.gc(s)
+    assert {:ok, "branch-target"} = ObjectStore.retrieve(s, blob)
+    assert {:error, :not_found} = ObjectStore.retrieve(s, junk)
+  end
+
+  test "storing identical content twice leaves exactly one object for gc to sweep", %{store: s} do
+    {:ok, h1} = ObjectStore.store(s, "dup")
+    {:ok, h2} = ObjectStore.store(s, "dup")
+    assert h1 == h2
+
+    assert {:ok, 1} = ObjectStore.gc(s)
+    assert {:error, :not_found} = ObjectStore.retrieve(s, h1)
+  end
 end
 ```

@@ -306,5 +306,72 @@ defmodule PriorityDLQTest do
   test "queues are independent", %{dlq: dlq} do
     # TODO
   end
+
+  test "peek entries expose error_reason and metadata as pushed", %{dlq: dlq} do
+    {:ok, id} = PriorityDLQ.push(dlq, "q", %{n: 7}, {:timeout, 5000}, %{source: "web"}, :high)
+
+    assert [e] = PriorityDLQ.peek(dlq, "q", 10)
+    assert e.id == id
+    assert e.message == %{n: 7}
+    assert e.error_reason == {:timeout, 5000}
+    assert e.metadata == %{source: "web"}
+    assert e.priority == :high
+    assert e.retry_count == 0
+  end
+
+  test "drain treats {:ok, term} as success and removes the entry", %{dlq: dlq} do
+    {:ok, _} = PriorityDLQ.push(dlq, "q", :m1, :err, %{}, :high)
+
+    assert {:ok, stats} = PriorityDLQ.drain(dlq, "q", fn _ -> {:ok, :handled} end, 10)
+    assert stats.succeeded == 1
+    assert stats.failed == 0
+    assert PriorityDLQ.peek(dlq, "q", 10) == []
+  end
+
+  test "drain treats an unexpected handler return as failure and keeps the entry", %{dlq: dlq} do
+    {:ok, id} = PriorityDLQ.push(dlq, "q", :m1, :err, %{}, :normal)
+
+    assert {:ok, stats} = PriorityDLQ.drain(dlq, "q", fn _ -> :something_else end, 10)
+    assert stats.succeeded == 0
+    assert stats.failed == 1
+    assert stats.processed == [id]
+
+    assert [e] = PriorityDLQ.peek(dlq, "q", 10)
+    assert e.id == id
+    assert e.retry_count == 1
+  end
+
+  test "purge removes entries whose age is exactly older_than", %{dlq: dlq} do
+    {:ok, _} = PriorityDLQ.push(dlq, "q", :exact, :err, %{}, :high)
+    Clock.advance(500)
+    {:ok, younger} = PriorityDLQ.push(dlq, "q", :younger, :err, %{}, :low)
+
+    assert {:ok, 1} = PriorityDLQ.purge(dlq, "q", 500)
+    assert [e] = PriorityDLQ.peek(dlq, "q", 10)
+    assert e.id == younger
+  end
+
+  test "capacity defaults to :infinity so pushes are never rejected", %{} do
+    {:ok, dlq} = PriorityDLQ.start_link(clock: &Clock.now/0)
+
+    for n <- 1..50 do
+      assert {:ok, _} = PriorityDLQ.push(dlq, "q", {:m, n}, :err, %{}, :low)
+    end
+
+    assert length(PriorityDLQ.peek(dlq, "q", 100)) == 50
+  end
+
+  test "a throwing handler during drain counts as failure and keeps the entry", %{dlq: dlq} do
+    {:ok, id} = PriorityDLQ.push(dlq, "q", :thrower, :err, %{}, :high)
+
+    assert {:ok, stats} = PriorityDLQ.drain(dlq, "q", fn _ -> throw(:nope) end, 10)
+    assert stats.succeeded == 0
+    assert stats.failed == 1
+    assert Process.alive?(dlq)
+
+    assert [e] = PriorityDLQ.peek(dlq, "q", 10)
+    assert e.id == id
+    assert e.retry_count == 1
+  end
 end
 ```

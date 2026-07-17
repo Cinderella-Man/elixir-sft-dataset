@@ -347,5 +347,67 @@ defmodule GraceWatchdogTest do
     assert Process.whereis(:custom_grace) == pid
     on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
   end
+
+  test "the registration is removed once the callback has fired" do
+    test = self()
+    :ok = GraceWatchdog.register(:w, dummy_pid(), 40, 1, notifier(test))
+
+    assert_receive {:timed_out, :w, 1}, 1_000
+    assert {:error, :not_registered} = GraceWatchdog.misses(:w)
+  end
+
+  test "re-registering with a longer interval does not fire at the old deadline" do
+    test = self()
+    :ok = GraceWatchdog.register(:w, dummy_pid(), 40, 1, notifier(test, :old))
+    :ok = GraceWatchdog.register(:w, dummy_pid(), 10_000, 1, notifier(test, :new))
+
+    refute_receive {:old, :w, _}, 300
+    refute_receive {:new, :w, _}, 10
+    assert {:ok, 0} = GraceWatchdog.misses(:w)
+  end
+
+  test "re-registering resets the accumulated miss count to zero" do
+    test = self()
+    :ok = GraceWatchdog.register(:w, dummy_pid(), 25, 10, notifier(test))
+    :ok = GraceWatchdog.register(:gate, dummy_pid(), 70, 1, notifier(test, :gate))
+
+    assert_receive {:gate, :gate, 1}, 1_000
+    assert {:ok, accumulated} = GraceWatchdog.misses(:w)
+    assert accumulated >= 1
+
+    :ok = GraceWatchdog.register(:w, dummy_pid(), 10_000, 5, notifier(test))
+    assert {:ok, 0} = GraceWatchdog.misses(:w)
+  end
+
+  test "a heartbeat for one name leaves another name's miss count alone" do
+    test = self()
+    :ok = GraceWatchdog.register(:a, dummy_pid(), 25, 10, notifier(test))
+    :ok = GraceWatchdog.register(:b, dummy_pid(), 25, 10, notifier(test))
+    :ok = GraceWatchdog.register(:gate, dummy_pid(), 70, 1, notifier(test, :gate))
+
+    assert_receive {:gate, :gate, 1}, 1_000
+    assert :ok = GraceWatchdog.heartbeat(:a)
+
+    assert {:ok, 0} = GraceWatchdog.misses(:a)
+    assert {:ok, b_misses} = GraceWatchdog.misses(:b)
+    assert b_misses >= 1
+  end
+
+  test "a burst of misses interrupted by a heartbeat does not fire at the original deadline" do
+    test = self()
+    :ok = GraceWatchdog.register(:w, dummy_pid(), 60, 3, notifier(test))
+    :ok = GraceWatchdog.register(:gate, dummy_pid(), 100, 1, notifier(test, :gate))
+
+    assert_receive {:gate, :gate, 1}, 1_000
+    assert :ok = GraceWatchdog.heartbeat(:w)
+    assert {:ok, 0} = GraceWatchdog.misses(:w)
+
+    # The threshold would have been crossed by ~180ms without the heartbeat.
+    refute_receive {:timed_out, :w, _}, 120
+  end
+
+  test "start_link without a :name option registers under the module name" do
+    assert is_pid(Process.whereis(GraceWatchdog))
+  end
 end
 ```

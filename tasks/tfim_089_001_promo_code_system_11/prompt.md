@@ -578,5 +578,95 @@ defmodule PromoCodesTest do
     assert {:ok, 250} = PromoCodes.apply("B", 10_000)
     assert {:ok, 250} = PromoCodes.apply("B", 10_000)
   end
+
+  test "an anonymous application does not consume any user's per-user quota" do
+    {:ok, _} =
+      PromoCodes.create(%{
+        code: "ANONPU",
+        type: :fixed_amount,
+        value: 500,
+        max_uses_per_user: 1
+      })
+
+    # No :user_id -> counts toward the (unlimited) total, tracked for nobody.
+    assert {:ok, 500} = PromoCodes.apply("ANONPU", 10_000)
+    assert {:ok, 500} = PromoCodes.apply("ANONPU", 10_000)
+
+    # u1 still has their full per-user allowance.
+    assert {:ok, 500} = PromoCodes.apply("ANONPU", 10_000, user_id: "u1")
+
+    assert {:error, :max_uses_per_user_exceeded} =
+             PromoCodes.apply("ANONPU", 10_000, user_id: "u1")
+  end
+
+  test "a successful application by a user also consumes the shared total max_uses" do
+    {:ok, _} =
+      PromoCodes.create(%{
+        code: "SHAREDTOTAL",
+        type: :fixed_amount,
+        value: 500,
+        max_uses: 2
+      })
+
+    assert {:ok, 500} = PromoCodes.apply("SHAREDTOTAL", 10_000, user_id: "u1")
+    assert {:ok, 500} = PromoCodes.apply("SHAREDTOTAL", 10_000, user_id: "u2")
+
+    # Total is exhausted for everyone, including anonymous callers and new users.
+    assert {:error, :max_uses_exceeded} = PromoCodes.apply("SHAREDTOTAL", 10_000)
+
+    assert {:error, :max_uses_exceeded} =
+             PromoCodes.apply("SHAREDTOTAL", 10_000, user_id: "u3")
+  end
+
+  test "total max_uses failure takes precedence over the per-user limit failure" do
+    {:ok, _} =
+      PromoCodes.create(%{
+        code: "PRECUSES",
+        type: :fixed_amount,
+        value: 500,
+        max_uses: 1,
+        max_uses_per_user: 1
+      })
+
+    assert {:ok, 500} = PromoCodes.apply("PRECUSES", 10_000, user_id: "u1")
+
+    # Both limits are now blown for u1; the total limit is checked first.
+    assert {:error, :max_uses_exceeded} =
+             PromoCodes.apply("PRECUSES", 10_000, user_id: "u1")
+  end
+
+  test "expiry is reported before the minimum order total check" do
+    {:ok, _} =
+      PromoCodes.create(%{
+        code: "PRECEXP",
+        type: :percentage,
+        value: 10,
+        min_order_total: 5_000,
+        valid_until: @past
+      })
+
+    # Order is also below the minimum, but expiry is evaluated first.
+    assert {:error, :expired} = PromoCodes.apply("PRECEXP", 1_000)
+  end
+
+  test "min_order_total defaults to zero so any order total passes the check" do
+    {:ok, _} = PromoCodes.create(%{code: "NOMIN", type: :percentage, value: 10})
+
+    assert {:ok, 0} = PromoCodes.apply("NOMIN", 0)
+    assert {:ok, 1} = PromoCodes.apply("NOMIN", 5)
+    assert {:ok, 1_000} = PromoCodes.apply("NOMIN", 10_000)
+  end
+
+  test "start_link registers the process under an explicit :name option" do
+    pid = start_supervised!({PromoCodes, [clock: &Clock.now/0, name: :promo_alt]}, id: :promo_alt)
+
+    assert is_pid(pid)
+    assert Process.whereis(:promo_alt) == pid
+
+    # The default singleton is untouched and still serves the public API.
+    assert Process.whereis(PromoCodes) != pid
+    assert {:ok, _} = PromoCodes.create(%{code: "NAMED", type: :percentage, value: 10})
+    assert {:ok, 1_000} = PromoCodes.apply("NAMED", 10_000)
+  end
 end
 ```

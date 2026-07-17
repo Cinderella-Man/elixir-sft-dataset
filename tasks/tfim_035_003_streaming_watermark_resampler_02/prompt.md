@@ -226,7 +226,9 @@ defmodule StreamingResampler do
   defp bump(nil, ts), do: ts
   defp bump(current, ts), do: max(current, ts)
 
-  defp floor_bucket(ts, interval), do: div(ts, interval) * interval
+  # Integer.floor_div/2 rounds toward negative infinity, so negative timestamps
+  # land in the bucket below them (e.g. -500 with a 1000ms grid -> -1000).
+  defp floor_bucket(ts, interval), do: Integer.floor_div(ts, interval) * interval
 
   defp aggregate(points, :last), do: points |> List.last() |> elem(1)
   defp aggregate(points, :first), do: points |> hd() |> elem(1)
@@ -374,6 +376,89 @@ defmodule StreamingResamplerTest do
     assert_raise ArgumentError, fn ->
       StreamingResampler.start_link(1_000, allowed_lateness: -1)
     end
+  end
+
+  test "negative timestamps floor toward negative infinity, not toward zero" do
+    {:ok, pid} = StreamingResampler.start_link(1_000, agg: :sum)
+
+    # first point at -500 -> floor(-500/1000) * 1000 = -1000, NOT 0
+    :ok = StreamingResampler.push(pid, -500, 1)
+    :ok = StreamingResampler.push(pid, 600, 2)
+    :ok = StreamingResampler.push(pid, 1_500, 4)
+
+    # watermark 1500 closes bucket -1000 (needs wm >= 0) and bucket 0 (needs wm >= 1000)
+    assert StreamingResampler.finalized(pid) == [{-1_000, 1}, {0, 2}]
+  end
+
+  test "agg defaults to :last when the option is omitted" do
+    {:ok, pid} = StreamingResampler.start_link(1_000)
+
+    :ok = StreamingResampler.push(pid, 100, 1)
+    :ok = StreamingResampler.push(pid, 900, 2)
+
+    # default :last -> latest timestamp in bucket 0 is 900 -> value 2 (not sum 3, not first 1)
+    assert StreamingResampler.flush(pid) == [{0, 2}]
+  end
+
+  test "first/mean/count/max/min aggregations over an out-of-order bucket" do
+    {:ok, first} = StreamingResampler.start_link(1_000, agg: :first, allowed_lateness: 1_000)
+    :ok = StreamingResampler.push(first, 900, 2)
+    :ok = StreamingResampler.push(first, 100, 1)
+    assert StreamingResampler.flush(first) == [{0, 1}]
+
+    {:ok, mean} = StreamingResampler.start_link(1_000, agg: :mean)
+    :ok = StreamingResampler.push(mean, 0, 1)
+    :ok = StreamingResampler.push(mean, 500, 2)
+    assert StreamingResampler.flush(mean) == [{0, 1.5}]
+
+    {:ok, count} = StreamingResampler.start_link(1_000, agg: :count)
+    :ok = StreamingResampler.push(count, 0, 7)
+    :ok = StreamingResampler.push(count, 500, 7)
+    [{0, count_value}] = StreamingResampler.flush(count)
+    assert count_value === 2
+
+    {:ok, max} = StreamingResampler.start_link(1_000, agg: :max)
+    {:ok, min} = StreamingResampler.start_link(1_000, agg: :min)
+
+    Enum.each([{0, 3}, {400, 9}, {800, 5}], fn {t, v} ->
+      :ok = StreamingResampler.push(max, t, v)
+      :ok = StreamingResampler.push(min, t, v)
+    end)
+
+    assert StreamingResampler.flush(max) == [{0, 9}]
+    assert StreamingResampler.flush(min) == [{0, 3}]
+  end
+
+  test "bucket closes at exactly the equal watermark threshold, not before" do
+    {:ok, pid} = StreamingResampler.start_link(1_000, agg: :sum, allowed_lateness: 500)
+
+    :ok = StreamingResampler.push(pid, 0, 5)
+    :ok = StreamingResampler.push(pid, 1_499, 1)
+    # threshold is 0 + 1000 + 500 = 1500; watermark 1499 is one ms short
+    assert StreamingResampler.finalized(pid) == []
+
+    :ok = StreamingResampler.push(pid, 1_500, 2)
+    # watermark now exactly 1500 -> bucket 0 finalizes
+    assert StreamingResampler.finalized(pid) == [{0, 5}]
+  end
+
+  test "grid origin comes from the first pushed point, not from zero" do
+    {:ok, pid} = StreamingResampler.start_link(1_000, agg: :sum)
+
+    :ok = StreamingResampler.push(pid, 1_500, 5)
+    :ok = StreamingResampler.push(pid, 3_500, 7)
+
+    # grid starts at bucket 1000; no buckets below it are ever emitted
+    assert StreamingResampler.finalized(pid) == [{1_000, 5}, {2_000, nil}]
+  end
+
+  test "fill defaults to nil for empty buckets when the option is omitted" do
+    {:ok, pid} = StreamingResampler.start_link(1_000, agg: :sum)
+
+    :ok = StreamingResampler.push(pid, 0, 5)
+    :ok = StreamingResampler.push(pid, 3_200, 9)
+
+    assert StreamingResampler.finalized(pid) == [{0, 5}, {1_000, nil}, {2_000, nil}]
   end
 end
 ```

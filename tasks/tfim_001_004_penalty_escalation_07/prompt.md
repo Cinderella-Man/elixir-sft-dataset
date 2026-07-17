@@ -500,5 +500,108 @@ defmodule PenaltyLimiterTest do
 
     assert retry_after_2 >= 30_000
   end
+
+  test "an active cooldown is forgiven once a strike decays under it", %{pl: pl} do
+    ladder = [1_000, 30_000]
+
+    # Strike 1 at t=0 (cooldown 1_000ms).
+    for _ <- 1..3, do: PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
+    assert {:error, :rate_limited, _, 1} = PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
+
+    # Past that cooldown, still inside the decay window: escalate to strike 2,
+    # whose cooldown (30_000ms) far outlasts the decay period (10_000ms).
+    Clock.advance(2_000)
+    for _ <- 1..3, do: PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
+    assert {:error, :rate_limited, _, 2} = PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
+
+    # One full decay period after strike 2: the cooldown (ending at t=32_000) is
+    # still nominally active, but a strike has decayed, so it is cancelled and
+    # the request is evaluated against the empty window instead of cooling_down.
+    Clock.advance(10_000)
+    assert {:ok, 2} = PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
+
+    # Only one strike decayed (2 → 1, not a full reset), so re-offending
+    # escalates straight back to strike 2.
+    assert {:ok, 1} = PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
+    assert {:ok, 0} = PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
+    assert {:error, :rate_limited, _, 2} = PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
+  end
+
+  test "a rejected request never occupies a window slot", %{pl: pl} do
+    ladder = [1]
+
+    # Three allowed requests at staggered times fill the window (max 3).
+    assert {:ok, 2} = PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
+    Clock.advance(100)
+    assert {:ok, 1} = PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
+    Clock.advance(100)
+    assert {:ok, 0} = PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
+
+    # A rejection at t=300 must NOT be stored as a window timestamp.
+    Clock.advance(100)
+    assert {:error, :rate_limited, _, 1} = PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
+
+    # Advance until only the first entry (t=0) has expired. Had the rejection
+    # consumed a slot, the window would still be full and this would reject;
+    # because it did not, exactly one fresh slot is available.
+    Clock.advance(701)
+    assert {:ok, 0} = PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
+  end
+
+  test "retry_after reflects window expiry when it exceeds the strike cooldown", %{pl: pl} do
+    # The window (10_000ms) dwarfs the first-strike cooldown (1_000ms).
+    ladder = [1_000]
+
+    assert {:ok, 2} = PenaltyLimiter.check(pl, "k", 3, 10_000, ladder)
+    assert {:ok, 1} = PenaltyLimiter.check(pl, "k", 3, 10_000, ladder)
+    assert {:ok, 0} = PenaltyLimiter.check(pl, "k", 3, 10_000, ladder)
+
+    # Oldest entry (t=0) expires at t=10_000; that 10_000ms window wait is larger
+    # than the 1_000ms cooldown, so retry_after must be the window figure.
+    assert {:error, :rate_limited, retry_after, 1} =
+             PenaltyLimiter.check(pl, "k", 3, 10_000, ladder)
+
+    assert retry_after == 10_000
+  end
+
+  test "the :name option registers the process for calls by name", %{ladder: ladder} do
+    name = :penalty_limiter_named_process
+
+    {:ok, _} =
+      PenaltyLimiter.start_link(
+        clock: &Clock.now/0,
+        cleanup_interval_ms: :infinity,
+        name: name
+      )
+
+    assert {:ok, 0} = PenaltyLimiter.check(name, "k", 1, 1_000, ladder)
+    assert {:error, :rate_limited, _, 1} = PenaltyLimiter.check(name, "k", 1, 1_000, ladder)
+  end
+
+  test "decay reference advances by a full period rather than resetting to now", %{
+    pl: pl,
+    ladder: ladder
+  } do
+    # Strike 1 at t=0.
+    for _ <- 1..3, do: PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
+    assert {:error, :rate_limited, _, 1} = PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
+
+    # Strike 2 at t=2_000 (last-strike reference = 2_000).
+    Clock.advance(2_000)
+    for _ <- 1..3, do: PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
+    assert {:error, :rate_limited, _, 2} = PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
+
+    # t=17_000: 1.5 decay periods after the reference. Exactly one strike decays
+    # (2 → 1) and the reference advances to t=12_000, NOT to t=17_000.
+    Clock.advance(15_000)
+    assert {:ok, _} = PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
+
+    # t=22_000: only 5_000ms since that check, but a full 10_000ms since the
+    # advanced reference (12_000), so the last strike decays away and the key
+    # resets. Re-offending therefore starts again at strike 1, not strike 2.
+    Clock.advance(5_000)
+    for _ <- 1..3, do: PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
+    assert {:error, :rate_limited, _, 1} = PenaltyLimiter.check(pl, "k", 3, 1_000, ladder)
+  end
 end
 ```

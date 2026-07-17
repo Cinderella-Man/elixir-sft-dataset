@@ -116,9 +116,11 @@ defmodule CursorPaginator do
   defp parse_direction(%{"direction" => "prev"}), do: :prev
   defp parse_direction(_), do: :next
 
+  # Only a fully numeric value counts: "12abc" has trailing junk and is rejected,
+  # falling back to the default limit rather than silently reading as 12.
   defp parse_limit(%{"limit" => raw}) do
     case Integer.parse(to_string(raw)) do
-      {n, _} when n >= 1 -> min(n, @max_limit)
+      {n, ""} when n >= 1 -> min(n, @max_limit)
       _ -> @default_limit
     end
   end
@@ -239,6 +241,79 @@ defmodule CursorPaginatorTest do
     assert CursorPaginator.decode_cursor(encoded) == {:ok, 42}
     assert CursorPaginator.decode_cursor("garbage***") == :error
     assert CursorPaginator.decode_cursor(123) == :error
+  end
+
+  test "window emptied by a cursor past the last id yields nil cursors and false booleans" do
+    all = items(1..5)
+
+    %{data: data, meta: meta} =
+      CursorPaginator.paginate(all, %{
+        "limit" => "3",
+        "cursor" => CursorPaginator.encode_cursor(5)
+      })
+
+    assert data == []
+    assert meta.next_cursor == nil
+    assert meta.prev_cursor == nil
+    assert meta.has_next == false
+    assert meta.has_prev == false
+  end
+
+  test "meta never exposes total_count or total_pages on any page" do
+    all = items(1..12)
+
+    page1 = CursorPaginator.paginate(all, %{"limit" => "5"})
+    page2 = CursorPaginator.paginate(all, %{"limit" => "5", "cursor" => page1.meta.next_cursor})
+    empty = CursorPaginator.paginate([])
+
+    for %{meta: meta} <- [page1, page2, empty] do
+      refute Map.has_key?(meta, :total_count)
+      refute Map.has_key?(meta, :total_pages)
+
+      assert Map.keys(meta) |> Enum.sort() ==
+               [:has_next, :has_prev, :next_cursor, :page_size, :prev_cursor]
+    end
+  end
+
+  test "rows inserted and deleted between requests neither skip nor duplicate the next window" do
+    page1 = CursorPaginator.paginate(items(1..10), %{"limit" => "3"})
+    assert Enum.map(page1.data, & &1.id) == [1, 2, 3]
+
+    mutated =
+      items(1..10)
+      |> Enum.reject(&(&1.id == 2))
+      |> then(&[%{id: 0, name: "Item 0"} | &1])
+      |> Enum.shuffle()
+
+    page2 =
+      CursorPaginator.paginate(mutated, %{"limit" => "3", "cursor" => page1.meta.next_cursor})
+
+    assert Enum.map(page2.data, & &1.id) == [4, 5, 6]
+  end
+
+  test "limit with trailing non-numeric characters falls back to the default" do
+    %{data: data, meta: meta} = CursorPaginator.paginate(items(1..30), %{"limit" => "12abc"})
+
+    assert meta.page_size == 20
+    assert length(data) == 20
+  end
+
+  test "encoded cursors contain only url-safe characters for varied ids" do
+    for id <- [0, 1, -7, 42, 1_000_000, 9_007_199_254_740_993] do
+      cursor = CursorPaginator.encode_cursor(id)
+      assert cursor =~ ~r/\A[A-Za-z0-9_-]+\z/
+      assert CursorPaginator.decode_cursor(cursor) == {:ok, id}
+    end
+
+    cursor = CursorPaginator.encode_cursor(123)
+    refute cursor =~ "123"
+  end
+
+  test "single-arity paginate matches the two-arity call with an empty params map" do
+    all = Enum.shuffle(items(1..25))
+
+    assert CursorPaginator.paginate(all) == CursorPaginator.paginate(all, %{})
+    assert CursorPaginator.paginate([]) == CursorPaginator.paginate([], %{})
   end
 end
 ```

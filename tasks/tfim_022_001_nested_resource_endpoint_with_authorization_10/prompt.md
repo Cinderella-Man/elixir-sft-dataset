@@ -491,5 +491,83 @@ defmodule TeamRouterTest do
   test "TeamStore.get_user_by_token returns error for unknown token", %{store: store} do
     assert :error = TeamStore.get_user_by_token(store, "bogus")
   end
+
+  test "AuthPlug resolves the store from its init option alone", %{store: store} do
+    conn =
+      :get
+      |> conn("/api/teams/team-1/members")
+      |> put_req_header("authorization", "Bearer token-alice")
+      |> AuthPlug.call(AuthPlug.init(store: store))
+
+    refute conn.halted
+    assert conn.assigns.current_user == "alice"
+  end
+
+  test "TeamRouter resolves the store from its :store option without conn private", %{
+    store: store
+  } do
+    conn =
+      :get
+      |> conn("/api/teams/team-1/members")
+      |> put_req_header("authorization", "Bearer token-alice")
+      |> TeamRouter.call(TeamRouter.init(store: store))
+
+    assert conn.status == 200
+    assert "alice" in Jason.decode!(conn.resp_body)["members"]
+  end
+
+  test "unknown route without credentials is rejected by AuthPlug with 401", %{store: store} do
+    conn =
+      :get
+      |> conn("/api/teams/team-1/nonsense")
+      |> TeamRouter.call(TeamRouter.init(store: store))
+
+    assert conn.status == 401
+    assert Jason.decode!(conn.resp_body)["error"] == "unauthorized"
+    assert conn.halted
+  end
+
+  test "authorization header without the Bearer scheme is unauthorized", %{store: store} do
+    conn =
+      :get
+      |> conn("/api/teams/team-1/members")
+      |> put_req_header("authorization", "Basic token-alice")
+      |> put_private(:team_store, store)
+      |> TeamRouter.call(TeamRouter.init(store: store))
+
+    assert conn.status == 401
+    assert Jason.decode!(conn.resp_body)["error"] == "unauthorized"
+    assert conn.halted
+  end
+
+  test "error responses carry the application/json content-type", %{store: store} do
+    conns = [
+      get_members(store, "no-such-team", "token-alice"),
+      get_members(store, "team-1", "token-carol"),
+      get_members(store, "team-1", "token-nobody"),
+      post_member(store, "team-1", "bob", "token-alice")
+    ]
+
+    for conn <- conns do
+      content_type = conn |> get_resp_header("content-type") |> List.first("")
+      assert content_type =~ "application/json"
+    end
+
+    assert Enum.map(conns, & &1.status) == [404, 403, 401, 409]
+  end
+
+  test "TeamStore registers under the :name option and serves calls by that name" do
+    name = :"named_store_#{System.unique_integer([:positive])}"
+    start_supervised!(%{id: name, start: {TeamStore, :start_link, [[name: name]]}})
+
+    assert is_pid(Process.whereis(name))
+    assert :ok = TeamStore.create_team(name, "team-x")
+    assert :ok = TeamStore.create_user(name, "dave", "token-dave")
+    assert :ok = TeamStore.add_member(name, "team-x", "dave")
+    assert TeamStore.team_exists?(name, "team-x")
+    assert TeamStore.is_member?(name, "team-x", "dave")
+    assert {:ok, "dave"} = TeamStore.get_user_by_token(name, "token-dave")
+    assert {:ok, ["dave"]} = TeamStore.list_members(name, "team-x")
+  end
 end
 ```

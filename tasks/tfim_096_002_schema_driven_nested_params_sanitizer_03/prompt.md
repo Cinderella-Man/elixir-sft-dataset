@@ -304,5 +304,68 @@ defmodule SanitizerTest do
       assert {:error, :empty} = Sanitizer.filename("/\\")
     end
   end
+
+  test "text strips C0 controls but keeps tab, newline and carriage return" do
+    raw = "  a\x01b\tc\nd\re\x0B\x0C\x1F&  "
+
+    assert {:ok, %{"note" => cleaned}} =
+             Sanitizer.sanitize(%{"note" => raw}, %{"note" => :text})
+
+    assert cleaned == "ab\tc\nd\re&amp;"
+  end
+
+  test "boolean rejects non-canonical values with not_a_boolean" do
+    assert {:error, errors} =
+             Sanitizer.sanitize(%{"active" => "TRUE"}, %{"active" => :boolean})
+
+    assert errors[["active"]] == :not_a_boolean
+
+    assert {:error, other} = Sanitizer.sanitize(%{"active" => 1}, %{"active" => :boolean})
+    assert other[["active"]] == :not_a_boolean
+  end
+
+  test "filename strips nulls, collapses dot runs and trims edge dots" do
+    assert {:ok, "a.b"} = Sanitizer.filename("..a\0...b..")
+
+    assert {:ok, %{"avatar" => "my-pic.png"}} =
+             Sanitizer.sanitize(%{"avatar" => "..my-pic..png.."}, %{"avatar" => :filename})
+  end
+
+  test "text reports not_a_string for non-binary values" do
+    assert {:error, errors} = Sanitizer.sanitize(%{"name" => 42}, %{"name" => :text})
+    assert errors[["name"]] == :not_a_string
+
+    assert {:error, nested} =
+             Sanitizer.sanitize(%{"profile" => %{"bio" => :atom_value}}, %{
+               "profile" => %{"bio" => :text}
+             })
+
+    assert nested[["profile", "bio"]] == :not_a_string
+  end
+
+  test "identifier and filename report not_a_string for non-binary values" do
+    assert {:error, errors} =
+             Sanitizer.sanitize(%{"table" => 7, "avatar" => ["x"]}, %{
+               "table" => :identifier,
+               "avatar" => :filename
+             })
+
+    assert errors[["table"]] == :not_a_string
+    assert errors[["avatar"]] == :not_a_string
+  end
+
+  test "list inner spec may itself be a nested schema map" do
+    spec = %{"items" => {:list, %{"handle" => :identifier}}}
+
+    assert {:ok, out} =
+             Sanitizer.sanitize(%{"items" => [%{"handle" => "1a"}, %{"handle" => "b!"}]}, spec)
+
+    assert out == %{"items" => [%{"handle" => "_1a"}, %{"handle" => "b"}]}
+
+    assert {:error, errors} =
+             Sanitizer.sanitize(%{"items" => [%{"handle" => "ok"}, "nope"]}, spec)
+
+    assert errors[["items", 1]] == :expected_map
+  end
 end
 ```

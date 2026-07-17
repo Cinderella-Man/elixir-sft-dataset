@@ -737,5 +737,112 @@ defmodule CalendarSchedulerTest do
     {:ok, next} = CalendarScheduler.next_run(cs, "j")
     assert next == ~N[2026-01-01 00:00:00]
   end
+
+  test "overdue job fires once and recomputes next_run relative to now", %{cs: cs} do
+    :ok =
+      CalendarScheduler.register(
+        cs,
+        "j",
+        {:nth_day_of_month, 1, {0, 0}},
+        {JobSink, :ping, [self(), :fired]}
+      )
+
+    # Registered at Jan 1 → initial next_run is Feb 1 00:00.
+    {:ok, first} = CalendarScheduler.next_run(cs, "j")
+    assert first == ~N[2025-02-01 00:00:00]
+
+    # Jump far past the deadline; the scheduler never ticked in between.
+    Clock.set(~N[2025-04-05 00:00:00])
+    tick(cs)
+
+    # Fires exactly once — no catch-up storm for the skipped Mar 1 occurrence.
+    assert_received :fired
+    refute_received :fired
+
+    # Recomputed relative to *now* (Apr 5), not relative to the old next_run.
+    {:ok, next} = CalendarScheduler.next_run(cs, "j")
+    assert next == ~N[2025-05-01 00:00:00]
+  end
+
+  test "a second tick at the same clock does not fire the job again", %{cs: cs} do
+    :ok =
+      CalendarScheduler.register(
+        cs,
+        "j",
+        {:nth_day_of_month, 1, {0, 0}},
+        {JobSink, :ping, [self(), :fired]}
+      )
+
+    Clock.set(~N[2025-02-01 00:00:01])
+    tick(cs)
+    assert_received :fired
+
+    # Clock unchanged; the recomputed next_run is now in the future.
+    tick(cs)
+    refute_received :fired
+  end
+
+  test "registration at exactly the target time skips to the next month", %{cs: cs} do
+    # Clock sits exactly on the first Monday's target instant.
+    Clock.set(~N[2025-01-06 09:00:00])
+
+    :ok =
+      CalendarScheduler.register(
+        cs,
+        "j",
+        {:nth_weekday_of_month, 1, :monday, {9, 0}},
+        {JobSink, :ping, [self(), :j]}
+      )
+
+    # Equal is not strictly greater, so Jan 6 must be skipped for Feb 3.
+    {:ok, next} = CalendarScheduler.next_run(cs, "j")
+    assert next == ~N[2025-02-03 09:00:00]
+  end
+
+  test "tick fires a job whose next_run equals now exactly", %{cs: cs} do
+    :ok =
+      CalendarScheduler.register(
+        cs,
+        "j",
+        {:nth_day_of_month, 1, {0, 0}},
+        {JobSink, :ping, [self(), :fired]}
+      )
+
+    {:ok, first} = CalendarScheduler.next_run(cs, "j")
+    assert first == ~N[2025-02-01 00:00:00]
+
+    # Clock lands exactly on next_run — the <= boundary must fire.
+    Clock.set(~N[2025-02-01 00:00:00])
+    tick(cs)
+    assert_received :fired
+  end
+
+  test "a job that throws does not kill the scheduler", %{cs: cs} do
+    :ok =
+      CalendarScheduler.register(
+        cs,
+        "thrower",
+        {:nth_day_of_month, 1, {0, 0}},
+        {:erlang, :throw, [:boom]}
+      )
+
+    :ok =
+      CalendarScheduler.register(
+        cs,
+        "good",
+        {:nth_day_of_month, 1, {0, 0}},
+        {JobSink, :ping, [self(), :ok]}
+      )
+
+    Clock.set(~N[2025-02-01 00:00:01])
+    tick(cs)
+
+    # A throw is only swallowed by the `catch` clause, not `rescue`.
+    assert_received :ok
+    assert Process.alive?(cs)
+
+    {:ok, next} = CalendarScheduler.next_run(cs, "thrower")
+    assert next == ~N[2025-03-01 00:00:00]
+  end
 end
 ```

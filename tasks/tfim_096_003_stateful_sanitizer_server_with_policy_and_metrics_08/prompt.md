@@ -286,5 +286,90 @@ defmodule SanitizerTest do
       # TODO
     end
   end
+
+  test "default max_filename_length truncates to 255 and counts the truncation", %{server: s} do
+    long = String.duplicate("a", 300)
+    assert {:ok, cleaned} = Sanitizer.sanitize_filename(s, long)
+    assert cleaned == String.duplicate("a", 255)
+    assert String.length(cleaned) == 255
+
+    m = Sanitizer.metrics(s)
+    assert m.filenames == 1
+    assert m.filenames_truncated == 1
+  end
+
+  test "filename of exactly max_filename_length is kept whole and not counted truncated" do
+    {:ok, s} = Sanitizer.start_link(max_filename_length: 5)
+    assert {:ok, "abcde"} = Sanitizer.sanitize_filename(s, "abcde")
+
+    m = Sanitizer.metrics(s)
+    assert m.filenames == 1
+    assert m.filenames_truncated == 0
+  end
+
+  test "script and style blocks are dropped case-insensitively across newlines", %{server: s} do
+    input = "a<STYLE>\n.x { color: red; }\n</StYlE>b<ScRiPt>\nalert(1)\n</SCRIPT>c<i>d</i>"
+
+    assert {:ok, cleaned, n} = Sanitizer.strip_html(s, input)
+    assert cleaned == "abcd"
+    assert n == 6
+
+    m = Sanitizer.metrics(s)
+    assert m.html_calls == 1
+    assert m.tags_stripped == 6
+  end
+
+  test "metrics exposes all seven integer keys and reset zeroes every one of them" do
+    {:ok, s} = Sanitizer.start_link(max_filename_length: 3)
+    Sanitizer.sanitize_identifier(s, "@@@")
+    Sanitizer.sanitize_identifier(s, "ok")
+    Sanitizer.sanitize_filename(s, "abcdef")
+    Sanitizer.sanitize_filename(s, "///")
+    Sanitizer.strip_html(s, "<b>x</b>")
+
+    keys = [
+      :identifiers,
+      :identifiers_blocked,
+      :filenames,
+      :filenames_blocked,
+      :filenames_truncated,
+      :tags_stripped,
+      :html_calls
+    ]
+
+    m = Sanitizer.metrics(s)
+    assert Enum.sort(Map.keys(m)) == Enum.sort(keys)
+    assert Enum.all?(keys, fn k -> is_integer(Map.fetch!(m, k)) end)
+
+    assert m == %{
+             identifiers: 2,
+             identifiers_blocked: 1,
+             filenames: 2,
+             filenames_blocked: 1,
+             filenames_truncated: 1,
+             tags_stripped: 2,
+             html_calls: 1
+           }
+
+    assert :ok = Sanitizer.reset_metrics(s)
+    assert Sanitizer.metrics(s) == Map.new(keys, fn k -> {k, 0} end)
+  end
+
+  test "server started with :name is reachable through the public API by that name" do
+    name = :sanitizer_named_server_audit
+    assert {:ok, pid} = Sanitizer.start_link(name: name, max_filename_length: 4)
+    assert Process.whereis(name) == pid
+
+    assert {:ok, "_9x"} = Sanitizer.sanitize_identifier(name, "9x!")
+    assert {:ok, "abcd"} = Sanitizer.sanitize_filename(name, "abcdefg")
+
+    m = Sanitizer.metrics(name)
+    assert m.identifiers == 1
+    assert m.filenames == 1
+    assert m.filenames_truncated == 1
+
+    assert :ok = Sanitizer.reset_metrics(name)
+    assert Sanitizer.metrics(name).identifiers == 0
+  end
 end
 ```

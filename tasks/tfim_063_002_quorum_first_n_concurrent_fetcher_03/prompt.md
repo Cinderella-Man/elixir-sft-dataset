@@ -283,5 +283,141 @@ defmodule QuorumFetcherTest do
     assert MapSet.size(new_pids) == 0,
            "expected no leftover processes, found #{inspect(MapSet.to_list(new_pids))}"
   end
+
+  test "a non-positive quorum never invokes any fetch function" do
+    parent = self()
+
+    probe = fn name ->
+      fn ->
+        send(parent, {:invoked, name})
+        {:ok, name}
+      end
+    end
+
+    sources = [{:a, probe.(:a)}, {:b, probe.(:b)}]
+
+    assert QuorumFetcher.fetch_first(sources, -1, 1_000) ==
+             %{a: {:error, :cancelled}, b: {:error, :cancelled}}
+
+    refute_receive {:invoked, _}, 100
+  end
+
+  test "every source has started before any of them is allowed to complete" do
+    parent = self()
+
+    gated = fn name ->
+      fn ->
+        send(parent, {:started, name, self()})
+
+        receive do
+          :go -> {:ok, name}
+        end
+      end
+    end
+
+    sources = [{:a, gated.(:a)}, {:b, gated.(:b)}, {:c, gated.(:c)}]
+
+    caller =
+      Task.async(fn -> QuorumFetcher.fetch_first(sources, 1, 5_000) end)
+
+    assert_receive {:started, :a, pid_a}, 1_000
+    assert_receive {:started, :b, _}, 1_000
+    assert_receive {:started, :c, _}, 1_000
+
+    send(pid_a, :go)
+
+    result = Task.await(caller, 5_000)
+
+    assert result[:a] == {:ok, :a}
+    assert result[:b] == {:error, :cancelled}
+    assert result[:c] == {:error, :cancelled}
+  end
+
+  test "a cancelled source's fetch function is interrupted before it can finish its work" do
+    parent = self()
+
+    winner = fn ->
+      send(parent, {:started, :w, self()})
+
+      receive do
+        :go -> {:ok, :w}
+      end
+    end
+
+    loser = fn ->
+      send(parent, {:started, :slow, self()})
+
+      receive do
+        :never -> :ok
+      after
+        1_000 -> send(parent, {:completed, :slow})
+      end
+
+      {:ok, :slow}
+    end
+
+    sources = [{:w, winner}, {:slow, loser}]
+
+    caller =
+      Task.async(fn -> QuorumFetcher.fetch_first(sources, 1, 5_000) end)
+
+    assert_receive {:started, :w, pid_w}, 1_000
+    assert_receive {:started, :slow, _}, 1_000
+
+    send(pid_w, :go)
+
+    result = Task.await(caller, 5_000)
+
+    assert result[:w] == {:ok, :w}
+    assert result[:slow] == {:error, :cancelled}
+    refute_receive {:completed, :slow}, 1_500
+  end
+
+  test "no spawned process is still alive the moment fetch_first returns" do
+    parent = self()
+
+    hang = fn name ->
+      fn ->
+        send(parent, {:pid, name, self()})
+
+        receive do
+          :never -> {:ok, name}
+        end
+      end
+    end
+
+    sources = [{:a, hang.(:a)}, {:b, hang.(:b)}, {:c, hang.(:c)}]
+
+    result = QuorumFetcher.fetch_first(sources, 3, 100)
+
+    assert_receive {:pid, :a, pid_a}, 1_000
+    assert_receive {:pid, :b, pid_b}, 1_000
+    assert_receive {:pid, :c, pid_c}, 1_000
+
+    for pid <- [pid_a, pid_b, pid_c] do
+      refute Process.alive?(pid),
+             "spawned process #{inspect(pid)} outlived fetch_first"
+    end
+
+    assert result[:a] == {:error, :timeout}
+    assert result[:b] == {:error, :timeout}
+    assert result[:c] == {:error, :timeout}
+  end
+
+  test "on timeout, finished failing and crashing sources keep their real outcome" do
+    sources = [
+      {:err, slow_error(:nope, 10)},
+      {:boom, slow_raise("kaboom", 10)},
+      {:slow, slow_ok(:s, 3_000)}
+    ]
+
+    result = QuorumFetcher.fetch_first(sources, 3, 200)
+
+    assert result[:err] == {:error, :nope}
+    assert {:error, reason} = result[:boom]
+    assert reason != :timeout
+    assert reason != :cancelled
+    assert result[:slow] == {:error, :timeout}
+  end
 end
 ```

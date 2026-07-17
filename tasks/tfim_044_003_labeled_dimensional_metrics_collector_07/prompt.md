@@ -313,5 +313,74 @@ defmodule MetricsTest do
     assert Metrics.get(:c, %{s: 2}) == 50
     assert Metrics.get(:c) == 100
   end
+
+  test "increment raises for a negative amount in both call shapes" do
+    assert_raise FunctionClauseError, fn ->
+      Metrics.increment(:bytes, %{route: "/x"}, -1)
+    end
+
+    assert_raise FunctionClauseError, fn ->
+      Metrics.increment(:bytes, -5)
+    end
+
+    assert Metrics.get(:bytes, %{route: "/x"}) == nil
+    assert Metrics.get(:bytes) == nil
+  end
+
+  test "increment accepts zero at the non-negative boundary and leaves the value alone" do
+    Metrics.increment(:bytes, %{route: "/z"}, 0)
+    assert Metrics.get(:bytes, %{route: "/z"}) == 0
+
+    Metrics.increment(:bytes, %{route: "/z"}, 4)
+    Metrics.increment(:bytes, %{route: "/z"}, 0)
+    assert Metrics.get(:bytes, %{route: "/z"}) == 4
+
+    Metrics.increment(:bytes, 0)
+    assert Metrics.get(:bytes, %{}) == 0
+  end
+
+  test "start_link registers the owning process under a custom :name option" do
+    stop_supervised!(Metrics)
+    refute Process.whereis(Metrics)
+
+    pid = start_supervised!({Metrics, name: :custom_metrics})
+    assert Process.whereis(:custom_metrics) == pid
+
+    Metrics.increment(:requests, %{method: "GET"}, 2)
+    assert Metrics.get(:requests, %{method: "GET"}) == 2
+  end
+
+  test "gauge, get, series, reset and all canonicalise reordered label maps" do
+    Metrics.gauge(:temp, %{a: 1, b: 2}, 10)
+    Metrics.gauge(:temp, %{b: 2, a: 1}, 25)
+
+    assert Metrics.get(:temp, %{b: 2, a: 1}) == 25
+    assert Metrics.get(:temp) == 25
+    assert Metrics.series(:temp) == [%{labels: %{a: 1, b: 2}, value: 25}]
+
+    Metrics.reset(:temp, %{b: 2, a: 1})
+    assert Metrics.get(:temp, %{a: 1, b: 2}) == 0
+    assert Metrics.all() == %{{:temp, %{a: 1, b: 2}} => 0}
+  end
+
+  test "reset/1 leaves series recorded under other names untouched" do
+    Metrics.increment(:requests, %{method: "GET"}, 5)
+    Metrics.increment(:errors, %{method: "GET"}, 7)
+    Metrics.gauge(:errors, 3)
+
+    Metrics.reset(:requests)
+
+    assert Metrics.get(:requests) == 0
+    assert Metrics.get(:errors, %{method: "GET"}) == 7
+    assert Metrics.get(:errors, %{}) == 3
+    assert Metrics.get(:errors) == 10
+  end
+
+  test "start_link defaults process registration to the Metrics module name" do
+    assert is_pid(Process.whereis(Metrics))
+
+    Metrics.increment(:requests, %{method: "GET"})
+    assert Metrics.get(:requests, %{method: "GET"}) == 1
+  end
 end
 ```

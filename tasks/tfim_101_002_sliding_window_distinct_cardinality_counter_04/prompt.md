@@ -595,5 +595,56 @@ defmodule SlidingUniqueCounterTest do
       2_000 -> flunk("the counter never read the clock again on its own schedule")
     end
   end
+
+  test "a bucket starting exactly at the window threshold is counted", %{sc: sc} do
+    Clock.set(0)
+    SlidingUniqueCounter.add(sc, "k", "u1")
+
+    # At now=1_000 with a 1_000ms window the threshold is exactly 0, and the
+    # member's bucket starts at 0 — the comparison is `>=`, so it counts.
+    Clock.set(1_000)
+    assert 1 = SlidingUniqueCounter.distinct_count(sc, "k", 1_000)
+  end
+
+  test "cleanup_interval_ms :infinity disables the periodic cleanup entirely" do
+    {:ok, sc} = start_reporting_counter(cleanup_interval_ms: :infinity)
+
+    SlidingUniqueCounter.add(sc, "k", "u1")
+    flush_clock_reads()
+
+    # Move the clock far past the retention horizon. With cleanup disabled the
+    # process must never wake itself up, so no further clock read can arrive.
+    Clock.advance(10_000)
+    refute_receive {:clock_read, _}, 200
+
+    assert SlidingUniqueCounter.tracked_key_count(sc) == 1
+  end
+
+  test "cleanup drops only the expired buckets of a key that is still live", %{sc: sc} do
+    Clock.set(0)
+    SlidingUniqueCounter.add(sc, "k", "old")
+
+    Clock.set(2_000)
+    SlidingUniqueCounter.add(sc, "k", "new")
+
+    send(sc, :cleanup)
+
+    # The key survives, but "old" (bucket start 0, outside the 1_000ms horizon)
+    # must be gone even when queried through a window wide enough to cover it.
+    assert SlidingUniqueCounter.tracked_key_count(sc) == 1
+    assert 1 = SlidingUniqueCounter.distinct_count(sc, "k", 100_000)
+  end
+
+  test "a member spread across two in-window buckets is unioned to one", %{sc: sc} do
+    Clock.set(0)
+    SlidingUniqueCounter.add(sc, "k", "u1")
+
+    Clock.set(500)
+    SlidingUniqueCounter.add(sc, "k", "u1")
+    SlidingUniqueCounter.add(sc, "k", "u2")
+
+    # Buckets 0 and 5 are both in window at now=500; union = {"u1", "u2"}.
+    assert 2 = SlidingUniqueCounter.distinct_count(sc, "k", 1_000)
+  end
 end
 ```

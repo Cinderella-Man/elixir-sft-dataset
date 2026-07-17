@@ -42,30 +42,43 @@ defmodule LogAnalyzer do
     :errors_per_hour  – %{{date_tuple, hour} => integer}
     :malformed_count  – integer
 
-  Returns `{:error, reason}` if the file cannot be opened.
+  Returns `{:error, reason}` if the file does not exist or cannot be opened
+  (for example when `path` points at a directory).
   """
   @spec analyze(String.t()) :: {:ok, map()} | {:error, term()}
   def analyze(path) do
-    stream =
-      path
-      |> File.stream!(:line, [])
-
-    # File.stream!/3 is lazy; it only raises on the first pull if the file is
-    # missing, so we attempt to stat the file eagerly to produce a clean error.
-    case File.stat(path) do
+    # File.stream!/3 is lazy and raises on the first pull, so we probe the path
+    # eagerly with File.open/2. This catches missing files as well as paths that
+    # exist but cannot be read (directories, permission errors, ...).
+    case File.open(path, [:read]) do
       {:error, reason} ->
         {:error, reason}
 
-      {:ok, _} ->
-        report =
-          stream
-          |> Stream.map(&String.trim_trailing(&1, "\n"))
-          |> Stream.map(&String.trim_trailing(&1, "\r"))
-          |> Enum.reduce(initial_acc(), &process_line/2)
-          |> build_report()
-
-        {:ok, report}
+      {:ok, io_device} ->
+        File.close(io_device)
+        stream_report(path)
     end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Streaming
+  # ---------------------------------------------------------------------------
+
+  # Stream the file line by line, folding into a single accumulator. Any I/O
+  # failure that only surfaces once the stream is pulled is converted into an
+  # {:error, reason} tuple rather than an exception.
+  defp stream_report(path) do
+    report =
+      path
+      |> File.stream!(:line, [])
+      |> Stream.map(&String.trim_trailing(&1, "\n"))
+      |> Stream.map(&String.trim_trailing(&1, "\r"))
+      |> Enum.reduce(initial_acc(), &process_line/2)
+      |> build_report()
+
+    {:ok, report}
+  rescue
+    error in File.Error -> {:error, error.reason}
   end
 
   # ---------------------------------------------------------------------------
@@ -453,6 +466,74 @@ defmodule LogAnalyzerTest do
              {{2024, 1, 1}, 23} => 1,
              {{2024, 1, 2}, 0} => 1
            }
+  end
+
+  test "path that exists but cannot be opened returns an error tuple" do
+    dir =
+      Path.join(
+        System.tmp_dir!(),
+        "log_analyzer_test_dir_#{System.pid()}_#{System.unique_integer([:positive])}"
+      )
+
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf(dir) end)
+
+    assert {:error, _reason} = LogAnalyzer.analyze(dir)
+  end
+
+  test "valid JSON that is not a top-level object counts as malformed" do
+    path = tmp_path("not_object")
+
+    write_lines(path, ["[1, 2, 3]", "\"just a string\"", "42", "null", "true"])
+    on_exit(fn -> File.rm(path) end)
+
+    assert {:ok, report} = LogAnalyzer.analyze(path)
+    assert report.malformed_count == 5
+    assert report.counts_by_level == %{}
+    assert report.error_rate == 0.0
+    assert report.time_range == nil
+  end
+
+  test "non-string timestamp values are counted as malformed" do
+    path = tmp_path("nonstring_ts")
+
+    lines = [
+      log_line(1_705_327_402, "info", "numeric timestamp"),
+      log_line(%{"iso" => "2024-01-15T14:03:22Z"}, "info", "object timestamp"),
+      log_line("2024-01-15T14:03:22Z", "info", "good line")
+    ]
+
+    write_lines(path, lines)
+    on_exit(fn -> File.rm(path) end)
+
+    assert {:ok, report} = LogAnalyzer.analyze(path)
+    assert report.malformed_count == 2
+    assert report.counts_by_level == %{"info" => 1}
+  end
+
+  test "timestamps with offsets bucket into their UTC hour and time range" do
+    path = tmp_path("offsets")
+
+    lines = [
+      log_line("2024-05-01T01:30:00+02:00", "error", "east of utc"),
+      log_line("2024-05-01T00:30:00-05:00", "error", "west of utc")
+    ]
+
+    write_lines(path, lines)
+    on_exit(fn -> File.rm(path) end)
+
+    assert {:ok, report} = LogAnalyzer.analyze(path)
+
+    assert report.errors_per_hour == %{
+             {{2024, 4, 30}, 23} => 1,
+             {{2024, 5, 1}, 5} => 1
+           }
+
+    {:ok, expected_first, _} = DateTime.from_iso8601("2024-04-30T23:30:00Z")
+    {:ok, expected_last, _} = DateTime.from_iso8601("2024-05-01T05:30:00Z")
+    {first, last} = report.time_range
+    assert DateTime.compare(first, expected_first) == :eq
+    assert DateTime.compare(last, expected_last) == :eq
   end
 end
 ```

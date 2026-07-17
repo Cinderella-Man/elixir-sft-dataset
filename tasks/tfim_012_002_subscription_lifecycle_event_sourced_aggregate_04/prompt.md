@@ -120,11 +120,9 @@ defmodule SubscriptionAggregate do
   defp validate_command(_state, {:suspend, _reason}), do: {:error, :not_active}
 
   # Cancel
-  # Must fail if already cancelled
+  # Must fail only if already cancelled; any other existing status may cancel.
   defp validate_command(%{status: :cancelled}, {:cancel}), do: {:error, :already_cancelled}
-  # Must fail if not yet active (pending)
-  defp validate_command(%{status: :pending}, {:cancel}), do: {:error, :not_active}
-  # Success for :active or :suspended
+
   defp validate_command(_state, {:cancel}) do
     {:ok, [%{type: :subscription_cancelled}]}
   end
@@ -326,8 +324,9 @@ defmodule SubscriptionAggregateTest do
 
   test "failed commands produce no events", %{agg: agg} do
     SubscriptionAggregate.execute(agg, "sub:1", {:create, "premium"})
-    SubscriptionAggregate.execute(agg, "sub:1", {:cancel})
+    # Both of the following fail against a :pending subscription and must add no events.
     SubscriptionAggregate.execute(agg, "sub:1", {:suspend, "reason"})
+    SubscriptionAggregate.execute(agg, "sub:1", {:reactivate})
 
     events = SubscriptionAggregate.events(agg, "sub:1")
     assert length(events) == 1
@@ -415,6 +414,23 @@ defmodule SubscriptionAggregateTest do
 
     assert suspended.type == :subscription_suspended
     assert suspended.reason == "payment_failed"
+  end
+
+  test "cancel from pending succeeds since only cancelled state blocks cancel", %{agg: agg} do
+    SubscriptionAggregate.execute(agg, "sub:1", {:create, "premium"})
+
+    assert {:ok, [event]} = SubscriptionAggregate.execute(agg, "sub:1", {:cancel})
+    assert event.type == :subscription_cancelled
+    assert SubscriptionAggregate.state(agg, "sub:1").status == :cancelled
+  end
+
+  test "start_link registers the process under the given :name option" do
+    name = :"agg_#{System.unique_integer([:positive])}"
+    assert {:ok, _pid} = SubscriptionAggregate.start_link(name: name)
+
+    assert {:ok, [event]} = SubscriptionAggregate.execute(name, "sub:1", {:create, "premium"})
+    assert event.type == :subscription_created
+    assert SubscriptionAggregate.state(name, "sub:1").status == :pending
   end
 end
 ```

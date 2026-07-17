@@ -482,5 +482,84 @@ defmodule WebhookReceiverOrderedTest do
     assert WebhookReceiver.Store.last_sequence(store, "s1") == 0
     assert WebhookReceiver.Store.delivered_events(store, "s1") == []
   end
+
+  test "drain stops at the first gap and leaves later events buffered", %{
+    opts: opts,
+    store: store
+  } do
+    assert deliver(opts, "e1", "s1", 1).status == 200
+    assert deliver(opts, "e3", "s1", 3).status == 202
+    assert deliver(opts, "e5", "s1", 5).status == 202
+
+    assert json_body(deliver(opts, "e2", "s1", 2))["status"] == "received"
+
+    assert WebhookReceiver.Store.last_sequence(store, "s1") == 3
+    assert WebhookReceiver.Store.buffered_sequences(store, "s1") == [5]
+
+    events = WebhookReceiver.Store.delivered_events(store, "s1")
+    assert Enum.map(events, & &1.sequence) == [1, 2, 3]
+    assert Enum.map(events, & &1.status) == [:delivered, :delivered, :delivered]
+  end
+
+  test "buffered_sequences returns sorted seqs regardless of arrival order", %{
+    opts: opts,
+    store: store
+  } do
+    assert deliver(opts, "e1", "s1", 1).status == 200
+    assert deliver(opts, "e7", "s1", 7).status == 202
+    assert deliver(opts, "e3", "s1", 3).status == 202
+    assert deliver(opts, "e5", "s1", 5).status == 202
+
+    assert WebhookReceiver.Store.buffered_sequences(store, "s1") == [3, 5, 7]
+    assert WebhookReceiver.Store.last_sequence(store, "s1") == 1
+  end
+
+  test "missing id and non-string id both return bad_payload", %{opts: opts, store: store} do
+    missing = Jason.encode!(%{"stream_id" => "s1", "sequence" => 1})
+    conn = post_signed(opts, missing)
+    assert conn.status == 400
+    assert json_body(conn)["error"] == "bad_payload"
+
+    wrong = Jason.encode!(%{"id" => 42, "stream_id" => "s1", "sequence" => 1})
+    conn = post_signed(opts, wrong)
+    assert conn.status == 400
+    assert json_body(conn)["error"] == "bad_payload"
+
+    assert WebhookReceiver.Store.last_sequence(store, "s1") == 0
+    assert WebhookReceiver.Store.delivered_events(store, "s1") == []
+  end
+
+  test "non-string stream_id returns bad_payload", %{opts: opts, store: store} do
+    payload = Jason.encode!(%{"id" => "e1", "stream_id" => 7, "sequence" => 1})
+    conn = post_signed(opts, payload)
+
+    assert conn.status == 400
+    assert json_body(conn)["error"] == "bad_payload"
+    assert WebhookReceiver.Store.last_sequence(store, "s1") == 0
+  end
+
+  test "sequence strictly below last_seq is duplicate and does not re-deliver", %{
+    opts: opts,
+    store: store
+  } do
+    for seq <- 1..3, do: assert(deliver(opts, "e#{seq}", "s1", seq).status == 200)
+
+    conn = deliver(opts, "e1-again", "s1", 1)
+    assert conn.status == 200
+    assert json_body(conn)["status"] == "duplicate"
+
+    assert WebhookReceiver.Store.last_sequence(store, "s1") == 3
+    assert WebhookReceiver.Store.buffered_sequences(store, "s1") == []
+
+    events = WebhookReceiver.Store.delivered_events(store, "s1")
+    assert Enum.map(events, & &1.event_id) == ["e1", "e2", "e3"]
+  end
+
+  test "Signature.verify/3 rejects non-binary signature and secret" do
+    assert :error = WebhookReceiver.Signature.verify("p", nil, @secret)
+    assert :error = WebhookReceiver.Signature.verify("p", :bad, @secret)
+    assert :error = WebhookReceiver.Signature.verify("p", sign("p", @secret), nil)
+    assert :error = WebhookReceiver.Signature.verify("p", sign("p", @secret), 123)
+  end
 end
 ```

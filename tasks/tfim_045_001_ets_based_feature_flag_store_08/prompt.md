@@ -390,5 +390,78 @@ defmodule FeatureFlagsTest do
 
     assert outcome == {:ok, {true, true}}
   end
+
+  test "writes stall while the owning server is suspended and land once it resumes", %{pid: pid} do
+    # A suspended GenServer cannot serve calls. If the writes really go through
+    # the server, none of them can take effect until it is resumed again.
+    :sys.suspend(pid)
+
+    writers = [
+      Task.async(fn -> FeatureFlags.enable(:write_path_on) end),
+      Task.async(fn -> FeatureFlags.disable(:write_path_off) end),
+      Task.async(fn -> FeatureFlags.enable_for_percentage(:write_path_pct, 100) end)
+    ]
+
+    assert Enum.all?(writers, fn task -> Task.yield(task, 200) == nil end)
+    refute FeatureFlags.enabled?(:write_path_on)
+    refute FeatureFlags.enabled_for?(:write_path_pct, "user:1")
+
+    :sys.resume(pid)
+
+    assert Enum.map(writers, &Task.await(&1, 1_000)) == [:ok, :ok, :ok]
+    assert FeatureFlags.enabled?(:write_path_on)
+    assert FeatureFlags.enabled_for?(:write_path_pct, "user:1")
+  end
+
+  test "ETS tables are created with read_concurrency enabled, default and custom" do
+    assert :ets.info(:feature_flags, :read_concurrency) == true
+
+    suffix = "#{System.pid()}_#{System.unique_integer([:positive])}"
+    table = String.to_atom("rc_table_#{suffix}")
+    server = String.to_atom("rc_server_#{suffix}")
+
+    start_supervised!(
+      {FeatureFlags, [table_name: table, name: server]},
+      id: :read_concurrency_feature_flags
+    )
+
+    assert :ets.info(table, :read_concurrency) == true
+  end
+
+  test "enable_for_percentage refuses non-integer or out-of-range percentages" do
+    assert_raise FunctionClauseError, fn ->
+      FeatureFlags.enable_for_percentage(:guarded, 101)
+    end
+
+    assert_raise FunctionClauseError, fn ->
+      FeatureFlags.enable_for_percentage(:guarded, -1)
+    end
+
+    assert_raise FunctionClauseError, fn ->
+      FeatureFlags.enable_for_percentage(:guarded, 50.0)
+    end
+
+    # No rejected call may leave a flag behind.
+    refute FeatureFlags.enabled?(:guarded)
+    refute FeatureFlags.enabled_for?(:guarded, "user:1")
+  end
+
+  test "user hashing exactly to the threshold is excluded until the threshold grows" do
+    target = 25
+
+    user_id =
+      Enum.find_value(1..50_000, fn i ->
+        candidate = "user:#{i}"
+        if :erlang.phash2({:edge, candidate}, 100) == target, do: candidate
+      end)
+
+    assert user_id, "expected some user hashing to exactly #{target} for flag :edge"
+
+    FeatureFlags.enable_for_percentage(:edge, target)
+    refute FeatureFlags.enabled_for?(:edge, user_id)
+
+    FeatureFlags.enable_for_percentage(:edge, target + 1)
+    assert FeatureFlags.enabled_for?(:edge, user_id)
+  end
 end
 ```

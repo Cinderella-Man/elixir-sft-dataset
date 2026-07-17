@@ -86,8 +86,9 @@ defmodule Money do
   Splits a money value evenly among `n` parties (a positive integer).
 
   Returns a list of `n` `Money` structs. The remainder is distributed one cent
-  at a time to the first `rem(amount, n)` parties, so the results always sum
-  back to the original amount.
+  at a time to the first `abs(rem(amount, n))` parties, so the results always
+  sum back to the original amount. For negative amounts the extra cent is a
+  negative cent, keeping every share within one cent of the others.
 
   Raises `ArgumentError` if `n` is not a positive integer.
   """
@@ -96,9 +97,11 @@ defmodule Money do
       when is_integer(n) and n > 0 do
     base = div(amount, n)
     remainder = rem(amount, n)
+    step = if remainder < 0, do: -1, else: 1
+    extras = abs(remainder)
 
     Enum.map(0..(n - 1), fn i ->
-      cents = if i < remainder, do: base + 1, else: base
+      cents = if i < extras, do: base + step, else: base
       %__MODULE__{amount: cents, currency: currency}
     end)
   end
@@ -307,6 +310,61 @@ defmodule MoneyTest do
 
     parts = Money.split(total, 3)
     assert Enum.sum(Enum.map(parts, & &1.amount)) == 2600
+  end
+
+  test "split/2 of a negative amount still sums back to the original amount" do
+    parts = Money.split(Money.new(-1000, :USD), 3)
+    amounts = Enum.map(parts, & &1.amount)
+
+    assert length(parts) == 3
+    assert Enum.sum(amounts) == -1000
+    assert Enum.all?(parts, &(&1.currency == :USD))
+  end
+
+  test "multiply/2 rounds negative halves away from zero" do
+    # -101 * 0.5 = -50.5 -> -51 (away from zero, not toward it)
+    assert Money.multiply(Money.new(-101, :USD), 0.5).amount == -51
+    # 101 * -0.5 = -50.5 -> -51
+    assert Money.multiply(Money.new(101, :USD), -0.5).amount == -51
+  end
+
+  test "multiply/2 by a float stores an integer cent count, never a float" do
+    result = Money.multiply(Money.new(100, :USD), 0.1)
+    assert is_integer(result.amount)
+
+    chained = Money.multiply(Money.new(333, :EUR), 1.5)
+    assert is_integer(chained.amount)
+    assert chained.amount == 500
+    assert is_integer(Money.add(chained, Money.new(1, :EUR)).amount)
+  end
+
+  test "split/2 raises when n is a non-integer value" do
+    assert_raise ArgumentError, fn -> Money.split(Money.new(100, :USD), 2.5) end
+    assert_raise ArgumentError, fn -> Money.split(Money.new(100, :USD), 3.0) end
+    assert_raise ArgumentError, fn -> Money.split(Money.new(100, :USD), "3") end
+    assert_raise ArgumentError, fn -> Money.split(Money.new(100, :USD), :three) end
+  end
+
+  test "new/2 returns a struct with exactly the amount and currency fields" do
+    m = Money.new(100, :USD)
+    assert m.__struct__ == Money
+
+    keys =
+      m
+      |> Map.from_struct()
+      |> Map.keys()
+      |> Enum.sort()
+
+    assert keys == [:amount, :currency]
+  end
+
+  test "split/2 of a small negative amount spreads the remainder cent by cent" do
+    parts = Money.split(Money.new(-2, :USD), 3)
+    amounts = Enum.map(parts, & &1.amount)
+
+    assert Enum.sum(amounts) == -2
+    assert Enum.max(amounts) - Enum.min(amounts) <= 1
+    assert Enum.all?(parts, &(&1.currency == :USD))
   end
 end
 ```

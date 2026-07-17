@@ -445,5 +445,55 @@ defmodule WebhookReceiverMultiProviderTest do
     conn = do_request(opts, :post, "/api/other/stripe", build_event("evt_z"), [])
     assert conn.status == 404
   end
+
+  test "provider config without :prefix key defaults to empty prefix", %{store: store} do
+    providers = %{"acme" => %{secrets: [@stripe], header: "acme-signature"}}
+    opts = [providers: providers, store: store]
+    payload = build_event("evt_no_prefix")
+
+    conn = post_webhook(opts, "acme", payload, [{"acme-signature", hmac_hex(payload, @stripe)}])
+
+    assert conn.status == 200
+    assert json_body(conn)["status"] == "received"
+    assert {:ok, event} = WebhookReceiver.Store.get_event(store, "acme", "evt_no_prefix")
+    assert event.event_id == "evt_no_prefix"
+  end
+
+  test "Store.store_event/4 client returns :created then :duplicate for same pair", %{
+    store: store
+  } do
+    payload = %{"id" => "evt_direct", "type" => "x"}
+
+    assert {:ok, :created} =
+             WebhookReceiver.Store.store_event(store, "stripe", "evt_direct", payload)
+
+    assert {:ok, :duplicate} =
+             WebhookReceiver.Store.store_event(store, "stripe", "evt_direct", payload)
+
+    assert {:ok, :created} =
+             WebhookReceiver.Store.store_event(store, "github", "evt_direct", payload)
+
+    assert {:ok, event} = WebhookReceiver.Store.get_event(store, "stripe", "evt_direct")
+    assert event.payload == payload
+    assert event.status == :pending
+
+    assert length(
+             Enum.filter(WebhookReceiver.Store.all_events(store), &(&1.event_id == "evt_direct"))
+           ) == 2
+  end
+
+  test "Store.get_event/3 returns :error for an unstored provider/id pair", %{
+    opts: opts,
+    store: store
+  } do
+    assert :error = WebhookReceiver.Store.get_event(store, "stripe", "never_stored")
+    assert WebhookReceiver.Store.all_events(store) == []
+
+    payload = build_event("evt_only")
+    post_webhook(opts, "stripe", payload, [{"stripe-signature", stripe_sig(payload, @stripe)}])
+
+    assert :error = WebhookReceiver.Store.get_event(store, "github", "evt_only")
+    assert :error = WebhookReceiver.Store.get_event(store, "stripe", "evt_other")
+  end
 end
 ```

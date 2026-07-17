@@ -269,5 +269,97 @@ defmodule PolicySagaTest do
     assert {:ok, %{x: 1}} = PolicySaga.execute(PolicySaga.new(), %{x: 1})
     assert Recorder.events() == []
   end
+
+  test "omitting :on_error defaults to :continue past a failed compensation" do
+    saga =
+      PolicySaga.new()
+      |> PolicySaga.step(:a, ok_action(:a, 1), comp(:a, {:ok, :undo_a}))
+      |> PolicySaga.step(:b, ok_action(:b, 2), comp(:b, {:error, :undo_failed}))
+      |> PolicySaga.step(:c, fail_action(:c, :boom), comp(:c))
+
+    assert {:error, err} = PolicySaga.execute(saga, %{})
+    assert err.compensated == [:b, :a]
+    assert err.compensations == %{b: {:error, :undo_failed}, a: {:ok, :undo_a}}
+    assert err.aborted_at == nil
+    assert err.uncompensated == []
+    assert Recorder.comps() == [{:comp, :b}, {:comp, :a}]
+  end
+
+  test "error value carries exactly the documented key set" do
+    saga =
+      PolicySaga.new()
+      |> PolicySaga.step(:a, ok_action(:a, 1), comp(:a))
+      |> PolicySaga.step(:b, fail_action(:b, :boom), comp(:b))
+
+    assert {:error, err} = PolicySaga.execute(saga, %{})
+
+    assert err |> Map.keys() |> Enum.sort() ==
+             [:aborted_at, :compensated, :compensations, :error, :step, :uncompensated]
+  end
+
+  test "actions after the failing step never run" do
+    saga =
+      PolicySaga.new()
+      |> PolicySaga.step(:a, ok_action(:a, 1), comp(:a))
+      |> PolicySaga.step(:b, fail_action(:b, :boom), comp(:b))
+      |> PolicySaga.step(:c, ok_action(:c, 3), comp(:c))
+
+    assert {:error, err} = PolicySaga.execute(saga, %{})
+    assert err.step == :b
+    refute {:action, :c} in Recorder.events()
+    refute {:comp, :c} in Recorder.events()
+    assert Recorder.events() == [{:action, :a}, {:action, :b}, {:comp, :a}]
+  end
+
+  test "an earlier step's compensation sees later steps' stored results" do
+    capture = fn name ->
+      fn ctx ->
+        Recorder.record({:comp_ctx, name, ctx})
+        {:ok, :undone}
+      end
+    end
+
+    saga =
+      PolicySaga.new()
+      |> PolicySaga.step(:a, ok_action(:a, 1), capture.(:a))
+      |> PolicySaga.step(:b, ok_action(:b, 2), capture.(:b))
+      |> PolicySaga.step(:c, fail_action(:c, :boom), comp(:c))
+
+    assert {:error, _} = PolicySaga.execute(saga, %{seed: :s})
+
+    ctxs =
+      for {:comp_ctx, name, ctx} <- Recorder.events(), into: %{}, do: {name, ctx}
+
+    assert ctxs[:a] == %{seed: :s, a: 1, b: 2}
+    assert ctxs[:b] == %{seed: :s, a: 1, b: 2}
+  end
+
+  test "uncompensated lists every skipped step in reverse completion order" do
+    saga =
+      PolicySaga.new()
+      |> PolicySaga.step(:a, ok_action(:a, 1), comp(:a))
+      |> PolicySaga.step(:b, ok_action(:b, 2), comp(:b))
+      |> PolicySaga.step(:c, ok_action(:c, 3), comp(:c, {:error, :undo_failed}), on_error: :abort)
+      |> PolicySaga.step(:d, fail_action(:d, :boom), comp(:d))
+
+    assert {:error, err} = PolicySaga.execute(saga, %{})
+    assert err.compensated == [:c]
+    assert err.aborted_at == :c
+    assert err.uncompensated == [:b, :a]
+    assert Recorder.comps() == [{:comp, :c}]
+  end
+
+  test "abort on the last compensation leaves nothing uncompensated" do
+    saga =
+      PolicySaga.new()
+      |> PolicySaga.step(:a, ok_action(:a, 1), comp(:a, {:error, :undo_failed}), on_error: :abort)
+      |> PolicySaga.step(:b, fail_action(:b, :boom), comp(:b))
+
+    assert {:error, err} = PolicySaga.execute(saga, %{})
+    assert err.compensated == [:a]
+    assert err.compensations == %{a: {:error, :undo_failed}}
+    assert err.aborted_at == :a
+    assert err.uncompensated == []
+  end
 end
 ```

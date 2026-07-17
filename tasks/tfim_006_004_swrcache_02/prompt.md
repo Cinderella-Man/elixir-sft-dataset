@@ -553,5 +553,57 @@ defmodule SwrCacheTest do
       SwrCache.put(c, :a, 1, 100, 0, fn -> :_ end)
     end
   end
+
+  test "re-put overwrites the loader used for revalidation", %{c: c} do
+    parent = self()
+
+    loader_a = fn ->
+      send(parent, :loader_a)
+      :va
+    end
+
+    loader_b = fn ->
+      send(parent, :loader_b)
+      :vb
+    end
+
+    :ok = SwrCache.put(c, :a, :v1, 1_000, 2_000, loader_a)
+    # Overwrite the same key — the new loader must replace the old one.
+    :ok = SwrCache.put(c, :a, :v2, 1_000, 2_000, loader_b)
+
+    Clock.advance(1_000)
+    assert {:ok, :v2, :stale} = SwrCache.get(c, :a)
+
+    assert_receive :loader_b, 500
+    refute_receive :loader_a, 50
+  end
+
+  test "sweep keeps a stale entry whose revalidation failed", %{c: c} do
+    Clock.set(0)
+    parent = self()
+
+    loader = fn ->
+      send(parent, :loader_ran)
+      raise "boom"
+    end
+
+    # fresh until 100, hard expiry at 2100.
+    :ok = SwrCache.put(c, :a, :v1, 100, 2_000, loader)
+
+    Clock.advance(150)
+    assert {:ok, :v1, :stale} = SwrCache.get(c, :a)
+    assert_receive :loader_ran, 500
+    :ok = wait_for_idle(c)
+
+    # Still inside the stale window (t=150 < 2100): sweep must NOT drop it.
+    send(c, :sweep)
+    assert %{entries: 1} = SwrCache.stats(c)
+    assert {:ok, :v1, :stale} = SwrCache.get(c, :a)
+  end
+
+  test "delete on a missing key returns :ok", %{c: c} do
+    assert :ok = SwrCache.delete(c, :never_existed)
+    assert :miss = SwrCache.get(c, :never_existed)
+  end
 end
 ```

@@ -378,5 +378,67 @@ defmodule ResumableJsonStreamerTest do
     assert growth < file_size
     assert is_float(stats.throughput) and stats.throughput > 0.0
   end
+
+  test "max_errors: 2 with exactly two malformed items finishes cleanly", %{
+    path: path,
+    collector: c
+  } do
+    encoded =
+      for i <- 1..8 do
+        if i in [2, 5], do: "{{{not json", else: valid(%{"id" => i})
+      end
+
+    write_array(path, encoded)
+
+    assert {:ok, stats} =
+             ResumableJsonStreamer.process(path, Collector.handler(c), max_errors: 2)
+
+    assert stats.aborted == false
+    assert stats.errors == 2
+    assert stats.processed == 6
+    assert stats.last_index == 8
+    assert Enum.map(Collector.items(c), & &1["id"]) == [1, 3, 4, 6, 7, 8]
+  end
+
+  test "blank lines are not element lines for indexing or resume", %{path: path, collector: c} do
+    File.write!(path, "[\n\n{\"id\": 1},\n\n\n{\"id\": 2},\n{\"id\": 3}\n\n]\n")
+
+    assert {:ok, stats} =
+             ResumableJsonStreamer.process(path, Collector.handler(c), resume_from: 1)
+
+    assert stats.processed == 2
+    assert stats.errors == 0
+    assert stats.last_index == 3
+    assert stats.aborted == false
+    assert Enum.map(Collector.items(c), & &1["id"]) == [2, 3]
+  end
+
+  test "element lines padded with whitespace still decode", %{path: path, collector: c} do
+    File.write!(path, "[\n   {\"id\": 1},  \n\t{\"id\": 2}\t\n]\n")
+
+    assert {:ok, stats} = ResumableJsonStreamer.process(path, Collector.handler(c))
+
+    assert stats.processed == 2
+    assert stats.errors == 0
+    assert stats.last_index == 2
+    assert stats.aborted == false
+    assert Enum.map(Collector.items(c), & &1["id"]) == [1, 2]
+  end
+
+  test "handler return values do not affect the run", %{path: path, collector: c} do
+    write_array(path, for(i <- 1..3, do: valid(%{"id" => i})))
+
+    handler = fn item ->
+      Agent.update(c, &[item | &1])
+      {:error, :handler_says_no}
+    end
+
+    assert {:ok, stats} = ResumableJsonStreamer.process(path, handler)
+
+    assert stats.processed == 3
+    assert stats.errors == 0
+    assert stats.aborted == false
+    assert Enum.map(Collector.items(c), & &1["id"]) == [1, 2, 3]
+  end
 end
 ```

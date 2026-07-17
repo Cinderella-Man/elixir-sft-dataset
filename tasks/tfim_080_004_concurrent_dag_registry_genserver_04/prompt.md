@@ -344,5 +344,85 @@ defmodule DAGServerTest do
     assert {:ok, order} = DAGServer.topological_sort(s)
     assert length(order) == 2
   end
+
+  test "rejected cycle edge is not committed to the graph", %{server: s} do
+    for v <- [:a, :b, :c], do: :ok = DAGServer.add_vertex(s, v)
+    :ok = DAGServer.add_edge(s, :a, :b)
+    :ok = DAGServer.add_edge(s, :b, :c)
+
+    assert {:error, :cycle} = DAGServer.add_edge(s, :c, :a)
+
+    assert DAGServer.successors(s, :c) == []
+    assert DAGServer.predecessors(s, :a) == []
+    assert {:ok, order} = DAGServer.topological_sort(s)
+    assert order == [:a, :b, :c]
+    assert valid_topological_order?(order, [{:a, :b}, {:b, :c}])
+  end
+
+  test "missing source endpoint is rejected just like a missing target", %{server: s} do
+    :ok = DAGServer.add_vertex(s, :a)
+
+    assert {:error, :vertex_not_found} = DAGServer.add_edge(s, :ghost, :a)
+    assert {:error, :vertex_not_found} = DAGServer.add_edge(s, :ghost, :phantom)
+
+    assert DAGServer.vertices(s) == [:a]
+    assert DAGServer.predecessors(s, :a) == []
+  end
+
+  test "start_link forwards opts so the server is reachable by registered name" do
+    name = :dag_server_named_opts_test
+
+    assert {:ok, pid} = DAGServer.start_link(name: name)
+    assert is_pid(pid)
+    assert Process.whereis(name) == pid
+
+    assert :ok = DAGServer.add_vertex(name, :x)
+    assert :ok = DAGServer.add_vertex(name, :y)
+    assert :ok = DAGServer.add_edge(name, :x, :y)
+    assert {:ok, [:x, :y]} = DAGServer.topological_sort(name)
+    assert DAGServer.successors(name, :x) == [:y]
+  end
+
+  test "vertices may be arbitrary terms such as tuples, maps, strings and lists", %{server: s} do
+    terms = [{:job, 1}, %{id: "m"}, "build", [1, 2, 3], 7]
+    for v <- terms, do: assert(:ok = DAGServer.add_vertex(s, v))
+
+    assert :ok = DAGServer.add_edge(s, {:job, 1}, %{id: "m"})
+    assert :ok = DAGServer.add_edge(s, %{id: "m"}, "build")
+    assert {:error, :cycle} = DAGServer.add_edge(s, "build", {:job, 1})
+
+    assert Enum.sort(DAGServer.vertices(s)) == Enum.sort(terms)
+    assert DAGServer.successors(s, {:job, 1}) == [%{id: "m"}]
+    assert DAGServer.predecessors(s, "build") == [%{id: "m"}]
+
+    assert {:ok, order} = DAGServer.topological_sort(s)
+    assert length(order) == 5
+    assert valid_topological_order?(order, [{{:job, 1}, %{id: "m"}}, {%{id: "m"}, "build"}])
+  end
+
+  test "sort includes isolated vertices and orders a diamond validly", %{server: s} do
+    for v <- [:a, :b, :c, :d, :lonely], do: :ok = DAGServer.add_vertex(s, v)
+    :ok = DAGServer.add_edge(s, :a, :b)
+    :ok = DAGServer.add_edge(s, :a, :c)
+    :ok = DAGServer.add_edge(s, :b, :d)
+    :ok = DAGServer.add_edge(s, :c, :d)
+
+    assert {:ok, order} = DAGServer.topological_sort(s)
+    assert Enum.sort(order) == [:a, :b, :c, :d, :lonely]
+    assert length(order) == 5
+    edges = [{:a, :b}, {:a, :c}, {:b, :d}, {:c, :d}]
+    assert valid_topological_order?(order, edges)
+  end
+
+  test "neighbour queries report only direct edges, not transitive reachability", %{server: s} do
+    for v <- [:a, :b, :c], do: :ok = DAGServer.add_vertex(s, v)
+    :ok = DAGServer.add_edge(s, :a, :b)
+    :ok = DAGServer.add_edge(s, :b, :c)
+
+    assert DAGServer.predecessors(s, :c) == [:b]
+    assert DAGServer.successors(s, :a) == [:b]
+    assert DAGServer.predecessors(s, :b) == [:a]
+    assert DAGServer.successors(s, :b) == [:c]
+  end
 end
 ```

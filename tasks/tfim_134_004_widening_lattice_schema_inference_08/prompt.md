@@ -425,5 +425,74 @@ defmodule LatticeSchemaTest do
              "when" => :datetime
            }
   end
+
+  test "a quoted empty field is a non-null string cell that widens the column" do
+    csv = """
+    a
+    1
+    ""
+    """
+
+    assert schema(csv) == %{"a" => :string}
+  end
+
+  test "sample_rows defaults to at most the first 100 data rows" do
+    rows = List.duplicate("2020-01-15", 100)
+    csv = Enum.join(["ts"] ++ rows ++ ["2020-01-15T10:00:00"], "\n") <> "\n"
+
+    assert schema(csv) == %{"ts" => :date}
+    assert schema(csv, sample_rows: 101) == %{"ts" => :datetime}
+  end
+
+  test "boolean detection is case-insensitive across mixed casings" do
+    csv = """
+    flag
+    TRUE
+    False
+    tRuE
+    """
+
+    assert schema(csv) == %{"flag" => :boolean}
+  end
+
+  test "signed numerics classify per the documented regexes, partial decimals do not" do
+    csv = """
+    i,f,x
+    +5,+1.5,1.
+    -3,-2.25,.5
+    """
+
+    assert schema(csv) == %{"i" => :integer, "f" => :float, "x" => :string}
+  end
+
+  test "quoted header fields keep embedded commas and unescape doubled quotes" do
+    csv = ~s|"first,last","say ""hi"""\n1,2\n|
+
+    assert schema(csv) == %{"first,last" => :integer, "say \"hi\"" => :integer}
+  end
+
+  test "infer_file honors headers and sample_rows options like infer_string" do
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "lattice_opts_#{System.pid()}_#{System.unique_integer([:positive])}.csv"
+      )
+
+    contents = """
+    2020-01-15,1
+    2020-01-15T10:00:00,2
+    """
+
+    File.write!(path, contents)
+    on_exit(fn -> File.rm(path) end)
+
+    opts = [headers: false, sample_rows: 1]
+
+    assert LatticeSchema.infer_file(path, opts) ==
+             LatticeSchema.infer_string(contents, opts)
+
+    assert LatticeSchema.infer_file(path, opts) ==
+             %{"column_1" => :date, "column_2" => :integer}
+  end
 end
 ```

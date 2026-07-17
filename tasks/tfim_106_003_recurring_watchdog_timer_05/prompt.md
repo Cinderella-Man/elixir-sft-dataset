@@ -258,5 +258,69 @@ defmodule RecurringWatchdogTest do
     assert Process.whereis(:custom_recurring) == pid
     on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
   end
+
+  test "replacing a registration with a longer interval retires the old short timer" do
+    test = self()
+    :ok = RecurringWatchdog.register(:w, dummy_pid(), 50, notifier(test, :old))
+    :ok = RecurringWatchdog.register(:w, dummy_pid(), 10_000, notifier(test, :new))
+
+    # The replaced 50 ms deadline must never fire, and the fresh 10 s one is far away.
+    refute_receive {:old, :w}, 300
+    refute_receive {:new, :w}, 100
+    assert {:ok, :healthy} = RecurringWatchdog.status(:w)
+  end
+
+  test "replacing an alerting registration resets its health back to healthy" do
+    test = self()
+    :ok = RecurringWatchdog.register(:w, dummy_pid(), 50, notifier(test, :old))
+
+    assert_receive {:old, :w}, 1_000
+    assert {:ok, :alerting} = RecurringWatchdog.status(:w)
+
+    :ok = RecurringWatchdog.register(:w, dummy_pid(), 10_000, notifier(test, :new))
+    assert {:ok, :healthy} = RecurringWatchdog.status(:w)
+    refute_receive {:old, :w}, 200
+    refute_receive {:new, :w}, 50
+  end
+
+  test "unregister before the first alert cancels the armed timer" do
+    test = self()
+    :ok = RecurringWatchdog.register(:w, dummy_pid(), 200, notifier(test))
+    assert :ok = RecurringWatchdog.unregister(:w)
+
+    refute_receive {:alert, :w}, 500
+    assert {:error, :not_registered} = RecurringWatchdog.status(:w)
+  end
+
+  test "heartbeat and unregister on one name leave another name alerting" do
+    test = self()
+    :ok = RecurringWatchdog.register(:a, dummy_pid(), 10_000, notifier(test, :a_alert))
+    :ok = RecurringWatchdog.register(:b, dummy_pid(), 50, notifier(test, :b_alert))
+
+    assert :ok = RecurringWatchdog.heartbeat(:a)
+    assert :ok = RecurringWatchdog.unregister(:a)
+
+    assert_receive {:b_alert, :b}, 1_000
+    assert_receive {:b_alert, :b}, 1_000
+    assert {:ok, :alerting} = RecurringWatchdog.status(:b)
+    refute_receive {:a_alert, :a}, 50
+  end
+
+  test "a dead registered pid stays healthy while heartbeats keep arriving" do
+    test = self()
+    pid = dummy_pid()
+    :ok = RecurringWatchdog.register(:w, pid, 150, notifier(test))
+
+    ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}, 500
+
+    for _ <- 1..4 do
+      assert :ok = RecurringWatchdog.heartbeat(:w)
+      refute_receive {:alert, :w}, 50
+    end
+
+    assert {:ok, :healthy} = RecurringWatchdog.status(:w)
+  end
 end
 ```

@@ -168,5 +168,48 @@ defmodule AccessPolicyTest do
       refute AccessPolicy.authorized?(:admin, :posts, :read, [])
     end
   end
+
+  test "scalar role atom in :roles matches only that exact role" do
+    policies = [%{effect: :allow, roles: :viewer, resource: :docs, action: :read}]
+
+    assert AccessPolicy.evaluate(:viewer, :docs, :read, policies) == :allow
+    assert AccessPolicy.evaluate(:editor, :docs, :read, policies) == :deny
+  end
+
+  test "list membership in resource field" do
+    policies = [%{effect: :allow, roles: :any, resource: [:posts, :docs], action: :read}]
+
+    assert AccessPolicy.authorized?(:viewer, :posts, :read, policies)
+    assert AccessPolicy.authorized?(:viewer, :docs, :read, policies)
+    refute AccessPolicy.authorized?(:viewer, :settings, :read, policies)
+  end
+
+  test "list membership in action field" do
+    policies = [%{effect: :allow, roles: :any, resource: :posts, action: [:read, :write]}]
+
+    assert AccessPolicy.authorized?(:viewer, :posts, :read, policies)
+    assert AccessPolicy.authorized?(:viewer, :posts, :write, policies)
+    refute AccessPolicy.authorized?(:viewer, :posts, :delete, policies)
+  end
+
+  test "authorized? returns exact booleans, never nil or other truthy values" do
+    policies = [%{effect: :allow, roles: [:admin], resource: :any, action: :any}]
+
+    assert AccessPolicy.authorized?(:admin, :posts, :read, policies) === true
+    assert AccessPolicy.authorized?(:viewer, :posts, :read, policies) === false
+    assert AccessPolicy.authorized?(:admin, :posts, :read, []) === false
+  end
+
+  test "deny statement with scalar roles and list resource wins over wildcard allow" do
+    policies = [
+      %{effect: :allow, roles: :any, resource: :any, action: :any},
+      %{effect: :deny, roles: :editor, resource: [:settings, :billing], action: [:delete]}
+    ]
+
+    assert AccessPolicy.evaluate(:editor, :settings, :delete, policies) == :deny
+    assert AccessPolicy.evaluate(:editor, :billing, :delete, policies) == :deny
+    assert AccessPolicy.evaluate(:admin, :settings, :delete, policies) == :allow
+    assert AccessPolicy.evaluate(:editor, :settings, :read, policies) == :allow
+  end
 end
 ```

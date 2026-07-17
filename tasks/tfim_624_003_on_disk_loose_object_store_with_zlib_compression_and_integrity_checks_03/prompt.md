@@ -345,5 +345,76 @@ defmodule ObjectStoreTest do
     assert {:ok, "persist two"} = ObjectStore.retrieve(s2, h2)
     assert ObjectStore.list_objects(s2) == Enum.sort([h1, h2])
   end
+
+  test "a second live process on the same directory sees objects written by the first", %{
+    store: s,
+    dir: dir
+  } do
+    {:ok, s2} = ObjectStore.start_link(dir: dir)
+
+    {:ok, h1} = ObjectStore.store(s, "written by first")
+    assert {:ok, "written by first"} = ObjectStore.retrieve(s2, h1)
+    assert ObjectStore.has_object?(s2, h1) == true
+
+    {:ok, h2} = ObjectStore.store(s2, "written by second")
+    assert {:ok, "written by second"} = ObjectStore.retrieve(s, h2)
+    assert ObjectStore.list_objects(s) == Enum.sort([h1, h2])
+
+    :ok = GenServer.stop(s2)
+  end
+
+  test "storing the same content twice leaves the existing file untouched", %{store: s, dir: dir} do
+    content = "no rewrite please"
+    {:ok, hash} = ObjectStore.store(s, content)
+    path = object_path(dir, hash)
+
+    stamp = 946_684_800
+    :ok = File.touch!(path, stamp)
+    assert File.stat!(path, time: :posix).mtime == stamp
+
+    {:ok, ^hash} = ObjectStore.store(s, content)
+
+    assert File.stat!(path, time: :posix).mtime == stamp
+    assert {:ok, ^content} = ObjectStore.retrieve(s, hash)
+  end
+
+  test "start_link creates the object directory when it does not exist", %{dir: dir} do
+    nested = Path.join([dir, "not", "yet", "created"])
+    refute File.exists?(nested)
+
+    {:ok, s2} = ObjectStore.start_link(dir: nested)
+    assert File.dir?(nested)
+
+    {:ok, hash} = ObjectStore.store(s2, "fresh dir")
+    assert File.exists?(object_path(nested, hash))
+    assert ObjectStore.list_objects(s2) == [hash]
+
+    :ok = GenServer.stop(s2)
+  end
+
+  test "start_link registers the process under the given :name", %{dir: dir} do
+    name = :"objstore_named_#{System.unique_integer([:positive])}"
+    {:ok, pid} = ObjectStore.start_link(dir: Path.join(dir, "named"), name: name)
+    assert Process.whereis(name) == pid
+
+    {:ok, hash} = ObjectStore.store(name, "via name")
+    assert {:ok, "via name"} = ObjectStore.retrieve(name, hash)
+    assert ObjectStore.has_object?(name, hash) == true
+    assert ObjectStore.list_objects(name) == [hash]
+
+    :ok = GenServer.stop(name)
+  end
+
+  test "list_objects returns an empty list for a store with no objects", %{store: s} do
+    assert ObjectStore.list_objects(s) == []
+
+    {:ok, hash} = ObjectStore.store(s, "only one")
+    assert ObjectStore.list_objects(s) == [hash]
+  end
+
+  test "start_link without the required :dir option raises" do
+    assert_raise KeyError, fn -> ObjectStore.start_link([]) end
+    assert_raise KeyError, fn -> ObjectStore.start_link(name: :objstore_no_dir) end
+  end
 end
 ```

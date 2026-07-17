@@ -350,5 +350,39 @@ defmodule WorkflowTest do
     # record is still in draft
     assert rec.state == :draft
   end
+
+  test "unguarded edges pass even when both guard fields are unusable" do
+    draft = Workflow.new(%{items: [:x], approved_by: "someone"})
+    {:ok, submitted} = Workflow.transition(draft, :submit)
+    bare = %{submitted | items: [], approved_by: nil}
+
+    # :reject has no guard.
+    assert {:ok, %{state: :rejected}} = Workflow.transition(bare, :reject)
+    assert Workflow.can?(bare, :reject) == true
+
+    approved = %{bare | state: :approved}
+    assert {:ok, in_progress} = Workflow.transition(approved, :start)
+    assert in_progress.state == :in_progress
+    assert Workflow.can?(approved, :start) == true
+
+    assert {:ok, %{state: :completed}} = Workflow.transition(in_progress, :complete)
+    assert {:ok, %{state: :cancelled}} = Workflow.transition(in_progress, :cancel)
+  end
+
+  test "unrelated fields survive a guardless transition into a terminal state" do
+    rec = Workflow.new(%{items: [:a], approved_by: "boss", meta: %{customer: "acme"}, tag: 42})
+
+    {:ok, rec} = Workflow.transition(rec, :submit)
+    {:ok, rec} = Workflow.transition(rec, :approve)
+    {:ok, rec} = Workflow.transition(rec, :start)
+    {:ok, done} = Workflow.transition(rec, :complete)
+
+    assert done.state == :completed
+    assert Map.delete(done, :state) == Map.delete(rec, :state)
+    assert done.meta == %{customer: "acme"}
+    assert done.tag == 42
+    assert done.items == [:a]
+    assert done.approved_by == "boss"
+  end
 end
 ```

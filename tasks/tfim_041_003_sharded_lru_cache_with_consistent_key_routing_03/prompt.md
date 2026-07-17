@@ -410,5 +410,106 @@ defmodule LRUCacheShardedTest do
     assert {:ok, :from_c1} = LRUCacheSharded.get(c1, :k)
     assert {:ok, :from_c2} = LRUCacheSharded.get(c2, :k)
   end
+
+  test "updating a key at exactly capacity evicts nothing and refreshes its recency" do
+    c = start_cache(1, 2)
+    LRUCacheSharded.put(c, :a, 1)
+    LRUCacheSharded.put(c, :b, 2)
+    assert LRUCacheSharded.size(c) == 2
+
+    # in-place update while the shard is exactly full
+    LRUCacheSharded.put(c, :a, 99)
+    assert LRUCacheSharded.size(c) == 2
+
+    # :a was refreshed by the update, so :b is now the eviction victim
+    LRUCacheSharded.put(c, :c, 3)
+    assert :miss = LRUCacheSharded.get(c, :b)
+    assert {:ok, 99} = LRUCacheSharded.get(c, :a)
+    assert {:ok, 3} = LRUCacheSharded.get(c, :c)
+    assert LRUCacheSharded.size(c) == 2
+  end
+
+  test "invalid :num_shards fails the start with an ArgumentError naming the option" do
+    Process.flag(:trap_exit, true)
+    n1 = :"shard_#{System.unique_integer([:positive])}"
+
+    assert {:error, {%ArgumentError{message: m1}, _stack}} =
+             LRUCacheSharded.start_link(name: n1, num_shards: 0, max_size: 4)
+
+    assert m1 =~ ":num_shards"
+    assert m1 =~ "0"
+
+    n2 = :"shard_#{System.unique_integer([:positive])}"
+
+    assert {:error, {%ArgumentError{message: m2}, _stack}} =
+             LRUCacheSharded.start_link(name: n2, num_shards: 2.0, max_size: 4)
+
+    assert m2 =~ ":num_shards"
+    assert m2 =~ "2.0"
+  end
+
+  test "invalid :max_size fails the start with an ArgumentError naming the option" do
+    Process.flag(:trap_exit, true)
+    n1 = :"shard_#{System.unique_integer([:positive])}"
+
+    assert {:error, {%ArgumentError{message: m1}, _stack}} =
+             LRUCacheSharded.start_link(name: n1, num_shards: 2, max_size: -3)
+
+    assert m1 =~ ":max_size"
+    assert m1 =~ "-3"
+
+    n2 = :"shard_#{System.unique_integer([:positive])}"
+
+    assert {:error, {%ArgumentError{message: m2}, _stack}} =
+             LRUCacheSharded.start_link(name: n2, num_shards: 2, max_size: :lots)
+
+    assert m2 =~ ":max_size"
+    assert m2 =~ ":lots"
+  end
+
+  test "a missing required option fails loudly instead of defaulting" do
+    Process.flag(:trap_exit, true)
+    name = :"shard_#{System.unique_integer([:positive])}"
+
+    assert {:error, {%KeyError{key: :max_size}, _stack}} =
+             LRUCacheSharded.start_link(name: name, num_shards: 2)
+
+    assert {:error, {%KeyError{key: :num_shards}, _stack}} =
+             LRUCacheSharded.start_link(name: :"#{name}_b", max_size: 4)
+
+    assert_raise KeyError, fn ->
+      LRUCacheSharded.start_link(num_shards: 2, max_size: 4)
+    end
+  end
+
+  test "child_spec carries the documented id, type, restart and shutdown" do
+    opts = [name: :child_spec_probe, num_shards: 2, max_size: 3]
+    spec = LRUCacheSharded.child_spec(opts)
+
+    assert %{id: :child_spec_probe, type: :worker, restart: :permanent, shutdown: 5_000} = spec
+    assert {LRUCacheSharded, :start_link, [passed]} = spec.start
+    assert passed[:num_shards] == 2
+    assert passed[:max_size] == 3
+  end
+
+  test "arbitrary terms work as keys and values and round-trip unchanged" do
+    c = start_cache(2, 8)
+
+    pairs = [
+      {nil, nil},
+      {{:tuple, 1}, %{nested: [1, 2, 3]}},
+      {"string", {:ok, nil}},
+      {~D[2024-01-01], ~D[2030-12-31]},
+      {[1, [2]], :atom_value}
+    ]
+
+    for {k, v} <- pairs, do: LRUCacheSharded.put(c, k, v)
+
+    for {k, v} <- pairs do
+      idx = LRUCacheSharded.shard_index(c, k)
+      assert idx >= 0 and idx < 2
+      assert {:ok, ^v} = LRUCacheSharded.get(c, k)
+    end
+  end
 end
 ```

@@ -373,5 +373,44 @@ defmodule FieldMaskerTest do
     m = FieldMasker.new(%{})
     assert FieldMasker.mask_string(m, "4111-1111-1111-1234") == "****-****-****-1234"
   end
+
+  test "hash strategy hashes the inspect representation of a non-string value" do
+    m = FieldMasker.new(%{password: :hash})
+    result = FieldMasker.mask(m, %{password: :secret})
+    expected = "sha256:" <> Base.encode16(:crypto.hash(:sha256, inspect(:secret)), case: :lower)
+    assert result.password == expected
+  end
+
+  test "mask_string replaces a bare SSN pattern in free text" do
+    m = FieldMasker.new(%{})
+    assert FieldMasker.mask_string(m, "ssn 123-45-6789 ok") == "ssn ***-**-**** ok"
+  end
+
+  test "plain lists of maps and keyword lists are walked element-by-element" do
+    m = FieldMasker.new(%{password: :redact})
+    data = [%{password: "a"}, [password: "b"], "ping x@example.com"]
+    result = FieldMasker.mask(m, data)
+    assert [%{password: "[MASKED]"}, [password: "[MASKED]"], "ping x***@example.com"] = result
+  end
+
+  test "a struct value under a non-policy key is returned unchanged" do
+    m = FieldMasker.new(%{password: :redact})
+    uri = URI.parse("mailto:john.doe@example.com")
+    result = FieldMasker.mask(m, %{contact: uri})
+    assert result.contact == uri
+  end
+
+  test "a differently-cased string policy key masks an atom data key" do
+    m = FieldMasker.new(%{"PassWord" => :redact})
+    result = FieldMasker.mask(m, %{password: "x"})
+    assert result.password == "[MASKED]"
+  end
+
+  test "mask_string masks a bare 13-digit card and a space-separated 19-digit card" do
+    m = FieldMasker.new(%{})
+    assert FieldMasker.mask_string(m, "4111111111234") == "*********1234"
+    # 19 digits: only the final four digits (1, 2, 3, 4) survive, separators kept intact.
+    assert FieldMasker.mask_string(m, "4111 1111 1111 1111 234") == "**** **** **** ***1 234"
+  end
 end
 ```

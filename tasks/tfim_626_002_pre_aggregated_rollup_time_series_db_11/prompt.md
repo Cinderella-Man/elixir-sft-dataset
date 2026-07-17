@@ -500,5 +500,96 @@ defmodule RollupTSDBTest do
     assert b1.count == 2
     assert b1.sum == 5
   end
+
+  test "stats map exposes exactly the documented keys and nothing else", %{db: db} do
+    :ok = RollupTSDB.insert(db, "m", %{"host" => "a"}, 100, 5)
+    :ok = RollupTSDB.insert(db, "m", %{"host" => "a"}, 200, 15)
+
+    [{_labels, [{0, stats}]}] = RollupTSDB.query(db, "m", %{}, {0, 900})
+
+    assert Enum.sort(Map.keys(stats)) == [:avg, :count, :first, :last, :max, :min, :sum]
+    assert is_float(stats.avg)
+  end
+
+  test "a bucket is dropped exactly when start + duration equals now - retention", %{db: db} do
+    # bucket 0 expires at now == 11_000; bucket 1000 expires at now == 12_000
+    :ok = RollupTSDB.insert(db, "m", %{}, 100, 1)
+    :ok = RollupTSDB.insert(db, "m", %{}, 1500, 2)
+
+    Clock.set(10_999)
+    :ok = sync_cleanup(db)
+    [{_labels, buckets}] = RollupTSDB.query(db, "m", %{}, {0, 20_000})
+    assert Enum.map(buckets, &elem(&1, 0)) == [0, 1000]
+
+    Clock.set(11_000)
+    :ok = sync_cleanup(db)
+    [{_labels, kept}] = RollupTSDB.query(db, "m", %{}, {0, 20_000})
+    assert Enum.map(kept, &elem(&1, 0)) == [1000]
+  end
+
+  test "automatic cleanup re-arms itself after each run" do
+    test_pid = self()
+
+    clock = fn ->
+      send(test_pid, :clock_read)
+      0
+    end
+
+    {:ok, _db} = RollupTSDB.start_link(clock: clock, cleanup_interval_ms: 10)
+
+    assert_receive :clock_read, 1_000
+    assert_receive :clock_read, 1_000
+  end
+
+  test "cleanup_interval_ms of :infinity arms no automatic cleanup at all" do
+    test_pid = self()
+
+    clock = fn ->
+      send(test_pid, :clock_read)
+      0
+    end
+
+    {:ok, _db} = RollupTSDB.start_link(clock: clock, cleanup_interval_ms: :infinity)
+
+    refute_receive :clock_read, 300
+  end
+
+  test "bucket width defaults to one minute when the option is omitted" do
+    {:ok, db} = RollupTSDB.start_link(clock: &Clock.now/0, cleanup_interval_ms: :infinity)
+
+    :ok = RollupTSDB.insert(db, "m", %{}, 0, 1)
+    :ok = RollupTSDB.insert(db, "m", %{}, 59_999, 2)
+    :ok = RollupTSDB.insert(db, "m", %{}, 60_000, 3)
+
+    [{_labels, buckets}] = RollupTSDB.query(db, "m", %{}, {0, 120_000})
+    assert Enum.map(buckets, &elem(&1, 0)) == [0, 60_000]
+
+    [{0, b0}, {60_000, b1}] = buckets
+    assert b0.count == 2
+    assert b1.count == 1
+  end
+
+  test "retention defaults to one hour when the option is omitted" do
+    {:ok, db} =
+      RollupTSDB.start_link(
+        clock: &Clock.now/0,
+        bucket_duration_ms: 1_000,
+        cleanup_interval_ms: :infinity
+      )
+
+    # bucket 0 expires at now == 3_601_000; bucket 5000 not until 3_606_000
+    :ok = RollupTSDB.insert(db, "m", %{}, 100, 1)
+    :ok = RollupTSDB.insert(db, "m", %{}, 5_500, 2)
+
+    Clock.set(3_600_999)
+    :ok = sync_cleanup(db)
+    [{_labels, before}] = RollupTSDB.query(db, "m", %{}, {0, 10_000})
+    assert Enum.map(before, &elem(&1, 0)) == [0, 5_000]
+
+    Clock.set(3_601_000)
+    :ok = sync_cleanup(db)
+    [{_labels, kept}] = RollupTSDB.query(db, "m", %{}, {0, 10_000})
+    assert Enum.map(kept, &elem(&1, 0)) == [5_000]
+  end
 end
 ```

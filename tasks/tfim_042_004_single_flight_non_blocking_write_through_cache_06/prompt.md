@@ -515,5 +515,119 @@ defmodule CacheLayerSingleFlightTest do
     CacheLayer.fetch(cl, :posts, "id:1", &Tracker.fallback/0)
     assert Tracker.count() == 2
   end
+
+  test "a cache registered under :name serves fetches and hits through that name" do
+    pid = start_supervised!({CacheLayer, [name: :named_cache_layer]}, id: :named_cache)
+    assert Process.whereis(:named_cache_layer) == pid
+
+    assert {:ok, :db_value} =
+             CacheLayer.fetch(:named_cache_layer, :users, "u:1", &Tracker.fallback/0)
+
+    assert Tracker.count() == 1
+
+    # A hit must be locatable via the registered name alone, with no recompute.
+    boom = fn -> raise "fallback must not run on a cache hit" end
+    assert {:ok, :db_value} = CacheLayer.fetch(:named_cache_layer, :users, "u:1", boom)
+    assert Tracker.count() == 1
+
+    assert :ok = CacheLayer.invalidate(:named_cache_layer, :users, "u:1")
+
+    assert {:ok, :db_value} =
+             CacheLayer.fetch(:named_cache_layer, :users, "u:1", &Tracker.fallback/0)
+
+    assert Tracker.count() == 2
+  end
+
+  test "a cache hit is served while the cache process is suspended and answers no calls",
+       %{cl: cl} do
+    assert {:ok, :db_value} = CacheLayer.fetch(cl, :users, "u:1", &Tracker.fallback/0)
+    assert Tracker.count() == 1
+
+    # Suspended: the process still runs, but any GenServer call queues forever.
+    # A hit that round-trips through the server would therefore never return.
+    :sys.suspend(cl)
+
+    task =
+      Task.async(fn ->
+        CacheLayer.fetch(cl, :users, "u:1", fn -> :must_not_run end)
+      end)
+
+    try do
+      assert {:ok, :db_value} = Task.await(task, 500)
+    after
+      :sys.resume(cl)
+    end
+
+    assert Tracker.count() == 1
+  end
+
+  test "followers are handed the leader's value and never run their own fallback", %{cl: cl} do
+    parent = self()
+
+    leader_fun = fn ->
+      send(parent, {:leading, self()})
+
+      receive do
+        :go -> :leader_value
+      end
+    end
+
+    leader = Task.async(fn -> CacheLayer.fetch(cl, :t, :shared, leader_fun) end)
+    assert_receive {:leading, leader_pid}, 1_000
+
+    # Every follower passes a fallback that must never be invoked: whether it
+    # parks behind the leader or arrives after the insert, the value it gets
+    # must be the LEADER's value.
+    followers =
+      for _ <- 1..5 do
+        Task.async(fn ->
+          CacheLayer.fetch(cl, :t, :shared, fn -> raise "follower fallback must not run" end)
+        end)
+      end
+
+    send(leader_pid, :go)
+
+    assert {:ok, :leader_value} = Task.await(leader, 2_000)
+
+    for f <- followers do
+      assert {:ok, :leader_value} = Task.await(f, 2_000)
+    end
+  end
+
+  test "a table's ETS table appears only on first use and is readable from other processes",
+       %{cl: cl} do
+    before_tabs = MapSet.new(:ets.all())
+
+    # Touching a table that was never fetched must not create anything.
+    assert :ok = CacheLayer.invalidate_all(cl, :lazy)
+    assert :ok = CacheLayer.invalidate(cl, :lazy, "k")
+    assert MapSet.difference(MapSet.new(:ets.all()), before_tabs) |> MapSet.size() == 0
+
+    assert {:ok, :v} = CacheLayer.fetch(cl, :lazy, "k", fn -> :v end)
+
+    created = MapSet.difference(MapSet.new(:ets.all()), before_tabs)
+    assert MapSet.size(created) == 1
+
+    # A :public table can be read straight from an unrelated process; a
+    # :protected one would blow up in :ets.lookup outside the owner.
+    boom = fn -> raise "fallback must not run on a cache hit" end
+    task = Task.async(fn -> CacheLayer.fetch(cl, :lazy, "k", boom) end)
+    assert {:ok, :v} = Task.await(task, 1_000)
+  end
+
+  test "invalidate_all leaves entries cached in other tables intact", %{cl: cl} do
+    CacheLayer.fetch(cl, :users, "id:1", &Tracker.fallback/0)
+    CacheLayer.fetch(cl, :posts, "id:1", &Tracker.fallback/0)
+    assert Tracker.count() == 2
+
+    assert :ok = CacheLayer.invalidate_all(cl, :users)
+
+    boom = fn -> raise ":posts must survive invalidate_all(:users)" end
+    assert {:ok, :db_value} = CacheLayer.fetch(cl, :posts, "id:1", boom)
+    assert Tracker.count() == 2
+
+    CacheLayer.fetch(cl, :users, "id:1", &Tracker.fallback/0)
+    assert Tracker.count() == 3
+  end
 end
 ```

@@ -362,5 +362,61 @@ defmodule Catalog.FacetedTest do
     assert {:ok, %{data: [item]}} = Faceted.search(products(), %{"name" => "usb"})
     assert item.price == "9.99"
   end
+
+  test "absent sort param defaults to ordering by id ascending" do
+    assert {:ok, %{data: data, total: 6}} = Faceted.search(products(), %{})
+    assert ids(data) == [1, 2, 3, 4, 5, 6]
+  end
+
+  test "empty categories list imposes no category constraint" do
+    assert {:ok, %{data: data, total: 6, facets: facets}} =
+             Faceted.search(products(), %{"categories" => [], "sort" => "id"})
+
+    assert ids(data) == [1, 2, 3, 4, 5, 6]
+    assert facets.categories == %{"footwear" => 2, "electronics" => 3, "fitness" => 1}
+  end
+
+  test "empty tags list imposes no tag constraint" do
+    assert {:ok, %{data: data, total: 6, facets: facets}} =
+             Faceted.search(products(), %{"tags" => [], "sort" => "id"})
+
+    assert ids(data) == [1, 2, 3, 4, 5, 6]
+    assert facets.tags["office"] == 3
+    assert facets.tags["outdoor"] == 3
+  end
+
+  test "blank and unparseable price bounds are ignored" do
+    assert {:ok, %{data: data, total: 6}} =
+             Faceted.search(products(), %{"min_price" => "", "max_price" => "abc", "sort" => "id"})
+
+    assert ids(data) == [1, 2, 3, 4, 5, 6]
+
+    assert {:ok, %{data: only_min, total: 2}} =
+             Faceted.search(products(), %{
+               "min_price" => "8999",
+               "max_price" => "  ",
+               "sort" => "id"
+             })
+
+    assert ids(only_min) == [1, 2]
+  end
+
+  test "descending sort breaks ties by id descending" do
+    assert {:ok, %{data: data}} =
+             Faceted.search(products(), %{"sort" => "category", "order" => "desc"})
+
+    assert ids(data) == [2, 1, 6, 5, 4, 3]
+
+    assert {:ok, %{data: asc}} = Faceted.search(products(), %{"sort" => "category"})
+    assert ids(asc) == [3, 4, 5, 6, 1, 2]
+  end
+
+  test "empty result from a category selection keeps the full category facet source" do
+    assert {:ok, %{data: [], total: 0, facets: facets}} =
+             Faceted.search(products(), %{"categories" => ["nonexistent"]})
+
+    assert facets.categories == %{"footwear" => 2, "electronics" => 3, "fitness" => 1}
+    assert facets.tags == %{}
+  end
 end
 ```

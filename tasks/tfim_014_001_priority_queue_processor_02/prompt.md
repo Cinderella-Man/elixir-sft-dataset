@@ -15,6 +15,11 @@ defmodule PriorityQueue do
   Processing happens asynchronously one task at a time. The actual
   processor function runs in a spawned process so the GenServer remains
   responsive to enqueue/status/drain calls while a task is being worked on.
+
+  After each task completes the GenServer re-schedules itself via an internal
+  `:process_next` message. That message either picks the next highest-priority
+  task or, when nothing remains, transitions the server back to the idle state
+  so that a task enqueued later triggers processing again.
   """
 
   use GenServer
@@ -163,16 +168,10 @@ defmodule PriorityQueue do
     {:noreply, state}
   end
 
-  def handle_info({:DOWN, ref, :process, pid, _}, %{current_ref: {pid, ref}} = state) do
+  def handle_info({:DOWN, ref, :process, pid, _reason}, %{current_ref: {pid, ref}} = state) do
     state = %{state | current_task: nil, current_ref: nil}
-
-    if queue_empty?(state) do
-      state = %{state | processing: false} |> notify_drain_waiters()
-      {:noreply, state}
-    else
-      send(self(), :process_next)
-      {:noreply, state}
-    end
+    send(self(), :process_next)
+    {:noreply, state}
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
@@ -473,6 +472,35 @@ defmodule PriorityQueueTest do
   end
 
   # -------------------------------------------------------
+  # Idle transition after draining
+  # -------------------------------------------------------
+
+  test "becomes idle after draining and processes tasks enqueued later", %{pq: pq} do
+    PriorityQueue.enqueue(pq, "batch1", :normal)
+    assert :ok = PriorityQueue.drain(pq)
+    assert [{"batch1", {:processed, "batch1"}}] = PriorityQueue.processed(pq)
+
+    # Once the queue has fully drained the processor must be idle again, so a
+    # brand new task enqueued now must trigger processing on its own. If the
+    # server stayed "busy", this second drain would never return.
+    PriorityQueue.enqueue(pq, "batch2", :high)
+    assert :ok = PriorityQueue.drain(pq)
+
+    tasks = PriorityQueue.processed(pq) |> Enum.map(&elem(&1, 0))
+    assert tasks == ["batch1", "batch2"]
+  end
+
+  test "repeated drain/enqueue cycles keep processing each new task", %{pq: pq} do
+    for n <- 1..5 do
+      PriorityQueue.enqueue(pq, n, :normal)
+      assert :ok = PriorityQueue.drain(pq)
+
+      processed_so_far = PriorityQueue.processed(pq) |> Enum.map(&elem(&1, 0))
+      assert processed_so_far == Enum.to_list(1..n)
+    end
+  end
+
+  # -------------------------------------------------------
   # Processor function receives the task value
   # -------------------------------------------------------
 
@@ -529,6 +557,27 @@ defmodule PriorityQueueTest do
     # Verify all tasks were processed (order may vary due to concurrent enqueue)
     processed_tasks = Enum.map(processed, &elem(&1, 0)) |> Enum.sort()
     assert processed_tasks == Enum.to_list(1..50)
+  end
+
+  test "default processor returns the task unchanged when :processor omitted" do
+    {:ok, pq2} = PriorityQueue.start_link([])
+
+    assert :ok = PriorityQueue.enqueue(pq2, "echo_me", :normal)
+    assert :ok = PriorityQueue.drain(pq2)
+
+    assert PriorityQueue.processed(pq2) == [{"echo_me", "echo_me"}]
+  end
+
+  test "registers under the given :name and is reachable by that name" do
+    name = :priority_queue_named_registration_test
+
+    {:ok, _pid} =
+      PriorityQueue.start_link(name: name, processor: fn t -> {:ok, t} end)
+
+    assert :ok = PriorityQueue.enqueue(name, "named_task", :high)
+    assert :ok = PriorityQueue.drain(name)
+
+    assert PriorityQueue.processed(name) == [{"named_task", {:ok, "named_task"}}]
   end
 end
 ```

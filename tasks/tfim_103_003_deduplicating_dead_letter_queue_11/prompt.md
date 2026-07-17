@@ -312,5 +312,71 @@ defmodule DedupDLQTest do
     assert ea.message == :ma
     assert eb.message == :mb
   end
+
+  test "retry handler returning {:ok, term} succeeds and removes the entry", %{dlq: dlq} do
+    {:ok, :new, _} = DedupDLQ.push(dlq, "q", "k", :m, :err, %{})
+    assert :ok = DedupDLQ.retry(dlq, "q", "k", fn :m -> {:ok, :done} end)
+    assert DedupDLQ.peek(dlq, "q", 10) == []
+  end
+
+  test "handler returning a non-ok, non-error value counts as a failure", %{dlq: dlq} do
+    {:ok, :new, id} = DedupDLQ.push(dlq, "q", "k", :m, :err, %{})
+    assert {:error, _reason} = DedupDLQ.retry(dlq, "q", "k", fn _ -> :weird end)
+    assert Process.alive?(dlq)
+    assert [e] = DedupDLQ.peek(dlq, "q", 10)
+    assert e.id == id
+    assert e.retry_count == 1
+    assert e.occurrences == 1
+  end
+
+  test "purge removes an entry whose age exactly equals older_than", %{dlq: dlq} do
+    {:ok, :new, _} = DedupDLQ.push(dlq, "q", "edge", :m, :err, %{})
+    {:ok, :new, _} = DedupDLQ.push(dlq, "q", "young", :m, :err, %{})
+    Clock.advance(49)
+    {:ok, :duplicate, _} = DedupDLQ.push(dlq, "q", "young", :m, :err, %{})
+
+    Clock.advance(1)
+    # now = 50: "edge" age 50 >= 50 -> purged, "young" age 1 < 50 -> kept
+    assert {:ok, 1} = DedupDLQ.purge(dlq, "q", 50)
+    assert [e] = DedupDLQ.peek(dlq, "q", 10)
+    assert e.dedup_key == "young"
+  end
+
+  test "throwing handler counts as failure without crashing", %{dlq: dlq} do
+    {:ok, :new, _} = DedupDLQ.push(dlq, "q", "k", :m, :err, %{})
+    assert {:error, _} = DedupDLQ.retry(dlq, "q", "k", fn _ -> throw(:nope) end)
+    assert Process.alive?(dlq)
+    assert [e] = DedupDLQ.peek(dlq, "q", 10)
+    assert e.retry_count == 1
+    # the process still serves subsequent calls
+    assert :ok = DedupDLQ.retry(dlq, "q", "k", fn _ -> :ok end)
+  end
+
+  test "new entry ids are unique across queues on the same server", %{dlq: dlq} do
+    {:ok, :new, id_a} = DedupDLQ.push(dlq, "a", "k", :ma, :err, %{})
+    {:ok, :new, id_b} = DedupDLQ.push(dlq, "b", "k", :mb, :err, %{})
+    {:ok, :new, id_c} = DedupDLQ.push(dlq, "a", "k2", :mc, :err, %{})
+    assert length(Enum.uniq([id_a, id_b, id_c])) == 3
+
+    # an id is not recycled after its entry leaves the queue
+    assert :ok = DedupDLQ.retry(dlq, "a", "k2", fn _ -> :ok end)
+    {:ok, :new, id_d} = DedupDLQ.push(dlq, "a", "k3", :md, :err, %{})
+    refute id_d in [id_a, id_b, id_c]
+  end
+
+  test "server can be registered under a name and driven through it" do
+    {:ok, _} = DedupDLQ.start_link(name: :dedup_dlq_named_server, clock: &Clock.now/0)
+
+    assert {:ok, :new, id} =
+             DedupDLQ.push(:dedup_dlq_named_server, "q", "k", :m, :err, %{})
+
+    assert {:ok, :duplicate, ^id} =
+             DedupDLQ.push(:dedup_dlq_named_server, "q", "k", :m2, :err, %{})
+
+    assert [e] = DedupDLQ.peek(:dedup_dlq_named_server, "q", 10)
+    assert e.occurrences == 2
+    assert :ok = DedupDLQ.retry(:dedup_dlq_named_server, "q", "k", fn _ -> :ok end)
+    assert DedupDLQ.peek(:dedup_dlq_named_server, "q", 10) == []
+  end
 end
 ```

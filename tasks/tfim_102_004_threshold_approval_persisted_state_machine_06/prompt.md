@@ -558,5 +558,52 @@ defmodule StateMachineTest do
     assert length(invalid) == 7
     assert {:ok, :approved, 3} = StateMachine.get_state(sm, "cr:cc")
   end
+
+  test "rejected and withdrawn are terminal and other bad pairs are invalid", %{sm: sm} do
+    {:ok, :draft, 0} = StateMachine.start(sm, "cr:inv1")
+    assert {:error, :invalid_transition} = StateMachine.transition(sm, "cr:inv1", :reject)
+    {:ok, :in_review, 0} = StateMachine.transition(sm, "cr:inv1", :submit)
+    assert {:error, :invalid_transition} = StateMachine.transition(sm, "cr:inv1", :submit)
+    {:ok, :rejected, 0} = StateMachine.transition(sm, "cr:inv1", :reject)
+
+    assert {:error, :invalid_transition} = StateMachine.transition(sm, "cr:inv1", :approve)
+    assert {:error, :invalid_transition} = StateMachine.transition(sm, "cr:inv1", :submit)
+    assert {:error, :invalid_transition} = StateMachine.transition(sm, "cr:inv1", :withdraw)
+    assert {:ok, :rejected, 0} = StateMachine.get_state(sm, "cr:inv1")
+
+    {:ok, :draft, 0} = StateMachine.start(sm, "cr:inv2")
+    {:ok, :withdrawn, 0} = StateMachine.transition(sm, "cr:inv2", :withdraw)
+    assert {:error, :invalid_transition} = StateMachine.transition(sm, "cr:inv2", :submit)
+    assert {:error, :invalid_transition} = StateMachine.transition(sm, "cr:inv2", :approve)
+    assert {:ok, :withdrawn, 0} = StateMachine.get_state(sm, "cr:inv2")
+  end
+
+  test "start_link/1 registers the server under the given :name" do
+    name = :"sm_named_#{System.unique_integer([:positive])}"
+    {:ok, pid} = StateMachine.start_link(repo: StateMachine.Repo, name: name)
+
+    assert Process.whereis(name) == pid
+    assert {:ok, :draft, 0} = StateMachine.start(name, "cr:named")
+    assert {:ok, :in_review, 0} = StateMachine.transition(name, "cr:named", :submit)
+    assert {:ok, :in_review, 0} = StateMachine.get_state(name, "cr:named")
+  end
+
+  test "withdraw from in_review keeps a non-zero approval count unchanged" do
+    {:ok, sm} = StateMachine.start_link(repo: StateMachine.Repo, required_approvals: 3)
+    {:ok, :draft, 0} = StateMachine.start(sm, "cr:wd")
+    {:ok, :in_review, 0} = StateMachine.transition(sm, "cr:wd", :submit)
+    {:ok, :in_review, 1} = StateMachine.transition(sm, "cr:wd", :approve)
+    {:ok, :in_review, 2} = StateMachine.transition(sm, "cr:wd", :approve)
+
+    assert {:ok, :withdrawn, 2} = StateMachine.transition(sm, "cr:wd", :withdraw)
+    assert {:ok, :withdrawn, 2} = StateMachine.get_state(sm, "cr:wd")
+
+    assert {:ok, entries} = StateMachine.history(sm, "cr:wd")
+    last = List.last(entries)
+    assert last.event == :withdraw
+    assert last.from_state == :in_review
+    assert last.to_state == :withdrawn
+    assert last.approvals == 2
+  end
 end
 ```

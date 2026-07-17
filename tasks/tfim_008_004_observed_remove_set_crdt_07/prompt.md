@@ -715,5 +715,72 @@ defmodule ORSetTest do
     live_tag = state.entries[:x] |> MapSet.to_list() |> hd()
     refute MapSet.member?(state.tombstones, live_tag)
   end
+
+  test "remove moves every current tag of the element into tombstones", %{s: s} do
+    ORSet.add(s, :x, :node_a)
+    ORSet.add(s, :x, :node_a)
+    ORSet.add(s, :x, :node_b)
+
+    before = ORSet.state(s)
+    all_tags = before.entries[:x]
+    assert MapSet.size(all_tags) == 3
+
+    assert :ok = ORSet.remove(s, :x)
+    assert ORSet.member?(s, :x) == false
+
+    after_state = ORSet.state(s)
+    assert MapSet.subset?(all_tags, after_state.tombstones)
+    assert MapSet.size(after_state.tombstones) == 3
+  end
+
+  test "re-add after merged tombstones is unaffected by previous tombstones", %{s: s} do
+    # Bring in tombstones for node_a's counters 1 and 2, plus a clock recording them.
+    remote = %{
+      entries: %{},
+      tombstones: MapSet.new([{:node_a, 1}, {:node_a, 2}]),
+      clock: %{node_a: 2}
+    }
+
+    assert :ok = ORSet.merge(s, remote)
+
+    # A fresh add from the same node must not reuse a tombstoned tag.
+    ORSet.add(s, :x, :node_a)
+    assert ORSet.member?(s, :x) == true
+
+    state = ORSet.state(s)
+    live_tag = state.entries[:x] |> MapSet.to_list() |> hd()
+    refute MapSet.member?(state.tombstones, live_tag)
+  end
+
+  test "merge removes only the tombstoned tag and keeps other tags live", %{s: s} do
+    ORSet.add(s, :x, :local)
+    original = ORSet.state(s)
+    local_tag = original.entries[:x] |> MapSet.to_list() |> hd()
+
+    # Merge in a second, unrelated tag for :x.
+    ORSet.merge(s, %{
+      entries: %{x: MapSet.new([{:r, 7}])},
+      tombstones: MapSet.new(),
+      clock: %{r: 7}
+    })
+
+    # Now tombstone ONLY the original local tag.
+    ORSet.merge(s, %{entries: %{}, tombstones: MapSet.new([local_tag]), clock: %{}})
+
+    assert ORSet.member?(s, :x) == true
+    state = ORSet.state(s)
+    assert MapSet.size(state.entries[:x]) == 1
+    refute MapSet.member?(state.entries[:x], local_tag)
+    assert MapSet.member?(state.entries[:x], {:r, 7})
+  end
+
+  test "removing an already-removed element raises ArgumentError", %{s: s} do
+    ORSet.add(s, :x, :node_a)
+    assert :ok = ORSet.remove(s, :x)
+
+    assert_raise ArgumentError, fn ->
+      ORSet.remove(s, :x)
+    end
+  end
 end
 ```

@@ -293,5 +293,65 @@ defmodule MarkdownTablesTest do
     md = "| A | B |\r\n| --- | --- |\r\n| 1 | 2 |\r\n"
     assert [%{headers: ["A", "B"], rows: [%{"A" => "1", "B" => "2"}]}] = parse(md)
   end
+
+  test "rescans from the next line so a later line can become the header" do
+    md = """
+    | A | B |
+    | C | D |
+    | --- | --- |
+    | 1 | 2 |
+    """
+
+    assert parse(md) == [
+             %{
+               headers: ["C", "D"],
+               alignments: [:none, :none],
+               rows: [%{"C" => "1", "D" => "2"}]
+             }
+           ]
+  end
+
+  test "separator with a different cell count than the header forms no table" do
+    md = """
+    | A | B |
+    | --- |
+    | 1 | 2 |
+    """
+
+    assert parse(md) == []
+  end
+
+  test "header and separator alone yield a table with zero rows" do
+    md = """
+    | A | B |
+    | --- | :---: |
+    """
+
+    assert parse(md) == [%{headers: ["A", "B"], alignments: [:none, :center], rows: []}]
+  end
+
+  test "a non-pipe line ends the table and later pipe rows are excluded" do
+    md = """
+    | A |
+    | --- |
+    | 1 |
+    prose interrupts here
+    | 2 |
+    """
+
+    assert parse(md) == [%{headers: ["A"], alignments: [:none], rows: [%{"A" => "1"}]}]
+  end
+
+  test "escaped pipes in a header cell keep one column and key the rows" do
+    md = """
+    | a \\| b | c |
+    | --- | --- |
+    | 1 | 2 |
+    """
+
+    [table] = parse(md)
+    assert table.headers == ["a | b", "c"]
+    assert table.rows == [%{"a | b" => "1", "c" => "2"}]
+  end
 end
 ```

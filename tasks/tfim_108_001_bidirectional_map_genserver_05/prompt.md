@@ -335,5 +335,51 @@ defmodule BiMapTest do
     surviving_keys = Enum.map(surviving, fn {_v, k} -> k end)
     assert length(surviving_keys) == length(Enum.uniq(surviving_keys))
   end
+
+  test "every function accepts a raw pid as the server reference", %{pid: pid} do
+    assert :ok = BiMap.put(pid, :a, 1)
+    assert {:ok, 1} = BiMap.get_by_key(pid, :a)
+    assert {:ok, :a} = BiMap.get_by_value(pid, 1)
+
+    assert :ok = BiMap.put(pid, :b, 1)
+    assert :error = BiMap.get_by_key(pid, :a)
+    assert {:ok, :b} = BiMap.get_by_value(pid, 1)
+
+    assert :ok = BiMap.delete(pid, :b)
+    assert :error = BiMap.get_by_key(pid, :b)
+    assert :error = BiMap.get_by_value(pid, 1)
+  end
+
+  test "start_link with a :name option returns {:ok, pid} and registers that name" do
+    name = :"bimap_started_#{System.unique_integer([:positive])}"
+
+    assert {:ok, pid} = BiMap.start_link(name: name)
+    assert is_pid(pid)
+    assert Process.whereis(name) == pid
+
+    assert :ok = BiMap.put(name, :k, :v)
+    assert {:ok, :v} = BiMap.get_by_key(name, :k)
+
+    GenServer.stop(pid)
+  end
+
+  test "bijection survives terms used as both key and value", %{bm: bm} do
+    assert :ok = BiMap.put(bm, :a, :b)
+    assert :ok = BiMap.put(bm, :b, :a)
+
+    assert {:ok, :b} = BiMap.get_by_key(bm, :a)
+    assert {:ok, :a} = BiMap.get_by_value(bm, :b)
+    assert {:ok, :a} = BiMap.get_by_key(bm, :b)
+    assert {:ok, :b} = BiMap.get_by_value(bm, :a)
+
+    # Reassign :a to itself: the old value :b is orphaned as a value, but :b
+    # keeps its own forward entry :b -> :a.
+    assert :ok = BiMap.put(bm, :a, :a)
+
+    assert {:ok, :a} = BiMap.get_by_key(bm, :a)
+    assert {:ok, :a} = BiMap.get_by_value(bm, :a)
+    assert :error = BiMap.get_by_key(bm, :b)
+    assert :error = BiMap.get_by_value(bm, :b)
+  end
 end
 ```

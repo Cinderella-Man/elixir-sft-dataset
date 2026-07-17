@@ -80,16 +80,18 @@ defmodule LogMasker do
   @doc """
   Masks credit card numbers, email addresses, and SSN patterns inside a raw string.
 
+  * SSNs (`\\d{3}-\\d{2}-\\d{4}`): replaced with `***-**-****`. SSNs are masked
+    first so that adjacent SSNs are never swallowed by the broader credit card
+    pattern (which would otherwise leave a trailing four digits visible).
   * Credit cards (13–19 digits, optionally separated by spaces or hyphens):
     all digits except the final four are replaced with `*`, separators kept.
   * Emails: the local part keeps only its first character; the rest becomes `***`.
-  * SSNs (`\\d{3}-\\d{2}-\\d{4}`): replaced with `***-**-****`.
   """
   @spec mask_string(t(), String.t()) :: String.t()
   def mask_string(%__MODULE__{}, string) when is_binary(string) do
     string
-    |> mask_credit_cards()
     |> mask_ssns()
+    |> mask_credit_cards()
     |> mask_emails()
   end
 
@@ -424,6 +426,25 @@ defmodule LogMaskerTest do
     result = LogMasker.mask(m, %{"Password" => "secret", "TOKEN" => "abc"})
     assert result["Password"] == "[MASKED]"
     assert result["TOKEN"] == "[MASKED]"
+  end
+
+  test "two space-separated SSNs are both fully masked", %{m: m} do
+    result = LogMasker.mask_string(m, "123-45-6789 987-65-4321")
+    refute result =~ "4321"
+    assert result == "***-**-**** ***-**-****"
+  end
+
+  test "masks sensitive keys inside a list of keyword lists", %{m: m} do
+    data = [
+      [user: "alice", password: "pass1"],
+      [user: "bob", token: "tok_xyz"]
+    ]
+
+    [r1, r2] = LogMasker.mask(m, data)
+    assert r1[:user] == "alice"
+    assert r1[:password] == "[MASKED]"
+    assert r2[:user] == "bob"
+    assert r2[:token] == "[MASKED]"
   end
 end
 ```

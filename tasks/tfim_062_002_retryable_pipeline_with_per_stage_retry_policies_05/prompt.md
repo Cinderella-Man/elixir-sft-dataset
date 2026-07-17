@@ -248,5 +248,99 @@ defmodule PipelineTest do
     # Two attempts means exactly one backoff sleep separates them.
     assert elapsed_us >= backoff_ms * 1_000
   end
+
+  test "every retry of a stage receives the identical original input" do
+    {:ok, seen} = Agent.start_link(fn -> [] end)
+
+    recorder = fn v ->
+      n = Agent.get_and_update(seen, fn acc -> {length(acc) + 1, acc ++ [v]} end)
+      if n < 4, do: {:error, :again}, else: {:ok, :done}
+    end
+
+    pipeline = Pipeline.new() |> Pipeline.stage(:rec, recorder, retries: 5)
+
+    assert {:ok, :done, [%{stage: :rec, attempts: 4}]} =
+             Pipeline.run(pipeline, {:payload, 99})
+
+    assert Agent.get(seen, & &1) == List.duplicate({:payload, 99}, 4)
+  end
+
+  test "a stage that succeeds on a retry threads its result into the next stage" do
+    {:ok, ag} = Agent.start_link(fn -> 0 end)
+
+    flaky = fn v ->
+      n = Agent.get_and_update(ag, fn c -> {c + 1, c + 1} end)
+      if n < 2, do: {:error, :later}, else: {:ok, v * 3}
+    end
+
+    pipeline =
+      Pipeline.new()
+      |> Pipeline.stage(:flaky, flaky, retries: 2)
+      |> Pipeline.stage(:after_flaky, ok_stage(&(&1 + 1)))
+
+    assert {:ok, 22, [%{stage: :flaky, attempts: 2}, %{stage: :after_flaky, attempts: 1}]} =
+             Pipeline.run(pipeline, 7)
+  end
+
+  test "retries: 2 allows success on exactly the third and final permitted attempt" do
+    {:ok, ag} = Agent.start_link(fn -> 0 end)
+
+    flaky = fn v ->
+      n = Agent.get_and_update(ag, fn c -> {c + 1, c + 1} end)
+      if n < 3, do: {:error, :not_yet}, else: {:ok, v}
+    end
+
+    pipeline = Pipeline.new() |> Pipeline.stage(:edge, flaky, retries: 2)
+
+    assert {:ok, :v, [%{stage: :edge, attempts: 3}]} = Pipeline.run(pipeline, :v)
+  end
+
+  test "a later stage failing reports its own name and only its own attempt count" do
+    {:ok, firsts} = Agent.start_link(fn -> 0 end)
+
+    first = fn v ->
+      Agent.update(firsts, &(&1 + 1))
+      {:ok, v}
+    end
+
+    pipeline =
+      Pipeline.new()
+      |> Pipeline.stage(:first, first, retries: 4)
+      |> Pipeline.stage(:second, always_fail(:down), retries: 1)
+
+    assert {:error, :second, :down, 2} = Pipeline.run(pipeline, :in)
+    assert Agent.get(firsts, & &1) == 1
+  end
+
+  test "two stages registered under the same name both run in insertion order" do
+    {:ok, ag} = Agent.start_link(fn -> [] end)
+
+    step = fn tag ->
+      fn v ->
+        Agent.update(ag, &(&1 ++ [tag]))
+        {:ok, v <> tag}
+      end
+    end
+
+    pipeline =
+      Pipeline.new()
+      |> Pipeline.stage(:same, step.("a"))
+      |> Pipeline.stage(:same, step.("b"))
+
+    assert {:ok, "xab", [%{stage: :same}, %{stage: :same}]} = Pipeline.run(pipeline, "x")
+    assert Agent.get(ag, & &1) == ["a", "b"]
+  end
+
+  test "stage/4 rejects a non-atom name and a function of the wrong arity" do
+    pipeline = Pipeline.new()
+
+    assert_raise FunctionClauseError, fn ->
+      Pipeline.stage(pipeline, "not_an_atom", fn v -> {:ok, v} end)
+    end
+
+    assert_raise FunctionClauseError, fn ->
+      Pipeline.stage(pipeline, :bad_arity, fn a, b -> {:ok, a + b} end)
+    end
+  end
 end
 ```

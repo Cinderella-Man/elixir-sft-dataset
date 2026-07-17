@@ -513,5 +513,57 @@ defmodule WorkerPoolTest do
     release(w1)
     release(w2)
   end
+
+  test "pool starts three workers by default", _context do
+    name = :"defsize_#{:erlang.unique_integer([:positive])}"
+
+    pool =
+      start_supervised!({WorkerPool, name: name}, id: :defsize_pool)
+
+    status = WorkerPool.status(pool)
+    assert status.idle_workers == 3
+    assert status.busy_workers == 0
+    assert status.queue_length == 0
+  end
+
+  test "queue defaults to a capacity of ten pending tasks", _context do
+    name = :"maxq_#{:erlang.unique_integer([:positive])}"
+
+    pool =
+      start_supervised!({WorkerPool, pool_size: 1, name: name}, id: :maxq_pool)
+
+    gate = self()
+    {:ok, _} = WorkerPool.submit(pool, blocking_task(gate))
+    assert_receive {:ready, w}, 1_000
+
+    for _ <- 1..10 do
+      assert {:ok, _} = WorkerPool.submit(pool, quick_task(:queued))
+    end
+
+    assert {:error, :queue_full} = WorkerPool.submit(pool, quick_task(:overflow))
+    release(w)
+  end
+
+  test "pool is addressable by its registered name", _context do
+    name = :"named_#{:erlang.unique_integer([:positive])}"
+    start_supervised!({WorkerPool, pool_size: 1, name: name}, id: :named_pool)
+
+    {:ok, ref} = WorkerPool.submit(name, quick_task(:via_name))
+    assert {:ok, :via_name} = WorkerPool.await(name, ref, 1_000)
+    assert %{idle_workers: _, busy_workers: _} = WorkerPool.status(name)
+  end
+
+  test "await uses its default timeout when none is given", %{pool: pool} do
+    {:ok, ref} = WorkerPool.submit(pool, quick_task(:defaulted))
+    assert {:ok, :defaulted} = WorkerPool.await(pool, ref)
+  end
+
+  test "each submit returns a distinct reference", %{pool: pool} do
+    {:ok, r1} = WorkerPool.submit(pool, quick_task(:x))
+    {:ok, r2} = WorkerPool.submit(pool, quick_task(:y))
+    assert r1 != r2
+    assert is_reference(r1)
+    assert is_reference(r2)
+  end
 end
 ```

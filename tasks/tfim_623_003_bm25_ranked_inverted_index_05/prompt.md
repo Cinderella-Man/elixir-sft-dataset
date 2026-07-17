@@ -628,5 +628,87 @@ defmodule InvertedIndexTest do
     :ok = InvertedIndex.index(:bm25_index, "doc1", %{body: "hello world"})
     assert length(InvertedIndex.search(:bm25_index, "hello")) == 1
   end
+
+  test "exact BM25 score when boosts weight both f(t,d) and avgdl", %{idx: idx} do
+    :ok = InvertedIndex.index(idx, "doc1", %{title: "fox", body: "fox cat"})
+    :ok = InvertedIndex.index(idx, "doc2", %{title: "dog", body: "bird"})
+
+    # boosts %{title: 3}: |d1| = 1*3 + 2*1 = 5, |d2| = 1*3 + 1*1 = 4, avgdl = 4.5
+    # f(fox,doc1) = 1*3 + 1*1 = 4 ; N=2, df(fox)=1 -> IDF = ln(1 + 1.5/1.5) = ln 2
+    [result] = InvertedIndex.search(idx, "fox", boosts: %{title: 3})
+    assert result.id == "doc1"
+
+    ratio = 5.0 / 4.5
+    denom = 4.0 + 1.2 * (1 - 0.75 + 0.75 * ratio)
+    expected = :math.log(2) * (4.0 * 2.2) / denom
+    assert_in_delta result.score, expected, 1.0e-9
+  end
+
+  test "removal lowers N so the IDF of a surviving term changes exactly", %{idx: idx} do
+    :ok = InvertedIndex.index(idx, "doc1", %{body: "fox"})
+    :ok = InvertedIndex.index(idx, "doc2", %{body: "cat"})
+    :ok = InvertedIndex.index(idx, "doc3", %{body: "dog"})
+
+    [before] = InvertedIndex.search(idx, "fox")
+    assert_in_delta before.score, :math.log(1 + 2.5 / 1.5) * 2.2 / 2.2, 1.0e-9
+
+    :ok = InvertedIndex.remove(idx, "doc3")
+
+    # N=2, df(fox)=1 -> IDF = ln 2 ; |d|=1, avgdl=1 -> denom = 1 + 1.2 = 2.2, numer = 2.2
+    [result] = InvertedIndex.search(idx, "fox")
+    assert result.id == "doc1"
+    assert_in_delta result.score, :math.log(2), 1.0e-9
+  end
+
+  test "repeated query terms are scored once, not once per occurrence", %{idx: idx} do
+    :ok = InvertedIndex.index(idx, "doc1", %{body: "fox fox cat"})
+    :ok = InvertedIndex.index(idx, "doc2", %{body: "dog bird"})
+
+    [single] = InvertedIndex.search(idx, "fox")
+    [repeated] = InvertedIndex.search(idx, "fox fox fox")
+
+    assert repeated.id == single.id
+    assert_in_delta repeated.score, single.score, 1.0e-9
+  end
+
+  test "field omitted from the boosts map is weighted exactly one", %{idx: idx} do
+    :ok = InvertedIndex.index(idx, "doc1", %{title: "cat", body: "fox"})
+    :ok = InvertedIndex.index(idx, "doc2", %{title: "fox", body: "cat"})
+
+    partial = InvertedIndex.search(idx, "fox", boosts: %{title: 3})
+    explicit = InvertedIndex.search(idx, "fox", boosts: %{title: 3, body: 1})
+
+    assert Enum.map(partial, & &1.id) == ["doc2", "doc1"]
+    assert Enum.map(partial, & &1.id) == Enum.map(explicit, & &1.id)
+
+    for {p, e} <- Enum.zip(partial, explicit) do
+      assert_in_delta p.score, e.score, 1.0e-9
+    end
+  end
+
+  test "mixed-case occurrences collapse into one term for scoring", %{idx: idx} do
+    :ok = InvertedIndex.index(idx, "doc1", %{body: "Fox FOX fOx"})
+
+    # N=1, df(fox)=1 -> IDF = ln(1 + 0.5/1.5) ; f=3, |d|=3, avgdl=3 -> denom = 3 + 1.2
+    [result] = InvertedIndex.search(idx, "FoX")
+    assert result.id == "doc1"
+    assert InvertedIndex.stats(idx).term_count == 1
+
+    expected = :math.log(1 + 0.5 / 1.5) * (3.0 * 2.2) / 4.2
+    assert_in_delta result.score, expected, 1.0e-9
+  end
+
+  test "removal purges the removed document's exclusive terms from the vocabulary", %{idx: idx} do
+    :ok = InvertedIndex.index(idx, "doc1", %{body: "alpha beta"})
+    :ok = InvertedIndex.index(idx, "doc2", %{body: "beta gamma"})
+    assert InvertedIndex.stats(idx).term_count == 3
+
+    :ok = InvertedIndex.remove(idx, "doc1")
+
+    assert InvertedIndex.stats(idx).term_count == 2
+    assert InvertedIndex.suggest(idx, "alpha") == []
+    assert InvertedIndex.search(idx, "alpha") == []
+    assert Enum.map(InvertedIndex.search(idx, "beta"), & &1.id) == ["doc2"]
+  end
 end
 ```

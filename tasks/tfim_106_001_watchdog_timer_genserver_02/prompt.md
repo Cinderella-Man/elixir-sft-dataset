@@ -344,5 +344,70 @@ defmodule WatchdogTest do
     assert Process.whereis(:custom_watchdog) == pid
     on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
   end
+
+  test "re-registering with a longer interval outlives the replaced deadline" do
+    test = self()
+
+    # First registration would fire at 60ms; the replacement extends the window to 400ms.
+    :ok = Watchdog.register(:worker, dummy_pid(), 60, notifier(test, :old))
+    :ok = Watchdog.register(:worker, dummy_pid(), 400, notifier(test, :new))
+
+    # Drive real time well past the OLD 60ms deadline: nothing may fire from it.
+    refute_receive {:old, :worker}, 200
+    refute_receive {:new, :worker}, 0
+
+    # The replacement's own (extended) deadline must still be honoured.
+    assert_receive {:new, :worker}, 1_000
+    refute_receive {:old, :worker}, 50
+  end
+
+  test "a heartbeat for one name does not reset another name's timer" do
+    test = self()
+    :ok = Watchdog.register(:chatty, dummy_pid(), 10_000, notifier(test, :chatty_out))
+    :ok = Watchdog.register(:quiet, dummy_pid(), 60, notifier(test, :quiet_out))
+
+    # Heartbeats for :chatty must not touch :quiet's armed timer.
+    for _ <- 1..5 do
+      assert :ok = Watchdog.heartbeat(:chatty)
+    end
+
+    assert_receive {:quiet_out, :quiet}, 1_000
+    refute_receive {:chatty_out, :chatty}, 50
+  end
+
+  test "a heartbeat after unregister does not revive the registration" do
+    test = self()
+    :ok = Watchdog.register(:worker, dummy_pid(), 60, notifier(test))
+    assert :ok = Watchdog.unregister(:worker)
+
+    # An unknown-name heartbeat must not re-arm anything for the retired registration.
+    assert :ok = Watchdog.heartbeat(:worker)
+
+    refute_receive {:timed_out, :worker}, 300
+  end
+
+  test "registering again after unregister arms a fresh timer" do
+    test = self()
+    :ok = Watchdog.register(:worker, dummy_pid(), 10_000, notifier(test, :first))
+    assert :ok = Watchdog.unregister(:worker)
+
+    :ok = Watchdog.register(:worker, dummy_pid(), 60, notifier(test, :second))
+
+    assert_receive {:second, :worker}, 1_000
+    refute_receive {:first, :worker}, 50
+  end
+
+  test "a value-equal composite name replaces instead of duplicating" do
+    test = self()
+    :ok = Watchdog.register({:svc, [1, 2]}, dummy_pid(), 60, notifier(test, :old))
+
+    # Same name by value, built independently.
+    key = {:svc, Enum.to_list(1..2)}
+    :ok = Watchdog.register(key, dummy_pid(), 60, notifier(test, :new))
+
+    assert_receive {:new, {:svc, [1, 2]}}, 1_000
+    refute_receive {:old, {:svc, [1, 2]}}, 200
+    refute_receive {:new, {:svc, [1, 2]}}, 200
+  end
 end
 ```

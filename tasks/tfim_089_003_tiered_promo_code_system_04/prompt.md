@@ -388,5 +388,95 @@ defmodule TieredPromoCodesTest do
 
     assert {:ok, 2_000} = TieredPromoCodes.apply_code("EDGE", 10_000)
   end
+
+  test "create rejects a non-binary code with :invalid_code" do
+    assert {:error, :invalid_code} = TieredPromoCodes.create(%{code: :atom, tiers: @pct_tiers})
+    assert {:error, :invalid_code} = TieredPromoCodes.create(%{tiers: @pct_tiers})
+  end
+
+  test "preview ignores the time window and exhausted usage limits" do
+    {:ok, _} =
+      TieredPromoCodes.create(%{code: "PVW", tiers: @pct_tiers, valid_until: @past, max_uses: 1})
+
+    assert {:error, :expired} = TieredPromoCodes.apply_code("PVW", 10_000)
+    assert {:ok, 2_000, 2} = TieredPromoCodes.preview("PVW", 10_000)
+
+    {:ok, _} = TieredPromoCodes.create(%{code: "PVU", tiers: @pct_tiers, max_uses: 1})
+    assert {:ok, 2_000} = TieredPromoCodes.apply_code("PVU", 10_000)
+    assert {:error, :max_uses_exceeded} = TieredPromoCodes.apply_code("PVU", 10_000)
+    assert {:ok, 2_000, 2} = TieredPromoCodes.preview("PVU", 10_000)
+
+    {:ok, _} = TieredPromoCodes.create(%{code: "PVF", tiers: @pct_tiers, valid_from: @future})
+    assert {:ok, 500, 1} = TieredPromoCodes.preview("PVF", 5_000)
+  end
+
+  test "expired window outranks a below-minimum order total" do
+    tiers = [%{threshold: 5_000, type: :percentage, value: 10}]
+
+    {:ok, _} =
+      TieredPromoCodes.create(%{code: "EXPLOW", tiers: tiers, valid_until: @past})
+
+    assert {:error, :expired} = TieredPromoCodes.apply_code("EXPLOW", 1_000)
+
+    {:ok, _} =
+      TieredPromoCodes.create(%{code: "SOONLOW", tiers: tiers, valid_from: @future})
+
+    assert {:error, :not_yet_valid} = TieredPromoCodes.apply_code("SOONLOW", 1_000)
+  end
+
+  test "max_uses failure outranks the per-user failure when both are exhausted" do
+    {:ok, _} =
+      TieredPromoCodes.create(%{
+        code: "BOTH",
+        tiers: @pct_tiers,
+        max_uses: 1,
+        max_uses_per_user: 1
+      })
+
+    assert {:ok, 2_000} = TieredPromoCodes.apply_code("BOTH", 10_000, user_id: "u1")
+
+    assert {:error, :max_uses_exceeded} =
+             TieredPromoCodes.apply_code("BOTH", 10_000, user_id: "u1")
+  end
+
+  test "create rejects malformed thresholds and negative values" do
+    neg_threshold = [%{threshold: -1, type: :percentage, value: 10}]
+    assert {:error, :invalid_tiers} = TieredPromoCodes.create(%{code: "NT", tiers: neg_threshold})
+
+    float_threshold = [%{threshold: 1_000.0, type: :percentage, value: 10}]
+
+    assert {:error, :invalid_tiers} =
+             TieredPromoCodes.create(%{code: "FT", tiers: float_threshold})
+
+    neg_fixed = [%{threshold: 0, type: :fixed_amount, value: -5}]
+    assert {:error, :invalid_tiers} = TieredPromoCodes.create(%{code: "NF", tiers: neg_fixed})
+
+    bad_value = [%{threshold: 0, type: :percentage, value: "10"}]
+    assert {:error, :invalid_tiers} = TieredPromoCodes.create(%{code: "BV", tiers: bad_value})
+
+    not_a_map = [%{threshold: 0, type: :percentage, value: 10}, :nope]
+    assert {:error, :invalid_tiers} = TieredPromoCodes.create(%{code: "NM", tiers: not_a_map})
+  end
+
+  test "a per-user rejection does not consume a total use" do
+    {:ok, _} =
+      TieredPromoCodes.create(%{
+        code: "NOBURN",
+        tiers: @pct_tiers,
+        max_uses: 2,
+        max_uses_per_user: 1
+      })
+
+    assert {:ok, 2_000} = TieredPromoCodes.apply_code("NOBURN", 10_000, user_id: "u1")
+
+    assert {:error, :max_uses_per_user_exceeded} =
+             TieredPromoCodes.apply_code("NOBURN", 10_000, user_id: "u1")
+
+    # the rejected attempt must not have burned the second total use
+    assert {:ok, 2_000} = TieredPromoCodes.apply_code("NOBURN", 10_000, user_id: "u2")
+
+    assert {:error, :max_uses_exceeded} =
+             TieredPromoCodes.apply_code("NOBURN", 10_000, user_id: "u3")
+  end
 end
 ```

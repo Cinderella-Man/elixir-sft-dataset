@@ -331,5 +331,40 @@ defmodule PermissionsTest do
       end
     end
   end
+
+  test "matching owner opts do not grant role-gated actions the role cannot perform" do
+    refute Permissions.can?(:viewer, :posts, :delete, @rules, user_id: 5, owner_id: 5)
+    refute Permissions.can?(:editor, :posts, :publish, @rules, user_id: 5, owner_id: 5)
+    refute Permissions.can?(:manager, :settings, :update, @rules, user_id: 5, owner_id: 5)
+  end
+
+  test "owner-gated action coexists with role-gated action on the same resource" do
+    # profile.read is :viewer, profile.update is :owner
+    assert Permissions.can?(:viewer, :profile, :read, @rules)
+    refute Permissions.can?(:viewer, :profile, :update, @rules)
+
+    assert Permissions.can?(:viewer, :profile, :read, @rules, user_id: 1, owner_id: 99)
+    assert Permissions.can?(:viewer, :profile, :update, @rules, user_id: 1, owner_id: 1)
+    refute Permissions.can?(:viewer, :profile, :update, @rules, user_id: 1, owner_id: 99)
+  end
+
+  test "role comparison ignores owner opts for non-owner rules" do
+    assert Permissions.can?(:admin, :settings, :update, @rules, user_id: 1, owner_id: 99)
+    assert Permissions.can?(:editor, :posts, :create, @rules, user_id: 1, owner_id: 99)
+    assert Permissions.can?(:manager, :posts, :delete, @rules, user_id: nil, owner_id: nil)
+    refute Permissions.can?(:viewer, :settings, :read, @rules, user_id: 3, owner_id: 3)
+  end
+
+  test "unknown resource or action returns false even when owner opts are supplied" do
+    refute Permissions.can?(:admin, :nonexistent, :read, @rules, user_id: 1, owner_id: 1)
+
+    refute Permissions.can?(:admin, :profile, :nonexistent_action, @rules,
+             user_id: 1,
+             owner_id: 1
+           )
+
+    refute Permissions.can?(:viewer, :nonexistent, :update, @rules, user_id: 2, owner_id: 2)
+    refute Permissions.can?(:admin, :posts, :archive, @rules)
+  end
 end
 ```

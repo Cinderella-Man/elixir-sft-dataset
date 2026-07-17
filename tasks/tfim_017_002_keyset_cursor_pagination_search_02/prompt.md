@@ -58,7 +58,8 @@ defmodule Catalog.KeysetSearch do
 
   Returns `{:ok, page}` on success, `{:error, :invalid_sort_field}` when the
   requested sort field is not allowed, or `{:error, :invalid_cursor}` when the
-  supplied cursor is malformed or was produced under a different sort.
+  supplied cursor is malformed, carries a wrongly typed payload, or was
+  produced under a different sort.
   """
   @spec search([product()], map()) ::
           {:ok, page()} | {:error, :invalid_sort_field | :invalid_cursor}
@@ -237,7 +238,8 @@ defmodule Catalog.KeysetSearch do
 
       c when is_binary(c) ->
         with {:ok, bin} <- Base.url_decode64(c, padding: false),
-             {:ok, {^field, value, id}} <- safe_to_term(bin) do
+             {:ok, {^field, value, id}} <- safe_to_term(bin),
+             true <- valid_key?(field, value, id) do
           {:ok, {value, id}}
         else
           _ -> {:error, :invalid_cursor}
@@ -247,6 +249,14 @@ defmodule Catalog.KeysetSearch do
         {:error, :invalid_cursor}
     end
   end
+
+  # The decoded payload is untrusted: its value must have the exact type the
+  # sort field produces, otherwise Erlang's cross-type term ordering would
+  # silently slice the page instead of failing loudly.
+  defp valid_key?("name", value, id), do: is_binary(value) and is_integer(id)
+  defp valid_key?("price", value, id), do: is_integer(value) and is_integer(id)
+  defp valid_key?("id", value, id), do: is_integer(value) and is_integer(id) and value == id
+  defp valid_key?(_, _, _), do: false
 
   defp safe_to_term(bin) do
     {:ok, :erlang.binary_to_term(bin, [:safe])}
@@ -380,6 +390,64 @@ defmodule Catalog.KeysetSearchTest do
              KeysetSearch.search(products(), %{"category" => "outdoors", "sort" => "id"})
 
     assert item.price == "199.99"
+  end
+
+  test "cursor carrying a wrongly typed payload is rejected instead of silently slicing" do
+    forged =
+      {"price", "not-a-price", 5}
+      |> :erlang.term_to_binary()
+      |> Base.url_encode64(padding: false)
+
+    assert {:error, :invalid_cursor} =
+             KeysetSearch.search(products(), %{"sort" => "price", "cursor" => forged})
+  end
+
+  test "non-positive and garbage limits fall back to the default page size" do
+    for bad <- ["0", "-5", "abc", ""] do
+      assert {:ok, %{data: data, has_more: true}} =
+               KeysetSearch.search(products(), %{"sort" => "id", "limit" => bad})
+
+      assert ids(data) == [1, 2, 3]
+    end
+  end
+
+  test "integer limit above the maximum yields at most one hundred items" do
+    many =
+      for i <- 1..150 do
+        %{id: i, name: "Item #{i}", category: "bulk", price_cents: i * 10}
+      end
+
+    assert {:ok, %{data: data, has_more: true, next_cursor: cursor}} =
+             KeysetSearch.search(many, %{"sort" => "id", "limit" => 500})
+
+    assert length(data) == 100
+    assert List.last(ids(data)) == 100
+    assert is_binary(cursor)
+  end
+
+  test "unparseable and blank price bounds are ignored rather than filtering everything out" do
+    assert {:ok, %{data: data, has_more: false}} =
+             KeysetSearch.search(products(), %{
+               "min_price" => "abc",
+               "max_price" => "  ",
+               "sort" => "id",
+               "limit" => "10"
+             })
+
+    assert ids(data) == [1, 2, 3, 4, 5, 6, 7, 8]
+  end
+
+  test "page after a cursor is unaffected by items removed before the cursor" do
+    p = products()
+
+    {:ok, %{data: d1, next_cursor: c1}} = KeysetSearch.search(p, %{"sort" => "price"})
+    assert ids(d1) == [5, 7, 3]
+
+    shrunk = Enum.reject(p, &(&1.id in [5, 7]))
+
+    assert {:ok, %{data: d2}} = KeysetSearch.search(shrunk, %{"sort" => "price", "cursor" => c1})
+
+    assert ids(d2) == [6, 4, 1]
   end
 end
 ```

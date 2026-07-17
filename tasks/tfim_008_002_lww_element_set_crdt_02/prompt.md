@@ -683,5 +683,13 @@ defmodule LWWSetTest do
     LWWSet.add(:my_lww_set, :x, 1)
     assert LWWSet.member?(:my_lww_set, :x) == true
   end
+
+  test "add updates stored timestamp to a newer one", %{s: s} do
+    LWWSet.add(s, :x, 3)
+    LWWSet.add(s, :x, 10)
+    state = LWWSet.state(s)
+    assert state.adds[:x] == 10
+    assert LWWSet.member?(s, :x) == true
+  end
 end
 ```

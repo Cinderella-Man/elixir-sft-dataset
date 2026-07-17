@@ -208,5 +208,68 @@ defmodule EtsCatalogTest do
     assert meta.current_page == 4
     assert meta.total_pages == 4
   end
+
+  test "insert returns :ok for both a new id and an overwriting id" do
+    table = EtsCatalog.new()
+
+    assert EtsCatalog.insert(table, %{id: 7, name: "first"}) == :ok
+    assert EtsCatalog.insert(table, %{id: 7, name: "second"}) == :ok
+    assert EtsCatalog.count(table) == 1
+  end
+
+  test "omitted page_size serves twenty items per page by default" do
+    table = EtsCatalog.new() |> seed(1..25)
+
+    %{data: data, meta: meta} = EtsCatalog.list(table, %{"page" => "1"})
+    assert meta.page_size == 20
+    assert length(data) == 20
+    assert Enum.map(data, & &1.id) == Enum.to_list(1..20)
+    assert meta.total_pages == 2
+  end
+
+  test "non-numeric and below-range page_size values fall back to twenty" do
+    table = EtsCatalog.new() |> seed(1..25)
+
+    %{data: data, meta: meta} = EtsCatalog.list(table, %{"page_size" => "abc"})
+    assert meta.page_size == 20
+    assert length(data) == 20
+
+    %{meta: zero_meta} = EtsCatalog.list(table, %{"page_size" => "0"})
+    assert zero_meta.page_size == 20
+    assert zero_meta.total_pages == 2
+  end
+
+  test "non-numeric page falls back to page one for requested and current" do
+    table = EtsCatalog.new() |> seed(1..25)
+
+    %{data: data, meta: meta} = EtsCatalog.list(table, %{"page" => "oops", "page_size" => "10"})
+    assert meta.requested_page == 1
+    assert meta.current_page == 1
+    assert Enum.map(data, & &1.id) == Enum.to_list(1..10)
+  end
+
+  test "empty catalog with an out-of-range requested page still reports page one" do
+    table = EtsCatalog.new()
+
+    %{data: data, meta: meta} = EtsCatalog.list(table, %{"page" => "99", "page_size" => "5"})
+    assert data == []
+    assert meta.requested_page == 99
+    assert meta.current_page == 1
+    assert meta.total_count == 0
+    assert meta.total_pages == 0
+  end
+
+  test "new returns a fresh table that is independent of earlier ones" do
+    first = EtsCatalog.new() |> seed(1..3)
+    second = EtsCatalog.new()
+
+    assert EtsCatalog.count(first) == 3
+    assert EtsCatalog.count(second) == 0
+    assert %{data: [], meta: %{total_count: 0, total_pages: 0}} = EtsCatalog.list(second)
+
+    EtsCatalog.insert(second, %{id: 99, name: "only second"})
+    assert EtsCatalog.count(first) == 3
+    assert EtsCatalog.count(second) == 1
+  end
 end
 ```

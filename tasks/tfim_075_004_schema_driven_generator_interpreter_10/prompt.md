@@ -303,5 +303,77 @@ defmodule SchemaGeneratorsTest do
       assert 10 in lengths
     end
   end
+
+  test "{:list, schema, opts} applies each documented default independently" do
+    min_only =
+      SchemaGenerators.from_schema({:list, :boolean, [min: 3]})
+      |> Enum.take(300)
+      |> Enum.map(&length/1)
+
+    assert Enum.all?(min_only, fn len -> len >= 3 and len <= 10 end)
+    assert 3 in min_only
+    assert 10 in min_only
+
+    max_only =
+      SchemaGenerators.from_schema({:list, :boolean, [max: 2]})
+      |> Enum.take(300)
+      |> Enum.map(&length/1)
+
+    assert Enum.all?(max_only, fn len -> len >= 0 and len <= 2 end)
+    assert 0 in max_only
+    assert 2 in max_only
+  end
+
+  test "from_schema/1 returns a %StreamData{} struct for every schema form" do
+    schemas = [
+      :integer,
+      {:integer, 1, 2},
+      :boolean,
+      :string,
+      {:string, 0, 2},
+      {:enum, [:a, :b]},
+      {:list, :boolean},
+      {:list, :boolean, []},
+      {:map, %{a: :integer}},
+      {:optional, :integer},
+      {:one_of, [:integer, :boolean]}
+    ]
+
+    for schema <- schemas do
+      assert %StreamData{} = SchemaGenerators.from_schema(schema)
+    end
+  end
+
+  test "map schema with optional list-valued field nests generators correctly" do
+    schema =
+      {:map,
+       %{
+         tags: {:optional, {:list, {:string, 1, 3}, [min: 1, max: 2]}},
+         n: {:integer, 0, 3}
+       }}
+
+    values = SchemaGenerators.from_schema(schema) |> Enum.take(300)
+
+    for v <- values do
+      assert Map.keys(v) |> Enum.sort() == [:n, :tags]
+      assert v.n >= 0 and v.n <= 3
+
+      case v.tags do
+        nil ->
+          :ok
+
+        list ->
+          assert is_list(list)
+          assert length(list) >= 1 and length(list) <= 2
+
+          assert Enum.all?(list, fn s ->
+                   is_binary(s) and String.length(s) >= 1 and String.length(s) <= 3
+                 end)
+      end
+    end
+
+    assert Enum.any?(values, fn v -> is_nil(v.tags) end)
+    assert Enum.any?(values, fn v -> is_list(v.tags) end)
+  end
 end
 ```

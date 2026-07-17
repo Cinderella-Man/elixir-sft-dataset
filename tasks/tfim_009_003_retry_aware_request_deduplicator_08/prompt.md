@@ -595,5 +595,87 @@ defmodule RetryDedupTest do
     results = Task.await_many(tasks, 5_000)
     assert Enum.all?(results, &(&1 == {:error, :persistent_failure}))
   end
+
+  test "registers under the :name option and is reachable by that name" do
+    name = :retry_dedup_name_promise_srv
+    {:ok, _} = RetryDedup.start_link(name: name)
+
+    assert {:ok, 7} = RetryDedup.execute(name, "k", fn -> {:ok, 7} end)
+  end
+
+  test "status reports 1-based attempt number at the first retry", %{rd: rd} do
+    test = self()
+
+    func = fn ->
+      send(test, {:running, self()})
+
+      receive do
+        :fail -> {:error, :again}
+        :succeed -> {:ok, :done}
+      end
+    end
+
+    t =
+      Task.async(fn ->
+        RetryDedup.execute(rd, "attempt_num", func, max_retries: 4, base_delay_ms: 1)
+      end)
+
+    # Initial attempt (attempt 0) — status is still :idle here.
+    assert_receive {:running, p1}, 2_000
+    send(p1, :fail)
+
+    # First retry is attempt 1, not attempt 0.
+    assert_receive {:running, p2}, 2_000
+    assert RetryDedup.status(rd, "attempt_num") == {:retrying, 1, 4}
+    send(p2, :fail)
+
+    # Second retry is attempt 2.
+    assert_receive {:running, p3}, 2_000
+    assert RetryDedup.status(rd, "attempt_num") == {:retrying, 2, 4}
+    send(p3, :succeed)
+
+    assert {:ok, :done} = Task.await(t, 5_000)
+  end
+
+  test "a joining caller during retries does not spawn an extra execution", %{rd: rd} do
+    test = self()
+
+    func = fn ->
+      send(test, {:running, self()})
+
+      receive do
+        :fail -> {:error, :again}
+        :succeed -> {:ok, :done}
+      end
+    end
+
+    t1 =
+      Task.async(fn ->
+        RetryDedup.execute(rd, "no_restart", func, max_retries: 5, base_delay_ms: 1)
+      end)
+
+    assert_receive {:running, p1}, 2_000
+    send(p1, :fail)
+
+    # Second caller joins while the retry sequence is in flight.
+    assert_receive {:running, p2}, 2_000
+
+    t2 =
+      Task.async(fn ->
+        RetryDedup.execute(rd, "no_restart", func, max_retries: 5, base_delay_ms: 1)
+      end)
+
+    send(p2, :fail)
+    assert_receive {:running, p3}, 2_000
+    send(p3, :fail)
+    assert_receive {:running, p4}, 2_000
+    send(p4, :succeed)
+
+    assert {:ok, :done} = Task.await(t1, 5_000)
+    assert {:ok, :done} = Task.await(t2, 5_000)
+
+    # A restart would have produced a fifth invocation of func.
+    refute_receive {:running, _}, 300
+  end
 end
 ```

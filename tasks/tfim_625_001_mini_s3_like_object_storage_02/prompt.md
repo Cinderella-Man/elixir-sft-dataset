@@ -890,5 +890,76 @@ defmodule ObjectStorageTest do
     assert {:ok, %{data: "A1A2"}} = ObjectStorage.get_object(os, "b", "file-a")
     assert {:ok, %{data: "B1B2"}} = ObjectStorage.get_object(os, "b", "file-b")
   end
+
+  test "a server started with :name is reachable through its registered name", %{tmp_dir: tmp_dir} do
+    name = :"object_storage_named_#{System.unique_integer([:positive])}"
+    root = Path.join(tmp_dir, "named-root")
+
+    {:ok, named_pid} = ObjectStorage.start_link(root_dir: root, name: name)
+    assert Process.whereis(name) == named_pid
+
+    assert :ok = ObjectStorage.create_bucket(name, "via-name")
+    assert :ok = ObjectStorage.put_object(name, "via-name", "k", "payload")
+    assert {:ok, ["via-name"]} = ObjectStorage.list_buckets(name)
+    assert {:ok, %{data: "payload"}} = ObjectStorage.get_object(name, "via-name", "k")
+
+    GenServer.stop(name)
+  end
+
+  test "a completed upload_id cannot be aborted or replayed into a second object", %{os: os} do
+    ObjectStorage.create_bucket(os, "b")
+    {:ok, uid} = ObjectStorage.start_multipart(os, "b", "once.bin", "text/plain")
+    assert :ok = ObjectStorage.upload_part(os, uid, 1, "only")
+    assert :ok = ObjectStorage.complete_multipart(os, uid)
+
+    assert {:error, :not_found} = ObjectStorage.abort_multipart(os, uid)
+    assert {:error, :not_found} = ObjectStorage.upload_part(os, uid, 2, "extra")
+    assert {:error, :not_found} = ObjectStorage.complete_multipart(os, uid)
+
+    # The stored object must reflect exactly the one completion, not a replayed second one.
+    assert {:ok, obj} = ObjectStorage.get_object(os, "b", "once.bin")
+    assert obj.data == "only"
+    assert obj.size == 4
+  end
+
+  test "start_multipart defaults content_type to octet-stream and metadata to empty", %{os: os} do
+    ObjectStorage.create_bucket(os, "b")
+    {:ok, uid} = ObjectStorage.start_multipart(os, "b", "defaults.bin")
+    assert :ok = ObjectStorage.upload_part(os, uid, 1, "body")
+    assert :ok = ObjectStorage.complete_multipart(os, uid)
+
+    assert {:ok, obj} = ObjectStorage.get_object(os, "b", "defaults.bin")
+    assert obj.content_type == "application/octet-stream"
+    assert obj.metadata == %{}
+  end
+
+  test "max_keys limits the prefix-filtered result to the lexicographically first keys", %{os: os} do
+    ObjectStorage.create_bucket(os, "b")
+    ObjectStorage.put_object(os, "b", "a/3", "")
+    ObjectStorage.put_object(os, "b", "a/1", "")
+    ObjectStorage.put_object(os, "b", "a/2", "")
+    ObjectStorage.put_object(os, "b", "b/1", "")
+
+    assert {:ok, objects} = ObjectStorage.list_objects(os, "b", prefix: "a/", max_keys: 2)
+    assert Enum.map(objects, & &1.key) == ["a/1", "a/2"]
+
+    assert {:ok, all} = ObjectStorage.list_objects(os, "b", prefix: "a/")
+    assert Enum.map(all, & &1.key) == ["a/1", "a/2", "a/3"]
+  end
+
+  test "put_object defaults metadata to an empty map", %{os: os} do
+    ObjectStorage.create_bucket(os, "b")
+    assert :ok = ObjectStorage.put_object(os, "b", "k", "v", "text/plain")
+
+    assert {:ok, obj} = ObjectStorage.get_object(os, "b", "k")
+    assert obj.metadata == %{}
+    assert obj.content_type == "text/plain"
+  end
+
+  test "non-string bucket names are rejected as invalid", %{os: os} do
+    assert {:error, :invalid_name} = ObjectStorage.create_bucket(os, :atom_bucket)
+    assert {:error, :invalid_name} = ObjectStorage.create_bucket(os, 123)
+    assert {:ok, []} = ObjectStorage.list_buckets(os)
+  end
 end
 ```

@@ -286,5 +286,98 @@ defmodule DBCleanerTest do
     send(child, :go)
     assert_receive {:lookup, :error}, 1000
   end
+
+  test "an owner resolves to its own connection even when a shared owner exists" do
+    parent = self()
+
+    shared_owner =
+      spawn(fn ->
+        {:ok, shared_conn} = DBCleaner.start(:sandbox, repo: FakeRepo, mode: :shared)
+        send(parent, {:shared_ready, shared_conn})
+
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    assert_receive {:shared_ready, shared_conn}, 1000
+
+    assert {:ok, own_conn} = DBCleaner.start(:sandbox, repo: FakeRepo)
+    refute own_conn == shared_conn
+    assert {:ok, ^own_conn} = DBCleaner.lookup()
+
+    send(shared_owner, :stop)
+  end
+
+  test "an explicit allowance takes precedence over the global shared owner" do
+    parent = self()
+
+    shared_owner =
+      spawn(fn ->
+        {:ok, shared_conn} = DBCleaner.start(:sandbox, repo: FakeRepo, mode: :shared)
+        send(parent, {:shared_ready, shared_conn})
+
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    assert_receive {:shared_ready, shared_conn}, 1000
+
+    {:ok, conn} = DBCleaner.start(:sandbox, repo: FakeRepo, mode: :manual)
+    refute conn == shared_conn
+
+    child =
+      spawn(fn ->
+        receive do
+          :go -> send(parent, {:lookup, DBCleaner.lookup()})
+        end
+      end)
+
+    assert {:ok, ^child} = DBCleaner.allow(self(), child)
+    send(child, :go)
+    assert_receive {:lookup, {:ok, ^conn}}, 1000
+
+    send(shared_owner, :stop)
+  end
+
+  test "lookup/1 resolves the connection of an explicitly given pid" do
+    parent = self()
+
+    child =
+      spawn(fn ->
+        {:ok, conn} = DBCleaner.start(:sandbox, repo: FakeRepo)
+        send(parent, {:ready, conn})
+
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    assert_receive {:ready, child_conn}, 1000
+
+    assert {:ok, ^child_conn} = DBCleaner.lookup(child)
+    assert :error = DBCleaner.lookup(self())
+
+    send(child, :stop)
+  end
+
+  test "a second clean/0 after a successful clean does not check the connection in twice" do
+    {:ok, conn} = DBCleaner.start(:sandbox, repo: FakeRepo)
+
+    assert :ok = DBCleaner.clean()
+    assert :ok = DBCleaner.clean()
+
+    checkins = Enum.filter(FakeRepo.calls(), &match?({:checkin, ^conn}, &1))
+    assert length(checkins) == 1
+  end
+
+  test "mode: :manual never marks the owner as the global shared owner" do
+    DBCleaner.start(:sandbox, repo: FakeRepo, mode: :manual)
+    parent = self()
+
+    spawn(fn -> send(parent, {:lookup, DBCleaner.lookup()}) end)
+    assert_receive {:lookup, :error}, 1000
+  end
 end
 ```

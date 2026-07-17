@@ -553,5 +553,38 @@ defmodule OneTimeTokenStoreTest do
     assert :ok = OneTimeTokenStore.revoke(store, id)
     assert {:error, :not_found} = OneTimeTokenStore.redeem(store, id)
   end
+
+  test "server is reachable through its registered :name", %{store: _store} do
+    name = :one_time_token_store_named_audit
+
+    {:ok, _pid} =
+      OneTimeTokenStore.start_link(
+        name: name,
+        clock: &Clock.now/0,
+        default_ttl_ms: 1_000,
+        cleanup_interval_ms: :infinity
+      )
+
+    {:ok, id} = OneTimeTokenStore.mint(name, %{via: :name})
+
+    assert {:ok, %{via: :name}} = OneTimeTokenStore.verify(name, id)
+    assert {:ok, %{via: :name}} = OneTimeTokenStore.redeem(name, id)
+  end
+
+  test "default TTL is one hour when :default_ttl_ms is not given", %{store: _store} do
+    {:ok, hourly} =
+      OneTimeTokenStore.start_link(
+        clock: &Clock.now/0,
+        cleanup_interval_ms: :infinity
+      )
+
+    {:ok, id} = OneTimeTokenStore.mint(hourly, %{scope: :default})
+
+    Clock.advance(3_599_999)
+    assert {:ok, %{scope: :default}} = OneTimeTokenStore.verify(hourly, id)
+
+    Clock.advance(2)
+    assert {:error, :not_found} = OneTimeTokenStore.verify(hourly, id)
+  end
 end
 ```

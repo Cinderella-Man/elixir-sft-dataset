@@ -338,5 +338,46 @@ defmodule MaskingServerTest do
 
     assert MaskingServer.stats(s).keys_masked == 50
   end
+
+  test "server started without :sensitive_keys masks no keys at all" do
+    d = start_supervised!({MaskingServer, []}, id: :default_opts_server)
+    result = MaskingServer.mask(d, %{password: "hunter2", token: "abc"})
+    assert result.password == "hunter2"
+    assert result.token == "abc"
+    assert MaskingServer.stats(d).keys_masked == 0
+  end
+
+  test "sensitive key matching is case-insensitive for string and atom keys", %{s: s} do
+    result = MaskingServer.mask(s, %{"PASSWORD" => "x", "Token" => "y", User: "z"})
+    assert result["PASSWORD"] == "[MASKED]"
+    assert result["Token"] == "[MASKED]"
+    assert result[:User] == "z"
+    assert MaskingServer.stats(s).keys_masked == 2
+  end
+
+  test "plain lists of maps and keyword lists are walked element-by-element", %{s: s} do
+    result = MaskingServer.mask(s, [%{password: "a", note: "hi"}, [token: "b", user: "eve"]])
+    [first, second] = result
+    assert first.password == "[MASKED]"
+    assert first.note == "hi"
+    assert second[:token] == "[MASKED]"
+    assert second[:user] == "eve"
+  end
+
+  test "custom patterns are applied in registration order", %{s: s} do
+    assert MaskingServer.add_pattern(s, ~r/alpha/, "beta") == :ok
+    assert MaskingServer.add_pattern(s, ~r/beta/, "gamma") == :ok
+    assert MaskingServer.mask_string(s, "alpha") == "gamma"
+  end
+
+  test "structs under non-sensitive keys are returned unchanged", %{s: s} do
+    uri = URI.parse("https://example.com/x?mail=john.doe@example.com")
+    result = MaskingServer.mask(s, %{when: ~D[2024-01-01], link: uri, n: 7, flag: :on})
+    assert result.when == ~D[2024-01-01]
+    assert result.link == uri
+    assert result.n == 7
+    assert result.flag == :on
+    assert MaskingServer.stats(s).patterns_applied == 0
+  end
 end
 ```

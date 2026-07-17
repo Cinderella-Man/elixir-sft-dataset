@@ -594,5 +594,86 @@ defmodule TreeBuilderTest do
 
     assert {:error, {:duplicate_ids, [1]}} = TreeBuilder.build(items)
   end
+
+  test "cycle inside an otherwise valid input errors with only the cycle ids" do
+    items = [
+      %{id: 1, parent_id: nil},
+      %{id: 2, parent_id: 1},
+      %{id: 10, parent_id: 11},
+      %{id: 11, parent_id: 10}
+    ]
+
+    assert {:error, {:cycle_detected, ids}} = TreeBuilder.build(items)
+    assert Enum.sort(ids) == [10, 11]
+  end
+
+  test "every duplicated id is reported exactly once when several ids repeat" do
+    items = [
+      %{id: 1, parent_id: nil},
+      %{id: 2, parent_id: 1},
+      %{id: 1, parent_id: nil},
+      %{id: 2, parent_id: 1},
+      %{id: 2, parent_id: 1}
+    ]
+
+    assert {:error, {:duplicate_ids, ids}} = TreeBuilder.build(items)
+    assert Enum.sort(ids) == [1, 2]
+  end
+
+  test "raised orphans and real roots together follow original input order" do
+    items = [
+      %{id: :orphan_a, parent_id: :missing},
+      %{id: :root_b, parent_id: nil},
+      %{id: :orphan_c, parent_id: :gone},
+      %{id: :root_d, parent_id: nil}
+    ]
+
+    opts = [orphan_strategy: :raise_to_root]
+    assert {:ok, roots} = TreeBuilder.build(items, opts)
+    assert Enum.map(roots, & &1.id) == [:orphan_a, :root_b, :orphan_c, :root_d]
+  end
+
+  test "sibling order is preserved when children of different parents interleave" do
+    items = [
+      %{id: 1, parent_id: nil},
+      %{id: 2, parent_id: nil},
+      %{id: :a1, parent_id: 1},
+      %{id: :b1, parent_id: 2},
+      %{id: :a2, parent_id: 1},
+      %{id: :b2, parent_id: 2},
+      %{id: :a3, parent_id: 1}
+    ]
+
+    assert {:ok, [r1, r2]} = TreeBuilder.build(items)
+    assert Enum.map(r1.children, & &1.id) == [:a1, :a2, :a3]
+    assert Enum.map(r2.children, & &1.id) == [:b1, :b2]
+  end
+
+  test "diamond-shaped branches listed deepest-first are not reported as a cycle" do
+    items = [
+      %{id: 4, parent_id: 2},
+      %{id: 5, parent_id: 3},
+      %{id: 2, parent_id: 1},
+      %{id: 3, parent_id: 1},
+      %{id: 1, parent_id: nil}
+    ]
+
+    assert {:ok, [root]} = TreeBuilder.build(items)
+    assert collect_ids([root]) == [1, 2, 4, 3, 5]
+  end
+
+  test "an indirect cycle is still detected when orphans are raised to root" do
+    items = [
+      %{id: :r, parent_id: nil},
+      %{id: :o, parent_id: :nowhere},
+      %{id: :a, parent_id: :c},
+      %{id: :b, parent_id: :a},
+      %{id: :c, parent_id: :b}
+    ]
+
+    opts = [orphan_strategy: :raise_to_root]
+    assert {:error, {:cycle_detected, ids}} = TreeBuilder.build(items, opts)
+    assert Enum.sort(ids) == [:a, :b, :c]
+  end
 end
 ```

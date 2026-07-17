@@ -600,5 +600,41 @@ defmodule LeaseManagerTest do
     assert {:ok, "string_owner", _} = LeaseManager.holder(mgr, 42)
     assert {:ok, :atom_owner, _} = LeaseManager.holder(mgr, {:complex, :key})
   end
+
+  test "acquire uses default 30000ms lease duration when unspecified", %{mgr: _mgr} do
+    {:ok, dflt} =
+      LeaseManager.start_link(clock: &Clock.now/0, cleanup_interval_ms: :infinity)
+
+    {:ok, _} = LeaseManager.acquire(dflt, :printer, :alice)
+    assert {:ok, :alice, 30_000} = LeaseManager.holder(dflt, :printer)
+
+    Clock.advance(30_000)
+    assert {:error, :available} = LeaseManager.holder(dflt, :printer)
+  end
+
+  test "server is reachable through the registered :name option", %{mgr: _mgr} do
+    name = :lease_manager_named_test
+
+    {:ok, _} =
+      LeaseManager.start_link(
+        name: name,
+        clock: &Clock.now/0,
+        lease_duration_ms: 1_000,
+        cleanup_interval_ms: :infinity
+      )
+
+    assert {:ok, _} = LeaseManager.acquire(name, :printer, :alice)
+    assert {:ok, :alice, _} = LeaseManager.holder(name, :printer)
+  end
+
+  test "lease ids are unpadded url-safe base64 of 16 random bytes", %{mgr: mgr} do
+    {:ok, id1} = LeaseManager.acquire(mgr, :printer, :alice)
+    {:ok, id2} = LeaseManager.acquire(mgr, :scanner, :bob)
+
+    assert String.length(id1) == 22
+    assert id1 =~ ~r/\A[A-Za-z0-9_-]{22}\z/
+    refute String.contains?(id1, "=")
+    assert id1 != id2
+  end
 end
 ```

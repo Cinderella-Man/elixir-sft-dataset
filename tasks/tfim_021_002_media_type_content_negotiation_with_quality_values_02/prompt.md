@@ -420,5 +420,62 @@ defmodule MediaVersionApi.RouterTest do
     conn = call("/api/nope")
     assert conn.status == 404
   end
+
+  test "application/* resolves to the default version" do
+    conn = call("/api/users/1", [{"accept", "application/*"}])
+
+    assert conn.status == 200
+    assert content_type(conn) =~ "v2"
+    body = json_body(conn)
+    assert body["first_name"] == "Alice"
+    assert body["created_at"] == "2024-01-15T10:30:00Z"
+    refute Map.has_key?(body, "name")
+  end
+
+  test "unrelated media type is ignored while a supported vendor range still wins" do
+    conn =
+      call("/api/users/1", [
+        {"accept", "text/html;q=1.0, application/vnd.acme.v1+json;q=0.2"}
+      ])
+
+    assert conn.status == 200
+    assert content_type(conn) =~ "application/vnd.acme.v1+json"
+    assert json_body(conn)["name"] == "Alice Smith"
+  end
+
+  test "plug honours custom :supported and :default options" do
+    opts = MediaVersionApi.Plugs.AcceptVersion.init(supported: ["v1"], default: "v1")
+
+    absent = MediaVersionApi.Plugs.AcceptVersion.call(conn(:get, "/api/users/1"), opts)
+    refute absent.halted
+    assert absent.assigns[:api_version] == "v1"
+
+    wildcard =
+      conn(:get, "/api/users/1")
+      |> Plug.Conn.put_req_header("accept", "*/*")
+      |> MediaVersionApi.Plugs.AcceptVersion.call(opts)
+
+    assert wildcard.assigns[:api_version] == "v1"
+
+    rejected =
+      conn(:get, "/api/users/1")
+      |> Plug.Conn.put_req_header("accept", "application/vnd.acme.v2+json")
+      |> MediaVersionApi.Plugs.AcceptVersion.call(opts)
+
+    assert rejected.halted
+    assert rejected.status == 406
+    assert Jason.decode!(rejected.resp_body)["supported"] == ["v1"]
+  end
+
+  test "second user renders the full v2 shape from the store" do
+    conn = call("/api/users/2", [{"accept", "application/vnd.acme.v2+json"}])
+
+    assert conn.status == 200
+    body = json_body(conn)
+    assert body["first_name"] == "Bob"
+    assert body["last_name"] == "Jones"
+    assert body["email"] == "bob@example.com"
+    assert body["created_at"] == "2024-06-20T14:00:00Z"
+  end
 end
 ```

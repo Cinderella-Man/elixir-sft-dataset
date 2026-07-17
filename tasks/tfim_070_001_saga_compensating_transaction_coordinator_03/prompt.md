@@ -382,5 +382,131 @@ defmodule SagaTest do
              |> Saga.step(:only, fn _ctx -> {:ok, :result} end, fn _ctx -> nil end)
              |> Saga.execute(%{})
   end
+
+  test "exception raised inside a compensation is recorded in the compensation results" do
+    result =
+      Saga.new()
+      |> Saga.step(:a, fn _ctx -> {:ok, :a_ok} end, fn _ctx -> raise "boom from a" end)
+      |> Saga.step(:b, fn _ctx -> {:ok, :b_ok} end, fn _ctx -> :b_done end)
+      |> Saga.step(:c, fn _ctx -> {:error, :fail} end, fn _ctx -> :c_done end)
+      |> Saga.execute(%{})
+
+    assert {:error, :c, :fail, comp} = result
+    # every completed step has an entry, in reverse execution order
+    assert Keyword.keys(comp) == [:b, :a]
+    assert comp[:b] == :b_done
+    # the caught exception itself must be recorded as :a's result
+    assert comp[:a] != nil
+    assert comp[:a] != :a_ok
+  end
+
+  test "actions of steps after the failing step are never invoked" do
+    result =
+      Saga.new()
+      |> Saga.step(
+        :a,
+        fn _ctx ->
+          track(:actions_run, :a)
+          {:ok, 1}
+        end,
+        fn _ctx -> nil end
+      )
+      |> Saga.step(
+        :b,
+        fn _ctx ->
+          track(:actions_run, :b)
+          {:error, :stop_here}
+        end,
+        fn _ctx -> nil end
+      )
+      |> Saga.step(
+        :c,
+        fn _ctx ->
+          track(:actions_run, :c)
+          {:ok, 3}
+        end,
+        fn _ctx -> nil end
+      )
+      |> Saga.execute(%{})
+
+    assert {:error, :b, :stop_here, _comp} = result
+    assert tracked(:actions_run) == [:a, :b]
+  end
+
+  test "three completed steps are compensated in reverse invocation order" do
+    Saga.new()
+    |> Saga.step(:one, fn _ctx -> {:ok, 1} end, fn _ctx -> track(:calls, :one) end)
+    |> Saga.step(:two, fn _ctx -> {:ok, 2} end, fn _ctx -> track(:calls, :two) end)
+    |> Saga.step(:three, fn _ctx -> {:ok, 3} end, fn _ctx -> track(:calls, :three) end)
+    |> Saga.step(:four, fn _ctx -> {:error, :nope} end, fn _ctx -> track(:calls, :four) end)
+    |> Saga.execute(%{})
+
+    assert tracked(:calls) == [:three, :two, :one]
+  end
+
+  test "compensation returning an error tuple is recorded and does not abort the chain" do
+    result =
+      Saga.new()
+      |> Saga.step(:a, fn _ctx -> {:ok, :a_ok} end, fn _ctx ->
+        track(:ran_comp, :a)
+        :a_undone
+      end)
+      |> Saga.step(:b, fn _ctx -> {:ok, :b_ok} end, fn _ctx ->
+        track(:ran_comp, :b)
+        {:error, :compensation_broke}
+      end)
+      |> Saga.step(:c, fn _ctx -> {:error, :fail} end, fn _ctx -> nil end)
+      |> Saga.execute(%{})
+
+    assert {:error, :c, :fail, comp} = result
+    assert tracked(:ran_comp) == [:b, :a]
+    assert comp == [b: {:error, :compensation_broke}, a: :a_undone]
+  end
+
+  test "actions run strictly in insertion order on the success path" do
+    result =
+      Saga.new()
+      |> Saga.step(
+        :third_added,
+        fn _ctx ->
+          track(:seq, :third_added)
+          {:ok, 3}
+        end,
+        fn _ctx -> nil end
+      )
+      |> Saga.step(
+        :first_added,
+        fn _ctx ->
+          track(:seq, :first_added)
+          {:ok, 1}
+        end,
+        fn _ctx -> nil end
+      )
+      |> Saga.step(
+        :second_added,
+        fn _ctx ->
+          track(:seq, :second_added)
+          {:ok, 2}
+        end,
+        fn _ctx -> nil end
+      )
+      |> Saga.execute(%{})
+
+    assert {:ok, _ctx} = result
+    assert tracked(:seq) == [:third_added, :first_added, :second_added]
+  end
+
+  test "every compensation sees the same context including all completed step results" do
+    Saga.new()
+    |> Saga.step(:alpha, fn _ctx -> {:ok, :a_val} end, fn ctx -> track(:ctxs, ctx) end)
+    |> Saga.step(:beta, fn _ctx -> {:ok, :b_val} end, fn ctx -> track(:ctxs, ctx) end)
+    |> Saga.step(:gamma, fn _ctx -> {:error, :bad} end, fn ctx -> track(:ctxs, ctx) end)
+    |> Saga.execute(%{seed: 0})
+
+    [beta_ctx, alpha_ctx] = tracked(:ctxs)
+    expected = %{seed: 0, alpha: :a_val, beta: :b_val}
+    assert beta_ctx == expected
+    assert alpha_ctx == expected
+  end
 end
 ```

@@ -33,21 +33,33 @@ defmodule TransactionAnalyzer do
   @doc "Analyzes the transaction log at `path`. Returns `{:ok, stats}` or `{:error, reason}`."
   @spec analyze(String.t()) :: {:ok, map()} | {:error, term()}
   def analyze(path) do
-    case File.stat(path) do
+    case File.open(path, [:read]) do
       {:error, reason} ->
         {:error, reason}
 
-      {:ok, _} ->
-        report =
-          path
-          |> File.stream!(:line, [])
-          |> Stream.map(&String.trim_trailing(&1, "\n"))
-          |> Stream.map(&String.trim_trailing(&1, "\r"))
-          |> Enum.reduce(initial_acc(), &process_line/2)
-          |> build_report()
-
-        {:ok, report}
+      {:ok, device} ->
+        :ok = File.close(device)
+        stream_report(path)
     end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Streaming
+  # ---------------------------------------------------------------------------
+
+  defp stream_report(path) do
+    report =
+      path
+      |> File.stream!(:line, [])
+      |> Stream.map(&String.trim_trailing(&1, "\n"))
+      |> Stream.map(&String.trim_trailing(&1, "\r"))
+      |> Enum.reduce(initial_acc(), &process_line/2)
+      |> build_report()
+
+    {:ok, report}
+  rescue
+    error in [File.Error] -> {:error, Map.get(error, :reason, :enoent)}
+    error in [IO.StreamError] -> {:error, Map.get(error, :reason, :terminated)}
   end
 
   # ---------------------------------------------------------------------------
@@ -541,6 +553,58 @@ defmodule TransactionAnalyzerTest do
 
     assert_in_delta report.daily_volume[{2024, 1, 1}], 100.0, 0.001
     assert_in_delta report.daily_volume[{2024, 1, 2}], 200.0, 0.001
+  end
+
+  test "top_accounts breaks equal-volume ties alphabetically by account_id" do
+    path = tmp_path("ties")
+
+    write_lines(path, [
+      txn_line("2024-02-01T00:00:00Z", "acct_b", "credit", 100, "USD"),
+      txn_line("2024-02-01T00:00:01Z", "acct_a", "credit", 60, "USD"),
+      txn_line("2024-02-01T00:00:02Z", "acct_a", "debit", 40, "USD"),
+      txn_line("2024-02-01T00:00:03Z", "acct_c", "credit", 500, "USD")
+    ])
+
+    on_exit(fn -> File.rm(path) end)
+
+    assert {:ok, report} = TransactionAnalyzer.analyze(path)
+    assert [{"acct_c", _}, {"acct_a", vol_a}, {"acct_b", vol_b}] = report.top_accounts
+    assert_in_delta vol_a, 100.0, 0.001
+    assert_in_delta vol_b, 100.0, 0.001
+  end
+
+  test "path that exists but cannot be opened as a file returns an error tuple" do
+    path = tmp_path("is_a_directory")
+    File.mkdir_p!(path)
+    on_exit(fn -> File.rm_rf(path) end)
+
+    assert {:error, _reason} = TransactionAnalyzer.analyze(path)
+  end
+
+  test "daily_volume buckets an offset timestamp by its UTC day" do
+    path = tmp_path("utc_day")
+
+    write_lines(path, [
+      txn_line("2024-01-15T23:30:00-05:00", "acct_o", "credit", 100, "USD")
+    ])
+
+    on_exit(fn -> File.rm(path) end)
+
+    assert {:ok, report} = TransactionAnalyzer.analyze(path)
+    assert Map.keys(report.daily_volume) == [{2024, 1, 16}]
+    assert is_float(report.daily_volume[{2024, 1, 16}])
+    assert_in_delta report.daily_volume[{2024, 1, 16}], 100.0, 0.001
+  end
+
+  test "valid JSON that is not an object counts as malformed" do
+    path = tmp_path("non_object")
+    write_lines(path, ["123", "[1, 2, 3]", ~s("just a string"), "null", "true"])
+    on_exit(fn -> File.rm(path) end)
+
+    assert {:ok, report} = TransactionAnalyzer.analyze(path)
+    assert report.malformed_count == 5
+    assert report.top_accounts == []
+    assert report.time_range == nil
   end
 end
 ```

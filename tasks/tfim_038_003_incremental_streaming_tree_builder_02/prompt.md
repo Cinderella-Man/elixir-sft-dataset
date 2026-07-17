@@ -415,5 +415,88 @@ defmodule TreeStreamTest do
     assert {:ok, [%{children: [%{id: 2}]}]} = TreeStream.forest(pid)
     TreeStream.stop(pid)
   end
+
+  test "forest adds the :children key and no other key to each node map" do
+    {:ok, pid} = TreeStream.start_link()
+    TreeStream.add(pid, %{id: 1, parent_id: nil, label: "root", score: 9})
+    TreeStream.add(pid, %{id: 2, parent_id: 1, note: :leafy})
+
+    assert {:ok, [root]} = TreeStream.forest(pid)
+    assert Enum.sort(Map.keys(root)) == Enum.sort([:id, :parent_id, :label, :score, :children])
+    assert [child] = root.children
+    assert Enum.sort(Map.keys(child)) == Enum.sort([:id, :parent_id, :note, :children])
+    TreeStream.stop(pid)
+  end
+
+  test "explicit :discard strategy drops orphans and their descendants from the forest" do
+    {:ok, pid} = TreeStream.start_link(orphan_strategy: :discard)
+    TreeStream.add(pid, %{id: 1, parent_id: nil})
+    TreeStream.add(pid, %{id: 2, parent_id: 99})
+    TreeStream.add(pid, %{id: 3, parent_id: 2})
+
+    assert {:ok, [root]} = TreeStream.forest(pid)
+    assert root.id == 1
+    assert root.children == []
+    assert TreeStream.count(pid) == 3
+    TreeStream.stop(pid)
+  end
+
+  test "nesting is identical for two servers fed the same nodes in different orders" do
+    {:ok, forward} = TreeStream.start_link()
+    TreeStream.add(forward, %{id: 1, parent_id: nil, tag: :a})
+    TreeStream.add(forward, %{id: 2, parent_id: 1, tag: :b})
+    TreeStream.add(forward, %{id: 3, parent_id: 2, tag: :c})
+    TreeStream.add(forward, %{id: 4, parent_id: 1, tag: :d})
+
+    {:ok, backward} = TreeStream.start_link()
+    TreeStream.add(backward, %{id: 2, parent_id: 1, tag: :b})
+    TreeStream.add(backward, %{id: 3, parent_id: 2, tag: :c})
+    TreeStream.add(backward, %{id: 4, parent_id: 1, tag: :d})
+    TreeStream.add(backward, %{id: 1, parent_id: nil, tag: :a})
+
+    assert {:ok, forest_a} = TreeStream.forest(forward)
+    assert {:ok, forest_b} = TreeStream.forest(backward)
+    assert forest_a == forest_b
+    TreeStream.stop(forward)
+    TreeStream.stop(backward)
+  end
+
+  test "atom ids nest correctly and duplicate detection compares them by value" do
+    {:ok, pid} = TreeStream.start_link()
+    assert :ok = TreeStream.add(pid, %{id: :root, parent_id: nil})
+    assert :ok = TreeStream.add(pid, %{id: :leaf, parent_id: :root})
+
+    assert {:error, {:duplicate_id, :leaf}} =
+             TreeStream.add(pid, %{id: :leaf, parent_id: nil})
+
+    assert TreeStream.count(pid) == 2
+    assert {:ok, [root]} = TreeStream.forest(pid)
+    assert root.id == :root
+    assert [%{id: :leaf, children: []}] = root.children
+    TreeStream.stop(pid)
+  end
+
+  test "add_many returns :ok for an empty list and for an all-duplicate list" do
+    {:ok, pid} = TreeStream.start_link()
+    assert :ok = TreeStream.add_many(pid, [])
+    assert TreeStream.count(pid) == 0
+    assert {:ok, []} = TreeStream.forest(pid)
+
+    assert :ok = TreeStream.add(pid, %{id: 1, parent_id: nil, v: :first})
+    assert :ok = TreeStream.add_many(pid, [%{id: 1, parent_id: nil, v: :second}])
+
+    assert TreeStream.count(pid) == 1
+    assert {:ok, [root]} = TreeStream.forest(pid)
+    assert root.v == :first
+    TreeStream.stop(pid)
+  end
+
+  test "stop terminates the server process" do
+    {:ok, pid} = TreeStream.start_link()
+    ref = Process.monitor(pid)
+    assert :ok = TreeStream.stop(pid)
+    assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 1_000
+    refute Process.alive?(pid)
+  end
 end
 ```

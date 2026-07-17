@@ -528,5 +528,70 @@ defmodule StateMachineTest do
   rescue
     _error -> :ok
   end
+
+  test "transition/3 reports a db error and leaves the in-memory state untouched" do
+    {:module, failing_repo, _, _} =
+      defmodule FailingRepo do
+        def one(_query), do: nil
+        def all(_query), do: []
+        def insert(_struct), do: {:error, :disk_full}
+      end
+
+    {:ok, sm} = StateMachine.start_link(repo: failing_repo)
+    {:ok, :pending} = StateMachine.start(sm, "order:dbfail")
+
+    assert {:error, {:db_error, :disk_full}} =
+             StateMachine.transition(sm, "order:dbfail", :confirm)
+
+    assert {:ok, :pending} = StateMachine.get_state(sm, "order:dbfail")
+  end
+
+  test "cancel from :pending yields :cancelled and records the transition", %{sm: sm} do
+    {:ok, :pending} = StateMachine.start(sm, "order:cancel-p")
+
+    assert {:ok, :cancelled} = StateMachine.transition(sm, "order:cancel-p", :cancel)
+    assert {:ok, :cancelled} = StateMachine.get_state(sm, "order:cancel-p")
+
+    assert {:ok, [%{event: :cancel, from_state: :pending, to_state: :cancelled}]} =
+             StateMachine.history(sm, "order:cancel-p")
+  end
+
+  test "cancel from :confirmed yields :cancelled and records the transition", %{sm: sm} do
+    {:ok, :pending} = StateMachine.start(sm, "order:cancel-c")
+    {:ok, :confirmed} = StateMachine.transition(sm, "order:cancel-c", :confirm)
+
+    assert {:ok, :cancelled} = StateMachine.transition(sm, "order:cancel-c", :cancel)
+    assert {:ok, :cancelled} = StateMachine.get_state(sm, "order:cancel-c")
+
+    assert {:ok, [_confirm, %{event: :cancel, from_state: :confirmed, to_state: :cancelled}]} =
+             StateMachine.history(sm, "order:cancel-c")
+  end
+
+  test "an invalid transition writes no row to the history", %{sm: sm} do
+    {:ok, :pending} = StateMachine.start(sm, "order:novoid")
+
+    assert {:error, :invalid_transition} = StateMachine.transition(sm, "order:novoid", :deliver)
+    assert {:ok, []} = StateMachine.history(sm, "order:novoid")
+  end
+
+  test "the :name option registers the server so the API can be driven by name" do
+    {:ok, pid} = StateMachine.start_link(repo: @repo, name: :sm_named_server)
+
+    assert Process.whereis(:sm_named_server) == pid
+    assert {:ok, :pending} = StateMachine.start(:sm_named_server, "order:named")
+    assert {:ok, :confirmed} = StateMachine.transition(:sm_named_server, "order:named", :confirm)
+    assert {:ok, :confirmed} = StateMachine.get_state(:sm_named_server, "order:named")
+  end
+
+  test "history entries expose atom lifecycle values and a DateTime inserted_at", %{sm: sm} do
+    {:ok, :pending} = StateMachine.start(sm, "order:dt")
+    {:ok, :confirmed} = StateMachine.transition(sm, "order:dt", :confirm)
+
+    assert {:ok, [entry]} = StateMachine.history(sm, "order:dt")
+    assert %DateTime{} = entry.inserted_at
+    assert is_atom(entry.event)
+    assert is_atom(entry.from_state)
+    assert is_atom(entry.to_state)
+  end
 end
 ```

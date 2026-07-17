@@ -456,5 +456,92 @@ defmodule ValidatingPoolTest do
     assert cnew == {:conn, 1}
     assert destroyed_list.() == [c0]
   end
+
+  test "every invalid available connection is discarded before a fresh one is created" do
+    {_counter, create} = counting_create()
+    {validate, destroy, poison, destroyed_list} = validation_tools()
+
+    start_supervised!(
+      {ValidatingPool,
+       name: :vp_sweep, max_size: 3, create: create, validate: validate, destroy: destroy}
+    )
+
+    conns =
+      for _ <- 1..3 do
+        assert {:ok, c} = ValidatingPool.checkout(:vp_sweep, 100)
+        c
+      end
+
+    Enum.each(conns, fn c -> assert :ok = ValidatingPool.checkin(:vp_sweep, c) end)
+    Enum.each(conns, poison)
+
+    # All three available connections are stale: each must be validated, destroyed
+    # and dropped (total 3 -> 0) so that a fresh one can be created under max_size.
+    assert {:ok, fresh} = ValidatingPool.checkout(:vp_sweep, 100)
+    assert fresh == {:conn, 3}
+    assert Enum.sort(destroyed_list.()) == Enum.sort(conns)
+
+    s = ValidatingPool.stats(:vp_sweep)
+    assert s.total == 1 and s.in_use == 1 and s.available == 0
+  end
+
+  test "the longest-waiting blocked caller is served before a later one" do
+    start_supervised!({ValidatingPool, name: :vp_fifo, max_size: 1})
+    assert {:ok, c} = ValidatingPool.checkout(:vp_fifo, 100)
+
+    parent = self()
+
+    waiter = fn tag ->
+      spawn(fn ->
+        send(parent, {tag, ValidatingPool.checkout(:vp_fifo, 2_000)})
+
+        # Stay alive: a dead waiter would trigger crash reclamation.
+        receive do
+          :release -> :ok
+        end
+      end)
+    end
+
+    waiter.(:first)
+    refute_receive {:first, _}, 100
+    waiter.(:second)
+    refute_receive {:second, _}, 100
+
+    assert :ok = ValidatingPool.checkin(:vp_fifo, c)
+    assert_receive {:first, {:ok, ^c}}, 1_000
+    refute_receive {:second, _}, 100
+  end
+
+  test "a zero timeout on an exhausted pool returns an error without blocking" do
+    start_supervised!({ValidatingPool, name: :vp_zero, max_size: 1})
+    assert {:ok, _c} = ValidatingPool.checkout(:vp_zero, 100)
+    assert {:error, :timeout} = ValidatingPool.checkout(:vp_zero, 0)
+
+    s = ValidatingPool.stats(:vp_zero)
+    assert s.total == 1 and s.in_use == 1 and s.available == 0
+  end
+
+  test "max_size defaults to ten and min_size defaults to zero" do
+    {counter, create} = counting_create()
+    start_supervised!({ValidatingPool, name: :vp_defaults, create: create})
+
+    s = ValidatingPool.stats(:vp_defaults)
+    assert s.max == 10 and s.min == 0
+    assert s.total == 0 and s.available == 0 and s.in_use == 0
+    assert created(counter) == 0
+
+    for _ <- 1..10, do: assert({:ok, _} = ValidatingPool.checkout(:vp_defaults, 100))
+    assert {:error, :timeout} = ValidatingPool.checkout(:vp_defaults, 0)
+    assert ValidatingPool.stats(:vp_defaults).total == 10
+  end
+
+  test "the default create function hands out distinct references" do
+    start_supervised!({ValidatingPool, name: :vp_defcreate, max_size: 2})
+    assert {:ok, r1} = ValidatingPool.checkout(:vp_defcreate, 100)
+    assert {:ok, r2} = ValidatingPool.checkout(:vp_defcreate, 100)
+    assert is_reference(r1)
+    assert is_reference(r2)
+    assert r1 != r2
+  end
 end
 ```

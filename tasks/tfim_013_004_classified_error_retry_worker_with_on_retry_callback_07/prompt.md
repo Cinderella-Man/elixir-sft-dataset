@@ -543,5 +543,85 @@ defmodule ClassifiedRetryWorkerTest do
     func = fn -> {:ok, :defaults_work} end
     assert {:ok, :defaults_work} = ClassifiedRetryWorker.execute(rw, func, [])
   end
+
+  test "accepts a name option and is reachable by that registered name" do
+    name = :classified_retry_named_worker
+
+    {:ok, _pid} =
+      ClassifiedRetryWorker.start_link(
+        name: name,
+        clock: &Clock.now/0,
+        random: &ZeroRandom.rand/1
+      )
+
+    func = fn -> {:ok, :via_name} end
+
+    assert {:ok, :via_name} = ClassifiedRetryWorker.execute(name, func, [])
+  end
+
+  test "default max_retries permits exactly three transient retries", %{rw: rw} do
+    start_supervised!({Counter, 0})
+
+    func = fn ->
+      Counter.increment_and_get()
+      {:error, :transient, :always_down}
+    end
+
+    assert {:error, :retries_exhausted, :always_down} =
+             ClassifiedRetryWorker.execute(rw, func, base_delay_ms: 1)
+
+    # 1 initial + 3 default retries = 4 calls
+    assert Counter.get() == 4
+  end
+
+  test "on_retry delay reflects injected non-zero jitter added to backoff" do
+    start_supervised!({Counter, 0})
+    start_supervised!({RetryLog, []})
+
+    {:ok, rw2} =
+      ClassifiedRetryWorker.start_link(clock: &Clock.now/0, random: fn _max -> 7 end)
+
+    func = fn ->
+      attempt = Counter.increment_and_get()
+      if attempt == 1, do: {:error, :transient, :once}, else: {:ok, :ok}
+    end
+
+    on_retry = fn a, r, d -> RetryLog.record(a, r, d) end
+
+    assert {:ok, :ok} =
+             ClassifiedRetryWorker.execute(rw2, func,
+               base_delay_ms: 100,
+               on_retry: on_retry
+             )
+
+    # delay 100 + jitter 7 = 107
+    assert RetryLog.entries() == [{1, :once, 107}]
+  end
+
+  test "injected random is called with the pre-jitter capped delay as argument" do
+    test_pid = self()
+
+    {:ok, rw2} =
+      ClassifiedRetryWorker.start_link(
+        clock: &Clock.now/0,
+        random: fn max ->
+          send(test_pid, {:rand_arg, max})
+          0
+        end
+      )
+
+    {:ok, agent} = Agent.start_link(fn -> 0 end)
+
+    func = fn ->
+      n = Agent.get_and_update(agent, fn n -> {n + 1, n + 1} end)
+      if n == 1, do: {:error, :transient, :x}, else: {:ok, :done}
+    end
+
+    assert {:ok, :done} =
+             ClassifiedRetryWorker.execute(rw2, func, base_delay_ms: 100)
+
+    assert_receive {:rand_arg, 100}
+    Agent.stop(agent)
+  end
 end
 ```

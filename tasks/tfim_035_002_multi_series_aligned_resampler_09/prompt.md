@@ -369,5 +369,68 @@ defmodule MultiSeriesResamplerTest do
 
     assert result == [{0, %{cpu: 5}}, {2_000, %{cpu: nil}}, {4_000, %{cpu: 7}}]
   end
+
+  test "a non-integer or negative interval raises ArgumentError" do
+    assert_raise ArgumentError, fn ->
+      MultiSeriesResampler.resample(@series, 2_000.0, agg: :sum)
+    end
+
+    assert_raise ArgumentError, fn ->
+      MultiSeriesResampler.resample(@series, -2_000, agg: :sum)
+    end
+  end
+
+  test "a timestamp exactly on a boundary opens the next bucket" do
+    # 1999 -> bucket 0, 2000 -> bucket 2000 (not 0), and the joint max at
+    # exactly 4000 must still produce bucket 4000 as the last row.
+    series = %{cpu: [{1_999, 2}, {2_000, 1}], mem: [{4_000, 3}]}
+    result = MultiSeriesResampler.resample(series, @interval, agg: :sum, fill: nil)
+
+    assert result == [
+             {0, %{cpu: 2, mem: nil}},
+             {2_000, %{cpu: 1, mem: nil}},
+             {4_000, %{cpu: nil, mem: 3}}
+           ]
+  end
+
+  test ":mean yields a float even when the mean is a whole number" do
+    # mem's mean is exactly 12; integer division or a rounding shortcut would
+    # return 12 rather than the promised float.
+    series = %{cpu: [{0, 1}, {500, 2}], mem: [{0, 10}, {500, 11}, {900, 15}]}
+    result = MultiSeriesResampler.resample(series, @interval, agg: :mean, fill: nil)
+
+    m0 = row(result, 0)
+    assert m0.cpu === 1.5
+    assert m0.mem === 12.0
+  end
+
+  test "an always-empty series stays nil in every row under fill: :forward" do
+    series = %{a: [], b: [{0, 1}, {2_500, 2}]}
+    result = MultiSeriesResampler.resample(series, @interval, agg: :last, fill: :forward)
+
+    assert result == [{0, %{a: nil, b: 1}}, {2_000, %{a: nil, b: 2}}]
+  end
+
+  test ":count and :sum leave empty buckets nil rather than zero" do
+    series = %{cpu: [{0, 5}, {4_500, 7}], mem: [{0, 1}]}
+
+    counted = MultiSeriesResampler.resample(series, @interval, agg: :count, fill: nil)
+    assert row(counted, 2_000) == %{cpu: nil, mem: nil}
+    assert row(counted, 4_000) == %{cpu: 1, mem: nil}
+
+    summed = MultiSeriesResampler.resample(series, @interval, agg: :sum, fill: nil)
+    assert row(summed, 2_000) == %{cpu: nil, mem: nil}
+    assert row(summed, 4_000) == %{cpu: 7, mem: nil}
+  end
+
+  test "options are validated even when the input has no data points" do
+    assert_raise ArgumentError, fn ->
+      MultiSeriesResampler.resample(%{}, @interval, agg: :median)
+    end
+
+    assert_raise ArgumentError, fn ->
+      MultiSeriesResampler.resample(%{a: []}, @interval, fill: :backward)
+    end
+  end
 end
 ```

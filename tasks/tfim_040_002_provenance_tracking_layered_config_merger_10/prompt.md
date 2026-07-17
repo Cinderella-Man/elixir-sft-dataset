@@ -131,10 +131,11 @@ defmodule LayeredConfig do
 
       is_map(ov) ->
         # Override replaces a scalar/list with a whole subtree.
-        {ov, leaf_provenance(ov, name, kpath, Map.delete(pr, kpath))}
+        {ov, leaf_provenance(ov, name, kpath, prune_subtree(pr, kpath))}
 
       true ->
-        {ov, Map.put(pr, kpath, name)}
+        # Override replaces whatever was there (possibly a subtree) with a leaf.
+        {ov, Map.put(prune_subtree(pr, kpath), kpath, name)}
     end
   end
 
@@ -147,6 +148,16 @@ defmodule LayeredConfig do
   end
 
   defp leaf_provenance(_value, name, path, pr), do: Map.put(pr, path, name)
+
+  # Drops `kpath` and every provenance entry nested beneath it, so a subtree that a
+  # higher layer replaced leaves no stale descendant paths behind.
+  defp prune_subtree(pr, kpath) do
+    depth = length(kpath)
+
+    Map.reject(pr, fn {path, _name} ->
+      is_list(path) and Enum.take(path, depth) == kpath
+    end)
+  end
 
   defp locked?(kpath, %{locked_paths: locked}), do: kpath in locked
 
@@ -315,6 +326,91 @@ defmodule LayeredConfigTest do
 
   test "empty layer list raises ArgumentError" do
     assert_raise ArgumentError, fn -> LayeredConfig.merge([]) end
+  end
+
+  test "provenance drops paths whose subtree a higher layer replaced with a scalar" do
+    layers = [
+      {:base, %{db: %{host: "localhost", port: 5432}}},
+      {:env, %{db: "disabled"}}
+    ]
+
+    result = LayeredConfig.merge(layers)
+
+    assert result.config == %{db: "disabled"}
+    assert result.provenance[[:db]] == :env
+    refute Map.has_key?(result.provenance, [:db, :host])
+    refute Map.has_key?(result.provenance, [:db, :port])
+  end
+
+  test "locked path absent from earlier layers may still be set by a higher layer" do
+    layers = [
+      {:base, %{db: %{host: "localhost"}}},
+      {:env, %{db: %{password: "fresh"}, token: "new"}}
+    ]
+
+    result = LayeredConfig.merge(layers, locked: [[:db, :password], [:token]])
+
+    assert result.config.db.password == "fresh"
+    assert result.config.token == "new"
+    assert result.provenance[[:db, :password]] == :env
+    assert result.provenance[[:token]] == :env
+  end
+
+  test "per-key replace overrides a global append strategy" do
+    layers = [
+      {:base, %{tags: ["a"], plugins: ["core"]}},
+      {:env, %{tags: ["b"], plugins: ["extra"]}}
+    ]
+
+    result =
+      LayeredConfig.merge(layers,
+        list_strategy: :append,
+        list_strategies: %{[:tags] => :replace}
+      )
+
+    assert result.config.tags == ["b"]
+    assert result.config.plugins == ["core", "extra"]
+    assert result.provenance[[:tags]] == :env
+    assert result.provenance[[:plugins]] == [:base, :env]
+  end
+
+  test "tuple key paths work for locked and list_strategies options" do
+    layers = [
+      {:base, %{db: %{password: "keep", tags: ["a"]}}},
+      {:env, %{db: %{password: "hack", tags: ["b"]}}}
+    ]
+
+    result =
+      LayeredConfig.merge(layers,
+        locked: [{:db, :password}],
+        list_strategies: %{{:db, :tags} => :append}
+      )
+
+    assert result.config.db.password == "keep"
+    assert result.config.db.tags == ["a", "b"]
+    assert result.provenance[[:db, :password]] == :base
+    assert result.provenance[[:db, :tags]] == [:base, :env]
+  end
+
+  test "append provenance omits a middle layer that contributed no elements" do
+    layers = [
+      {:base, %{plugins: ["core"]}},
+      {:file, %{other: 1}},
+      {:env, %{plugins: ["metrics"]}}
+    ]
+
+    result = LayeredConfig.merge(layers, list_strategy: :append)
+
+    assert result.config.plugins == ["core", "metrics"]
+    assert result.provenance[[:plugins]] == [:base, :env]
+    assert result.provenance[[:other]] == :file
+  end
+
+  test "merge result exposes exactly the config and provenance keys" do
+    result = LayeredConfig.merge([{:base, %{a: 1}}, {:env, %{a: 2}}])
+
+    assert result |> Map.keys() |> Enum.sort() == [:config, :provenance]
+    assert map_size(result) == 2
   end
 end
 ```

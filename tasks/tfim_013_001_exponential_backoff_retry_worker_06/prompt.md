@@ -550,5 +550,58 @@ defmodule RetryWorkerTest do
     assert {:ok, :done} = RetryWorker.execute(rw2, func, max_retries: 1, base_delay_ms: 1)
     assert DelayRecorder.delays() == [1]
   end
+
+  test "negative max_retries invokes func once then errors immediately", %{rw: rw} do
+    func = fail_then_succeed(5, :never)
+
+    assert {:error, :max_retries_exceeded, :boom} =
+             RetryWorker.execute(rw, func, max_retries: -1, base_delay_ms: 100)
+
+    assert Counter.get() == 1
+  end
+
+  test "random is never called when max_delay_ms is zero", %{rw: _rw} do
+    rw2 = recording_server()
+    func = fail_then_succeed(2, :done)
+
+    assert {:ok, :done} =
+             RetryWorker.execute(rw2, func, max_retries: 2, base_delay_ms: 100, max_delay_ms: 0)
+
+    assert DelayRecorder.delays() == []
+  end
+
+  test "large max_retries drives many attempts without crashing", %{rw: rw} do
+    start_supervised!({Counter, 0})
+
+    func = fn ->
+      Counter.increment_and_get()
+      {:error, :always}
+    end
+
+    assert {:error, :max_retries_exceeded, :always} =
+             RetryWorker.execute(rw, func, max_retries: 120, base_delay_ms: 1, max_delay_ms: 0)
+
+    assert Counter.get() == 121
+  end
+
+  test "recorded delays reflect clamping to max_delay_ms", %{rw: _rw} do
+    rw2 = recording_server()
+    func = fail_then_succeed(4, :done)
+
+    assert {:ok, :done} =
+             RetryWorker.execute(rw2, func, max_retries: 4, base_delay_ms: 4, max_delay_ms: 10)
+
+    assert DelayRecorder.delays() == [4, 8, 10, 10]
+  end
+
+  test "execute with two arguments uses default options", %{rw: rw} do
+    assert {:ok, :arity_two} = RetryWorker.execute(rw, fn -> {:ok, :arity_two} end)
+  end
+
+  test "start_link with no arguments starts a working process", %{rw: _rw} do
+    assert {:ok, pid} = RetryWorker.start_link()
+    assert is_pid(pid)
+    assert {:ok, :ready} = RetryWorker.execute(pid, fn -> {:ok, :ready} end)
+  end
 end
 ```

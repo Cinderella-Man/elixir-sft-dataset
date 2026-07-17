@@ -530,5 +530,93 @@ defmodule CounterTSDBTest do
     # so the automatic pass dropped both the chunk and its now-empty series.
     assert [] = CounterTSDB.query(db, "reqs", %{"i" => "a"}, {0, 2_000_000})
   end
+
+  test "increase treats an equal consecutive value as a zero delta, not a reset", %{db: db} do
+    # values 10, 10, 15 -> deltas 0 (10 >= 10, no reset), 5 -> total 5
+    :ok = CounterTSDB.insert(db, "reqs", %{}, 0, 10)
+    :ok = CounterTSDB.insert(db, "reqs", %{}, 100, 10)
+    :ok = CounterTSDB.insert(db, "reqs", %{}, 200, 15)
+
+    [{_labels, range}] = CounterTSDB.query_range(db, "reqs", %{}, {0, 1000}, :increase, 1_000)
+    assert range == [{0, 5}]
+  end
+
+  test "cleanup drops a chunk whose end exactly equals the retention threshold", %{db: db} do
+    # chunk_duration_ms 1_000, retention_ms 10_000.
+    :ok = CounterTSDB.insert(db, "reqs", %{}, 100, 1)
+    :ok = CounterTSDB.insert(db, "reqs", %{}, 1_000, 2)
+
+    # now - retention_ms = 1_000. Chunk 0 ends at 0 + 1_000 == 1_000 -> removed.
+    # Chunk 1_000 ends at 2_000 > 1_000 -> kept.
+    Clock.set(11_000)
+    send(db, :cleanup)
+
+    [{_labels, points}] = CounterTSDB.query(db, "reqs", %{}, {0, 20_000})
+    assert points == [{1_000, 2}]
+  end
+
+  test "retention defaults to one hour when the option is omitted" do
+    {:ok, db} =
+      CounterTSDB.start_link(
+        clock: &Clock.now/0,
+        chunk_duration_ms: 1_000,
+        cleanup_interval_ms: :infinity
+      )
+
+    :ok = CounterTSDB.insert(db, "reqs", %{}, 0, 1)
+
+    # threshold = 100_000 - 3_600_000 < 0, so the chunk survives.
+    Clock.set(100_000)
+    send(db, :cleanup)
+    [{_labels, points}] = CounterTSDB.query(db, "reqs", %{}, {0, 10_000})
+    assert points == [{0, 1}]
+
+    # threshold = 3_601_000 - 3_600_000 = 1_000; chunk ends at 1_000 -> expired.
+    Clock.set(3_601_000)
+    send(db, :cleanup)
+    assert [] = CounterTSDB.query(db, "reqs", %{}, {0, 10_000})
+  end
+
+  test "chunk duration defaults to sixty seconds when the option is omitted" do
+    {:ok, db} =
+      CounterTSDB.start_link(
+        clock: &Clock.now/0,
+        retention_ms: 10_000,
+        cleanup_interval_ms: :infinity
+      )
+
+    :ok = CounterTSDB.insert(db, "reqs", %{}, 0, 1)
+
+    # threshold = 20_000 - 10_000 = 10_000; the default chunk ends at
+    # 0 + 60_000 = 60_000 > 10_000, so the point must survive cleanup.
+    Clock.set(20_000)
+    send(db, :cleanup)
+
+    [{_labels, points}] = CounterTSDB.query(db, "reqs", %{}, {0, 10_000})
+    assert points == [{0, 1}]
+  end
+
+  test "the name option registers the process for public API calls" do
+    {:ok, _pid} =
+      CounterTSDB.start_link(
+        name: :counter_tsdb_named_test,
+        clock: &Clock.now/0,
+        chunk_duration_ms: 1_000,
+        cleanup_interval_ms: :infinity
+      )
+
+    :ok = CounterTSDB.insert(:counter_tsdb_named_test, "reqs", %{"i" => "a"}, 100, 5)
+    :ok = CounterTSDB.insert(:counter_tsdb_named_test, "reqs", %{"i" => "a"}, 200, 9)
+
+    assert [{%{"i" => "a"}, [{100, 5}, {200, 9}]}] =
+             CounterTSDB.query(:counter_tsdb_named_test, "reqs", %{"i" => "a"}, {0, 500})
+  end
+
+  test "query returns an empty list when neither metric nor matchers select a series", %{db: db} do
+    :ok = CounterTSDB.insert(db, "reqs", %{"i" => "a"}, 100, 10)
+
+    assert [] == CounterTSDB.query(db, "other_metric", %{}, {0, 500})
+    assert [] == CounterTSDB.query(db, "reqs", %{"i" => "z"}, {0, 500})
+  end
 end
 ```

@@ -391,5 +391,61 @@ defmodule SchemaProfilerTest do
              "label" => %{type: :string, nullable: false, unique: false}
            }
   end
+
+  test "a quoted field keeps its comma instead of splitting into another column" do
+    csv = ~s("x,y",1\n"x,z",2\n)
+
+    assert schema(csv, headers: false) == %{
+             "column_1" => %{type: :string, nullable: false, unique: true},
+             "column_2" => %{type: :integer, nullable: false, unique: true}
+           }
+  end
+
+  test "a doubled quote collapses to one literal quote and stays inside the quoted field" do
+    csv = ~s(q\n"a"",b"\n"a,b"\n)
+
+    # row 1 is the value `a",b`, row 2 is `a,b` — distinct, so the column stays unique
+    assert schema(csv) == %{"q" => %{type: :string, nullable: false, unique: true}}
+  end
+
+  test "a quoted empty field is a non-null string value" do
+    csv = ~s(a,b\n"",1\nx,2\n)
+
+    result = schema(csv)
+    assert result["a"] == %{type: :string, nullable: false, unique: true}
+    assert result["b"] == %{type: :integer, nullable: false, unique: true}
+  end
+
+  test "a quoted value duplicates an unquoted one with the same characters" do
+    csv = ~s(code\n1\n"1"\n)
+
+    assert schema(csv) == %{"code" => %{type: :string, nullable: false, unique: false}}
+  end
+
+  test "sample_rows defaults to 100 data rows" do
+    body = Enum.map_join(1..100, "", fn i -> "#{i}\n" end)
+    csv = "n\n" <> body <> "1\n"
+
+    # the 101st data row repeats "1" but falls outside the default sample
+    assert schema(csv) == %{"n" => %{type: :integer, nullable: false, unique: true}}
+
+    assert schema(csv, sample_rows: 101) == %{
+             "n" => %{type: :integer, nullable: false, unique: false}
+           }
+  end
+
+  test "real calendar dates and datetimes classify while impossible dates fall back to string" do
+    csv = """
+    d,ts,bad,flag
+    2020-01-31,2020-01-31T10:00:00,2020-02-30,TRUE
+    03/04/2021,2021-03-04 08:30:00,13/01/2021,False
+    """
+
+    result = schema(csv)
+    assert result["d"] == %{type: :date, nullable: false, unique: true}
+    assert result["ts"] == %{type: :datetime, nullable: false, unique: true}
+    assert result["bad"] == %{type: :string, nullable: false, unique: true}
+    assert result["flag"] == %{type: :boolean, nullable: false, unique: true}
+  end
 end
 ```

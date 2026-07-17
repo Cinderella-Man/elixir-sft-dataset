@@ -44,6 +44,9 @@ defmodule DBCleaner do
 
   All state is stored in the calling process's dictionary under the private key
   `{DBCleaner, :state}`, so no Agent or extra process is required.
+
+  Every `start/2` call discards any previously registered state *before* doing
+  any database work, so a failed start can never leave a stale strategy behind.
   """
 
   @state_key {__MODULE__, :state}
@@ -65,7 +68,8 @@ defmodule DBCleaner do
                   `:truncation` strategy. Ignored by `:transaction`.
 
   Returns `{:ok, :transaction | :truncation}` on success, or
-  `{:error, reason}` on failure.
+  `{:error, reason}` on failure. Any state registered by an earlier `start/2`
+  is discarded first, even when this call ultimately fails.
   """
   @spec start(:transaction | :truncation, keyword()) ::
           {:ok, :transaction | :truncation} | {:error, term()}
@@ -74,12 +78,18 @@ defmodule DBCleaner do
   def start(:transaction, opts) do
     repo = fetch_repo!(opts)
 
+    # Drop any prior registration before touching the database: if
+    # begin_transaction/0 raises, no stale strategy may survive this call.
+    clear_state()
+
     try do
       {:ok, _ref} = repo.begin_transaction()
       put_state(%{strategy: :transaction, repo: repo})
       {:ok, :transaction}
     rescue
-      e -> {:error, Exception.message(e)}
+      e ->
+        clear_state()
+        {:error, Exception.message(e)}
     end
   end
 
@@ -87,6 +97,7 @@ defmodule DBCleaner do
     repo = fetch_repo!(opts)
     tables = Keyword.get(opts, :tables, [])
 
+    clear_state()
     validate_tables!(tables)
 
     put_state(%{strategy: :truncation, repo: repo, tables: tables})
@@ -451,6 +462,83 @@ defmodule DBCleanerTest do
     DBCleaner.start(:truncation, repo: CleanRaisesRepo, tables: ["users"])
     assert {:error, message} = DBCleaner.clean()
     assert is_binary(message)
+  end
+
+  test "a failed transaction start/2 still replaces prior truncation state (no TRUNCATE on clean)" do
+    assert {:ok, :truncation} =
+             DBCleaner.start(:truncation, repo: FakeRepo, tables: ["users"])
+
+    assert {:error, message} = DBCleaner.start(:transaction, repo: BeginRaisesRepo)
+    assert is_binary(message)
+
+    FakeRepo.reset()
+    DBCleaner.clean()
+
+    refute Enum.any?(FakeRepo.calls(), fn
+             {:query, sql} -> String.contains?(sql, "TRUNCATE")
+             _ -> false
+           end)
+  end
+
+  test "truncation: clean/0 emits the exact bare-identifier TRUNCATE statement per table" do
+    DBCleaner.start(:truncation, repo: FakeRepo, tables: ["users", "posts"])
+    DBCleaner.clean()
+
+    assert FakeRepo.calls() == [
+             {:query, "TRUNCATE users RESTART IDENTITY CASCADE"},
+             {:query, "TRUNCATE posts RESTART IDENTITY CASCADE"}
+           ]
+  end
+
+  test "start/2 replaces an uncleaned truncation registration with a transaction one" do
+    assert {:ok, :truncation} =
+             DBCleaner.start(:truncation, repo: FakeRepo, tables: ["orders"])
+
+    assert {:ok, :transaction} = DBCleaner.start(:transaction, repo: FakeRepo)
+
+    FakeRepo.reset()
+    assert DBCleaner.clean() == :ok
+
+    calls = FakeRepo.calls()
+    assert {:rollback} in calls
+
+    refute Enum.any?(calls, fn
+             {:query, _sql} -> true
+             _ -> false
+           end)
+  end
+
+  test "transaction: clean/0 issues no query!/3 call at all even when tables were given" do
+    DBCleaner.start(:transaction, repo: FakeRepo, tables: ["users", "posts"])
+    FakeRepo.reset()
+
+    assert DBCleaner.clean() == :ok
+
+    assert FakeRepo.calls() == [{:rollback}]
+  end
+
+  test "truncation: a second clean/0 after cleanup issues no further TRUNCATE statements" do
+    DBCleaner.start(:truncation, repo: FakeRepo, tables: ["users"])
+    assert DBCleaner.clean() == :ok
+    FakeRepo.reset()
+
+    assert DBCleaner.clean() == :ok
+    assert FakeRepo.calls() == []
+  end
+
+  test "truncation: query!/3 receives the repo module itself and empty params" do
+    defmodule EchoRepo do
+      def query!(repo, sql, params) do
+        send(self(), {:echo_query, repo, sql, params})
+        %{rows: [], num_rows: 0}
+      end
+    end
+
+    DBCleaner.start(:truncation, repo: EchoRepo, tables: ["users"])
+    assert DBCleaner.clean() == :ok
+
+    assert_receive {:echo_query, EchoRepo, "TRUNCATE users RESTART IDENTITY CASCADE", []}, 100
+    refute_receive {:echo_query, _, _, _}, 50
   end
 end
 ```

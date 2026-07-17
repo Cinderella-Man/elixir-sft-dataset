@@ -517,5 +517,55 @@ defmodule ConditionalObjectStorageTest do
   test "list_objects on a missing bucket errors", %{os: os} do
     assert {:error, :bucket_not_found} = ConditionalObjectStorage.list_objects(os, "nope")
   end
+
+  test "put with a precondition on a missing bucket reports bucket_not_found not precondition", %{
+    os: os
+  } do
+    assert {:error, :bucket_not_found} =
+             ConditionalObjectStorage.put_object(os, "nope", "k", "v", if_none_match: "*")
+
+    assert {:error, :bucket_not_found} =
+             ConditionalObjectStorage.put_object(os, "nope", "k", "v", if_match: "anything")
+  end
+
+  test "delete with if_match on a missing bucket reports bucket_not_found", %{os: os} do
+    assert {:error, :bucket_not_found} =
+             ConditionalObjectStorage.delete_object(os, "nope", "k", if_match: "some-etag")
+  end
+
+  test "start_link registers the process under the given name option" do
+    name = :cos_named_registration_test
+    {:ok, pid} = ConditionalObjectStorage.start_link(name: name)
+    on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
+
+    assert Process.whereis(name) == pid
+    assert :ok = ConditionalObjectStorage.create_bucket(name, "b")
+    assert {:ok, ["b"]} = ConditionalObjectStorage.list_buckets(name)
+  end
+
+  test "an empty bucket name is rejected as invalid_name", %{os: os} do
+    assert {:error, :invalid_name} = ConditionalObjectStorage.create_bucket(os, "")
+    assert {:ok, []} = ConditionalObjectStorage.list_buckets(os)
+  end
+
+  test "bucket names with hyphens, dots and digits are accepted", %{os: os} do
+    assert :ok = ConditionalObjectStorage.create_bucket(os, "my-bucket.v2")
+    assert :ok = ConditionalObjectStorage.create_bucket(os, "a.b-c9")
+    assert {:ok, ["a.b-c9", "my-bucket.v2"]} = ConditionalObjectStorage.list_buckets(os)
+    assert {:error, :invalid_name} = ConditionalObjectStorage.create_bucket(os, "has_underscore")
+  end
+
+  test "delete with a stale etag from a previous version leaves the object in place", %{os: os} do
+    ConditionalObjectStorage.create_bucket(os, "b")
+    {:ok, old_etag} = ConditionalObjectStorage.put_object(os, "b", "k", "v1")
+    {:ok, new_etag} = ConditionalObjectStorage.put_object(os, "b", "k", "v2")
+
+    assert {:error, :precondition_failed} =
+             ConditionalObjectStorage.delete_object(os, "b", "k", if_match: old_etag)
+
+    assert {:ok, %{data: "v2"}} = ConditionalObjectStorage.get_object(os, "b", "k")
+    assert :ok = ConditionalObjectStorage.delete_object(os, "b", "k", if_match: new_etag)
+    assert {:error, :not_found} = ConditionalObjectStorage.get_object(os, "b", "k")
+  end
 end
 ```

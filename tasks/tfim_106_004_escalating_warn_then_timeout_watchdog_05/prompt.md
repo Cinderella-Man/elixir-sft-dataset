@@ -439,5 +439,95 @@ defmodule EscalatingWatchdogTest do
     assert Process.whereis(:custom_escalating) == pid
     on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
   end
+
+  test "re-registering with longer deadlines defers past the old deadlines" do
+    test = self()
+
+    :ok =
+      EscalatingWatchdog.register(
+        :w,
+        dummy_pid(),
+        40,
+        90,
+        warn_notifier(test),
+        timeout_notifier(test)
+      )
+
+    :ok =
+      EscalatingWatchdog.register(
+        :w,
+        dummy_pid(),
+        5_000,
+        10_000,
+        warn_notifier(test),
+        timeout_notifier(test)
+      )
+
+    # The replaced 40/90 deadlines must be dead: drive real time well past both.
+    refute_receive {:warned, :w}, 250
+    refute_receive {:timed_out, :w}, 10
+    assert {:ok, :healthy} = EscalatingWatchdog.phase(:w)
+    assert :ok = EscalatingWatchdog.unregister(:w)
+  end
+
+  test "heartbeat after the warning defers the timeout past its original deadline" do
+    test = self()
+
+    :ok =
+      EscalatingWatchdog.register(
+        :w,
+        dummy_pid(),
+        50,
+        200,
+        warn_notifier(test),
+        timeout_notifier(test)
+      )
+
+    assert_receive {:warned, :w}, 1_000
+    assert :ok = EscalatingWatchdog.heartbeat(:w)
+
+    # The original timeout deadline (~200ms from registration) must pass silently.
+    refute_receive {:timed_out, :w}, 180
+    assert :ok = EscalatingWatchdog.unregister(:w)
+  end
+
+  test "unregister after the warning prevents the pending timeout" do
+    test = self()
+
+    :ok =
+      EscalatingWatchdog.register(
+        :w,
+        dummy_pid(),
+        40,
+        200,
+        warn_notifier(test),
+        timeout_notifier(test)
+      )
+
+    assert_receive {:warned, :w}, 1_000
+    assert :ok = EscalatingWatchdog.unregister(:w)
+    assert {:error, :not_registered} = EscalatingWatchdog.phase(:w)
+
+    refute_receive {:timed_out, :w}, 300
+  end
+
+  test "the warning fires only once while the entity stays silent" do
+    test = self()
+
+    :ok =
+      EscalatingWatchdog.register(
+        :w,
+        dummy_pid(),
+        40,
+        5_000,
+        warn_notifier(test),
+        timeout_notifier(test)
+      )
+
+    assert_receive {:warned, :w}, 1_000
+    refute_receive {:warned, :w}, 250
+    assert {:ok, :warned} = EscalatingWatchdog.phase(:w)
+    assert :ok = EscalatingWatchdog.unregister(:w)
+  end
 end
 ```

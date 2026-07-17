@@ -335,5 +335,79 @@ defmodule MetricsTest do
                :ets.info(table, :named_table) == true
            end)
   end
+
+  test "rate excludes a bucket sitting exactly on the window cutoff", %{clock: clock} do
+    set_time(clock, 40)
+    Metrics.increment(:edge, 7)
+
+    set_time(clock, 41)
+    Metrics.increment(:edge, 3)
+
+    set_time(clock, 100)
+    # cutoff = 100 - 60 = 40 => bucket 40 is excluded, bucket 41 is included
+    assert Metrics.rate(:edge, 60) == 3
+  end
+
+  test "prune deletes a bucket sitting exactly on the retention cutoff", %{clock: clock} do
+    set_time(clock, 40)
+    Metrics.increment(:edge, 7)
+
+    set_time(clock, 41)
+    Metrics.increment(:edge, 3)
+
+    set_time(clock, 100)
+    # cutoff = 100 - 60 = 40 => bucket 40 is deleted, bucket 41 survives
+    assert Metrics.prune(60) == 1
+    assert Metrics.count(:edge) == 3
+    assert Metrics.rate(:edge, 1000) == 3
+  end
+
+  test "prune returns the bucket count rather than the events removed", %{clock: clock} do
+    set_time(clock, 0)
+    Metrics.increment(:heavy, 5)
+
+    set_time(clock, 1)
+    Metrics.increment(:heavy, 9)
+
+    set_time(clock, 100)
+    # two buckets holding 14 events between them => 2, not 14
+    assert Metrics.prune(60) == 2
+    assert Metrics.count(:heavy) == 0
+  end
+
+  test "prune removes stale buckets belonging to every name", %{clock: clock} do
+    set_time(clock, 0)
+    Metrics.increment(:a, 2)
+    Metrics.increment(:b, 3)
+
+    set_time(clock, 100)
+    Metrics.increment(:b, 1)
+
+    assert Metrics.prune(60) == 2
+    assert Metrics.count(:a) == 0
+    assert Metrics.count(:b) == 1
+    assert Metrics.all() == %{b: 1}
+  end
+
+  test "increment refuses amounts that are not non-negative integers", %{clock: clock} do
+    set_time(clock, 0)
+
+    assert_raise FunctionClauseError, fn -> Metrics.increment(:guarded, -1) end
+    assert_raise FunctionClauseError, fn -> Metrics.increment(:guarded, 1.0) end
+
+    assert Metrics.count(:guarded) == 0
+    assert Metrics.rate(:guarded, 1000) == 0
+  end
+
+  test "increment accepts an amount of zero and records no events", %{clock: clock} do
+    set_time(clock, 12)
+    assert :ok = Metrics.increment(:zeroed, 0)
+
+    assert Metrics.count(:zeroed) == 0
+    assert Metrics.rate(:zeroed, 1) == 0
+
+    Metrics.increment(:zeroed, 4)
+    assert Metrics.count(:zeroed) == 4
+  end
 end
 ```

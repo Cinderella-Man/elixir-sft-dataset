@@ -325,5 +325,68 @@ defmodule BoundedIdempotentPaymentsTest do
     ids = [r1.id, r2.id, r3.id]
     assert ids == Enum.uniq(ids)
   end
+
+  test "get_payments lists records oldest first", %{pid: pid} do
+    {:ok, r1} = BoundedIdempotentPayments.process_payment(pid, %{@valid | amount: 1})
+    {:ok, r2} = BoundedIdempotentPayments.process_payment(pid, %{@valid | amount: 2})
+    {:ok, r3} = BoundedIdempotentPayments.process_payment(pid, %{@valid | amount: 3})
+
+    records = BoundedIdempotentPayments.get_payments(pid)
+    assert Enum.map(records, & &1.id) == [r1.id, r2.id, r3.id]
+    assert Enum.map(records, & &1.amount) == [1, 2, 3]
+  end
+
+  test "response ids follow the counter-based pay_N form in order", %{pid: pid} do
+    {:ok, r1} = BoundedIdempotentPayments.process_payment(pid, @valid)
+    {:ok, r2} = BoundedIdempotentPayments.process_payment(pid, @valid, "key-a")
+    {:ok, r3} = BoundedIdempotentPayments.process_payment(pid, @valid)
+
+    assert r1.id == "pay_1"
+    assert r2.id == "pay_2"
+    assert r3.id == "pay_3"
+    assert r2.currency == "USD"
+    assert r2.recipient == "merchant_42"
+    assert r2.status == "completed"
+    assert r2.created_at == Clock.now()
+  end
+
+  test "cached error key refreshes recency on hit and survives eviction", %{pid: _pid} do
+    {:ok, srv} = BoundedIdempotentPayments.start_link(clock: &Clock.now/0, max_keys: 2)
+
+    assert {:error, :invalid_params} =
+             BoundedIdempotentPayments.process_payment(srv, %{amount: 100}, "bad")
+
+    {:ok, _} = BoundedIdempotentPayments.process_payment(srv, @valid, "good")
+    assert BoundedIdempotentPayments.keys_by_recency(srv) == ["bad", "good"]
+
+    # a hit on the error key refreshes its recency, making "good" the LRU
+    assert {:error, :invalid_params} =
+             BoundedIdempotentPayments.process_payment(srv, %{amount: 100}, "bad")
+
+    assert BoundedIdempotentPayments.keys_by_recency(srv) == ["good", "bad"]
+
+    # overflow evicts "good", not the touched error key
+    {:ok, _} = BoundedIdempotentPayments.process_payment(srv, @valid, "third")
+    assert BoundedIdempotentPayments.keys_by_recency(srv) == ["bad", "third"]
+    assert length(BoundedIdempotentPayments.get_payments(srv)) == 2
+  end
+
+  test "clock only stamps :created_at and never drives recency order", %{pid: _pid} do
+    {:ok, agent} = Agent.start_link(fn -> 500 end)
+    clock = fn -> Agent.get_and_update(agent, fn n -> {n, n - 100} end) end
+    {:ok, srv} = BoundedIdempotentPayments.start_link(clock: clock, max_keys: 2)
+
+    {:ok, a} = BoundedIdempotentPayments.process_payment(srv, @valid, "a")
+    {:ok, b} = BoundedIdempotentPayments.process_payment(srv, @valid, "b")
+    assert a.created_at == 500
+    assert b.created_at == 400
+
+    # despite a descending clock, recency follows the internal tick
+    assert BoundedIdempotentPayments.keys_by_recency(srv) == ["a", "b"]
+
+    {:ok, c} = BoundedIdempotentPayments.process_payment(srv, @valid, "c")
+    assert c.created_at == 300
+    assert BoundedIdempotentPayments.keys_by_recency(srv) == ["b", "c"]
+  end
 end
 ```

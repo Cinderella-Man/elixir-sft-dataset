@@ -351,5 +351,88 @@ defmodule JsonStreamerTest do
     assert is_float(stats.throughput)
     assert stats.throughput > 0.0
   end
+
+  test "throughput equals processed divided by elapsed seconds", %{path: path, collector: c} do
+    encoded = for i <- 1..500, do: valid(%{"id" => i})
+    write_array(path, encoded)
+
+    assert {:ok, stats} = JsonStreamer.process(path, Collector.handler(c))
+
+    assert stats.processed == 500
+    assert is_float(stats.throughput)
+
+    expected =
+      if stats.elapsed_ms == 0 or stats.elapsed_ms == 0.0 do
+        0.0
+      else
+        stats.processed / (stats.elapsed_ms / 1000)
+      end
+
+    assert stats.throughput == expected
+  end
+
+  test "only one trailing comma is stripped from an element line", %{path: path, collector: c} do
+    encoded = [valid("a,"), valid(%{"note" => "b,"}), valid("c,")]
+    write_array(path, encoded)
+
+    assert {:ok, stats} = JsonStreamer.process(path, Collector.handler(c))
+
+    assert stats.processed == 3
+    assert stats.errors == 0
+    assert Collector.items(c) == ["a,", %{"note" => "b,"}, "c,"]
+  end
+
+  test "blank lines are skipped without counting as errors", %{path: path, collector: c} do
+    File.write!(path, "[\n\n{\"id\":1},\n   \n{\"id\":2}\n\n]\n")
+
+    assert {:ok, stats} = JsonStreamer.process(path, Collector.handler(c))
+
+    assert stats.processed == 2
+    assert stats.errors == 0
+    assert Enum.map(Collector.items(c), & &1["id"]) == [1, 2]
+  end
+
+  test "indented element lines are trimmed before decoding", %{path: path, collector: c} do
+    File.write!(path, "  [  \n\t{\"id\":1},  \n   {\"id\":2}\t\n  ]  \n")
+
+    assert {:ok, stats} = JsonStreamer.process(path, Collector.handler(c))
+
+    assert stats.processed == 2
+    assert stats.errors == 0
+    assert Enum.map(Collector.items(c), & &1["id"]) == [1, 2]
+  end
+
+  test "handler return values do not affect stats or streaming", %{path: path, collector: c} do
+    encoded = for i <- 1..4, do: valid(%{"id" => i})
+    write_array(path, encoded)
+
+    collect = Collector.handler(c)
+
+    handler = fn item ->
+      collect.(item)
+      {:error, :ignored_by_contract}
+    end
+
+    assert {:ok, stats} = JsonStreamer.process(path, handler)
+
+    assert stats.processed == 4
+    assert stats.errors == 0
+    assert Enum.map(Collector.items(c), & &1["id"]) == [1, 2, 3, 4]
+  end
+
+  test "duplicate items each reach the handler exactly one time", %{path: path} do
+    write_array(path, [valid(%{"id" => 1}), valid(%{"id" => 1})])
+
+    parent = self()
+    handler = fn item -> send(parent, {:handled, item}) end
+
+    assert {:ok, stats} = JsonStreamer.process(path, handler)
+
+    assert stats.processed == 2
+    assert stats.errors == 0
+    assert_receive {:handled, %{"id" => 1}}, 200
+    assert_receive {:handled, %{"id" => 1}}, 200
+    refute_receive {:handled, _}, 50
+  end
 end
 ```

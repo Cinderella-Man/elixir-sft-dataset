@@ -489,5 +489,95 @@ defmodule CacheLayerWriteThroughTest do
     remaining = MapSet.new(:persistent_term.get(), fn {key, _} -> key end)
     assert MapSet.disjoint?(created, remaining)
   end
+
+  test "cache hits are served from ETS while the server is blocked in a loader", %{cl: cl} do
+    assert {:ok, :warm} = CacheLayer.fetch(cl, :users, "warm", fn -> Store.loaded(:warm) end)
+
+    test_pid = self()
+    gate = spawn(fn -> Process.sleep(:infinity) end)
+
+    slow_loader = fn ->
+      ref = Process.monitor(gate)
+      send(test_pid, :loader_running)
+
+      receive do
+        {:DOWN, ^ref, :process, _, _} -> :ok
+      end
+
+      Store.loaded(:slow)
+    end
+
+    blocked = Task.async(fn -> CacheLayer.fetch(cl, :users, "slow", slow_loader) end)
+    assert_receive :loader_running, 1_000
+
+    boom = fn -> raise "a cache hit must not call the loader" end
+    reader = Task.async(fn -> CacheLayer.fetch(cl, :users, "warm", boom) end)
+
+    assert {:ok, {:ok, :warm}} = Task.yield(reader, 500) || Task.shutdown(reader, :brutal_kill)
+
+    Process.exit(gate, :kill)
+    assert {:ok, :slow} = Task.await(blocked, 1_000)
+  end
+
+  test "a :name registered server serves fetch, put and invalidate through the name" do
+    start_supervised!(Supervisor.child_spec({CacheLayer, [name: :cl_named]}, id: :cl_named))
+
+    assert {:ok, :v1} = CacheLayer.fetch(:cl_named, :users, "u:1", fn -> Store.loaded(:v1) end)
+
+    boom = fn -> raise "a cache hit must not call the loader" end
+    assert {:ok, :v1} = CacheLayer.fetch(:cl_named, :users, "u:1", boom)
+
+    assert {:ok, :v2} = CacheLayer.put(:cl_named, :users, "u:1", :v2, &Store.write/0)
+    assert {:ok, :v2} = CacheLayer.fetch(:cl_named, :users, "u:1", boom)
+
+    assert :ok = CacheLayer.invalidate(:cl_named, :users, "u:1")
+    assert {:ok, :v3} = CacheLayer.fetch(:cl_named, :users, "u:1", fn -> Store.loaded(:v3) end)
+    assert Store.counts().loads == 2
+  end
+
+  test "put accepts an {:ok, term} writer result and caches the value", %{cl: cl} do
+    writer = fn -> {:ok, :store_receipt} end
+
+    assert {:ok, :v2} = CacheLayer.put(cl, :users, "u:1", :v2, writer)
+
+    boom = fn -> raise "a cache hit must not call the loader" end
+    assert {:ok, :v2} = CacheLayer.fetch(cl, :users, "u:1", boom)
+    assert Store.counts().loads == 0
+  end
+
+  test "delete accepts an {:ok, term} deleter result and evicts the entry", %{cl: cl} do
+    CacheLayer.fetch(cl, :users, "u:1", fn -> Store.loaded(:v1) end)
+
+    assert :ok = CacheLayer.delete(cl, :users, "u:1", fn -> {:ok, :deleted_1_row} end)
+
+    assert {:ok, :v2} = CacheLayer.fetch(cl, :users, "u:1", fn -> Store.loaded(:v2) end)
+    assert Store.counts().loads == 2
+  end
+
+  test "a failed put does not populate the cache for a previously uncached key", %{cl: cl} do
+    Store.set_fail(true)
+
+    assert {:error, :store_down} = CacheLayer.put(cl, :users, "u:9", :v2, &Store.write/0)
+
+    Store.set_fail(false)
+
+    assert {:ok, :from_store} =
+             CacheLayer.fetch(cl, :users, "u:9", fn -> Store.loaded(:from_store) end)
+
+    assert Store.counts().loads == 1
+    assert Store.counts().writes == 1
+  end
+
+  test "invalidate_all clears only the named table and leaves other tables cached", %{cl: cl} do
+    CacheLayer.fetch(cl, :users, "id:1", fn -> Store.loaded(:u) end)
+    CacheLayer.fetch(cl, :posts, "id:1", fn -> Store.loaded(:p) end)
+
+    assert :ok = CacheLayer.invalidate_all(cl, :users)
+
+    boom = fn -> raise "a cache hit must not call the loader" end
+    assert {:ok, :p} = CacheLayer.fetch(cl, :posts, "id:1", boom)
+    assert {:ok, :u2} = CacheLayer.fetch(cl, :users, "id:1", fn -> Store.loaded(:u2) end)
+    assert Store.counts().loads == 3
+  end
 end
 ```

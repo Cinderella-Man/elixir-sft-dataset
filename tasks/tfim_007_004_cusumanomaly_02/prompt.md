@@ -422,5 +422,59 @@ defmodule CusumAnomalyTest do
     {:ok, c} = CusumAnomaly.start_link()
     assert {:error, :no_data} = CusumAnomaly.check(c, "never_seen")
   end
+
+  test "frozen stream ignores further pushes and keeps samples at zero" do
+    {:ok, c} = CusumAnomaly.start_link(warmup_samples: 5, threshold: 3.0, slack: 0.5)
+
+    for v <- [10.0, 11.0, 9.0, 10.5, 9.5], do: CusumAnomaly.push(c, "s", v)
+
+    first_batch = for _ <- 1..5, do: CusumAnomaly.push(c, "s", 20.0)
+    assert {:alert, :upward_shift} in first_batch
+
+    frozen = for _ <- 1..25, do: CusumAnomaly.push(c, "s", 20.0)
+    assert Enum.all?(frozen, &(&1 == :warming_up))
+
+    {:ok, info} = CusumAnomaly.check(c, "s")
+    assert info.samples == 0
+    assert info.mean == 0.0
+    assert info.s_high == 0.0
+    assert info.s_low == 0.0
+  end
+
+  test "reset clears the post-alert freeze so the stream re-learns" do
+    {:ok, c} = CusumAnomaly.start_link(warmup_samples: 3, threshold: 3.0, slack: 0.5)
+
+    for v <- [10.0, 11.0, 9.0], do: CusumAnomaly.push(c, "s", v)
+    assert {:alert, :upward_shift} = CusumAnomaly.push(c, "s", 20.0)
+
+    :ok = CusumAnomaly.reset(c, "s")
+
+    assert :warming_up = CusumAnomaly.push(c, "s", 1.0)
+    assert :warming_up = CusumAnomaly.push(c, "s", 2.0)
+    assert :warming_up = CusumAnomaly.push(c, "s", 3.0)
+
+    {:ok, info} = CusumAnomaly.check(c, "s")
+    assert info.samples == 3
+    assert close_to(info.mean, 2.0)
+  end
+
+  test "below-slack stddev skips CUSUM and returns :ok despite a large spike" do
+    {:ok, c} = CusumAnomaly.start_link(warmup_samples: 3, threshold: 3.0, slack: 0.5)
+
+    for _ <- 1..3, do: assert(:warming_up = CusumAnomaly.push(c, "s", 5.0))
+
+    # stddev before this push is 0.0 (a flat signal), which is below slack,
+    # so even a huge deviation must be absorbed with a plain :ok — no alert.
+    assert :ok = CusumAnomaly.push(c, "s", 100.0)
+  end
+
+  test "default warmup_samples is 10 pushes" do
+    {:ok, c} = CusumAnomaly.start_link()
+
+    for _ <- 1..10, do: assert(:warming_up = CusumAnomaly.push(c, "s", 5.0))
+
+    # The 11th push is the first CUSUM-active push (default warmup is 10).
+    assert :ok = CusumAnomaly.push(c, "s", 5.0)
+  end
 end
 ```

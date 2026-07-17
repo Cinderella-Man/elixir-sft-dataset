@@ -502,5 +502,113 @@ defmodule SlidingCounterTest do
     send(pid, :cleanup)
     assert 1 = SlidingCounter.count(pid, "edge", 500)
   end
+
+  test "negative clock times bucket by floor division and slide correctly", %{sc: sc} do
+    Clock.set(-250)
+    SlidingCounter.increment(sc, "neg")
+
+    # now = -250, window 100 => window_start = -350; the bucket [-300, -200) starts
+    # at -300 >= -350, so it counts.
+    assert 1 = SlidingCounter.count(sc, "neg", 100)
+
+    # Crossing zero: an event at -50 sits in bucket [-100, 0) and is still visible
+    # from now = 0 with a 100 ms window (bucket start -100 >= -100).
+    Clock.set(-50)
+    SlidingCounter.increment(sc, "cross")
+    Clock.set(0)
+    assert 1 = SlidingCounter.count(sc, "cross", 100)
+
+    # The old -250 event's bucket starts at -300, well before 0 - 100, so it is gone.
+    assert 0 = SlidingCounter.count(sc, "neg", 100)
+  end
+
+  test "stray messages neither crash the counter nor alter its counts", %{sc: sc} do
+    SlidingCounter.increment(sc, "k")
+    SlidingCounter.increment(sc, "k")
+
+    send(sc, :not_cleanup)
+    send(sc, {:unrelated, self(), make_ref()})
+    send(sc, "a stray binary")
+
+    # The synchronous call is the mailbox barrier: it runs after every stray
+    # message above has been handled.
+    assert 2 = SlidingCounter.count(sc, "k", 1_000)
+    assert Process.alive?(sc)
+  end
+
+  test "name option registers the process and is not treated as counter config", %{sc: _sc} do
+    name = :sliding_counter_named_instance
+
+    {:ok, pid} =
+      SlidingCounter.start_link(
+        name: name,
+        clock: &Clock.now/0,
+        bucket_ms: 100,
+        cleanup_interval_ms: :infinity
+      )
+
+    # Registered: the name works as a server reference and behaves normally.
+    assert :ok = SlidingCounter.increment(name, "k")
+    assert 1 = SlidingCounter.count(name, "k", 1_000)
+
+    # Forwarded as a start option, so a second start under the same name reports
+    # the standard GenServer.on_start() error rather than starting a twin.
+    assert {:error, {:already_started, ^pid}} =
+             SlidingCounter.start_link(
+               name: name,
+               clock: &Clock.now/0,
+               cleanup_interval_ms: :infinity
+             )
+  end
+
+  test "bucket starting exactly at now minus window_ms is included, one ms later excluded", %{
+    sc: sc
+  } do
+    SlidingCounter.increment(sc, "edge")
+
+    # Bucket 0 starts at 0; at now = 500 with a 500 ms window, window_start = 0,
+    # so the bucket start is exactly on the inclusive old edge.
+    Clock.set(500)
+    assert 1 = SlidingCounter.count(sc, "edge", 500)
+
+    # One millisecond later window_start = 1 > 0, so the bucket contributes nothing
+    # at all even though its range overlaps the leading edge.
+    Clock.set(501)
+    assert 0 = SlidingCounter.count(sc, "edge", 500)
+  end
+
+  test "arbitrary terms work as keys and are matched by value", %{sc: sc} do
+    tuple_key = {:page, 1, ["a"]}
+    equal_tuple_key = {:page, 1, ["a"]}
+    other_tuple_key = {:page, 2, ["a"]}
+
+    SlidingCounter.increment(sc, tuple_key)
+    SlidingCounter.increment(sc, equal_tuple_key)
+    SlidingCounter.increment(sc, :atom_key)
+    SlidingCounter.increment(sc, other_tuple_key)
+
+    # The value-equal tuple is the same key, so both increments land together.
+    assert 2 = SlidingCounter.count(sc, equal_tuple_key, 1_000)
+    assert 1 = SlidingCounter.count(sc, :atom_key, 1_000)
+    assert 1 = SlidingCounter.count(sc, other_tuple_key, 1_000)
+    assert 0 = SlidingCounter.count(sc, "page", 1_000)
+  end
+
+  test "repeated counts with an unchanged clock are stable and non-destructive", %{sc: sc} do
+    for _ <- 1..3, do: SlidingCounter.increment(sc, "k")
+
+    # Counting an unknown key must not create an entry or disturb anything.
+    assert 0 = SlidingCounter.count(sc, "ghost", 1_000)
+    assert 0 = SlidingCounter.count(sc, "ghost", 1_000)
+
+    assert 3 = SlidingCounter.count(sc, "k", 1_000)
+    assert 3 = SlidingCounter.count(sc, "k", 1_000)
+    assert 3 = SlidingCounter.count(sc, "k", 1_000)
+
+    # Reads left the data intact: a later increment adds to it rather than
+    # rebuilding a drained key.
+    assert :ok = SlidingCounter.increment(sc, "k")
+    assert 4 = SlidingCounter.count(sc, "k", 1_000)
+  end
 end
 ```

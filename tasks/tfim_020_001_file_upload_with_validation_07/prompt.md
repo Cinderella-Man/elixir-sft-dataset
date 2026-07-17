@@ -626,5 +626,81 @@ defmodule FileUploadTest do
     assert File.exists?(Path.join(@upload_dir, body1["id"] <> ".csv"))
     assert File.exists?(Path.join(@upload_dir, body2["id"] <> ".csv"))
   end
+
+  test "Validator.validate/1 is callable directly with a %Plug.Upload{} struct", _ctx do
+    csv_path = Path.join(@upload_dir, "direct_validator_ok.csv")
+    File.write!(csv_path, "name,email\nAlice,a@example.com\n")
+
+    csv_upload = %Plug.Upload{
+      path: csv_path,
+      filename: "direct_validator_ok.csv",
+      content_type: "text/csv"
+    }
+
+    assert FileUpload.Validator.validate(csv_upload) == :ok
+
+    txt_path = Path.join(@upload_dir, "direct_validator_bad.txt")
+    File.write!(txt_path, "plain text")
+
+    txt_upload = %Plug.Upload{
+      path: txt_path,
+      filename: "direct_validator_bad.txt",
+      content_type: "text/plain"
+    }
+
+    assert {:error, reason} = FileUpload.Validator.validate(txt_upload)
+    assert is_binary(reason)
+  end
+
+  test "accepts a CSV with at least two lines even when no line contains a comma", %{opts: opts} do
+    conn = call_upload(opts, "two_lines_no_comma.csv", "alpha\nbeta\n")
+
+    assert conn.status == 201
+    body = json_body(conn)
+    assert body["original_name"] == "two_lines_no_comma.csv"
+  end
+
+  test "Store.save generates an id in canonical UUID v4 form", _ctx do
+    metadata = %{original_name: "uuid_shape.csv", size: 9, content_type: "text/csv"}
+
+    assert {:ok, record} = FileUpload.Store.save(:test_store, metadata)
+
+    uuid_v4 = ~r/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+
+    assert record.id =~ uuid_v4
+    assert {:ok, fetched} = FileUpload.Store.get(:test_store, record.id)
+    assert fetched.id == record.id
+  end
+
+  test "Store.save stamps an ISO 8601 UTC timestamp and echoes the caller metadata", _ctx do
+    metadata = %{original_name: "stamped.json", size: 2, content_type: "application/json"}
+
+    assert {:ok, record} = FileUpload.Store.save(:test_store, metadata)
+
+    assert is_binary(record.uploaded_at)
+    assert String.ends_with?(record.uploaded_at, "Z")
+    assert {:ok, _dt, 0} = DateTime.from_iso8601(record.uploaded_at)
+
+    assert record.original_name == "stamped.json"
+    assert record.size == 2
+    assert record.content_type == "application/json"
+    assert is_binary(record.id)
+  end
+
+  test "disallowed extension yields the exact documented error message", %{opts: opts} do
+    conn = call_upload(opts, "archive.zip", "PK\x03\x04")
+
+    assert conn.status == 422
+    body = json_body(conn)
+    assert body["error"] == "File type not allowed. Only .csv and .json files are accepted"
+  end
+
+  test "single-value single-line CSV yields the exact documented error message", %{opts: opts} do
+    conn = call_upload(opts, "lonely.csv", "onlyvalue\n")
+
+    assert conn.status == 422
+    body = json_body(conn)
+    assert body["error"] == "Invalid CSV: file must contain a header row with multiple columns"
+  end
 end
 ```

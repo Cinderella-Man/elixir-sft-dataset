@@ -39,7 +39,8 @@ defmodule TtlObjectStorage do
   @typedoc "A time-to-live in milliseconds, or `:infinity` to never expire."
   @type ttl :: pos_integer() | :infinity
 
-  @name_regex ~r/^[a-z0-9.-]+$/
+  # `\A`/`\z` (not `^`/`$`) so that a trailing newline cannot sneak past the anchors.
+  @name_regex ~r/\A[a-z0-9.-]+\z/
 
   ## Public API
 
@@ -619,6 +620,31 @@ defmodule TtlObjectStorageTest do
              TtlObjectStorage.get_object(name, "k" |> then(fn _ -> "b" end), "k")
 
     GenServer.stop(pid)
+  end
+
+  test "a bucket name with a trailing newline is rejected as invalid", %{os: os} do
+    assert {:error, :invalid_name} = TtlObjectStorage.create_bucket(os, "abc\n")
+    assert {:error, :invalid_name} = TtlObjectStorage.create_bucket(os, "a-b.c\n")
+    assert {:ok, []} = TtlObjectStorage.list_buckets(os)
+  end
+
+  test "bucket names with underscores or slashes are invalid, digits are valid", %{os: os} do
+    assert {:error, :invalid_name} = TtlObjectStorage.create_bucket(os, "a_b")
+    assert {:error, :invalid_name} = TtlObjectStorage.create_bucket(os, "a/b")
+    assert :ok = TtlObjectStorage.create_bucket(os, "a1-b.2")
+    assert {:ok, ["a1-b.2"]} = TtlObjectStorage.list_buckets(os)
+  end
+
+  test "list_objects sorts several live keys lexicographically", %{os: os} do
+    TtlObjectStorage.create_bucket(os, "b")
+    :ok = TtlObjectStorage.put_object(os, "b", "delta", "4")
+    :ok = TtlObjectStorage.put_object(os, "b", "alpha", "1")
+    :ok = TtlObjectStorage.put_object(os, "b", "Charlie", "3")
+    :ok = TtlObjectStorage.put_object(os, "b", "bravo", "2")
+
+    assert {:ok, listing} = TtlObjectStorage.list_objects(os, "b")
+    assert Enum.map(listing, & &1.key) == ["Charlie", "alpha", "bravo", "delta"]
+    assert Enum.map(listing, & &1.size) == [1, 1, 1, 1]
   end
 end
 ```

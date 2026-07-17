@@ -42,24 +42,40 @@ defmodule MetricAggregator do
     :unique_tags      – %{tag_key => MapSet.t(tag_values)}
     :malformed_count  – integer
 
-  Returns `{:error, reason}` if the file cannot be opened.
+  Returns `{:error, reason}` if the file does not exist or cannot be opened
+  (for example when `path` points at a directory).
   """
   @spec summarize(String.t()) :: {:ok, map()} | {:error, term()}
   def summarize(path) do
-    case File.stat(path) do
+    with :ok <- ensure_readable(path) do
+      report =
+        path
+        |> File.stream!(:line, [])
+        |> Stream.map(&String.trim_trailing(&1, "\n"))
+        |> Stream.map(&String.trim_trailing(&1, "\r"))
+        |> Enum.reduce(initial_acc(), &process_line/2)
+        |> build_report()
+
+      {:ok, report}
+    end
+  rescue
+    error in [File.Error] -> {:error, error.reason}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Openability check
+  # ---------------------------------------------------------------------------
+
+  # Opening the path (rather than only stat-ing it) rejects directories,
+  # permission problems and other non-streamable entries up front.
+  defp ensure_readable(path) do
+    case File.open(path, [:read]) do
+      {:ok, io_device} ->
+        File.close(io_device)
+        :ok
+
       {:error, reason} ->
         {:error, reason}
-
-      {:ok, _} ->
-        report =
-          path
-          |> File.stream!(:line, [])
-          |> Stream.map(&String.trim_trailing(&1, "\n"))
-          |> Stream.map(&String.trim_trailing(&1, "\r"))
-          |> Enum.reduce(initial_acc(), &process_line/2)
-          |> build_report()
-
-        {:ok, report}
     end
   end
 
@@ -499,6 +515,98 @@ defmodule MetricAggregatorTest do
     assert report.per_metric["m"].min == 3.5
     assert report.per_metric["m"].max == 10
     assert_in_delta report.per_metric["m"].sum, 13.5, 0.001
+  end
+
+  test "line with unparsable timestamp is counted as malformed" do
+    path = tmp_path("bad_timestamp")
+
+    write_lines(path, [
+      Jason.encode!(%{
+        "timestamp" => "not-a-real-datetime",
+        "name" => "x",
+        "value" => 1,
+        "tags" => %{}
+      }),
+      Jason.encode!(%{
+        "timestamp" => "2024-13-45T99:99:99Z",
+        "name" => "x",
+        "value" => 1,
+        "tags" => %{}
+      })
+    ])
+
+    on_exit(fn -> File.rm(path) end)
+
+    assert {:ok, report} = MetricAggregator.summarize(path)
+    assert report.malformed_count == 2
+    assert report.total_samples == 0
+    assert report.per_metric == %{}
+    assert report.time_range == nil
+  end
+
+  test "line whose tags field is not an object is malformed" do
+    path = tmp_path("bad_tags")
+
+    write_lines(path, [
+      Jason.encode!(%{
+        "timestamp" => "2024-01-01T00:00:00Z",
+        "name" => "x",
+        "value" => 1,
+        "tags" => ["a", "b"]
+      }),
+      Jason.encode!(%{
+        "timestamp" => "2024-01-01T00:01:00Z",
+        "name" => "x",
+        "value" => 1,
+        "tags" => "host=a"
+      }),
+      Jason.encode!(%{
+        "timestamp" => "2024-01-01T00:02:00Z",
+        "name" => "x",
+        "value" => 1,
+        "tags" => 7
+      })
+    ])
+
+    on_exit(fn -> File.rm(path) end)
+
+    assert {:ok, report} = MetricAggregator.summarize(path)
+    assert report.malformed_count == 3
+    assert report.total_samples == 0
+    assert report.unique_tags == %{}
+  end
+
+  test "lines whose top-level JSON value is not an object are malformed" do
+    path = tmp_path("not_object")
+    write_lines(path, ["[1, 2, 3]", "42", "\"hello\"", "true", "null"])
+    on_exit(fn -> File.rm(path) end)
+
+    assert {:ok, report} = MetricAggregator.summarize(path)
+    assert report.malformed_count == 5
+    assert report.total_samples == 0
+    assert report.time_range == nil
+  end
+
+  test "path that cannot be opened as a file returns an error tuple" do
+    dir = Path.join(System.tmp_dir!(), "metric_agg_dir_#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf(dir) end)
+
+    assert {:error, _reason} = MetricAggregator.summarize(dir)
+  end
+
+  test "report contains exactly the documented keys and stats keys", %{report: r} do
+    assert Enum.sort(Map.keys(r)) == [
+             :malformed_count,
+             :per_metric,
+             :samples_per_hour,
+             :time_range,
+             :total_samples,
+             :unique_tags
+           ]
+
+    assert Enum.sort(Map.keys(r.per_metric["cpu_usage"])) == [:count, :max, :mean, :min, :sum]
+    assert is_float(r.per_metric["mem_usage"].mean)
   end
 end
 ```

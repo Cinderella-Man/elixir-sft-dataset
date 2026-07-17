@@ -366,5 +366,126 @@ defmodule WeightedMapTest do
       assert WeightMeter.peak(m) == 7
     end
   end
+
+  test "weight of a raising element is released so later queued work still runs" do
+    results =
+      WeightedMap.pmap(
+        [4, 1, 1],
+        fn
+          4 -> raise "boom"
+          x -> x * 100
+        end,
+        & &1,
+        4
+      )
+
+    assert match?({:error, _}, Enum.at(results, 0))
+    assert Enum.drop(results, 1) == [100, 100]
+  end
+
+  test "an oversize element waits until every running element has finished" do
+    parent = self()
+
+    spawn_link(fn ->
+      results =
+        WeightedMap.pmap(
+          [1, 10],
+          fn x ->
+            send(parent, {:started, x, self()})
+
+            receive do
+              :go -> x
+            end
+          end,
+          & &1,
+          4
+        )
+
+      send(parent, {:results, results})
+    end)
+
+    assert_receive {:started, 1, p1}, 1_000
+    refute_receive {:started, 10, _}, 200
+    send(p1, :go)
+    assert_receive {:started, 10, p10}, 1_000
+    send(p10, :go)
+    assert_receive {:results, [1, 10]}, 1_000
+  end
+
+  test "a light element does not jump ahead of a blocked heavier queue head" do
+    parent = self()
+
+    spawn_link(fn ->
+      results =
+        WeightedMap.pmap(
+          [2, 3, 1],
+          fn x ->
+            send(parent, {:started, x, self()})
+
+            receive do
+              :go -> x * 10
+            end
+          end,
+          & &1,
+          3
+        )
+
+      send(parent, {:results, results})
+    end)
+
+    assert_receive {:started, 2, p2}, 1_000
+    refute_receive {:started, 1, _}, 200
+    send(p2, :go)
+    assert_receive {:started, 3, p3}, 1_000
+    send(p3, :go)
+    assert_receive {:started, 1, p1}, 1_000
+    send(p1, :go)
+    assert_receive {:results, [20, 30, 10]}, 1_000
+  end
+
+  test "a task killed abnormally yields an error tuple and leaves the others intact" do
+    results =
+      WeightedMap.pmap(
+        [1, 2, 3],
+        fn
+          2 -> Process.exit(self(), :kill)
+          x -> x * 10
+        end,
+        fn _ -> 1 end,
+        3
+      )
+
+    assert Enum.at(results, 0) == 10
+    assert Enum.at(results, 1) == {:error, :killed}
+    assert Enum.at(results, 2) == 30
+  end
+
+  test "float, negative and non-numeric weights all raise ArgumentError" do
+    assert_raise ArgumentError, fn ->
+      WeightedMap.pmap([1], fn x -> x end, fn _ -> 1.5 end, 5)
+    end
+
+    assert_raise ArgumentError, fn ->
+      WeightedMap.pmap([1], fn x -> x end, fn _ -> -2 end, 5)
+    end
+
+    assert_raise ArgumentError, fn ->
+      WeightedMap.pmap([1], fn x -> x end, fn _ -> :heavy end, 5)
+    end
+
+    assert_raise ArgumentError, fn ->
+      WeightedMap.pmap([1, 2], fn x -> x end, fn x -> x - 1 end, 5)
+    end
+  end
+
+  test "WeightMeter can be reached through a registered :name" do
+    {:ok, pid} = WeightMeter.start_link(name: :audit_weight_meter)
+
+    assert Process.whereis(:audit_weight_meter) == pid
+    assert WeightMeter.add(:audit_weight_meter, 4) == 4
+    assert WeightMeter.add(:audit_weight_meter, 3) == 7
+    assert WeightMeter.sub(:audit_weight_meter, 7) == 0
+    assert WeightMeter.peak(:audit_weight_meter) == 7
+  end
 end
 ```

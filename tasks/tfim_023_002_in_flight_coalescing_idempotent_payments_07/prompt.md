@@ -424,5 +424,158 @@ defmodule CoalescingPaymentsTest do
     ids = [r1.id, r2.id, r3.id]
     assert ids == Enum.uniq(ids)
   end
+
+  test "raising processor produces a cached exception error and the server survives" do
+    {:ok, pid} =
+      CoalescingPayments.start_link(
+        clock: &Clock.now/0,
+        ttl_ms: 10_000,
+        cleanup_interval_ms: :infinity,
+        processor: fn _params -> raise ArgumentError, "gateway exploded" end
+      )
+
+    assert {:error, {:exception, "gateway exploded"}} =
+             CoalescingPayments.process_payment(pid, @valid, "boom")
+
+    # Cached like any other result: the processor is not re-run for the same key.
+    assert {:error, {:exception, "gateway exploded"}} =
+             CoalescingPayments.process_payment(pid, @valid, "boom")
+
+    assert Process.alive?(pid)
+    assert CoalescingPayments.get_payments(pid) == []
+    assert CoalescingPayments.in_flight_count(pid) == 0
+  end
+
+  test "caller joining a pending key gets the group result even with invalid params" do
+    test_pid = self()
+
+    processor = fn _params ->
+      send(test_pid, {:worker, self()})
+
+      receive do
+        :release -> :ok
+      end
+    end
+
+    {:ok, pid} =
+      CoalescingPayments.start_link(
+        clock: &Clock.now/0,
+        ttl_ms: 10_000,
+        cleanup_interval_ms: :infinity,
+        processor: processor
+      )
+
+    first = Task.async(fn -> CoalescingPayments.process_payment(pid, @valid, "group") end)
+    assert_receive {:worker, worker}, 2000
+
+    spawn(fn ->
+      send(test_pid, {:second, CoalescingPayments.process_payment(pid, %{junk: true}, "group")})
+    end)
+
+    # The joiner must block on the pending group, not be rejected as invalid_params.
+    refute_receive {:second, _}, 200
+    assert CoalescingPayments.in_flight_count(pid) == 1
+
+    send(worker, :release)
+
+    assert_receive {:second, {:ok, second}}, 2000
+    assert {:ok, first_result} = Task.await(first, 2000)
+    assert second == first_result
+    assert second.recipient == "merchant_42"
+    assert length(CoalescingPayments.get_payments(pid)) == 1
+  end
+
+  test "invalid params cached under a key shadow later valid params until expiry", %{pid: pid} do
+    assert {:error, :invalid_params} =
+             CoalescingPayments.process_payment(pid, %{amount: 100}, "poisoned")
+
+    assert CoalescingPayments.in_flight_count(pid) == 0
+
+    assert {:error, :invalid_params} =
+             CoalescingPayments.process_payment(pid, @valid, "poisoned")
+
+    assert Calls.count() == 0
+    assert CoalescingPayments.get_payments(pid) == []
+
+    Clock.advance(10_001)
+    assert {:ok, _} = CoalescingPayments.process_payment(pid, @valid, "poisoned")
+    assert Calls.count() == 1
+  end
+
+  test "key whose expiry exactly equals the clock is reprocessed", %{pid: pid} do
+    {:ok, first} = CoalescingPayments.process_payment(pid, @valid, "edge")
+
+    Clock.advance(10_000)
+
+    {:ok, second} = CoalescingPayments.process_payment(pid, @valid, "edge")
+
+    assert first.id != second.id
+    assert Calls.count() == 2
+    assert length(CoalescingPayments.get_payments(pid)) == 2
+  end
+
+  test "cleanup far past the TTL keeps an in-flight key and still replies to its waiter" do
+    test_pid = self()
+
+    processor = fn _params ->
+      send(test_pid, {:worker, self()})
+
+      receive do
+        :release -> :ok
+      end
+    end
+
+    {:ok, pid} =
+      CoalescingPayments.start_link(
+        clock: &Clock.now/0,
+        ttl_ms: 10_000,
+        cleanup_interval_ms: :infinity,
+        processor: processor
+      )
+
+    spawn(fn ->
+      send(test_pid, {:res, CoalescingPayments.process_payment(pid, @valid, "long")})
+    end)
+
+    assert_receive {:worker, worker}, 2000
+
+    Clock.advance(10_000_000)
+    send(pid, :cleanup)
+
+    # The synchronous call proves the cleanup ahead of it was handled.
+    assert CoalescingPayments.in_flight_count(pid) == 1
+
+    send(worker, :release)
+
+    assert_receive {:res, {:ok, resp}}, 2000
+    assert resp.status == "completed"
+    assert CoalescingPayments.in_flight_count(pid) == 0
+    assert length(CoalescingPayments.get_payments(pid)) == 1
+  end
+
+  test "declines and invalid params consume no counter so the first success is pay_1" do
+    processor = fn _params ->
+      Calls.bump()
+      if Calls.count() == 1, do: {:error, :gateway_declined}, else: :ok
+    end
+
+    {:ok, pid} =
+      CoalescingPayments.start_link(
+        clock: &Clock.now/0,
+        ttl_ms: 10_000,
+        cleanup_interval_ms: :infinity,
+        processor: processor
+      )
+
+    assert {:error, :gateway_declined} = CoalescingPayments.process_payment(pid, @valid)
+    assert {:error, :invalid_params} = CoalescingPayments.process_payment(pid, %{amount: 1})
+
+    assert {:ok, r1} = CoalescingPayments.process_payment(pid, @valid)
+    assert {:ok, r2} = CoalescingPayments.process_payment(pid, @valid)
+
+    assert r1.id == "pay_1"
+    assert r2.id == "pay_2"
+    assert Enum.map(CoalescingPayments.get_payments(pid), & &1.id) == ["pay_1", "pay_2"]
+  end
 end
 ```

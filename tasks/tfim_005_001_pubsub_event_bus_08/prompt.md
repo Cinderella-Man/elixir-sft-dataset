@@ -467,5 +467,79 @@ defmodule EventBusTest do
 
     assert_receive {:event, "t", :named}, 500
   end
+
+  test "single * pattern matches exactly one segment", %{bus: bus} do
+    {:ok, _ref} = EventBus.subscribe(bus, "*", self())
+
+    EventBus.publish(bus, "orders", :one_seg)
+    EventBus.publish(bus, "orders.created", :two_seg)
+
+    assert_receive {:event, "orders", :one_seg}, 500
+    refute_receive {:event, "orders.created", _}, 200
+  end
+
+  test "dead process with duplicate subscriptions on one topic is fully cleaned", %{bus: bus} do
+    child =
+      spawn(fn ->
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    {:ok, _} = EventBus.subscribe(bus, "t", child)
+    {:ok, _} = EventBus.subscribe(bus, "t", child)
+
+    send(child, :stop)
+    ref = Process.monitor(child)
+    assert_receive {:DOWN, ^ref, :process, ^child, _}, 500
+
+    # Synchronous no-op publish; once it returns, the :DOWN has been handled.
+    assert :ok = EventBus.publish(bus, "barrier", :sync)
+
+    {:ok, _} = EventBus.subscribe(bus, "t", self())
+    EventBus.publish(bus, "t", :check)
+
+    # Only our single subscription should deliver; the two dead ones are gone.
+    assert_receive {:event, "t", :check}, 500
+    refute_receive {:event, "t", :check}, 200
+  end
+
+  test "two subscriptions on same topic deliver exactly two copies", %{bus: bus} do
+    {:ok, _ref1} = EventBus.subscribe(bus, "t", self())
+    {:ok, _ref2} = EventBus.subscribe(bus, "t", self())
+
+    EventBus.publish(bus, "t", :dup)
+
+    assert_receive {:event, "t", :dup}, 500
+    assert_receive {:event, "t", :dup}, 500
+    refute_receive {:event, "t", :dup}, 200
+  end
+
+  test "remaining subscription is still cleaned up after a sibling unsubscribe", %{bus: bus} do
+    child =
+      spawn(fn ->
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    {:ok, ref1} = EventBus.subscribe(bus, "t", child)
+    {:ok, _ref2} = EventBus.subscribe(bus, "t", child)
+
+    :ok = EventBus.unsubscribe(bus, "t", ref1)
+
+    send(child, :stop)
+    ref = Process.monitor(child)
+    assert_receive {:DOWN, ^ref, :process, ^child, _}, 500
+
+    # Synchronous no-op publish; once it returns, the :DOWN has been handled.
+    assert :ok = EventBus.publish(bus, "barrier", :sync)
+
+    {:ok, _} = EventBus.subscribe(bus, "t", self())
+    EventBus.publish(bus, "t", :after_down)
+
+    assert_receive {:event, "t", :after_down}, 500
+    refute_receive {:event, "t", :after_down}, 200
+  end
 end
 ```

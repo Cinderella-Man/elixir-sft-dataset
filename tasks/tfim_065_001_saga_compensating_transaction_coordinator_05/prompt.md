@@ -354,5 +354,78 @@ defmodule SagaTest do
     assert ctx.only == :done
     assert Recorder.events() == [{:action, :only}]
   end
+
+  test "error map contains exactly the four documented keys and nothing else" do
+    saga =
+      Saga.new()
+      |> Saga.step(:a, ok_action(:a, 1), comp(:a))
+      |> Saga.step(:b, fail_action(:b, :nope), comp(:b))
+
+    assert {:error, err} = Saga.execute(saga, %{})
+
+    assert Enum.sort(Map.keys(err)) == [:compensated, :compensations, :error, :step]
+  end
+
+  test "an earlier step's compensation sees later results but not the failing step's key" do
+    record_ctx = fn name ->
+      fn ctx ->
+        Recorder.record({:comp_ctx, name, ctx})
+        {:ok, :undone}
+      end
+    end
+
+    saga =
+      Saga.new()
+      |> Saga.step(:a, ok_action(:a, 1), record_ctx.(:a))
+      |> Saga.step(:b, ok_action(:b, 2), record_ctx.(:b))
+      |> Saga.step(:c, fail_action(:c, :boom), comp(:c))
+
+    assert {:error, _} = Saga.execute(saga, %{seed: :s})
+
+    events = Recorder.events()
+    assert {:comp_ctx, :a, ctx_a} = Enum.find(events, &match?({:comp_ctx, :a, _}, &1))
+
+    assert ctx_a == %{seed: :s, a: 1, b: 2}
+    refute Map.has_key?(ctx_a, :c)
+  end
+
+  test "a compensation returning an arbitrary term is recorded verbatim" do
+    saga =
+      Saga.new()
+      |> Saga.step(:a, ok_action(:a, 1), comp(:a, :just_a_bare_atom))
+      |> Saga.step(:b, ok_action(:b, 2), comp(:b, %{weird: [1, 2, 3]}))
+      |> Saga.step(:c, fail_action(:c, :stop), comp(:c))
+
+    assert {:error, err} = Saga.execute(saga, %{})
+
+    assert err.compensated == [:b, :a]
+    assert err.compensations == %{a: :just_a_bare_atom, b: %{weird: [1, 2, 3]}}
+  end
+
+  test "a step result overwrites a pre-existing context key of the same name" do
+    saga =
+      Saga.new()
+      |> Saga.step(:order_id, ok_action(:order_id, 99), comp(:order_id))
+      |> Saga.step(:next, fn ctx -> {:ok, ctx.order_id} end, comp(:next))
+
+    assert {:ok, ctx} = Saga.execute(saga, %{order_id: 42})
+
+    assert ctx.order_id == 99
+    assert ctx.next == 99
+  end
+
+  test "non-atom step names work as context keys and in the error map" do
+    saga =
+      Saga.new()
+      |> Saga.step("reserve", ok_action(:reserve, :held), comp(:reserve, {:ok, :released}))
+      |> Saga.step({:charge, 1}, fail_action(:charge, :declined), comp(:charge))
+
+    assert {:error, err} = Saga.execute(saga, %{})
+
+    assert err.step == {:charge, 1}
+    assert err.error == :declined
+    assert err.compensated == ["reserve"]
+    assert err.compensations == %{"reserve" => {:ok, :released}}
+  end
 end
 ```
