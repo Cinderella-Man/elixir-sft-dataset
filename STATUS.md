@@ -13,69 +13,23 @@ Reference docs: `docs/14` (handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**Final push of the triage-sweep bookkeeping (detached, log
-`logs/push_v5_20260717.log`), then: T1.6 Task-A queue (the 8 spec
-lies) — next loop step.** The judge sweep is DONE (121 triaged: 83
-keeps / 19 open prompt gaps / 19 stale-resolved, 0 errors — docs/15);
-the T1.11 retro-audit arc is fully closed except the Kamil items below.
-
-**NEW TRIAGE QUEUE from the re-screen: 25 of 50 roots came back RED
-(quarantined, "prompt under-specified OR solver too weak"; rows in
-`logs/screen_blind.jsonl`, red details in `logs/rescreen_stale.log`).**
-Run the standing judge flow (`scripts/triage_screen.exs`, docs/10 R12d)
-after the push; keeps get evidence rows, prompt-gap reds join the T2.6
-material. Rule 7 applies per class.
-
-**Flag for Kamil:** `tasks/077_002_deletable_interval_tree_02` was
-DELETED (git rm, recoverable): its blanked fn `rebalance` no longer
-exists after the audit's balancing redesign. Re-carve when convenient.
-
-⚠️ Standing hazard until check_embeds (step 5) is green: children lag the
-audit-edited roots — a nightly sweep firing mid-cascade can report false
-flakes on those families, and DO NOT push (CI embed gate would fail).
+**Push of the T1.6 closure (detached, log `logs/push_v6_20260717.log`).**
+T1.6 Task-A is CLOSED (docs/15): 8 spec lies fixed + re-proven, 33 pairs
+reminted + 6/6-verified, embeds 1,322 clean / 0 drift, dialyzer clean or
+waived. The whole T1.11 retro-audit arc is also closed (docs/15). Next
+queue items after the push: §4.2.2 spot-review tranche, then the T2.6
+prompt-precision tool.
 
 ---
 
 ## 📋 TODO (rules 7–10 apply: every finding = Task A fix data + Task B gate
 the generator; pilots before full runs; one solved item = one commit)
 
-### 1. T1.11 CASCADE — propagate the finished retro audit (top priority)
+### 🧑‍⚖️ WAITING ON KAMIL
 
-Audit output on disk, uncommitted: 228 `test_harness.exs` + 40
-`solution.ex` rewritten. Ledger `logs/retro_audit.jsonl` (sha+gate keyed);
-the cascade instructions are verbatim at the tail of
-`logs/retro_audit_full.log`. In order:
-
-1. ~~Embed resyncs + check_embeds~~ DONE GREEN 2026-07-17 (docs/15).
-2. ~~Bugfix-pair invalidation + remint + six-property verification~~
-   DONE 2026-07-17 (docs/15; commits per tool step, not per family —
-   Kamil's 07-17 "commit on the way" directive).
-3. **Two stray dirs** minted in the audit's pre-restart first hour
-   (untracked, full triplets, no ledger row):
-   `tasks/repair_001_002_fixed_window_counter_01_audit_00/` and
-   `tasks/repair_001_003_hierarchical_limiter_01_audit_00/`. New
-   evidence 07-17: mint_repairs counts both among its `exists` skips —
-   same standing flow, first two mints. Still Kamil's call: verify +
-   commit like the other 68, or delete + let the flow re-mint. The
-   restarted audit minted no others — decide: verify + keep like any
-   repair pair, or delete.
-
-### 2. T1.11 TRIAGE — the 94 needs_triage roots (T2.6 prompt material)
-
-Roots the audit refused to auto-change (verified untouched on disk). List:
-`jq -r 'select(.outcome=="needs_triage")|.task' logs/retro_audit.jsonl | sort -u`
-minus 001_002 (resolved to changed after the restart). Shape: ~80 "grown
-harness not blind-solvable: <test>: <failure>" — the promise audit grew a
-test an independent solver can't pass from the prompt alone; each is
-either a prompt gap (T2.6 material), a bad grown test (drop), or a real
-hard-task keep — plus ~15 staging compile errors. Rule 7 applies to every
-class found here.
-
-### 🔎 OPEN FINDINGS
-
-**Prompt-gap sign-off queue — 19 roots from the 07-17 judge sweep,
-KAMIL ONLY (prompt edits are never automatic; each applied edit
-cascades: sha-keyed re-screen + embed resyncs, docs/10 invariant #5).**
+**1. Prompt-gap sign-off queue — 19 roots from the 07-17 judge sweep
+(prompt edits are never automatic; each applied edit cascades: sha-keyed
+re-screen + embed resyncs, docs/10 invariant #5).**
 `mix run scripts/triage_screen.exs -- --report` prints every root with
 its proposed one-sentence fix (ledger `logs/screen_triage.jsonl`).
 Review notes: (a) split the list by origin — roots also in
@@ -91,29 +45,28 @@ the grown test is a valid outcome there. The 83 keeps need no action
 (evidence rows recorded; they feed the quarantine-keep design and T2.6
 scoping).
 
-**T1.6 Task-A queue — 8 machine-proven spec lies (dialyzer gate,
-2026-07-16; Task B = the standing weekly-CI gate, so each item closes when
-its data fix lands). Was deferred on the running retro audit — now
-UNBLOCKED; do after the cascade (queue below). Each fix: edit the spec →
-re-run the gate → full cascade (embeds resync + reminted bugfix pairs):**
+**2. Two stray repair dirs** minted in the audit's pre-restart first hour
+(untracked, full triplets, no ledger row):
+`tasks/repair_001_002_fixed_window_counter_01_audit_00/` and
+`tasks/repair_001_003_hierarchical_limiter_01_audit_00/`. Evidence
+07-17: mint_repairs counts both among its `exists` skips — same standing
+flow, first two mints. Call: verify + commit like the other 68, or
+delete + let the flow re-mint.
 
-- **F20 — 015_001**: `@typep service` omits the `timer: reference()` field
-  the 07-15 F12 repair added (runtime-safe, but the type lies; a spec lie
-  introduced BY a repair, caught next day).
-- **F21 — 102_002**: migration `change/0` spec'd `:: :ok` but returns
-  Ecto's DSL value — "return types do not overlap"; check sibling
-  migrations while there.
-- **032_002**: `parse_csv/1` returns a `{headers, rows}` tuple; spec says
-  list of tuples.
-- **044_004 / 077_004 / 100_002 / 625_003**: arithmetic can produce
-  `float()` where specs promise integer types (`rate/2`+`count/1`,
-  `prefix_sum/2`, `seconds_remaining/2`+`base32_value/1`,
-  `compute_expires_at/2`).
-- **073_003**: `ensure_registry/0` can return `{:error, _}`; spec admits
-  only `{:ok, pid()}`.
+### 🔎 OPEN FINDINGS
 
-Fold-in for the cutover checklist (docs/12 §5.5): repairs must re-run the
-spec gate on the repaired file — F20 is the proof it's needed.
+**~15 audit needs_triage rows are staging COMPILE errors** (the grown
+harness never compiled, so no blind screen row exists and the 07-17
+judge sweep could not cover them; the roots on disk are unaffected and
+green). List:
+`jq -r 'select(.outcome=="needs_triage") | select(.detail|contains("compile:")) | .task' logs/retro_audit.jsonl`
+Triage: re-run the promise audit on these roots (`generate.exs <n>`
+paths) or log them as auditor-bug evidence — rule 7 either way.
+
+**Cutover-checklist fold-in still to land (docs/12 §5.5): repairs must
+re-run the spec gate on the repaired file — F20 (a spec lie introduced
+BY a repair) is the proof it's needed. Add the parity-table row when
+docs/12 is next edited.**
 
 ### 🔨 BUILDS
 
@@ -126,32 +79,25 @@ block their idea and surface here.
 **T1.4 sliver (d)**: record each seed's blind-screen outcome as difficulty
 metadata (ledger-side, tiny — fold into the export work).
 
-### ⏭️ QUEUE ORDER (after items 1–2 above)
+### ⏭️ QUEUE ORDER
 
-1. T1.6 Task-A queue (the 8 findings above) + one dialyzer re-pass —
-   audit-edited golds have fresh shas (40 solutions changed), so the
-   pass re-verifies them all; relaunch:
-   `scripts/run_detached.sh logs/dialyzer_golds_full.log bash -c "cd
-   /home/kamil/projects/elixir-sft-dataset-t16 && nice -n10 mix run
-   scripts/dialyzer_golds.exs -- --tasks
-   /home/kamil/projects/elixir-sft-dataset/tasks --ledger
-   /home/kamil/projects/elixir-sft-dataset/logs/dialyzer_golds.jsonl"`.
-2. §4.2.2 spot-review tranche: ~20 April-era seeds stratified against the
-   sweep ledger toward audit-clean roots (doubles as the T2.2 residue
+1. **§4.2.2 spot-review tranche**: ~20 April-era seeds stratified against
+   the sweep ledger toward audit-clean roots (doubles as the T2.2 residue
    check; signed off 2026-07-16).
-3. T2.6 prompt-precision tool (same skeleton as retro_audit.exs; feed it
-   the 94 triage rows from item 2) — never concurrently with the sweep.
+2. **T2.6 prompt-precision tool** (same skeleton as retro_audit.exs; feed
+   it the judge-sweep verdicts in `logs/screen_triage.jsonl`) — never
+   concurrently with the sweep.
 
 ### 📦 DATA EXTENSION (docs/13 §2; after the above)
 
+- **TD.3 — dedoc (~331 free units)** — NOW UNBLOCKED (T1.6 closed
+  2026-07-17 with the pass reading clean-or-waived). §2.3.
 - **T2.6 proper — prompt-register monotony rewrite** (improvement round
   #2 — NOT before steady state) [BIG: 2,396 tfim + 302 wt_ + 80/332 seed
   openers; own tool + ledger + blind re-screen budget] — docs/12 §7.4.
 - **TD.2 — multi-turn repair-dialogue exporter** (PERISHABLE raw material —
   snapshot `logs/attempts/` before any big run; archives 2026-07-12 and
   2026-07-14b; 745 chains / 100 mintable rejected→accepted pairs). §2.2.
-- **TD.3 — dedoc (~331 free units)** — unblocked once the T1.6 pass reads
-  all-clean after the Task-A fixes. §2.3.
 - **TD.4 — style-repair pairs (207) + cap lifts (~1,900 free tfim)** —
   weigh against docs/16 §4's advisory weights. §2.4–2.5.
 

@@ -1,28 +1,32 @@
-Implement the private `rebalance/1` function. It receives a single AVL node (a
-`node_t()` map with `:coord`, `:delta`, `:left`, and `:right` fields) whose two
-subtrees are each already balanced but whose own child heights may differ by at
-most 2, and it must return an equivalent node that satisfies the AVL balance
-invariant (child heights differing by no more than 1).
+# Fix the bug
 
-Compute the heights of the left and right children (`height/1`). Then:
+The module below was written for the task that follows, but ONE behavior bug
+slipped in. The test suite (not shown) fails with the report at the bottom.
+Find the bug and fix it — change as little as possible; do not restructure
+working code. Reply with the complete corrected module.
 
-- If the left subtree is too tall (`left height - right height > 1`), perform a
-  right rotation. When the left child is left-heavy or balanced
-  (`balance_factor(l) >= 0`) a single `rotate_right/1` on the node suffices;
-  otherwise it is a left-right case, so first rebuild the node with its left
-  child replaced by `rotate_left(l)` (using `make_node/4` with the node's own
-  `coord`/`delta` and its unchanged right child), then `rotate_right/1` the
-  result.
-- If the right subtree is too tall (`right height - left height > 1`), do the
-  mirror image: a single `rotate_left/1` when the right child is right-heavy or
-  balanced (`balance_factor(r) <= 0`), otherwise the right-left case — rebuild
-  the node with its right child replaced by `rotate_right(r)` via `make_node/4`,
-  then `rotate_left/1`.
-- Otherwise the node is already balanced; return it unchanged.
+## The task the module implements
 
-Because every rotation and `make_node/4` recomputes the `sum`, `best`, and
-`height` aggregates from the children, the returned node's augmented aggregates
-remain correct.
+Write me an Elixir module called `MaxOverlapIntervalTree` that implements a persistent, purely-functional interval tree specialised for **aggregate stabbing-depth queries** rather than interval enumeration.
+
+Unlike a plain interval tree that returns the *list* of matching intervals, this structure answers *counting* questions: how many stored intervals cover a point, and where do the most intervals pile up. Internally you must maintain a balanced augmented BST (not a flat scan) so the aggregate queries are efficient.
+
+I need these functions in the public API:
+- `MaxOverlapIntervalTree.new()` which returns an empty tree.
+- `MaxOverlapIntervalTree.insert(tree, {start, finish})` which inserts a closed integer interval `[start, finish]` and returns the updated tree. Both `start` and `finish` are integers and `start <= finish` is guaranteed. Duplicate intervals may be inserted and are counted with multiplicity. The original `tree` must never be mutated (persistent / purely-functional).
+- `MaxOverlapIntervalTree.depth_at(tree, point)` which returns an integer: the number of stored intervals that contain `point`. An interval `[s, f]` contains `point` when `s <= point <= f`. Touching counts, so `[1, 5]` and `[5, 10]` both contain the point `5`.
+- `MaxOverlapIntervalTree.max_overlap(tree)` which returns an integer: the maximum number of intervals that simultaneously cover any single integer point (the maximum stabbing number). An empty tree returns `0`.
+- `MaxOverlapIntervalTree.busiest_point(tree)` which returns the smallest integer point at which `max_overlap/1` is achieved, or `nil` for an empty tree.
+
+Implementation constraints:
+- The intervals are closed and touching is overlapping (so `[1, 3]` and `[3, 5]` both cover point `3`).
+- Represent the data as a **coordinate difference structure inside a balanced BST**: model each interval `[s, f]` as `+1` at coordinate `s` and `-1` at coordinate `f + 1`, keep those coordinate deltas in a self-balancing (e.g. AVL) tree keyed by coordinate, and augment each node so that `max_overlap/1` can be answered from the root's aggregate in `O(log n)` — do **not** re-sweep every insert or scan a flat list for `max_overlap`. `depth_at/2` must be an `O(log n)` prefix-sum query, not a full traversal.
+- Support degenerate intervals where `start == finish` (single-point intervals).
+- It must be a plain data-structure module — not a GenServer or process.
+
+Give me the complete module in a single file. Use only the Elixir standard library, no external dependencies.
+
+## The buggy module
 
 ```elixir
 defmodule MaxOverlapIntervalTree do
@@ -108,7 +112,7 @@ defmodule MaxOverlapIntervalTree do
   @spec insert(t(), interval()) :: t()
   def insert(tree, {start, finish}) do
     tree
-    |> bump(start, 1)
+    |> bump(start, 2)
     |> bump(finish + 1, -1)
   end
 
@@ -220,8 +224,29 @@ defmodule MaxOverlapIntervalTree do
   defp balance_factor(nil), do: 0
   defp balance_factor(%{left: l, right: r}), do: height(l) - height(r)
 
+  @spec rebalance(node_t()) :: node_t()
   defp rebalance(%{coord: xc, delta: xd, left: l, right: r} = node) do
-    # TODO
+    lh = height(l)
+    rh = height(r)
+
+    cond do
+      lh - rh > 1 ->
+        if balance_factor(l) >= 0 do
+          rotate_right(node)
+        else
+          rotate_right(make_node(xc, xd, rotate_left(l), r))
+        end
+
+      rh - lh > 1 ->
+        if balance_factor(r) <= 0 do
+          rotate_left(node)
+        else
+          rotate_left(make_node(xc, xd, l, rotate_right(r)))
+        end
+
+      true ->
+        node
+    end
   end
 
   # ---------------------------------------------------------------------------
@@ -272,4 +297,48 @@ defmodule MaxOverlapIntervalTree do
     in_order(left, [{c, d} | in_order(right, acc)])
   end
 end
+```
+
+## Failing test report
+
+```
+26 of 29 test(s) failed:
+
+  * test single interval covers its interior point
+      
+      
+      Assertion with == failed
+      code:  assert T.depth_at(tree, 5) == 1
+      left:  2
+      right: 1
+      
+
+  * test single interval covers its endpoints
+      
+      
+      Assertion with == failed
+      code:  assert T.depth_at(tree, 3) == 1
+      left:  2
+      right: 1
+      
+
+  * test single interval does not cover points outside it
+      
+      
+      Assertion with == failed
+      code:  assert T.depth_at(tree, 8) == 0
+      left:  1
+      right: 0
+      
+
+  * test single interval has max overlap of one at its start
+      
+      
+      Assertion with == failed
+      code:  assert T.max_overlap(tree) == 1
+      left:  2
+      right: 1
+      
+
+  (…22 more)
 ```

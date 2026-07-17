@@ -9,6 +9,30 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-17 — T1.6 TASK-A QUEUE CLOSED: all 8 machine-proven spec
+  lies fixed, cascaded, re-proven.** F20 015_001 (`@typep service` +
+  `timer: reference()`); F21 102_002 + sibling sweep (102_004's same
+  `:: :ok` lie and 102_003's noise `any()` dropped — the family now
+  matches 102_001's idiomatic spec-less migrations); 032_002
+  `parse_csv/1` (spec promised `[{row, line_no}]`, returns
+  `{headers, rows}`; stale comment fixed too); float-leak class →
+  truthful widenings (044_004 `rate/2`+`count/1`, 077_004 `prefix_sum/2`
+  + `depth_at/2` once the re-pass showed the widening propagating
+  through its delegation, 100_002 `seconds_remaining/2`, 625_003
+  `compute_expires_at/2`); 073_003 `ensure_registry/0` admits the
+  `{:error, term()}` race variant. Every edit re-graded perfect.
+  Cascade: 33 invalidated bugfix pairs deleted + reminted deterministic,
+  all verified 6/6 properties; embeds resynced (11 wt / 108 tfim / 13
+  adapt / 33 module-FIM incl. 2 fix_child_gold hand-fixes where the
+  edited @spec line sat inside the gold slice) — check_embeds 1,322
+  clean / 0 drift. Dialyzer: 41 fresh-sha golds re-passed; final state
+  all clean except 100_002 `base32_value/1`, WAIVED sha-keyed (spec
+  `0..31` is the true guarded range; dialyzer's byte()/float() widening
+  is unreachable; its pre-waiver warnings row re-verdicts as waived at
+  the next gate-sha bump — run-level exit green either way). Task B was
+  already standing (weekly CI gate), so each item closed on its data
+  fix landing.
+
 - **2026-07-17 — NEEDS-TRIAGE JUDGE SWEEP COMPLETE — both red queues in
   one pass, no new tool.** Discovery: the standing `triage_screen.exs`
   (docs/10 R12d) already covers the 94 audit needs_triage roots AND the
