@@ -66,6 +66,20 @@ delete + let the flow re-mint.
 
 ### 🔎 OPEN FINDINGS
 
+**F22 — 004_001 scheduler crash on unsatisfiable-but-valid cron
+(§4.2.2 spot-review, 2026-07-17).** `0 0 31 4 *` (April 31; also Feb
+30/31) passes field validation, then the next-run scan walks to its
+2.2M-iteration cap (~seconds of CPU) and RAISES inside `handle_call` —
+crashing the scheduler and losing every registered job. Harness has
+zero impossible-date coverage; invisible to all standing gates. Task A
+(Kamil direction needed — behavior change, full cascade): reject at
+registration (`{:error, :invalid_cron}` for never-matching
+expressions) or document the limitation + bound the scan gracefully.
+Task B: template/lint rule candidate — "for any input the prompt's own
+validation rules accept, the gold must terminate without crashing";
+check the other scheduler-family roots (004_002/3/4) for the same
+class when fixing. Full row in `logs/spot_review.jsonl`.
+
 **~15 audit needs_triage rows are staging COMPILE errors** (the grown
 harness never compiled, so no blind screen row exists and the 07-17
 judge sweep could not cover them; the roots on disk are unaffected and
