@@ -49,7 +49,12 @@ proposed sentence (incomplete judge reply) — write it by hand;
 037_002's verbatim word lists, 079_002's exact defstruct) — rejecting
 the grown test is a valid outcome there. The 83 keeps need no action
 (evidence rows recorded; they feed the quarantine-keep design and T2.6
-scoping).
+scoping). **(d) ADDED by the §4.2.2 spot-review (see
+`logs/spot_review.jsonl`): 002_001 — three prompt-precision defects
+incl. an unobservable-by-construction :half_open contract and a
+vestigial half_open_max_probes option (details in the ledger row);
+Task-B candidate template rule: "no documented option or state may be
+unobservable".**
 
 **2. Two stray repair dirs** minted in the audit's pre-restart first hour
 (untracked, full triplets, no ledger row):
