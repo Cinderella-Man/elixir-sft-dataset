@@ -222,4 +222,72 @@ defmodule LogAnalyzerTest do
              {{2024, 1, 2}, 0} => 1
            }
   end
+
+  test "path that exists but cannot be opened returns an error tuple" do
+    dir =
+      Path.join(
+        System.tmp_dir!(),
+        "log_analyzer_test_dir_#{System.pid()}_#{System.unique_integer([:positive])}"
+      )
+
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf(dir) end)
+
+    assert {:error, _reason} = LogAnalyzer.analyze(dir)
+  end
+
+  test "valid JSON that is not a top-level object counts as malformed" do
+    path = tmp_path("not_object")
+
+    write_lines(path, ["[1, 2, 3]", "\"just a string\"", "42", "null", "true"])
+    on_exit(fn -> File.rm(path) end)
+
+    assert {:ok, report} = LogAnalyzer.analyze(path)
+    assert report.malformed_count == 5
+    assert report.counts_by_level == %{}
+    assert report.error_rate == 0.0
+    assert report.time_range == nil
+  end
+
+  test "non-string timestamp values are counted as malformed" do
+    path = tmp_path("nonstring_ts")
+
+    lines = [
+      log_line(1_705_327_402, "info", "numeric timestamp"),
+      log_line(%{"iso" => "2024-01-15T14:03:22Z"}, "info", "object timestamp"),
+      log_line("2024-01-15T14:03:22Z", "info", "good line")
+    ]
+
+    write_lines(path, lines)
+    on_exit(fn -> File.rm(path) end)
+
+    assert {:ok, report} = LogAnalyzer.analyze(path)
+    assert report.malformed_count == 2
+    assert report.counts_by_level == %{"info" => 1}
+  end
+
+  test "timestamps with offsets bucket into their UTC hour and time range" do
+    path = tmp_path("offsets")
+
+    lines = [
+      log_line("2024-05-01T01:30:00+02:00", "error", "east of utc"),
+      log_line("2024-05-01T00:30:00-05:00", "error", "west of utc")
+    ]
+
+    write_lines(path, lines)
+    on_exit(fn -> File.rm(path) end)
+
+    assert {:ok, report} = LogAnalyzer.analyze(path)
+
+    assert report.errors_per_hour == %{
+             {{2024, 4, 30}, 23} => 1,
+             {{2024, 5, 1}, 5} => 1
+           }
+
+    {:ok, expected_first, _} = DateTime.from_iso8601("2024-04-30T23:30:00Z")
+    {:ok, expected_last, _} = DateTime.from_iso8601("2024-05-01T05:30:00Z")
+    {first, last} = report.time_range
+    assert DateTime.compare(first, expected_first) == :eq
+    assert DateTime.compare(last, expected_last) == :eq
+  end
 end

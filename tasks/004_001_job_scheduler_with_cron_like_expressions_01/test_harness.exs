@@ -381,4 +381,126 @@ defmodule SchedulerTest do
     assert JobTracker.count("fast") == 2
     assert JobTracker.count("slow") == 1
   end
+
+  test "next_run truncates seconds to zero and advances at least one minute", %{s: s} do
+    Clock.set(~N[2026-01-05 10:00:30])
+    :ok = Scheduler.register(s, "j", "* * * * *", {JobTracker, :record, ["j"]})
+
+    # Truncated to 10:00:00 then advanced one whole minute → 10:01:00 (seconds zero).
+    assert {:ok, ~N[2026-01-05 10:01:00]} = Scheduler.next_run(s, "j")
+  end
+
+  test "server is reachable through its registered :name option" do
+    {:ok, _pid} =
+      Scheduler.start_link(
+        name: :named_scheduler,
+        clock: &Clock.now/0,
+        tick_interval_ms: :infinity
+      )
+
+    on_exit(fn -> if Process.whereis(:named_scheduler), do: GenServer.stop(:named_scheduler) end)
+
+    assert :ok =
+             Scheduler.register(
+               :named_scheduler,
+               "j",
+               "30 11 * * *",
+               {JobTracker, :record, ["j"]}
+             )
+
+    assert {:ok, ~N[2026-01-05 11:30:00]} = Scheduler.next_run(:named_scheduler, "j")
+  end
+
+  test "jobs/1 tuples carry the cron expression and a NaiveDateTime next_run", %{s: s} do
+    :ok = Scheduler.register(s, "j", "30 11 * * *", {JobTracker, :record, ["j"]})
+
+    assert [{"j", "30 11 * * *", next_run}] = Scheduler.jobs(s)
+    assert %NaiveDateTime{} = next_run
+    assert next_run == ~N[2026-01-05 11:30:00]
+  end
+
+  # -------------------------------------------------------
+  # Field-range boundary validation
+  #
+  # These assert the DOCUMENTED valid range of every field through the public
+  # API: boundary values must be accepted, just-out-of-range values rejected.
+  # -------------------------------------------------------
+
+  test "minute 59 (upper boundary) is valid", %{s: s} do
+    assert :ok = Scheduler.register(s, "j", "59 * * * *", {JobTracker, :record, ["j"]})
+    assert {:ok, ~N[2026-01-05 10:59:00]} = Scheduler.next_run(s, "j")
+  end
+
+  test "hour 23 (upper boundary) is valid and schedules for today 23:00", %{s: s} do
+    assert :ok = Scheduler.register(s, "j", "0 23 * * *", {JobTracker, :record, ["j"]})
+    assert {:ok, ~N[2026-01-05 23:00:00]} = Scheduler.next_run(s, "j")
+  end
+
+  test "day-of-month 31 (upper boundary) is valid", %{s: s} do
+    assert :ok = Scheduler.register(s, "j", "0 0 31 * *", {JobTracker, :record, ["j"]})
+    assert {:ok, ~N[2026-01-31 00:00:00]} = Scheduler.next_run(s, "j")
+  end
+
+  test "day-of-month 32 is out of range", %{s: s} do
+    assert {:error, :invalid_cron} =
+             Scheduler.register(s, "bad", "0 0 32 * *", {IO, :puts, ["hi"]})
+  end
+
+  test "day-of-month 0 (below lower boundary) is out of range", %{s: s} do
+    assert {:error, :invalid_cron} =
+             Scheduler.register(s, "bad", "0 0 0 * *", {IO, :puts, ["hi"]})
+  end
+
+  test "day-of-month 1 and month 1 (lower boundaries) are valid", %{s: s} do
+    assert :ok = Scheduler.register(s, "j", "0 0 1 1 *", {JobTracker, :record, ["j"]})
+    assert {:ok, ~N[2027-01-01 00:00:00]} = Scheduler.next_run(s, "j")
+  end
+
+  test "month 12 (upper boundary) is valid", %{s: s} do
+    assert :ok = Scheduler.register(s, "j", "0 0 1 12 *", {JobTracker, :record, ["j"]})
+    assert {:ok, ~N[2026-12-01 00:00:00]} = Scheduler.next_run(s, "j")
+  end
+
+  test "month 0 (below lower boundary) is out of range", %{s: s} do
+    assert {:error, :invalid_cron} =
+             Scheduler.register(s, "bad", "0 0 * 0 *", {IO, :puts, ["hi"]})
+  end
+
+  test "month 13 is out of range", %{s: s} do
+    assert {:error, :invalid_cron} =
+             Scheduler.register(s, "bad", "0 0 * 13 *", {IO, :puts, ["hi"]})
+  end
+
+  test "day-of-week 6 (Saturday, upper boundary) is valid", %{s: s} do
+    assert :ok = Scheduler.register(s, "j", "* * * * 6", {JobTracker, :record, ["j"]})
+    # Jan 5 2026 is Monday; the next Saturday is Jan 10.
+    assert {:ok, ~N[2026-01-10 00:00:00]} = Scheduler.next_run(s, "j")
+  end
+
+  # -------------------------------------------------------
+  # Range / step parsing edge cases
+  # -------------------------------------------------------
+
+  test "step offset is measured from the range start, not zero", %{s: s} do
+    # "5-25/7" selects minutes whose offset from 5 is a multiple of 7: 5, 12, 19.
+    # (An offset measured from the wrong base would instead pick 9, 16, 23.)
+    :ok = Scheduler.register(s, "j", "5-25/7 * * * *", {JobTracker, :record, ["j"]})
+    assert {:ok, ~N[2026-01-05 10:05:00]} = Scheduler.next_run(s, "j")
+  end
+
+  test "range whose lower bound equals the field minimum is valid", %{s: s} do
+    # "0-5" in the minute field: lower bound (0) equals the field minimum.
+    :ok = Scheduler.register(s, "j", "0-5 * * * *", {JobTracker, :record, ["j"]})
+    assert {:ok, ~N[2026-01-05 10:01:00]} = Scheduler.next_run(s, "j")
+  end
+
+  test "step of zero is invalid", %{s: s} do
+    assert {:error, :invalid_cron} =
+             Scheduler.register(s, "bad", "*/0 * * * *", {IO, :puts, ["hi"]})
+  end
+
+  test "malformed range with two dashes is invalid", %{s: s} do
+    assert {:error, :invalid_cron} =
+             Scheduler.register(s, "bad", "1-2-3 * * * *", {IO, :puts, ["hi"]})
+  end
 end

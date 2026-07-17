@@ -8,6 +8,18 @@ defmodule LRUCacheTest do
     name
   end
 
+  # The backing ETS tables are part of the documented surface: they are named
+  # deterministically from the `:name` option so they are stable and
+  # inspectable, and the data table is readable from any process.
+  defp data_table(name), do: :"#{name}_data"
+  defp order_table(name), do: :"#{name}_order"
+
+  # The documented timestamp stamped on a resident key by its last touch.
+  defp timestamp(name, key) do
+    [{^key, {_value, ts}}] = :ets.lookup(data_table(name), key)
+    ts
+  end
+
   # -------------------------------------------------------
   # Basic get / put
   # -------------------------------------------------------
@@ -281,5 +293,150 @@ defmodule LRUCacheTest do
     assert is_pid(pid)
     assert :ok = LRUCache.put(name, :a, 1)
     assert {:ok, 1} = LRUCache.get(name, :a)
+  end
+
+  test "overwriting a key at exactly max_size evicts nothing" do
+    c = start_cache(3)
+    LRUCache.put(c, :a, 1)
+    LRUCache.put(c, :b, 2)
+    LRUCache.put(c, :c, 3)
+
+    # Cache is exactly at max_size; overwriting a resident key must not evict.
+    assert :ok = LRUCache.put(c, :b, 22)
+
+    assert {:ok, 1} = LRUCache.get(c, :a)
+    assert {:ok, 22} = LRUCache.get(c, :b)
+    assert {:ok, 3} = LRUCache.get(c, :c)
+  end
+
+  test "a miss creates nothing, evicts nothing and leaves ordering untouched" do
+    c = start_cache(2)
+    LRUCache.put(c, :a, 1)
+    LRUCache.put(c, :b, 2)
+
+    assert :miss = LRUCache.get(c, :ghost)
+    assert :miss = LRUCache.get(c, :ghost)
+
+    # Both residents survived the misses, and :a is still the LRU.
+    assert :ok = LRUCache.put(c, :d, 4)
+
+    assert :miss = LRUCache.get(c, :a)
+    assert {:ok, 2} = LRUCache.get(c, :b)
+    assert {:ok, 4} = LRUCache.get(c, :d)
+    assert :miss = LRUCache.get(c, :ghost)
+  end
+
+  test "falsy stored values are hits, not misses" do
+    c = start_cache(3)
+
+    LRUCache.put(c, :flag, false)
+    assert {:ok, false} = LRUCache.get(c, :flag)
+
+    LRUCache.put(c, :flag, nil)
+    assert {:ok, nil} = LRUCache.get(c, :flag)
+
+    LRUCache.put(c, :flag, false)
+    assert {:ok, false} = LRUCache.get(c, :flag)
+  end
+
+  test "child_spec uses the name option as the child id" do
+    name = unique_name()
+    spec = LRUCache.child_spec(name: name, max_size: 2)
+
+    assert %{id: ^name, start: {LRUCache, :start_link, [start_opts]}} = spec
+    assert start_opts[:name] == name
+    assert start_opts[:max_size] == 2
+  end
+
+  # -------------------------------------------------------
+  # Backing ETS tables — documented, stable and inspectable
+  # -------------------------------------------------------
+
+  test "the two backing tables are named, typed and protected as documented" do
+    c = start_cache(2)
+
+    data = data_table(c)
+    order = order_table(c)
+
+    # Both tables exist under the deterministic names derived from :name.
+    assert :ets.info(data, :named_table) == true
+    assert :ets.info(order, :named_table) == true
+
+    # The data table: a :set for O(1) lookups, readable from any process, and
+    # optimised for the direct concurrent reads the read path performs.
+    assert :ets.info(data, :type) == :set
+    assert :ets.info(data, :protection) == :public
+    assert :ets.info(data, :read_concurrency) == true
+
+    # The order table: an :ordered_set so the LRU entry is found in O(log n);
+    # only the owning GenServer writes to it.
+    assert :ets.info(order, :type) == :ordered_set
+    assert :ets.info(order, :protection) == :protected
+  end
+
+  test "a fresh cache starts its counter at 0, so the first write is stamped 1" do
+    c = start_cache(3)
+
+    assert :ok = LRUCache.put(c, :a, 1)
+    assert timestamp(c, :a) == 1
+  end
+
+  test "every touch consumes exactly the next counter value" do
+    c = start_cache(3)
+
+    # New key.
+    assert :ok = LRUCache.put(c, :a, 1)
+    assert timestamp(c, :a) == 1
+
+    # Another new key: the very next counter value, not a skipped one.
+    assert :ok = LRUCache.put(c, :b, 2)
+    assert timestamp(c, :b) == 2
+
+    # A hit on :get is a touch and re-stamps the entry.
+    assert {:ok, 1} = LRUCache.get(c, :a)
+    assert timestamp(c, :a) == 3
+    # ... and leaves untouched keys exactly where they were.
+    assert timestamp(c, :b) == 2
+
+    # An overwrite is a touch too.
+    assert :ok = LRUCache.put(c, :b, 22)
+    assert timestamp(c, :b) == 4
+
+    # A third new key continues the same unbroken sequence.
+    assert :ok = LRUCache.put(c, :c, 3)
+    assert timestamp(c, :c) == 5
+    assert timestamp(c, :a) == 3
+  end
+
+  test "a miss consumes no counter value at all" do
+    c = start_cache(3)
+
+    LRUCache.put(c, :a, 1)
+    assert timestamp(c, :a) == 1
+
+    assert :miss = LRUCache.get(c, :ghost)
+    assert :miss = LRUCache.get(c, :ghost)
+
+    # Had the misses burned counter values, :b would not be stamped 2.
+    assert :ok = LRUCache.put(c, :b, 2)
+    assert timestamp(c, :b) == 2
+  end
+
+  test "the order table holds exactly one freshly stamped row per resident key" do
+    c = start_cache(2)
+
+    LRUCache.put(c, :a, 1)
+    LRUCache.put(c, :b, 2)
+
+    # Overwrite and read :a; its stale ordering rows must be gone.
+    LRUCache.put(c, :a, 11)
+    assert {:ok, 11} = LRUCache.get(c, :a)
+
+    # ts 1 (:a inserted), 2 (:b inserted), 3 (:a overwritten), 4 (:a read).
+    assert :ets.tab2list(order_table(c)) == [{2, :b}, {4, :a}]
+
+    # Evicting the LRU (:b) removes its row and stamps the newcomer next.
+    LRUCache.put(c, :c, 3)
+    assert :ets.tab2list(order_table(c)) == [{4, :a}, {5, :c}]
   end
 end

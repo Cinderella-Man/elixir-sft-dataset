@@ -126,4 +126,64 @@ defmodule CounterResamplerTest do
     # -100, and fill: nil would make bucket 1000 nil.
     assert result === [{0, 50}, {1_000, 0}, {2_000, 300}]
   end
+
+  test "argument validation happens even when the data list is empty" do
+    assert_raise ArgumentError, fn ->
+      CounterResampler.resample([], 0, mode: :delta)
+    end
+
+    assert_raise ArgumentError, fn ->
+      CounterResampler.resample([], 1_000, mode: :average)
+    end
+
+    assert_raise ArgumentError, fn ->
+      CounterResampler.resample([], 1_000, reset: :ignore)
+    end
+  end
+
+  test "negative timestamps floor down to their bucket boundary" do
+    # floor(-1500/1000) = -2 -> -2000, floor(-300/1000) = -1 -> -1000,
+    # floor(200/1000) = 0 -> 0.  Increment +30 lands in bucket -1000 (later
+    # sample t=-300), increment +50 lands in bucket 0 (later sample t=200).
+    data = [{-1_500, 10}, {-300, 40}, {200, 90}]
+    result = CounterResampler.resample(data, 1_000, mode: :delta, fill: :zero)
+
+    assert result == [{-2_000, 0}, {-1_000, 30}, {0, 50}]
+  end
+
+  test "empty buckets fill with nil in :rate mode when requested" do
+    data = [{0, 100}, {300, 150}, {2_300, 400}]
+    result = CounterResampler.resample(data, 1_000, mode: :rate, fill: nil)
+
+    assert [{0, r0}, {1_000, gap}, {2_000, r2}] = result
+    assert gap == nil
+    assert_in_delta r0, 50.0, 0.0001
+    assert_in_delta r2, 250.0, 0.0001
+  end
+
+  test ":rate scales by a sub-second interval length" do
+    # interval 500ms = 0.5s, so an increment of +50 becomes 100.0 per second.
+    data = [{0, 100}, {200, 150}, {700, 200}]
+    result = CounterResampler.resample(data, 500, mode: :rate, fill: :zero)
+
+    assert [{0, r0}, {500, r1}] = result
+    assert_in_delta r0, 100.0, 0.0001
+    assert_in_delta r1, 100.0, 0.0001
+  end
+
+  test "an undocumented :fill value raises ArgumentError" do
+    assert_raise ArgumentError, fn ->
+      CounterResampler.resample([{0, 100}, {300, 150}], 1_000, fill: :empty)
+    end
+  end
+
+  test "a non-integer or negative interval raises ArgumentError" do
+    assert_raise ArgumentError, fn ->
+      CounterResampler.resample([{0, 100}, {300, 150}], 1_000.0, mode: :delta)
+    end
+
+    assert_raise ArgumentError, fn ->
+      CounterResampler.resample([{0, 100}, {300, 150}], -1_000, mode: :delta)
+    end
+  end
 end

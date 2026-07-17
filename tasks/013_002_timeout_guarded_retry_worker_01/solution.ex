@@ -2,6 +2,10 @@ defmodule TimeoutRetryWorker do
   @moduledoc """
   A GenServer that executes functions with exponential backoff, jitter,
   and per-attempt timeouts enforced via Task.yield/Task.shutdown.
+
+  Each attempt runs inside a supervised, unlinked Task so that an abnormal
+  exit in the user function cannot bring down the worker; such an exit is
+  surfaced as a retryable `{:task_crashed, reason}` failure.
   """
 
   use GenServer
@@ -9,6 +13,7 @@ defmodule TimeoutRetryWorker do
 
   # --- Public API ---
 
+  @doc "Starts the worker. Accepts `:name`, `:clock`, and `:random` options."
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
     name = Keyword.get(opts, :name)
@@ -29,7 +34,8 @@ defmodule TimeoutRetryWorker do
   def init(opts) do
     clock = Keyword.get(opts, :clock, fn -> System.monotonic_time(:millisecond) end)
     random = Keyword.get(opts, :random, fn max -> :rand.uniform(max) - 1 end)
-    {:ok, %{clock: clock, random: random, tasks: %{}}}
+    {:ok, supervisor} = Task.Supervisor.start_link()
+    {:ok, %{clock: clock, random: random, supervisor: supervisor, tasks: %{}}}
   end
 
   @impl true
@@ -45,7 +51,7 @@ defmodule TimeoutRetryWorker do
   end
 
   def handle_info({ref, result}, state) when is_reference(ref) do
-    # Task completed normally — flush the :DOWN message
+    # Defensive: a stray result for an execution we no longer track is ignored.
     Process.demonitor(ref, [:flush])
 
     case Map.pop(state.tasks, ref) do
@@ -74,21 +80,23 @@ defmodule TimeoutRetryWorker do
   defp launch_attempt(func, attempt, opts, from, state) do
     timeout = Keyword.get(opts, :attempt_timeout_ms, 5_000)
 
-    task = Task.async(fn -> func.() end)
+    task = Task.Supervisor.async_nolink(state.supervisor, fn -> func.() end)
 
-    case Task.yield(task, timeout) do
-      {:ok, result} ->
-        # Completed within timeout — handle synchronously
-        Process.demonitor(task.ref, [:flush])
-        {_, state} = handle_task_result_sync(result, func, attempt, opts, from, state)
-        state
+    outcome =
+      case Task.yield(task, timeout) do
+        {:ok, result} ->
+          result
 
-      nil ->
-        # Timed out — shut it down
-        Task.shutdown(task, :brutal_kill)
-        {_, state} = handle_task_result_sync({:error, :timeout}, func, attempt, opts, from, state)
-        state
-    end
+        {:exit, reason} ->
+          {:error, {:task_crashed, reason}}
+
+        nil ->
+          _ = Task.shutdown(task, :brutal_kill)
+          {:error, :timeout}
+      end
+
+    {_, state} = handle_task_result_sync(outcome, func, attempt, opts, from, state)
+    state
   end
 
   defp handle_task_result_sync(result, func, attempt, opts, from, state) do

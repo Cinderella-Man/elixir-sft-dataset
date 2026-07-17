@@ -372,4 +372,98 @@ defmodule MaxOverlapIntervalTreeTest do
 
     {max_depth, best_point}
   end
+
+  test "tree is inert data: no registered process, no behaviour, usable from another process" do
+    tree = Enum.reduce(1..50, T.new(), fn i, acc -> T.insert(acc, {i, i + 3}) end)
+
+    refute is_pid(tree)
+    refute is_reference(tree)
+    refute is_port(tree)
+
+    behaviours =
+      T.module_info(:attributes)
+      |> Keyword.get_values(:behaviour)
+      |> List.flatten()
+
+    refute GenServer in behaviours
+    assert Process.whereis(MaxOverlapIntervalTree) == nil
+
+    task =
+      Task.async(fn ->
+        {T.max_overlap(tree), T.busiest_point(tree), T.depth_at(tree, 10)}
+      end)
+
+    assert Task.await(task, 1_000) == {4, 4, 4}
+  end
+
+  test "abutting intervals whose deltas cancel at a shared coordinate keep depth one" do
+    # [1,5] ends at coordinate 6 exactly where [6,10] begins, so that coordinate
+    # carries a net delta of zero and must not erase the coverage there.
+    tree =
+      T.new()
+      |> T.insert({1, 5})
+      |> T.insert({6, 10})
+
+    assert T.depth_at(tree, 0) == 0
+    assert T.depth_at(tree, 5) == 1
+    assert T.depth_at(tree, 6) == 1
+    assert T.depth_at(tree, 10) == 1
+    assert T.depth_at(tree, 11) == 0
+    assert T.max_overlap(tree) == 1
+    assert T.busiest_point(tree) == 1
+  end
+
+  test "two divergent branches grown from one tree never disturb each other" do
+    base = Enum.reduce(1..8, T.new(), fn i, acc -> T.insert(acc, {i, i + 1}) end)
+
+    assert T.max_overlap(base) == 2
+    assert T.busiest_point(base) == 2
+
+    left = Enum.reduce(1..5, base, fn _, acc -> T.insert(acc, {1, 1}) end)
+    right = Enum.reduce(1..5, base, fn _, acc -> T.insert(acc, {9, 9}) end)
+
+    assert T.depth_at(left, 1) == 6
+    assert T.max_overlap(left) == 6
+    assert T.busiest_point(left) == 1
+    assert T.depth_at(left, 9) == 1
+
+    assert T.depth_at(right, 9) == 6
+    assert T.max_overlap(right) == 6
+    assert T.busiest_point(right) == 9
+    assert T.depth_at(right, 1) == 1
+
+    # The shared ancestor is unchanged by either branch.
+    assert T.max_overlap(base) == 2
+    assert T.busiest_point(base) == 2
+    assert T.depth_at(base, 1) == 1
+    assert T.depth_at(base, 9) == 1
+  end
+
+  test "three copies of one interval stack to depth three at the leftmost busiest point" do
+    tree = Enum.reduce(1..3, T.new(), fn _, acc -> T.insert(acc, {2, 8}) end)
+
+    assert T.depth_at(tree, 1) == 0
+    assert T.depth_at(tree, 2) == 3
+    assert T.depth_at(tree, 8) == 3
+    assert T.depth_at(tree, 9) == 0
+    assert T.max_overlap(tree) == 3
+    assert T.busiest_point(tree) == 2
+  end
+
+  test "repeated degenerate intervals at one coordinate stack with touching neighbours" do
+    tree =
+      T.new()
+      |> T.insert({0, 4})
+      |> T.insert({4, 4})
+      |> T.insert({4, 4})
+      |> T.insert({4, 9})
+
+    assert T.depth_at(tree, 3) == 1
+    assert T.depth_at(tree, 4) == 4
+    assert T.depth_at(tree, 5) == 1
+    assert T.depth_at(tree, 9) == 1
+    assert T.depth_at(tree, 10) == 0
+    assert T.max_overlap(tree) == 4
+    assert T.busiest_point(tree) == 4
+  end
 end

@@ -100,4 +100,69 @@ defmodule QueryPaginatorTest do
     assert meta.total_count == 0
     assert meta.total_pages == 0
   end
+
+  test "a present-but-non-integer nested filter value is rejected, not raised" do
+    assert {:error, :invalid_filter} =
+             QueryPaginator.paginate(items(), %{"min_age" => %{"gt" => "20"}})
+
+    assert {:error, :invalid_filter} =
+             QueryPaginator.paginate(items(), %{"max_age" => ["40"]})
+  end
+
+  test "page_size below one or non-numeric falls back to the default of 20" do
+    {:ok, %{meta: zero}} = QueryPaginator.paginate(items(), %{"page_size" => "0"})
+    assert zero.page_size == 20
+
+    {:ok, %{meta: negative}} = QueryPaginator.paginate(items(), %{"page_size" => "-5"})
+    assert negative.page_size == 20
+
+    {:ok, %{data: data, meta: junk}} = QueryPaginator.paginate(items(), %{"page_size" => "many"})
+    assert junk.page_size == 20
+    assert junk.total_pages == 1
+    assert length(data) == 6
+  end
+
+  test "page below one falls back to the first page" do
+    {:ok, %{data: zero_data, meta: zero}} =
+      QueryPaginator.paginate(items(), %{"page" => "0", "page_size" => "2"})
+
+    assert zero.current_page == 1
+    assert Enum.map(zero_data, & &1.id) == [1, 2]
+
+    {:ok, %{data: neg_data, meta: negative}} =
+      QueryPaginator.paginate(items(), %{"page" => "-4", "page_size" => "2"})
+
+    assert negative.current_page == 1
+    assert Enum.map(neg_data, & &1.id) == [1, 2]
+  end
+
+  test "filters that match nothing yield zero total_count and zero total_pages" do
+    {:ok, %{data: data, meta: meta}} =
+      QueryPaginator.paginate(items(), %{"min_age" => "999", "page_size" => "2"})
+
+    assert data == []
+    assert meta.total_count == 0
+    assert meta.total_pages == 0
+    assert meta.filters.min_age == 999
+    assert meta.filters.max_age == nil
+  end
+
+  test "min_age and max_age are inclusive at exactly-equal boundary values" do
+    {:ok, %{data: data, meta: meta}} =
+      QueryPaginator.paginate(items(), %{"min_age" => "25", "max_age" => "25"})
+
+    assert Enum.map(data, & &1.id) == [2, 4]
+    assert meta.total_count == 2
+    assert meta.total_pages == 1
+
+    {:ok, %{data: single}} =
+      QueryPaginator.paginate(items(), %{"min_age" => "22", "max_age" => "22"})
+
+    assert Enum.map(single, & &1.id) == [6]
+  end
+
+  test "paginate/1 returns exactly what paginate/2 with an empty map returns" do
+    assert QueryPaginator.paginate(items()) == QueryPaginator.paginate(items(), %{})
+    assert QueryPaginator.paginate([]) == QueryPaginator.paginate([], %{})
+  end
 end

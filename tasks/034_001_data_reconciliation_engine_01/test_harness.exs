@@ -242,4 +242,103 @@ defmodule ReconcilerTest do
     bob = Enum.find(result.matched, &(&1.left.id == 2))
     assert bob.differences == %{status: %{left: "active", right: "inactive"}}
   end
+
+  test "values equal under == are not reported as differences" do
+    left = [%{id: 1, score: 1, ratio: 2.0}]
+    right = [%{id: 1, score: 1.0, ratio: 2}]
+
+    result = Reconciler.reconcile(left, right, key_fields: [:id])
+
+    [entry] = result.matched
+    assert entry.differences == %{}
+  end
+
+  test "compare_fields field absent from both records yields no difference" do
+    left = [%{id: 1, name: "Alice"}]
+    right = [%{id: 1, name: "Alice"}]
+
+    result =
+      Reconciler.reconcile(left, right,
+        key_fields: [:id],
+        compare_fields: [:name, :nowhere_field]
+      )
+
+    [entry] = result.matched
+    assert entry.differences == %{}
+  end
+
+  test "explicitly compared field absent from left record diffs as nil vs value" do
+    left = [%{id: 1}]
+    right = [%{id: 1, score: 7}]
+
+    result =
+      Reconciler.reconcile(left, right,
+        key_fields: [:id],
+        compare_fields: [:score]
+      )
+
+    [entry] = result.matched
+    assert entry.differences == %{score: %{left: nil, right: 7}}
+  end
+
+  test "matched entry keeps full records when compare_fields excludes differing fields" do
+    left = [%{id: 1, name: "Alice", internal_ref: "old", extra: 1}]
+    right = [%{id: 1, name: "Alice", internal_ref: "new", extra: 2}]
+
+    result =
+      Reconciler.reconcile(left, right,
+        key_fields: [:id],
+        compare_fields: [:name]
+      )
+
+    [entry] = result.matched
+    assert entry.differences == %{}
+    assert entry.left == %{id: 1, name: "Alice", internal_ref: "old", extra: 1}
+    assert entry.right == %{id: 1, name: "Alice", internal_ref: "new", extra: 2}
+  end
+
+  test "composite key with equal first field but differing second field never matches" do
+    left = [%{org_id: 1, user_id: 10, name: "Alice"}]
+    right = [%{org_id: 1, user_id: 11, name: "Alice"}]
+
+    result = Reconciler.reconcile(left, right, key_fields: [:org_id, :user_id])
+
+    assert result.matched == []
+    assert result.only_in_left == [%{org_id: 1, user_id: 10, name: "Alice"}]
+    assert result.only_in_right == [%{org_id: 1, user_id: 11, name: "Alice"}]
+  end
+
+  # ---------------------------------------------------------------------------
+  # :key_fields validation (required option)
+  # ---------------------------------------------------------------------------
+
+  test "an empty :key_fields list raises ArgumentError" do
+    assert_raise ArgumentError, fn ->
+      Reconciler.reconcile([%{id: 1}], [%{id: 1}], key_fields: [])
+    end
+  end
+
+  test "a non-list :key_fields raises ArgumentError" do
+    assert_raise ArgumentError, fn ->
+      Reconciler.reconcile([%{id: 1}], [%{id: 1}], key_fields: :id)
+    end
+  end
+
+  test "a :key_fields list containing non-atoms raises ArgumentError" do
+    assert_raise ArgumentError, fn ->
+      Reconciler.reconcile([%{id: 1}], [%{id: 1}], key_fields: ["id"])
+    end
+  end
+
+  test "a nil :key_fields raises ArgumentError" do
+    assert_raise ArgumentError, fn ->
+      Reconciler.reconcile([%{id: 1}], [%{id: 1}], key_fields: nil)
+    end
+  end
+
+  test "omitting :key_fields raises ArgumentError" do
+    assert_raise ArgumentError, fn ->
+      Reconciler.reconcile([%{id: 1}], [%{id: 1}], [])
+    end
+  end
 end

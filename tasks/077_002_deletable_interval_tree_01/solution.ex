@@ -1,7 +1,8 @@
 defmodule DeletableIntervalTree do
   @moduledoc """
-  A persistent, purely-functional interval tree implemented as an augmented AVL
-  tree that supports removal with explicit success/failure semantics.
+  A persistent, purely-functional interval tree implemented as a size-balanced
+  (weight-balanced) binary search tree that supports removal with explicit
+  success/failure semantics.
 
   Each node stores:
 
@@ -9,15 +10,23 @@ defmodule DeletableIntervalTree do
       tuple so that `delete/2` can locate an exact interval deterministically.
     * `max_finish` — the maximum `finish` across the subtree, used to prune
       `overlapping/2` and `enclosing/2`.
-    * `height`     — the AVL height, maintained across `insert/2` and `delete/2`.
+    * `size`       — the number of intervals in the subtree. It answers `size/1`
+      in constant time and is also the quantity the tree balances on, so the
+      tree stays logarithmic after every `insert/2` and every `delete/2`.
 
   Two intervals overlap when they share at least one point, so `{1, 3}` and
   `{3, 5}` overlap. Every `insert/2` and every successful `delete/2` returns a
-  new tree value; the input tree is never mutated.
+  new tree value; the input tree is never mutated, so older versions of a tree
+  remain queryable.
   """
 
   @type interval :: {integer(), integer()}
   @type t :: nil | map()
+
+  # Weight-balance parameters. A subtree may be at most `@delta` times heavier
+  # than its sibling; `@ratio` decides between a single and a double rotation.
+  @delta 3
+  @ratio 2
 
   # -------------------------------------------------------------------------
   # Public API
@@ -81,63 +90,77 @@ defmodule DeletableIntervalTree do
 
   @doc """
   Returns the number of intervals stored in `tree`.
+
+  Runs in constant time; every node caches the size of its own subtree.
   """
   @spec size(t()) :: non_neg_integer()
-  def size(tree), do: do_size(tree)
+  def size(nil), do: 0
+  def size(%{size: n}), do: n
 
   # -------------------------------------------------------------------------
   # Node construction
   # -------------------------------------------------------------------------
 
-  defp height(nil), do: 0
-  defp height(%{height: h}), do: h
-
   defp make_node({_s, f} = interval, left, right) do
-    h = 1 + max(height(left), height(right))
+    n = 1 + size(left) + size(right)
     mf = f |> max_with_child(left) |> max_with_child(right)
-    %{interval: interval, max_finish: mf, height: h, left: left, right: right}
+    %{interval: interval, max_finish: mf, size: n, left: left, right: right}
   end
 
   defp max_with_child(acc, nil), do: acc
   defp max_with_child(acc, %{max_finish: mf}), do: max(acc, mf)
 
   # -------------------------------------------------------------------------
-  # AVL rotations / rebalance
+  # Weight-balanced rebuilding / rotations
   # -------------------------------------------------------------------------
 
-  defp rotate_right(%{interval: xi, left: %{interval: yi, left: a, right: b}, right: c}) do
-    make_node(yi, a, make_node(xi, b, c))
-  end
-
-  defp rotate_left(%{interval: xi, left: a, right: %{interval: yi, left: b, right: c}}) do
-    make_node(yi, make_node(xi, a, b), c)
-  end
-
-  defp balance_factor(nil), do: 0
-  defp balance_factor(%{left: l, right: r}), do: height(l) - height(r)
-
-  defp rebalance(%{interval: xi, left: l, right: r} = node) do
-    lh = height(l)
-    rh = height(r)
+  # Rebuilds the node `interval` with children `left` and `right`, restoring the
+  # weight-balance invariant. Exactly one element may have been added to or
+  # removed from one of the children since they were last balanced.
+  defp balance(interval, left, right) do
+    ls = size(left)
+    rs = size(right)
 
     cond do
-      lh - rh > 1 ->
-        if balance_factor(l) >= 0 do
-          rotate_right(node)
-        else
-          rotate_right(make_node(xi, rotate_left(l), r))
-        end
-
-      rh - lh > 1 ->
-        if balance_factor(r) <= 0 do
-          rotate_left(node)
-        else
-          rotate_left(make_node(xi, l, rotate_right(r)))
-        end
-
-      true ->
-        node
+      ls + rs <= 1 -> make_node(interval, left, right)
+      rs > @delta * ls -> rotate_left(interval, left, right)
+      ls > @delta * rs -> rotate_right(interval, left, right)
+      true -> make_node(interval, left, right)
     end
+  end
+
+  defp rotate_left(interval, left, %{left: rl, right: rr} = right) do
+    if size(rl) < @ratio * size(rr) do
+      single_left(interval, left, right)
+    else
+      double_left(interval, left, right)
+    end
+  end
+
+  defp rotate_right(interval, %{left: ll, right: lr} = left, right) do
+    if size(lr) < @ratio * size(ll) do
+      single_right(interval, left, right)
+    else
+      double_right(interval, left, right)
+    end
+  end
+
+  defp single_left(i1, t1, %{interval: i2, left: t2, right: t3}) do
+    make_node(i2, make_node(i1, t1, t2), t3)
+  end
+
+  defp single_right(i1, %{interval: i2, left: t1, right: t2}, t3) do
+    make_node(i2, t1, make_node(i1, t2, t3))
+  end
+
+  defp double_left(i1, t1, right) do
+    %{interval: i2, left: %{interval: i3, left: t2, right: t3}, right: t4} = right
+    make_node(i3, make_node(i1, t1, t2), make_node(i2, t3, t4))
+  end
+
+  defp double_right(i1, left, t4) do
+    %{interval: i2, left: t1, right: %{interval: i3, left: t2, right: t3}} = left
+    make_node(i3, make_node(i2, t1, t2), make_node(i1, t3, t4))
   end
 
   # -------------------------------------------------------------------------
@@ -146,15 +169,12 @@ defmodule DeletableIntervalTree do
 
   defp do_insert(nil, interval), do: make_node(interval, nil, nil)
 
-  defp do_insert(%{interval: ni} = node, interval) do
-    updated =
-      if interval <= ni do
-        make_node(node.interval, do_insert(node.left, interval), node.right)
-      else
-        make_node(node.interval, node.left, do_insert(node.right, interval))
-      end
-
-    rebalance(updated)
+  defp do_insert(%{interval: ni, left: l, right: r}, interval) do
+    if interval <= ni do
+      balance(ni, do_insert(l, interval), r)
+    else
+      balance(ni, l, do_insert(r, interval))
+    end
   end
 
   # -------------------------------------------------------------------------
@@ -181,24 +201,24 @@ defmodule DeletableIntervalTree do
     cond do
       target < iv ->
         {nl, found} = do_delete(l, target)
-        {rebalance(make_node(iv, nl, r)), found}
+        {balance(iv, nl, r), found}
 
       target > iv ->
         {nr, found} = do_delete(r, target)
-        {rebalance(make_node(iv, l, nr)), found}
+        {balance(iv, l, nr), found}
 
       true ->
-        {delete_here(make_node(iv, l, r)), true}
+        {delete_here(l, r), true}
     end
   end
 
-  defp delete_here(%{left: nil, right: r}), do: r
-  defp delete_here(%{left: l, right: nil}), do: l
+  defp delete_here(nil, right), do: right
+  defp delete_here(left, nil), do: left
 
-  defp delete_here(%{left: l, right: r}) do
-    successor = min_interval(r)
-    {nr, _found} = do_delete(r, successor)
-    rebalance(make_node(successor, l, nr))
+  defp delete_here(left, right) do
+    successor = min_interval(right)
+    {nr, _found} = do_delete(right, successor)
+    balance(successor, left, nr)
   end
 
   defp min_interval(%{left: nil, interval: iv}), do: iv
@@ -239,11 +259,4 @@ defmodule DeletableIntervalTree do
       acc
     end
   end
-
-  # -------------------------------------------------------------------------
-  # Size
-  # -------------------------------------------------------------------------
-
-  defp do_size(nil), do: 0
-  defp do_size(%{left: l, right: r}), do: 1 + do_size(l) + do_size(r)
 end

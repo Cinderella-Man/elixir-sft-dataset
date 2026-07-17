@@ -228,4 +228,73 @@ defmodule WildcardTrieTest do
     assert WildcardTrie.matches?(t, "w101") == false
     assert WildcardTrie.words(t) == Enum.sort(words)
   end
+
+  test "member? finds a stored word that contains a literal dot" do
+    t =
+      WildcardTrie.new()
+      |> WildcardTrie.insert("b.d")
+      |> WildcardTrie.insert("bad")
+
+    assert WildcardTrie.member?(t, "b.d") == true
+    assert WildcardTrie.member?(t, "bad") == true
+    assert WildcardTrie.size(t) == 2
+
+    only_dot = WildcardTrie.new() |> WildcardTrie.insert("b.d")
+    assert WildcardTrie.member?(only_dot, "b.d") == true
+    assert WildcardTrie.member?(only_dot, "bad") == false
+  end
+
+  test "wildcard pattern also matches a stored literal dot character" do
+    t =
+      WildcardTrie.new()
+      |> WildcardTrie.insert("b.d")
+      |> WildcardTrie.insert("bad")
+
+    assert WildcardTrie.matches?(t, "b.d") == true
+    assert WildcardTrie.matching(t, "b.d") == ["b.d", "bad"]
+    assert WildcardTrie.matching(t, "...") == ["b.d", "bad"]
+    assert WildcardTrie.matching(t, ".a.") == ["bad"]
+  end
+
+  test "deleting the same word twice leaves the trie empty and size at zero" do
+    t =
+      WildcardTrie.new()
+      |> WildcardTrie.insert("bad")
+      |> WildcardTrie.delete("bad")
+      |> WildcardTrie.delete("bad")
+
+    assert WildcardTrie.size(t) == 0
+    assert WildcardTrie.words(t) == []
+    assert WildcardTrie.member?(t, "bad") == false
+    assert WildcardTrie.matches?(t, "...") == false
+  end
+
+  test "deleting car leaves card fully intact" do
+    t =
+      WildcardTrie.new()
+      |> WildcardTrie.insert("car")
+      |> WildcardTrie.insert("card")
+      |> WildcardTrie.delete("car")
+
+    assert WildcardTrie.member?(t, "car") == false
+    assert WildcardTrie.member?(t, "card") == true
+    assert WildcardTrie.matching(t, "car.") == ["card"]
+    assert WildcardTrie.matching(t, "...") == []
+    assert WildcardTrie.words(t) == ["card"]
+    assert WildcardTrie.size(t) == 1
+  end
+
+  test "empty string is storable and retrievable like any other word" do
+    t = WildcardTrie.new() |> WildcardTrie.insert("")
+
+    assert WildcardTrie.member?(t, "") == true
+    assert WildcardTrie.size(t) == 1
+    assert WildcardTrie.words(t) == [""]
+    assert WildcardTrie.matches?(t, "") == true
+    assert WildcardTrie.matching(t, "") == [""]
+
+    t2 = WildcardTrie.delete(t, "")
+    assert WildcardTrie.member?(t2, "") == false
+    assert WildcardTrie.size(t2) == 0
+  end
 end

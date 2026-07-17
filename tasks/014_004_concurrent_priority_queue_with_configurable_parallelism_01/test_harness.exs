@@ -403,4 +403,100 @@ defmodule ConcurrentPriorityQueueTest do
     processed_tasks = Enum.map(processed, &elem(&1, 0)) |> Enum.sort()
     assert processed_tasks == Enum.to_list(1..100)
   end
+
+  test "processed records a {task, result} pair when the processor returns nil" do
+    {:ok, pq} =
+      ConcurrentPriorityQueue.start_link(
+        processor: fn _task -> nil end,
+        max_concurrency: 1
+      )
+
+    assert :ok = ConcurrentPriorityQueue.enqueue(pq, "nil_task", :normal)
+    assert :ok = ConcurrentPriorityQueue.drain(pq)
+
+    assert ConcurrentPriorityQueue.processed(pq) == [{"nil_task", nil}]
+  end
+
+  test "defaults the processor to the identity function when the option is omitted" do
+    {:ok, pq} = ConcurrentPriorityQueue.start_link(max_concurrency: 1)
+
+    assert :ok = ConcurrentPriorityQueue.enqueue(pq, "echo", :normal)
+    assert :ok = ConcurrentPriorityQueue.drain(pq)
+
+    assert ConcurrentPriorityQueue.processed(pq) == [{"echo", "echo"}]
+  end
+
+  test "defaults max_concurrency to 1 when the option is omitted" do
+    {:ok, pq} = ConcurrentPriorityQueue.start_link([])
+
+    status = ConcurrentPriorityQueue.status(pq)
+    assert status.max_concurrency == 1
+    assert status == %{critical: 0, normal: 0, low: 0, active: 0, max_concurrency: 1}
+  end
+
+  test "start_link rejects non-integer max_concurrency values" do
+    assert_raise ArgumentError, fn -> ConcurrentPriorityQueue.start_link(max_concurrency: 2.5) end
+
+    assert_raise ArgumentError, fn ->
+      ConcurrentPriorityQueue.start_link(max_concurrency: :two)
+    end
+
+    assert_raise ArgumentError, fn -> ConcurrentPriorityQueue.start_link(max_concurrency: "3") end
+  end
+
+  test "registers the server under the :name option and serves calls by that name" do
+    name = :concurrent_priority_queue_named_audit
+
+    {:ok, pid} =
+      ConcurrentPriorityQueue.start_link(
+        name: name,
+        processor: fn task -> {:ok, task} end,
+        max_concurrency: 1
+      )
+
+    assert Process.whereis(name) == pid
+    assert :ok = ConcurrentPriorityQueue.enqueue(name, "named", :critical)
+    assert :ok = ConcurrentPriorityQueue.drain(name)
+    assert ConcurrentPriorityQueue.processed(name) == [{"named", {:ok, "named"}}]
+  end
+
+  test "processed follows completion order rather than start order at concurrency 3" do
+    test_pid = self()
+
+    {:ok, pq} =
+      ConcurrentPriorityQueue.start_link(
+        processor: fn task ->
+          send(test_pid, {:started, task, self()})
+
+          receive do
+            :go -> :ok
+          end
+
+          {:done, task}
+        end,
+        max_concurrency: 3
+      )
+
+    for t <- ["a", "b", "c"] do
+      assert :ok = ConcurrentPriorityQueue.enqueue(pq, t, :normal)
+    end
+
+    workers =
+      for _ <- 1..3, into: %{} do
+        assert_receive {:started, task, worker}, 1000
+        {task, worker}
+      end
+
+    for t <- ["c", "a", "b"] do
+      worker = Map.fetch!(workers, t)
+      ref = Process.monitor(worker)
+      send(worker, :go)
+      assert_receive {:DOWN, ^ref, :process, ^worker, _}, 1000
+    end
+
+    assert :ok = ConcurrentPriorityQueue.drain(pq)
+
+    finished = Enum.map(ConcurrentPriorityQueue.processed(pq), &elem(&1, 0))
+    assert finished == ["c", "a", "b"]
+  end
 end

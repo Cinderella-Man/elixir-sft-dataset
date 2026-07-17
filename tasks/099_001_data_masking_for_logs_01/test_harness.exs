@@ -225,4 +225,23 @@ defmodule LogMaskerTest do
     assert result["Password"] == "[MASKED]"
     assert result["TOKEN"] == "[MASKED]"
   end
+
+  test "two space-separated SSNs are both fully masked", %{m: m} do
+    result = LogMasker.mask_string(m, "123-45-6789 987-65-4321")
+    refute result =~ "4321"
+    assert result == "***-**-**** ***-**-****"
+  end
+
+  test "masks sensitive keys inside a list of keyword lists", %{m: m} do
+    data = [
+      [user: "alice", password: "pass1"],
+      [user: "bob", token: "tok_xyz"]
+    ]
+
+    [r1, r2] = LogMasker.mask(m, data)
+    assert r1[:user] == "alice"
+    assert r1[:password] == "[MASKED]"
+    assert r2[:user] == "bob"
+    assert r2[:token] == "[MASKED]"
+  end
 end

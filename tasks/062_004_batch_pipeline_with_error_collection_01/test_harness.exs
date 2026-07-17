@@ -122,4 +122,71 @@ defmodule PipelineTest do
     stats = Map.new(report.stage_stats, fn s -> {s.stage, s.executions} end)
     assert stats == %{first: 1, second: 0}
   end
+
+  test "duplicate stage names keep per-entry execution counts independent" do
+    pipeline =
+      Pipeline.new()
+      |> Pipeline.stage(:same, ok_stage(&(&1 + 1)))
+      |> Pipeline.stage(:same, ok_stage(&(&1 * 2)))
+
+    assert {:ok, report} = Pipeline.run(pipeline, [1])
+
+    assert report.successes == [%{index: 0, result: 4}]
+    assert Enum.map(report.stage_stats, & &1.stage) == [:same, :same]
+    assert Enum.map(report.stage_stats, & &1.executions) == [1, 1]
+  end
+
+  test "a halted item never invokes any later stage function" do
+    parent = self()
+
+    later = fn v ->
+      send(parent, {:later_ran, v})
+      {:ok, v}
+    end
+
+    pipeline =
+      Pipeline.new()
+      |> Pipeline.stage(:guard, fn v -> if v == :bomb, do: {:error, :boom}, else: {:ok, v} end)
+      |> Pipeline.stage(:later, later)
+
+    assert {:ok, report} = Pipeline.run(pipeline, [:bomb])
+
+    assert report.failures == [%{index: 0, stage: :guard, reason: :boom}]
+    assert report.successes == []
+    refute_receive {:later_ran, _}, 50
+  end
+
+  test "multiple failures are listed in input index order" do
+    guard = fn v -> if rem(v, 2) == 0, do: {:error, {:even, v}}, else: {:ok, v} end
+
+    pipeline = Pipeline.new() |> Pipeline.stage(:parity, guard)
+
+    assert {:ok, report} = Pipeline.run(pipeline, [2, 1, 4, 3, 6])
+
+    assert report.failures == [
+             %{index: 0, stage: :parity, reason: {:even, 2}},
+             %{index: 2, stage: :parity, reason: {:even, 4}},
+             %{index: 4, stage: :parity, reason: {:even, 6}}
+           ]
+
+    assert report.successes == [%{index: 1, result: 1}, %{index: 3, result: 3}]
+  end
+
+  test "stage/3 rejects a non-atom stage name" do
+    assert_raise FunctionClauseError, fn ->
+      Pipeline.stage(Pipeline.new(), "not_an_atom", ok_stage(& &1))
+    end
+  end
+
+  test "stage/3 rejects a function whose arity is not one" do
+    assert_raise FunctionClauseError, fn ->
+      Pipeline.stage(Pipeline.new(), :bad_arity, fn a, b -> {:ok, {a, b}} end)
+    end
+  end
+
+  test "run/2 rejects inputs that are not a list" do
+    pipeline = Pipeline.new() |> Pipeline.stage(:noop, ok_stage(& &1))
+
+    assert_raise FunctionClauseError, fn -> Pipeline.run(pipeline, :not_a_list) end
+  end
 end

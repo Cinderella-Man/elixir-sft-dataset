@@ -254,4 +254,75 @@ defmodule CircuitBreakerTest do
     assert {:ok, :success} = CircuitBreaker.call(:test_cb, ok_fn())
     assert CircuitBreaker.state(:test_cb) == :closed
   end
+
+  test "closed state: raising functions count toward the failure threshold" do
+    # threshold is 3; three raises must trip exactly like three {:error, _}
+    CircuitBreaker.call(:test_cb, raise_fn())
+    CircuitBreaker.call(:test_cb, raise_fn())
+    assert CircuitBreaker.state(:test_cb) == :closed
+
+    CircuitBreaker.call(:test_cb, raise_fn())
+    assert CircuitBreaker.state(:test_cb) == :open
+  end
+
+  test "closed state: a raised RuntimeError is returned as the exception struct" do
+    assert {:error, %RuntimeError{message: "kaboom"}} =
+             CircuitBreaker.call(:test_cb, raise_fn())
+  end
+
+  test "closed state: the tripping call returns the function result not circuit_open" do
+    CircuitBreaker.call(:test_cb, error_fn())
+    CircuitBreaker.call(:test_cb, error_fn())
+
+    # The threshold-crossing call itself must surface the func's error, not :circuit_open
+    assert {:error, :boom} = CircuitBreaker.call(:test_cb, error_fn())
+    assert CircuitBreaker.state(:test_cb) == :open
+  end
+
+  test "default failure_threshold of 5 trips the breaker" do
+    {:ok, _pid} =
+      CircuitBreaker.start_link(name: :default_thr_cb, clock: &Clock.now/0)
+
+    for _ <- 1..4, do: CircuitBreaker.call(:default_thr_cb, error_fn())
+    assert CircuitBreaker.state(:default_thr_cb) == :closed
+
+    CircuitBreaker.call(:default_thr_cb, error_fn())
+    assert CircuitBreaker.state(:default_thr_cb) == :open
+  end
+
+  test "default reset_timeout_ms of 30_000 governs half-open transition" do
+    {:ok, _pid} =
+      CircuitBreaker.start_link(
+        name: :default_rst_cb,
+        failure_threshold: 1,
+        clock: &Clock.now/0
+      )
+
+    CircuitBreaker.call(:default_rst_cb, error_fn())
+    assert CircuitBreaker.state(:default_rst_cb) == :open
+
+    # One millisecond short of the default window: still failing fast
+    Clock.advance(29_999)
+    assert {:error, :circuit_open} = CircuitBreaker.call(:default_rst_cb, ok_fn())
+
+    # Exactly 30_000ms elapsed: the next call is allowed through as a probe
+    Clock.advance(1)
+    assert {:ok, :success} = CircuitBreaker.call(:default_rst_cb, ok_fn())
+  end
+
+  test "half-open: successful probe resets the failure count to zero" do
+    for _ <- 1..3, do: CircuitBreaker.call(:test_cb, error_fn())
+    Clock.advance(5_000)
+
+    assert {:ok, :success} = CircuitBreaker.call(:test_cb, ok_fn())
+    assert CircuitBreaker.state(:test_cb) == :closed
+
+    # With the count reset, it must take a full fresh threshold (3) to trip again
+    CircuitBreaker.call(:test_cb, error_fn())
+    CircuitBreaker.call(:test_cb, error_fn())
+    assert CircuitBreaker.state(:test_cb) == :closed
+
+    CircuitBreaker.call(:test_cb, error_fn())
+    assert CircuitBreaker.state(:test_cb) == :open
+  end
 end

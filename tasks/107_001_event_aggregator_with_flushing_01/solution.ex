@@ -9,8 +9,10 @@ defmodule Aggregator do
     * `:interval_ms` milliseconds elapse since the last flush (or since
       start) while there are buffered events.
 
-  Events are always delivered to the `:on_flush` callback as a list, in the
-  exact order they were pushed.
+  The interval is anchored on the most recent flush (or on start, if no
+  flush has happened yet) — not on the moment an event is pushed. Events
+  are always delivered to the `:on_flush` callback as a list, in the exact
+  order they were pushed.
   """
 
   use GenServer
@@ -69,15 +71,14 @@ defmodule Aggregator do
       timer_ref: nil
     }
 
-    {:ok, state}
+    # The interval clock runs from start, independently of when events are
+    # pushed, and is restarted on every flush.
+    {:ok, start_timer(state)}
   end
 
   @impl true
   def handle_cast({:push, event}, state) do
-    state =
-      state
-      |> add_event(event)
-      |> ensure_timer()
+    state = add_event(state, event)
 
     state =
       if state.count >= state.batch_size do
@@ -98,7 +99,9 @@ defmodule Aggregator do
       if state.count > 0 do
         flush(state)
       else
-        clear_timer(state)
+        # Nothing buffered: never call the callback, just wait another
+        # interval.
+        start_timer(state)
       end
 
     {:noreply, state}
@@ -118,13 +121,8 @@ defmodule Aggregator do
     %{state | buffer: [event | state.buffer], count: state.count + 1}
   end
 
-  # Start the interval timer only when the buffer transitions from empty to
-  # non-empty. While buffered events remain, the timer keeps running until a
-  # flush resets it.
-  defp ensure_timer(%{timer: nil} = state), do: start_timer(state)
-  defp ensure_timer(state), do: state
-
   defp start_timer(state) do
+    state = clear_timer(state)
     ref = make_ref()
     timer = Process.send_after(self(), {:flush, ref}, state.interval_ms)
     %{state | timer: timer, timer_ref: ref}
@@ -138,8 +136,8 @@ defmodule Aggregator do
   end
 
   # Deliver the buffered events (in push order) to the callback, then reset
-  # the buffer and the interval timer. After a flush the buffer is empty, so
-  # the timer is left cleared and will be restarted on the next push.
+  # the buffer and restart the interval timer, so the next time-based flush
+  # is due a full interval after this one.
   defp flush(%{count: 0} = state), do: state
 
   defp flush(state) do
@@ -147,7 +145,7 @@ defmodule Aggregator do
     state.on_flush.(batch)
 
     state
-    |> clear_timer()
     |> Map.merge(%{buffer: [], count: 0})
+    |> start_timer()
   end
 end

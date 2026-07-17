@@ -114,4 +114,62 @@ defmodule Catalog.KeysetSearchTest do
 
     assert item.price == "199.99"
   end
+
+  test "cursor carrying a wrongly typed payload is rejected instead of silently slicing" do
+    forged =
+      {"price", "not-a-price", 5}
+      |> :erlang.term_to_binary()
+      |> Base.url_encode64(padding: false)
+
+    assert {:error, :invalid_cursor} =
+             KeysetSearch.search(products(), %{"sort" => "price", "cursor" => forged})
+  end
+
+  test "non-positive and garbage limits fall back to the default page size" do
+    for bad <- ["0", "-5", "abc", ""] do
+      assert {:ok, %{data: data, has_more: true}} =
+               KeysetSearch.search(products(), %{"sort" => "id", "limit" => bad})
+
+      assert ids(data) == [1, 2, 3]
+    end
+  end
+
+  test "integer limit above the maximum yields at most one hundred items" do
+    many =
+      for i <- 1..150 do
+        %{id: i, name: "Item #{i}", category: "bulk", price_cents: i * 10}
+      end
+
+    assert {:ok, %{data: data, has_more: true, next_cursor: cursor}} =
+             KeysetSearch.search(many, %{"sort" => "id", "limit" => 500})
+
+    assert length(data) == 100
+    assert List.last(ids(data)) == 100
+    assert is_binary(cursor)
+  end
+
+  test "unparseable and blank price bounds are ignored rather than filtering everything out" do
+    assert {:ok, %{data: data, has_more: false}} =
+             KeysetSearch.search(products(), %{
+               "min_price" => "abc",
+               "max_price" => "  ",
+               "sort" => "id",
+               "limit" => "10"
+             })
+
+    assert ids(data) == [1, 2, 3, 4, 5, 6, 7, 8]
+  end
+
+  test "page after a cursor is unaffected by items removed before the cursor" do
+    p = products()
+
+    {:ok, %{data: d1, next_cursor: c1}} = KeysetSearch.search(p, %{"sort" => "price"})
+    assert ids(d1) == [5, 7, 3]
+
+    shrunk = Enum.reject(p, &(&1.id in [5, 7]))
+
+    assert {:ok, %{data: d2}} = KeysetSearch.search(shrunk, %{"sort" => "price", "cursor" => c1})
+
+    assert ids(d2) == [6, 4, 1]
+  end
 end

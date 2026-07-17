@@ -216,4 +216,41 @@ defmodule FactoryTest do
     results = Task.await_many(tasks)
     assert Enum.sort(results) == Enum.to_list(1..50)
   end
+
+  test "insert!(:post) raising on validation failure still rolls back the auto-created user" do
+    before = length(FakeRepo.all())
+    assert_raise ArgumentError, fn -> Factory.insert!(:post, body: nil) end
+    assert length(FakeRepo.all()) == before
+  end
+
+  test "sequence/2 formats each counter value through formatter_fn" do
+    assert Factory.sequence(:formatted_seq, &"item-#{&1}") == "item-1"
+    assert Factory.sequence(:formatted_seq, &"item-#{&1}") == "item-2"
+  end
+
+  test "valid?(:post, title: nil) is false and rolls back its association row" do
+    before = length(FakeRepo.all())
+    refute Factory.valid?(:post, title: nil)
+    assert length(FakeRepo.all()) == before
+  end
+
+  test "build/2 merges plain field overrides without persisting anything" do
+    before = length(FakeRepo.all())
+    user = Factory.build(:user, name: "Ada", email: "ada@example.com")
+    assert %MyApp.User{name: "Ada", email: "ada@example.com"} = user
+    assert length(FakeRepo.all()) == before
+  end
+
+  test "insert(:post) with a user_id override inserts only the post record" do
+    {:ok, existing} = Factory.insert(:user)
+    before = length(FakeRepo.all())
+    assert {:ok, post} = Factory.insert(:post, user_id: existing.id)
+    assert post.user_id == existing.id
+    assert length(FakeRepo.all()) == before + 1
+  end
+
+  test "start/0 returns the raw Agent.start_link/2 result when already started" do
+    assert {:error, {:already_started, pid}} = Factory.start()
+    assert is_pid(pid)
+  end
 end
