@@ -35,12 +35,6 @@ delete + let the flow re-mint.
 
 ### 🔎 OPEN FINDINGS
 
-**004_004 to-verify (F22 sibling check, 2026-07-17):** its
-`{:nth_weekday_of_month, n, weekday, ...}` calendar rules may accept an
-`n` that never occurs (no month has a 6th Monday; a 5th occurs only some
-months — verify the rule validation and next-run scan bound). Same class
-as F22; one root, quick read.
-
 **Template-rule candidate (F22 Task B, for the Phase-3 template work):**
 "for any input the prompt's own validation rules accept, the gold must
 terminate promptly without crashing" — F22 is the proof; fold into the
