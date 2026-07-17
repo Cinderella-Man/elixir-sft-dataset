@@ -21,7 +21,7 @@ I need these functions in the public API:
 
 - `Scheduler.start_link(opts)` to start the process. It should accept a `:clock` option which is a zero-arity function returning a `NaiveDateTime` representing the current time. If not provided, default to `fn -> NaiveDateTime.utc_now() end`. It should also accept a `:name` option for process registration and a `:tick_interval_ms` option (default `1_000`) that controls how frequently the GenServer checks for due jobs via `Process.send_after(self(), :tick, tick_interval_ms)`. Setting it to `:infinity` disables automatic ticking entirely (useful for testing).
 
-- `Scheduler.register(server, name, cron_expression, {mod, fun, args})` which registers a named job. `name` is a string or atom identifier that must be unique. `cron_expression` is a string with exactly 5 space-separated fields: minute (0–59), hour (0–23), day-of-month (1–31), month (1–12), day-of-week (0–6, where 0 = Sunday). Return `:ok` on success. Return `{:error, :invalid_cron}` if the expression cannot be parsed or any value is out of range. Return `{:error, :already_exists}` if a job with that name is already registered. Upon successful registration, the GenServer must immediately calculate the job's next run time based on the current clock value.
+- `Scheduler.register(server, name, cron_expression, {mod, fun, args})` which registers a named job. `name` is a string or atom identifier that must be unique. `cron_expression` is a string with exactly 5 space-separated fields: minute (0–59), hour (0–23), day-of-month (1–31), month (1–12), day-of-week (0–6, where 0 = Sunday). Return `:ok` on success. Return `{:error, :invalid_cron}` if the expression cannot be parsed, any value is out of range, or the expression can never match any real datetime because no allowed day-of-month exists in any allowed month (e.g. `0 0 31 4 *` — April has 30 days — or a day of 30–31 in February; `0 0 29 2 *` is valid, since leap years have a February 29th). Return `{:error, :already_exists}` if a job with that name is already registered. Upon successful registration, the GenServer must immediately calculate the job's next run time based on the current clock value.
 
 - `Scheduler.unregister(server, name)` which removes a registered job. Return `:ok` if the job was found and removed. Return `{:error, :not_found}` if no job with that name exists.
 
@@ -155,17 +155,11 @@ defmodule Scheduler do
       true ->
         case parse_cron(cron_expr) do
           {:ok, parsed} ->
-            now = state.clock.()
-            next = next_run_time(parsed, now)
-
-            job = %{
-              cron_expression: cron_expr,
-              parsed: parsed,
-              mfa: mfa,
-              next_run: next
-            }
-
-            {:reply, :ok, put_in(state, [:jobs, name], job)}
+            if satisfiable?(parsed) do
+              register_job(name, cron_expr, parsed, mfa, state)
+            else
+              {:reply, {:error, :invalid_cron}, state}
+            end
 
           :error ->
             {:reply, {:error, :invalid_cron}, state}
@@ -229,6 +223,37 @@ defmodule Scheduler do
 
   # Ignore unexpected messages
   def handle_info(_msg, state), do: {:noreply, state}
+
+  defp register_job(name, cron_expr, parsed, mfa, state) do
+    now = state.clock.()
+    next = next_run_time(parsed, now)
+
+    job = %{
+      cron_expression: cron_expr,
+      parsed: parsed,
+      mfa: mfa,
+      next_run: next
+    }
+
+    {:reply, :ok, put_in(state, [:jobs, name], job)}
+  end
+
+  # An in-range expression is satisfiable iff some allowed (month, day) pair
+  # can exist on a calendar: the day must not exceed the longest length that
+  # month ever has (29 for February — leap years exist). Minute, hour, and
+  # weekday fields can never make an in-range expression unsatisfiable on
+  # their own, since every valid calendar date falls on every weekday across
+  # years. Without this check, `next_run_time/2` would scan until its
+  # iteration cap and raise inside the server.
+  defp satisfiable?(parsed) do
+    Enum.any?(parsed.month, fn month ->
+      Enum.any?(parsed.day, fn day -> day <= max_month_day(month) end)
+    end)
+  end
+
+  defp max_month_day(2), do: 29
+  defp max_month_day(month) when month in [4, 6, 9, 11], do: 30
+  defp max_month_day(_month), do: 31
 
   # ---------------------------------------------------------------------------
   # Cron parsing

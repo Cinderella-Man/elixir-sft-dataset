@@ -9,6 +9,24 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-17 — F22 CLOSED (Kamil direction: reject at registration) +
+  strays resolved.** 004_001's `register/4` now rejects expressions that
+  can never match any real datetime (`{:error, :invalid_cron}` via a
+  satisfiable? month/day calendar check, Feb capped at 29) instead of
+  burning CPU and RAISING inside handle_call, killing the scheduler.
+  Prompt documents the rule with examples; harness gained add-only tests
+  (31 Apr + 30 Feb rejected, 29 Feb accepted); re-graded perfect 51/51.
+  Cascade green: 18 embeds resynced + 4 module-FIM prompts healed
+  (1,322 clean / 0 drift), 3 pairs reminted + 6/6-verified, 004_001
+  blind re-screened GREEN, freshness OK. Task B: template-rule candidate
+  recorded in STATUS ("the gold must terminate without crashing for any
+  input the prompt's own validation rules accept"); sibling 004_004
+  flagged to-verify (its {:nth_weekday_of_month, n, ...} rules may
+  accept never-occurring n). Also: the two stray repair pairs VERIFIED
+  (fixed green 13/13 + 11/11, buggy fails exactly 1) and KEPT with a
+  recorded caveat — they pin pre-audit harness snapshots (frozen
+  captured evidence).
+
 - **2026-07-17 — PROMPT-GAP SIGN-OFF QUEUE RESOLVED (Kamil: "fix the 19"):
   18 prompt fixes applied across two layers, 3 proposals REJECTED with
   ledgered reasons, every edited root re-screened GREEN or judged an

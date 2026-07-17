@@ -13,13 +13,10 @@ Reference docs: `docs/14` (handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**Push of the prompt-gap close-out (detached, log
-`logs/push_v10_20260717.log`).** The 19-root prompt-gap queue is
-RESOLVED (docs/15): 18 fixes applied across two layers, 3 rejections
-ledgered, all cascades + re-screens green. Next queue item: the T2.6
-prompt-precision tool — its inputs are now the judge+spot-review
-ledgers and the tranche findings; remaining Kamil inputs are only the
-F22 fix direction and the two stray repair dirs (items below).
+**Push of the F22 close-out (detached, log
+`logs/push_v12_20260717.log`).** F22 and the stray-dirs decision are
+both RESOLVED (docs/15) — no Kamil inputs outstanding. Next queue item:
+the T2.6 prompt-precision tool.
 
 ---
 
@@ -38,19 +35,16 @@ delete + let the flow re-mint.
 
 ### 🔎 OPEN FINDINGS
 
-**F22 — 004_001 scheduler crash on unsatisfiable-but-valid cron
-(§4.2.2 spot-review, 2026-07-17).** `0 0 31 4 *` (April 31; also Feb
-30/31) passes field validation, then the next-run scan walks to its
-2.2M-iteration cap (~seconds of CPU) and RAISES inside `handle_call` —
-crashing the scheduler and losing every registered job. Harness has
-zero impossible-date coverage; invisible to all standing gates. Task A
-(Kamil direction needed — behavior change, full cascade): reject at
-registration (`{:error, :invalid_cron}` for never-matching
-expressions) or document the limitation + bound the scan gracefully.
-Task B: template/lint rule candidate — "for any input the prompt's own
-validation rules accept, the gold must terminate without crashing";
-check the other scheduler-family roots (004_002/3/4) for the same
-class when fixing. Full row in `logs/spot_review.jsonl`.
+**004_004 to-verify (F22 sibling check, 2026-07-17):** its
+`{:nth_weekday_of_month, n, weekday, ...}` calendar rules may accept an
+`n` that never occurs (no month has a 6th Monday; a 5th occurs only some
+months — verify the rule validation and next-run scan bound). Same class
+as F22; one root, quick read.
+
+**Template-rule candidate (F22 Task B, for the Phase-3 template work):**
+"for any input the prompt's own validation rules accept, the gold must
+terminate promptly without crashing" — F22 is the proof; fold into the
+T1.4 template rules alongside the LIFECYCLE RULE when next edited.
 
 **~15 audit needs_triage rows are staging COMPILE errors** (the grown
 harness never compiled, so no blind screen row exists and the 07-17
