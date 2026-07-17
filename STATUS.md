@@ -13,11 +13,23 @@ Reference docs: `docs/14` (handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**PUSH retry (detached, log `logs/push_v2_20260717.log`) — the
-re-screen sweep finished: 50/50 screened, freshness gate reads OK ✓
-(fresh=310 / legacy=6 / via_strengthen=16, stale=0, unscreened=0;
-`logs/rescreen_stale.log`).** If the push fails on another gate, read
-its log tail — every failure so far has been a real finding.
+**T1.11 remint — scoped backfill over the 27 idea numbers of the 40
+solution-changed families (launched 2026-07-17). Log
+`logs/remint_backfill.log` (+ `.pid` sidecar); loop ledgers
+(runs.jsonl, bugfix_rejected.jsonl sha-keyed) make it resumable.**
+Idempotent relaunch:
+`scripts/run_detached.sh logs/remint_backfill.log bash -c 'for n in 1 10 12 13 14 16 17 19 23 31 33 35 37 40 41 44 62 73 77 95 97 99 107 109 624 625 626; do GEN_ONLY=backfill mix run scripts/generate.exs $n; done'`
+Mints exactly the missing derived units per idea: the 116 deleted bugfix
+pairs (deterministic mutation-mining, no LLM — fresh candidate pool since
+rejected-ledger rows are keyed to the OLD solution shas) + the deleted
+077_002 FIM child re-carved through the standing carver's gates (LLM) +
+any other pending derived work for these seeds. All gates default-ON.
+On exit: verify mint counts + spot-read pairs (rule 8), commit per
+family batch, then run `scripts/audit_bugfix.exs` (now timeout-safe)
+over the fresh pairs as the accept-side spot check.
+NOTE: no `mix compile`/mix runs in this tree while it lives.
+(PUSHED at b78fb4a3: origin has the whole audit + cascade + gate fixes;
+pre-push read OK across validate, freshness, and embed-drift checks.)
 
 **NEW TRIAGE QUEUE from the re-screen: 25 of 50 roots came back RED
 (quarantined, "prompt under-specified OR solver too weak"; rows in
