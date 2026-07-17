@@ -57,14 +57,19 @@ defmodule PromptPrecision do
   - An independent solver must be able to pass the harness from your prompt
     alone. That is the bar your output is judged against.
 
-  Reply with the COMPLETE replacement prompt inside one fenced block:
+  Reply with EXACTLY ONE file block and nothing else. To propose an edit,
+  return the COMPLETE replacement prompt:
 
-  ```markdown
-  <full prompt.md content>
-  ```
+  <file path="prompt.md">
+  ...full prompt.md content...
+  </file>
 
   If the prompt already meets the bar and you have no surgical improvement,
-  reply with exactly the single line: ALREADY PRECISE
+  return instead:
+
+  <file path="verdict.txt">
+  ALREADY PRECISE
+  </file>
   """
 
   def main(argv) do
@@ -220,12 +225,14 @@ defmodule PromptPrecision do
     """
 
     case Cycle.generate(cfg, id, "prompt_precision", @persona, user, &validate_reply/1) do
-      {:ok, %{"verdict" => "already_precise"}} ->
+      {:ok, %{"verdict.txt" => _}} ->
         record(cfg, id, key, "unchanged", "editor reports ALREADY PRECISE")
         IO.puts("  unchanged — already precise")
         :unchanged
 
-      {:ok, %{"prompt.md" => new_prompt}} ->
+      {:ok, %{"prompt.md" => raw}} ->
+        new_prompt = String.trim_trailing(raw) <> "\n"
+
         case vet_structure(files["prompt.md"], new_prompt) do
           :ok ->
             blind_verify_and_write(dir, id, key, files, new_prompt, cfg)
@@ -244,19 +251,19 @@ defmodule PromptPrecision do
   end
 
   @doc false
-  # Reply contract: one fenced markdown block with the full prompt, or the
-  # literal line ALREADY PRECISE. Exposed for the self-test.
-  def validate_reply(text) do
+  # Reply contract (Cycle.generate hands validators the PARSED file map): one
+  # `prompt.md` block with the full replacement, or a `verdict.txt` block
+  # containing ALREADY PRECISE. Exposed for the self-test.
+  def validate_reply(files) when is_map(files) do
     cond do
-      String.trim(text) == "ALREADY PRECISE" ->
-        {:ok, %{"verdict" => "already_precise"}}
+      String.trim(files["verdict.txt"] || "") == "ALREADY PRECISE" ->
+        :ok
 
-      match = Regex.run(~r/```(?:markdown|md)\n(.*?)\n```/s, text) ->
-        [_, prompt] = match
-        {:ok, %{"prompt.md" => String.trim_trailing(prompt) <> "\n"}}
+      is_binary(files["prompt.md"]) and String.trim(files["prompt.md"]) != "" ->
+        :ok
 
       true ->
-        {:error, "no fenced markdown block and not ALREADY PRECISE"}
+        {:error, "reply must be one prompt.md file block or a verdict.txt ALREADY PRECISE block"}
     end
   end
 
@@ -270,7 +277,7 @@ defmodule PromptPrecision do
       String.trim(new_prompt) == "" ->
         {:error, "empty prompt"}
 
-      byte_size(new_prompt) < byte_size(old_prompt) * 6 |> div(10) ->
+      byte_size(new_prompt) < (byte_size(old_prompt) * 6) |> div(10) ->
         {:error, "suspiciously short (#{byte_size(new_prompt)}B vs #{byte_size(old_prompt)}B)"}
 
       missing != [] ->
@@ -301,13 +308,24 @@ defmodule PromptPrecision do
     shape = if EvalTask.Bundle.bundle?(files["solution.ex"]), do: :multifile, else: :single
     {system, user} = Prompts.base_solve(new_prompt, shape)
 
-    case Cycle.generate(cfg, id, "precision_verify", system, user, &GenTask.Reply.validate_answer/1) do
-      {:ok, %{"solution.ex" => candidate}} ->
+    case Cycle.generate(
+           cfg,
+           id,
+           "precision_verify",
+           system,
+           user,
+           &GenTask.Reply.validate_answer/1
+         ) do
+      {:ok, %{"solution.ex" => candidate}} when is_binary(candidate) ->
         case grade_candidate(dir, cfg, candidate) do
           {:green, grade} ->
             write!(dir, id, new_prompt, grade, cfg)
             record(cfg, id, key, "improved", "blind-verified green; prompt replaced")
-            IO.puts("  IMPROVED — blind solve green (#{grade["tests_passed"]}/#{grade["tests_total"]})")
+
+            IO.puts(
+              "  IMPROVED — blind solve green (#{grade["tests_passed"]}/#{grade["tests_total"]})"
+            )
+
             :improved
 
           {:red, why} ->
@@ -316,6 +334,18 @@ defmodule PromptPrecision do
             IO.puts("  REJECTED (blind red): #{why}")
             :needs_triage
         end
+
+      {:ok, other} ->
+        record(
+          cfg,
+          id,
+          key,
+          "error",
+          "solver reply lacked solution.ex: #{inspect(Map.keys(other))}"
+        )
+
+        IO.puts("  ERROR (solver reply shape)")
+        :error
 
       {:error, reason} ->
         record(cfg, id, key, "error", "blind solver call failed: #{inspect(reason)}")
@@ -417,17 +447,20 @@ defmodule PromptPrecision do
     """
 
     checks = [
-      {"ALREADY PRECISE reply parses",
-       validate_reply("ALREADY PRECISE") == {:ok, %{"verdict" => "already_precise"}}},
-      {"fenced block extracts",
-       match?({:ok, %{"prompt.md" => "new prompt\n"}},
-              validate_reply("```markdown\nnew prompt\n```"))},
-      {"garbage reply rejected", match?({:error, _}, validate_reply("here you go: nothing"))},
+      {"ALREADY PRECISE verdict block accepted",
+       validate_reply(%{"verdict.txt" => "ALREADY PRECISE\n"}) == :ok},
+      {"prompt.md block accepted", validate_reply(%{"prompt.md" => "new prompt\n"}) == :ok},
+      {"empty parse rejected", match?({:error, _}, validate_reply(%{}))},
       {"dropped API token rejected",
-       match?({:error, "dropped API tokens:" <> _},
-              vet_structure(old, String.replace(old, "`Widget.stop/0`", "`stop`") <> "x"))},
+       match?(
+         {:error, "dropped API tokens:" <> _},
+         vet_structure(old, String.replace(old, "`Widget.stop/0`", "`stop`") <> "x")
+       )},
       {"short prompt rejected",
-       match?({:error, "suspiciously short" <> _}, vet_structure(old, "`Widget.run/1` `Widget.stop/0`"))},
+       match?(
+         {:error, "suspiciously short" <> _},
+         vet_structure(old, "`Widget.run/1` `Widget.stop/0`")
+       )},
       {"byte-identical rejected",
        match?({:error, "reply is byte-identical" <> _}, vet_structure(old, old))},
       {"good edit passes", vet_structure(old, old <> "It returns `:ok`.\n") == :ok}
