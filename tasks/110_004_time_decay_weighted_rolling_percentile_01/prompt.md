@@ -24,6 +24,7 @@ percentiles with no abrupt jumps when a sample crosses a boundary.
   - `:max_samples` — optional positive integer bounding retained samples per
     series (oldest dropped first) so memory stays bounded.
 
+- The `name` argument of `record/2`, `query/2`, `total_weight/1`, and `reset/1` is purely the **series** name — these helpers always call the server registered under the default `DecayPercentile` name (the `:name` start option changes process registration only, not how the helpers address the server).
 - `DecayPercentile.record(name, value)` — records a numeric `value`, timestamped
   with the current clock time. Returns `:ok`.
 

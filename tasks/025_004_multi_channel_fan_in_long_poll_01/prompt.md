@@ -6,7 +6,7 @@ This module manages per-`(user_id, channel)` pub/sub. It should provide:
 
 - `Notifications.start_link(opts)` — starts whatever backing process is needed. Accept a `:name` option for registration (default `Notifications`).
 
-- `Notifications.subscribe(server \\ Notifications, user_id, channel)` — subscribes the calling process to a single `(user_id, channel)` pair. When a notification is published to that pair, the subscribing process should receive a message `{:notification, channel, payload}`.
+- `Notifications.subscribe(server \\ Notifications, user_id, channel)` — subscribes the calling process to a single `(user_id, channel)` pair. When a notification is published to that pair, the subscribing process should receive a message `{:notification, channel, payload}`. Returns `:ok`.
 
 - `Notifications.publish(server \\ Notifications, user_id, channel, payload)` — publishes `payload` to all processes subscribed to `(user_id, channel)`. Returns `:ok`.
 
