@@ -33,24 +33,40 @@ defmodule MetricAggregator do
     :unique_tags      – %{tag_key => MapSet.t(tag_values)}
     :malformed_count  – integer
 
-  Returns `{:error, reason}` if the file cannot be opened.
+  Returns `{:error, reason}` if the file does not exist or cannot be opened
+  (for example when `path` points at a directory).
   """
   @spec summarize(String.t()) :: {:ok, map()} | {:error, term()}
   def summarize(path) do
-    case File.stat(path) do
+    with :ok <- ensure_readable(path) do
+      report =
+        path
+        |> File.stream!(:line, [])
+        |> Stream.map(&String.trim_trailing(&1, "\n"))
+        |> Stream.map(&String.trim_trailing(&1, "\r"))
+        |> Enum.reduce(initial_acc(), &process_line/2)
+        |> build_report()
+
+      {:ok, report}
+    end
+  rescue
+    error in [File.Error] -> {:error, error.reason}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Openability check
+  # ---------------------------------------------------------------------------
+
+  # Opening the path (rather than only stat-ing it) rejects directories,
+  # permission problems and other non-streamable entries up front.
+  defp ensure_readable(path) do
+    case File.open(path, [:read]) do
+      {:ok, io_device} ->
+        File.close(io_device)
+        :ok
+
       {:error, reason} ->
         {:error, reason}
-
-      {:ok, _} ->
-        report =
-          path
-          |> File.stream!(:line, [])
-          |> Stream.map(&String.trim_trailing(&1, "\n"))
-          |> Stream.map(&String.trim_trailing(&1, "\r"))
-          |> Enum.reduce(initial_acc(), &process_line/2)
-          |> build_report()
-
-        {:ok, report}
     end
   end
 

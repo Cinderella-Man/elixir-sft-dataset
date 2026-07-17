@@ -13,16 +13,16 @@ Reference docs: `docs/14` (handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**T1.11 cascade step 4 of 5 — adapt embed resync over 249 adapt_ dirs
-(launched 2026-07-17). Log `logs/resync_adapt_full.log` (+ `.pid` sidecar
-with the pid).** Idempotent relaunch:
-`scripts/run_detached.sh logs/resync_adapt_full.log mix run scripts/resync_adapt_embeds.exs -- --apply`
-On exit: verify the diff touches only adapt_* dirs, spot-read a few,
-commit, then step 5 = `elixir scripts/check_embeds.exs` + hand-fix
-`fix_child_gold` rows (expect hits: tfim resync updates prompts only, so
-tfim golds whose blanked test the audit rewrote WILL surface there).
-(Steps done: 1 wt 228/331 committed 204e9fc9; 2 bugfix no-op 83765590;
-3 tfim 2,256/3,269 prompt embeds.)
+**T1.11 cascade step 5 of 5 — check_embeds corpus-wide verification
+(launched 2026-07-17). Log `logs/check_embeds_full.log` (+ `.pid`
+sidecar with the pid).** Idempotent relaunch:
+`scripts/run_detached.sh logs/check_embeds_full.log elixir scripts/check_embeds.exs`
+On exit: hand-fix any `fix_child_gold` rows (expected: tfim golds whose
+blanked test the audit rewrote — the tfim resync updates prompts only),
+re-run until clean, commit. Push becomes safe only when this is green.
+(Steps done: 1 wt 228/331 → 204e9fc9; 2 bugfix no-op → 83765590; 3 tfim
+2,256/3,269 → db07a5fc; 4 adapt 184/249, spot-verified the 626_004 child
+carries the audit's absent-key matcher fix.)
 
 ⚠️ Standing hazard until check_embeds (step 5) is green: children lag the
 audit-edited roots — a nightly sweep firing mid-cascade can report false
@@ -45,9 +45,9 @@ the cascade instructions are verbatim at the tail of
    - [x] step 1 wt — done, committed
    - [x] step 2 bugfix — verified no-op (960/960 unchanged)
    - [x] step 3 tfim — done, 2,256/3,269 prompt embeds resynced
-   - [~] step 4 adapt: `mix run scripts/resync_adapt_embeds.exs -- --apply` (RUNNING above)
-   - [ ] step 5 check: `elixir scripts/check_embeds.exs`, hand-fix any
-     `fix_child_gold` rows, commit; push only after this is green.
+   - [x] step 4 adapt — done, 184/249 resynced
+   - [~] step 5 check: `elixir scripts/check_embeds.exs`, hand-fix any
+     `fix_child_gold` rows, commit; push only after this is green. (RUNNING above)
 2. **Bugfix-pair invalidation**: `scripts/audit_bugfix.exs` on the 40
    solution-changed families (a redesigned gold invalidates its bugfix
    pairs) — delete + remint invalidated pairs via `generate.exs <n>`

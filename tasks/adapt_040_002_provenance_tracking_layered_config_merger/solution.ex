@@ -122,10 +122,11 @@ defmodule LayeredConfig do
 
       is_map(ov) ->
         # Override replaces a scalar/list with a whole subtree.
-        {ov, leaf_provenance(ov, name, kpath, Map.delete(pr, kpath))}
+        {ov, leaf_provenance(ov, name, kpath, prune_subtree(pr, kpath))}
 
       true ->
-        {ov, Map.put(pr, kpath, name)}
+        # Override replaces whatever was there (possibly a subtree) with a leaf.
+        {ov, Map.put(prune_subtree(pr, kpath), kpath, name)}
     end
   end
 
@@ -138,6 +139,16 @@ defmodule LayeredConfig do
   end
 
   defp leaf_provenance(_value, name, path, pr), do: Map.put(pr, path, name)
+
+  # Drops `kpath` and every provenance entry nested beneath it, so a subtree that a
+  # higher layer replaced leaves no stale descendant paths behind.
+  defp prune_subtree(pr, kpath) do
+    depth = length(kpath)
+
+    Map.reject(pr, fn {path, _name} ->
+      is_list(path) and Enum.take(path, depth) == kpath
+    end)
+  end
 
   defp locked?(kpath, %{locked_paths: locked}), do: kpath in locked
 

@@ -212,4 +212,29 @@ defmodule LRUCacheTest do
     assert {:ok, 4} = LRUCache.get(c, :d)
     assert {:ok, 5} = LRUCache.get(c, :e)
   end
+
+  test "keys_by_recency returns empty list for an empty cache", %{lru: c} do
+    assert [] = LRUCache.keys_by_recency(c)
+  end
+
+  test "capacity of one evicts the sole entry when a new key is inserted" do
+    {:ok, c} = LRUCache.start_link(capacity: 1, clock: &Clock.now/0)
+
+    :ok = LRUCache.put(c, :a, 1)
+    :ok = LRUCache.put(c, :b, 2)
+
+    assert :miss = LRUCache.get(c, :a)
+    assert {:ok, 2} = LRUCache.get(c, :b)
+    assert LRUCache.size(c) == 1
+  end
+
+  test "start_link registers the process under the given :name" do
+    name = :lru_named_registration_test
+
+    {:ok, _pid} = LRUCache.start_link(capacity: 3, name: name, clock: &Clock.now/0)
+
+    :ok = LRUCache.put(name, :a, 1)
+    assert {:ok, 1} = LRUCache.get(name, :a)
+    assert LRUCache.size(name) == 1
+  end
 end

@@ -163,41 +163,50 @@ defmodule IntervalTree do
     make_node(yi, make_node(xi, a, b), c)
   end
 
-  # Balance factor: positive = left-heavy, negative = right-heavy.
-  @spec balance_factor(t()) :: integer()
-  defp balance_factor(nil), do: 0
-  defp balance_factor(%{left: l, right: r}), do: height(l) - height(r)
+  # ---------------------------------------------------------------------------
+  # AVL rebalancing
+  # ---------------------------------------------------------------------------
+  # Invariant: every tree value this module hands out is a valid AVL tree, i.e.
+  # `|height(left) - height(right)| <= 1` at every node.
+  #
+  # `insert/2` rebuilds a single root-to-leaf path and rebalances every rebuilt
+  # node bottom-up. When `rebalance/1` runs on a node, both of that node's
+  # children are already valid AVL subtrees, and the one that absorbed the new
+  # interval grew by at most one level. A rebuilt node's balance factor is
+  # therefore always within -2..2, and when it is exactly +2 or -2 the child on
+  # the heavy side always leans (its own balance factor is +1 or -1, never 0:
+  # a subtree whose height grew is never perfectly balanced).
+  #
+  # The `case` clauses below spell out exactly those reachable states, so any
+  # tree that drifts outside the AVL invariant surfaces immediately as a
+  # CaseClauseError instead of silently degrading query and insert costs.
 
-  # Rebalance a node whose subtree heights may differ by more than 1.
   @spec rebalance(node_t()) :: node_t()
-  defp rebalance(%{interval: xi, left: l, right: r} = node) do
-    lh = height(l)
-    rh = height(r)
+  defp rebalance(%{left: l, right: r} = node) do
+    case height(l) - height(r) do
+      2 -> fix_left_heavy(node)
+      -2 -> fix_right_heavy(node)
+      d when abs(d) <= 1 -> node
+    end
+  end
 
-    cond do
-      # Left-heavy by more than 1
-      lh - rh > 1 ->
-        if balance_factor(l) >= 0 do
-          # Left-Left case: single right rotation
-          rotate_right(node)
-        else
-          # Left-Right case: rotate left child left, then rotate node right
-          rotate_right(make_node(xi, rotate_left(l), r))
-        end
+  # Left subtree is two levels taller: single right rotation when the left child
+  # leans left (Left-Left), double rotation when it leans right (Left-Right).
+  @spec fix_left_heavy(node_t()) :: node_t()
+  defp fix_left_heavy(%{interval: xi, left: %{left: ll, right: lr} = l, right: r} = node) do
+    case height(ll) - height(lr) do
+      1 -> rotate_right(node)
+      -1 -> rotate_right(make_node(xi, rotate_left(l), r))
+    end
+  end
 
-      # Right-heavy by more than 1
-      rh - lh > 1 ->
-        if balance_factor(r) <= 0 do
-          # Right-Right case: single left rotation
-          rotate_left(node)
-        else
-          # Right-Left case: rotate right child right, then rotate node left
-          rotate_left(make_node(xi, l, rotate_right(r)))
-        end
-
-      # Already balanced
-      true ->
-        node
+  # Right subtree is two levels taller: single left rotation when the right child
+  # leans right (Right-Right), double rotation when it leans left (Right-Left).
+  @spec fix_right_heavy(node_t()) :: node_t()
+  defp fix_right_heavy(%{interval: xi, left: l, right: %{left: rl, right: rr} = r} = node) do
+    case height(rl) - height(rr) do
+      -1 -> rotate_left(node)
+      1 -> rotate_left(make_node(xi, l, rotate_right(r)))
     end
   end
 

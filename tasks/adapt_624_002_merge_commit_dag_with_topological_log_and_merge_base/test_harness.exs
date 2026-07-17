@@ -148,4 +148,79 @@ defmodule ObjectStoreTest do
 
     assert {:error, :no_merge_base} = ObjectStore.merge_base(s, r1, r2)
   end
+
+  test "merge_base returns the nearest shared ancestor, not an older common one", %{store: s} do
+    {:ok, t} = ObjectStore.store(s, "tc")
+    {:ok, root} = ObjectStore.commit(s, t, [], "root", "alice")
+    {:ok, mid} = ObjectStore.commit(s, t, [root], "mid", "alice")
+    {:ok, a} = ObjectStore.commit(s, t, [mid], "a", "alice")
+    {:ok, b} = ObjectStore.commit(s, t, [mid], "b", "bob")
+
+    # root is also a common ancestor, but it is a proper ancestor of mid.
+    assert {:ok, ^mid} = ObjectStore.merge_base(s, a, b)
+  end
+
+  test "the stored commit object is a text representation carrying every field", %{store: s} do
+    {:ok, t} = ObjectStore.store(s, "tree-content")
+    {:ok, c} = ObjectStore.commit(s, t, [], "an important message", "alice")
+    {:ok, raw} = ObjectStore.retrieve(s, c)
+
+    assert String.printable?(raw)
+    assert raw =~ t
+    assert raw =~ "an important message"
+    assert raw =~ "alice"
+  end
+
+  test "log of a diamond lists each reachable commit exactly once", %{store: s} do
+    {:ok, t} = ObjectStore.store(s, "tc")
+    {:ok, root} = ObjectStore.commit(s, t, [], "root", "alice")
+    {:ok, a} = ObjectStore.commit(s, t, [root], "a", "alice")
+    {:ok, b} = ObjectStore.commit(s, t, [root], "b", "bob")
+    {:ok, m} = ObjectStore.commit(s, t, [a, b], "merge", "carol")
+
+    {:ok, log} = ObjectStore.log(s, m)
+    hashes = Enum.map(log, & &1.hash)
+
+    assert length(hashes) == 4
+    assert Enum.uniq(hashes) == hashes
+    assert MapSet.new(hashes) == MapSet.new([m, a, b, root])
+    assert hd(log).hash == m
+    assert order_ok?(log)
+  end
+
+  test "start_link registers the process under the given :name option" do
+    name = :object_store_promise_named
+    {:ok, pid} = ObjectStore.start_link(name: name)
+    on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
+
+    assert Process.whereis(name) == pid
+
+    {:ok, hash} = ObjectStore.store(name, "named registration")
+    assert hash == sha1("named registration")
+    assert {:ok, "named registration"} = ObjectStore.retrieve(name, hash)
+  end
+
+  test "reordering the parent list changes the commit hash", %{store: s} do
+    {:ok, t} = ObjectStore.store(s, "tc")
+    {:ok, p1} = ObjectStore.commit(s, t, [], "p one", "alice")
+    {:ok, p2} = ObjectStore.commit(s, t, [], "p two", "bob")
+
+    {:ok, ab} = ObjectStore.commit(s, t, [p1, p2], "merge", "carol")
+    {:ok, ba} = ObjectStore.commit(s, t, [p2, p1], "merge", "carol")
+    {:ok, again} = ObjectStore.commit(s, t, [p1, p2], "merge", "carol")
+
+    assert ab != ba
+    assert ab == again
+
+    {:ok, [entry | _]} = ObjectStore.log(s, ba)
+    assert entry.parents == [p2, p1]
+  end
+
+  test "merge_base of a commit with itself returns that commit", %{store: s} do
+    {:ok, t} = ObjectStore.store(s, "tc")
+    {:ok, c1} = ObjectStore.commit(s, t, [], "first", "alice")
+    {:ok, c2} = ObjectStore.commit(s, t, [c1], "second", "bob")
+
+    assert {:ok, ^c2} = ObjectStore.merge_base(s, c2, c2)
+  end
 end

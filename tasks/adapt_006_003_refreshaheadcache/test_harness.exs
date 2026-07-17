@@ -294,4 +294,138 @@ defmodule RefreshAheadCacheTest do
       RefreshAheadCache.start_link(refresh_threshold: 1.5)
     end
   end
+
+  test "refresh triggers exactly at the age >= 800ms boundary", %{c: c} do
+    start_supervised!({Loader, [:v2]})
+    :ok = RefreshAheadCache.put(c, :a, :v1, 1_000, &Loader.next_value/0)
+
+    # age 799ms: below the boundary, no refresh must be scheduled.
+    Clock.advance(799)
+    assert {:ok, :v1} = RefreshAheadCache.get(c, :a)
+    :ok = wait_for_idle(c)
+    assert Loader.calls() == 0
+
+    # age exactly 800ms: at the boundary the refresh must fire.
+    Clock.advance(1)
+    assert {:ok, :v1} = RefreshAheadCache.get(c, :a)
+    :ok = wait_for_idle(c)
+    assert Loader.calls() == 1
+  end
+
+  test "sweeping an entry mid-refresh discards the late result, no resurrect", %{c: c} do
+    test_pid = self()
+
+    # This loader blocks until released, keeping a refresh in flight
+    # deterministically while we sweep the entry out from under it.
+    loader = fn ->
+      send(test_pid, {:task, self()})
+
+      receive do
+        :release -> :ok
+      end
+
+      :late_value
+    end
+
+    :ok = RefreshAheadCache.put(c, :a, :v1, 1_000, loader)
+
+    Clock.advance(850)
+    assert {:ok, :v1} = RefreshAheadCache.get(c, :a)
+    assert_receive {:task, task_pid}
+    assert %{refreshes_in_flight: 1} = RefreshAheadCache.stats(c)
+
+    # Hard-expire the entry, then sweep it while its refresh is still running.
+    Clock.advance(200)
+    send(c, :sweep)
+    assert %{entries: 0} = RefreshAheadCache.stats(c)
+
+    # Release the refresh and wait for its task to fully exit, which guarantees
+    # the {:refresh_complete, ...} message is already in the server mailbox.
+    ref = Process.monitor(task_pid)
+    send(task_pid, :release)
+    assert_receive {:DOWN, ^ref, :process, ^task_pid, _}
+
+    # The following synchronous calls drain past that stale message: it must be
+    # discarded and must NOT resurrect the swept entry.
+    assert :miss = RefreshAheadCache.get(c, :a)
+    assert %{entries: 0} = RefreshAheadCache.stats(c)
+  end
+
+  test "after a failed refresh a later get retries the refresh", %{c: c} do
+    {:ok, cnt} = Agent.start_link(fn -> 0 end)
+
+    loader = fn ->
+      n = Agent.get_and_update(cnt, fn n -> {n, n + 1} end)
+      if n == 0, do: raise("boom"), else: :recovered
+    end
+
+    :ok = RefreshAheadCache.put(c, :a, :orig, 1_000, loader)
+
+    Clock.advance(850)
+
+    # First threshold crossing: schedules a refresh whose loader raises.
+    assert {:ok, :orig} = RefreshAheadCache.get(c, :a)
+    :ok = wait_for_idle(c)
+
+    # The failure left the old value in place; this get crosses the threshold
+    # again and must start a brand-new (this time succeeding) refresh.
+    assert {:ok, :orig} = RefreshAheadCache.get(c, :a)
+    :ok = wait_for_idle(c)
+
+    assert {:ok, :recovered} = RefreshAheadCache.get(c, :a)
+  end
+
+  test "re-put overwrites ttl and loader for an existing key", %{c: c} do
+    :ok = RefreshAheadCache.put(c, :a, :v1, 1_000, fn -> :old_refresh end)
+    :ok = RefreshAheadCache.put(c, :a, :v2, 2_000, fn -> :new_refresh end)
+
+    # The new ttl (2000) means the entry is still alive at t=1600, where the old
+    # ttl (1000) would already be hard-expired.  This get also crosses the new
+    # threshold (0.8 * 2000 = 1600), scheduling a refresh via the NEW loader.
+    Clock.advance(1_600)
+    assert {:ok, :v2} = RefreshAheadCache.get(c, :a)
+
+    :ok = wait_for_idle(c)
+    assert {:ok, :new_refresh} = RefreshAheadCache.get(c, :a)
+  end
+
+  test "default refresh_threshold triggers at age == 0.8 * ttl", %{c: _c} do
+    start_supervised!({Loader, [:v2]})
+
+    {:ok, d} =
+      RefreshAheadCache.start_link(clock: &Clock.now/0, sweep_interval_ms: :infinity)
+
+    :ok = RefreshAheadCache.put(d, :a, :v1, 1_000, &Loader.next_value/0)
+
+    # Default threshold 0.8 => boundary at age 800.  At 799 no refresh fires.
+    Clock.advance(799)
+    assert {:ok, :v1} = RefreshAheadCache.get(d, :a)
+    :ok = wait_for_idle(d)
+    assert Loader.calls() == 0
+
+    # At age exactly 800 the default threshold fires the refresh.
+    Clock.advance(1)
+    assert {:ok, :v1} = RefreshAheadCache.get(d, :a)
+    :ok = wait_for_idle(d)
+    assert Loader.calls() == 1
+  end
+
+  test "the same loader is reused across successive refreshes", %{c: c} do
+    start_supervised!({Loader, [:r1, :r2]})
+    :ok = RefreshAheadCache.put(c, :a, :v0, 1_000, &Loader.next_value/0)
+
+    # First refresh at t=850 -> :r1, TTL reset to expires_at = 1850.
+    Clock.advance(850)
+    assert {:ok, :v0} = RefreshAheadCache.get(c, :a)
+    :ok = wait_for_idle(c)
+    assert {:ok, :r1} = RefreshAheadCache.get(c, :a)
+
+    # Second crossing on the refreshed entry must call the loader AGAIN -> :r2.
+    Clock.advance(810)
+    assert {:ok, :r1} = RefreshAheadCache.get(c, :a)
+    :ok = wait_for_idle(c)
+    assert {:ok, :r2} = RefreshAheadCache.get(c, :a)
+
+    assert Loader.calls() == 2
+  end
 end

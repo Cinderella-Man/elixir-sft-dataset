@@ -20,9 +20,11 @@ defmodule TimeSeriesResampler do
   ## Bucketing
 
   Given an `interval_ms` width, every timestamp `t` is assigned to the bucket
-  whose start is `floor(t / interval_ms) * interval_ms`.  The output covers
-  every bucket from the one containing the earliest point to the one containing
-  the latest point, inclusive, with no gaps.
+  whose start is `floor(t / interval_ms) * interval_ms`.  The flooring is a
+  true mathematical floor, so negative timestamps round *downwards* (away from
+  zero) rather than being truncated towards zero.  The output covers every
+  bucket from the one containing the earliest point to the one containing the
+  latest point, inclusive, with no gaps.
 
   ## Options
 
@@ -130,10 +132,12 @@ defmodule TimeSeriesResampler do
   # Private helpers
   # ---------------------------------------------------------------------------
 
-  # Floor a timestamp to the nearest interval boundary.
+  # Floor a timestamp to the nearest interval boundary.  `Integer.floor_div/2`
+  # rounds towards negative infinity, unlike `div/2` which truncates towards
+  # zero and would misplace negative timestamps.
   @spec floor_bucket(integer(), pos_integer()) :: integer()
   defp floor_bucket(ts, interval_ms) do
-    div(ts, interval_ms) * interval_ms
+    Integer.floor_div(ts, interval_ms) * interval_ms
   end
 
   # Aggregate a non-empty list of sorted `{ts, value}` pairs.

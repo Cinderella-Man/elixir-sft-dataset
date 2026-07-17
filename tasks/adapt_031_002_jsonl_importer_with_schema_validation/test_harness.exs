@@ -417,4 +417,55 @@ defmodule JsonlImporterTest do
   defp find_error(errors, row, field_name) do
     Enum.find(errors, fn {r, f, _msg} -> r == row and f == field_name end)
   end
+
+  test "format is not applied to a non-string-typed field with a string value" do
+    schema = [field("age", type: :integer, format: ~r/^\d+$/)]
+    jsonl = ~s({"age": "abc"}\n)
+
+    assert {:ok, [], errors} = JsonlImporter.import_string(jsonl, schema)
+    assert [{1, "age", msg}] = errors
+    assert msg =~ "integer"
+  end
+
+  test "field definition without a :required key defaults to required" do
+    schema = [%{name: "name"}]
+
+    assert {:ok, [], errors} = JsonlImporter.import_string(~s({"other": 1}\n), schema)
+    assert {1, "name", msg} = find_error(errors, 1, "name")
+    assert msg =~ "required"
+  end
+
+  test "field definition without a :type key defaults to string" do
+    schema = [%{name: "name", required: true}]
+
+    assert {:ok, [], errors} = JsonlImporter.import_string(~s({"name": 123}\n), schema)
+    assert {1, "name", msg} = find_error(errors, 1, "name")
+    assert msg =~ "string"
+  end
+
+  test "BOM followed only by blank lines returns empty_file" do
+    assert {:error, :empty_file} =
+             JsonlImporter.import_string("\xEF\xBB\xBF\n   \n", @basic_schema)
+  end
+
+  test "required list field accepts an empty array as present and non-null" do
+    schema = [field("tags", type: :list)]
+
+    assert {:ok, [row], []} = JsonlImporter.import_string(~s({"tags": []}\n), schema)
+    assert row["tags"] == []
+  end
+
+  test "import_file strips a UTF-8 BOM before parsing file contents" do
+    path = "/tmp/jsonl_importer_bom_file_#{:rand.uniform(999_999)}.jsonl"
+
+    content =
+      "\xEF\xBB\xBF" <>
+        ~s({"name": "Alice", "email": "alice@example.com", "age": 30, "active": true}\n)
+
+    File.write!(path, content)
+    on_exit(fn -> File.rm(path) end)
+
+    assert {:ok, [row], []} = JsonlImporter.import_file(path, @basic_schema)
+    assert row["name"] == "Alice"
+  end
 end

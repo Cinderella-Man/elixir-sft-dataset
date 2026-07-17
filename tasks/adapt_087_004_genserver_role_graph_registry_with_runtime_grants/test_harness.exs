@@ -126,4 +126,74 @@ defmodule RoleRegistryTest do
       assert RoleRegistry.can?(s, :editor, :settings, :read)
     end
   end
+
+  test "rejected cycle edge is not recorded at all", %{server: s} do
+    RoleRegistry.add_role(s, :a)
+    RoleRegistry.add_role(s, :b)
+    assert RoleRegistry.add_inheritance(s, :a, :b) == :ok
+    assert RoleRegistry.add_inheritance(s, :b, :a) == {:error, :cycle}
+
+    RoleRegistry.grant(s, :a, :res, :act)
+    # the rejected b -> a edge must not exist, so b must not inherit a's grant
+    refute RoleRegistry.can?(s, :b, :res, :act)
+
+    RoleRegistry.grant(s, :b, :other, :act)
+    # the accepted a -> b edge must survive the rejection unchanged
+    assert RoleRegistry.can?(s, :a, :other, :act)
+  end
+
+  test "start_link honors the :name option and the API works by name" do
+    name = :role_registry_named_server
+    {:ok, _pid} = RoleRegistry.start_link(name: name)
+
+    assert RoleRegistry.add_role(name, :viewer) == :ok
+    assert RoleRegistry.add_role(name, :editor) == :ok
+    assert RoleRegistry.grant(name, :viewer, :posts, :read) == :ok
+    assert RoleRegistry.add_inheritance(name, :editor, :viewer) == :ok
+    assert RoleRegistry.can?(name, :editor, :posts, :read)
+    refute RoleRegistry.can?(name, :editor, :posts, :write)
+  end
+
+  test "fresh server starts with no roles, no edges and no grants" do
+    {:ok, s} = RoleRegistry.start_link()
+
+    refute RoleRegistry.can?(s, :editor, :posts, :read)
+    assert RoleRegistry.grant(s, :editor, :posts, :read) == {:error, :unknown_role}
+    assert RoleRegistry.add_inheritance(s, :editor, :viewer) == {:error, :unknown_role}
+
+    # after adding the roles there must still be no pre-existing edges or grants
+    RoleRegistry.add_role(s, :viewer)
+    RoleRegistry.add_role(s, :editor)
+    RoleRegistry.grant(s, :viewer, :posts, :read)
+    refute RoleRegistry.can?(s, :editor, :posts, :read)
+  end
+
+  test "granting twice is idempotent so a single revoke clears it", %{server: s} do
+    RoleRegistry.add_role(s, :editor)
+    assert RoleRegistry.grant(s, :editor, :posts, :write) == :ok
+    assert RoleRegistry.grant(s, :editor, :posts, :write) == :ok
+    assert RoleRegistry.can?(s, :editor, :posts, :write)
+
+    assert RoleRegistry.revoke(s, :editor, :posts, :write) == :ok
+    refute RoleRegistry.can?(s, :editor, :posts, :write)
+  end
+
+  test "revoking from a child leaves the inherited grant intact", %{server: s} do
+    RoleRegistry.add_role(s, :viewer)
+    RoleRegistry.add_role(s, :editor)
+    RoleRegistry.grant(s, :viewer, :posts, :read)
+    RoleRegistry.add_inheritance(s, :editor, :viewer)
+    assert RoleRegistry.can?(s, :editor, :posts, :read)
+
+    # editor has no direct grant here; revoking must not touch viewer's grant
+    assert RoleRegistry.revoke(s, :editor, :posts, :read) == :ok
+    assert RoleRegistry.can?(s, :viewer, :posts, :read)
+    assert RoleRegistry.can?(s, :editor, :posts, :read)
+  end
+
+  test "revoke on an unknown role returns ok without creating the role", %{server: s} do
+    assert RoleRegistry.revoke(s, :ghost, :posts, :read) == :ok
+    refute RoleRegistry.can?(s, :ghost, :posts, :read)
+    assert RoleRegistry.grant(s, :ghost, :posts, :read) == {:error, :unknown_role}
+  end
 end

@@ -107,4 +107,58 @@ defmodule ConfigStoreTest do
 
     assert ConfigStore.get(:cfg_named_test, [:a]) == 2
   end
+
+  test "locked key-path absent from the base cannot be introduced by a layer" do
+    s = start(base: %{db: %{host: "localhost"}}, locked: [[:db, :password]])
+    ConfigStore.put_layer(s, :env, %{db: %{password: "pwned"}})
+
+    assert ConfigStore.get(s, [:db, :password]) == nil
+    assert ConfigStore.get(s, [:db, :host]) == "localhost"
+  end
+
+  test "locked key-paths supplied as tuples are honoured" do
+    s = start(base: %{db: %{password: "s3cr3t", host: "localhost"}}, locked: [{:db, :password}])
+    ConfigStore.put_layer(s, :env, %{db: %{password: "pwned", host: "evil.host"}})
+
+    assert ConfigStore.get(s, [:db, :password]) == "s3cr3t"
+    assert ConfigStore.get(s, [:db, :host]) == "evil.host"
+  end
+
+  test "list_strategies path given as a tuple applies to a nested key-path" do
+    s =
+      start(
+        base: %{app: %{plugins: ["core"]}},
+        list_strategies: %{{:app, :plugins} => :append}
+      )
+
+    ConfigStore.put_layer(s, :env, %{app: %{plugins: ["auth"]}})
+
+    assert ConfigStore.get(s, [:app, :plugins]) == ["core", "auth"]
+  end
+
+  test "re-putting a layer replaces its whole map rather than merging with the old map" do
+    s = start(base: %{})
+    ConfigStore.put_layer(s, :env, %{a: 1, stale: true})
+    ConfigStore.put_layer(s, :env, %{a: 2})
+
+    assert ConfigStore.get_config(s) == %{a: 2}
+    assert ConfigStore.layers(s) == [:env]
+  end
+
+  test "base defaults to an empty map when the option is omitted" do
+    s = start([])
+
+    assert ConfigStore.get_config(s) == %{}
+
+    ConfigStore.put_layer(s, :env, %{a: 1})
+
+    assert ConfigStore.get_config(s) == %{a: 1}
+  end
+
+  test "list_strategy defaults to replace when the option is omitted" do
+    s = start(base: %{plugins: ["core"]})
+    ConfigStore.put_layer(s, :env, %{plugins: ["auth"]})
+
+    assert ConfigStore.get(s, [:plugins]) == ["auth"]
+  end
 end

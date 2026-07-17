@@ -339,4 +339,126 @@ defmodule RetryPoolTest do
     # Await with a short timeout — should not wait for all retries
     assert {:error, :timeout} = RetryPool.await(pool, ref, 200)
   end
+
+  test "a timed-out retry runs before an already-queued task", _context do
+    pool =
+      start_supervised!(
+        {RetryPool, pool_size: 1, max_queue: 5, name: :added_to_front_pool},
+        id: :added_to_front
+      )
+
+    {:ok, counter} = Agent.start_link(fn -> 0 end)
+    collector = self()
+
+    task_a = fn ->
+      n = Agent.get_and_update(counter, fn n -> {n, n + 1} end)
+
+      if n == 0 do
+        Process.sleep(2_000)
+        :a_slow
+      else
+        send(collector, {:executed, :a})
+        :a_ok
+      end
+    end
+
+    {:ok, _ra} = RetryPool.submit(pool, task_a, task_timeout: 200, max_retries: 1)
+
+    {:ok, _rb} =
+      RetryPool.submit(pool, fn ->
+        send(collector, {:executed, :b})
+        :b_ok
+      end)
+
+    assert_receive {:executed, first}, 3_000
+    assert first == :a
+    assert_receive {:executed, second}, 3_000
+    assert second == :b
+
+    Agent.stop(counter)
+  end
+
+  test "a crashed retry jumps ahead of an already-queued task", _context do
+    pool =
+      start_supervised!(
+        {RetryPool, pool_size: 1, max_queue: 5, name: :added_front_pool},
+        id: :added_front
+      )
+
+    {:ok, counter} = Agent.start_link(fn -> 0 end)
+    collector = self()
+
+    task_a = fn ->
+      n = Agent.get_and_update(counter, fn n -> {n, n + 1} end)
+
+      if n == 0 do
+        send(collector, {:ready_a, self()})
+
+        receive do
+          :proceed -> raise "a fails first time"
+        end
+      else
+        send(collector, {:executed, :a})
+        :a_ok
+      end
+    end
+
+    {:ok, _ra} = RetryPool.submit(pool, task_a, max_retries: 1)
+    assert_receive {:ready_a, worker_a}, 1_000
+
+    {:ok, _rb} =
+      RetryPool.submit(pool, fn ->
+        send(collector, {:executed, :b})
+        :b_ok
+      end)
+
+    release(worker_a)
+
+    assert_receive {:executed, first}, 2_000
+    assert first == :a
+    assert_receive {:executed, second}, 2_000
+    assert second == :b
+
+    Agent.stop(counter)
+  end
+
+  test "pool_size defaults to 3 idle workers", _context do
+    pool =
+      start_supervised!(
+        {RetryPool, name: :added_default_pool},
+        id: :added_default
+      )
+
+    status = RetryPool.status(pool)
+    assert status.idle_workers == 3
+    assert status.busy_workers == 0
+  end
+
+  test "max_queue defaults to 10 pending tasks", _context do
+    pool =
+      start_supervised!(
+        {RetryPool, name: :added_maxq_pool},
+        id: :added_maxq
+      )
+
+    gate = self()
+
+    for _ <- 1..3 do
+      {:ok, _} = RetryPool.submit(pool, blocking_task(gate))
+    end
+
+    workers =
+      for _ <- 1..3 do
+        assert_receive {:ready, w}, 1_000
+        w
+      end
+
+    for _ <- 1..10 do
+      {:ok, _} = RetryPool.submit(pool, quick_task(:filler))
+    end
+
+    assert {:error, :queue_full} = RetryPool.submit(pool, quick_task(:overflow))
+
+    Enum.each(workers, &release/1)
+  end
 end

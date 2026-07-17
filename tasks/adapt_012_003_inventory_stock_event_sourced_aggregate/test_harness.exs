@@ -275,4 +275,24 @@ defmodule InventoryAggregateTest do
     assert shipped.type == :stock_shipped
     assert shipped.quantity == 75
   end
+
+  test "start_link registers the process under the given :name option" do
+    name = :inventory_named_process_test
+    {:ok, _pid} = InventoryAggregate.start_link(name: name)
+
+    assert {:ok, [event]} =
+             InventoryAggregate.execute(name, "prod:1", {:register, "Widget", "WDG-001"})
+
+    assert event.type == :product_registered
+    assert InventoryAggregate.state(name, "prod:1").status == :registered
+  end
+
+  test "negative adjustment landing on exactly zero succeeds", %{agg: agg} do
+    InventoryAggregate.execute(agg, "prod:1", {:register, "Widget", "WDG-001"})
+    InventoryAggregate.execute(agg, "prod:1", {:receive_stock, 10})
+
+    assert {:ok, [event]} = InventoryAggregate.execute(agg, "prod:1", {:adjust, -10})
+    assert event.type == :stock_adjusted
+    assert InventoryAggregate.state(agg, "prod:1").quantity_on_hand == 0
+  end
 end

@@ -88,4 +88,43 @@ defmodule SanitizerTest do
       assert {:ok, "", [:trimmed_whitespace]} = Sanitizer.text("   ")
     end
   end
+
+  test "text keeps tab, newline and carriage return untouched" do
+    assert {:ok, "a\tb\nc\rd", []} = Sanitizer.text("a\tb\nc\rd")
+    assert {:ok, "a\tb\nc\rd", []} = Sanitizer.text("a\tb\nc\rd", mode: :strict)
+  end
+
+  test "filename reports all five violations in the documented fixed order" do
+    assert {:ok, "abc.d",
+            [
+              :removed_null_bytes,
+              :removed_path_separators,
+              :removed_illegal_chars,
+              :collapsed_dots,
+              :trimmed_dots
+            ]} = Sanitizer.filename(".\0.a b/c..d.")
+  end
+
+  test "text reports control chars, trimming and escaping in fixed order" do
+    assert {:ok, "&lt;a&gt;&amp;", [:removed_control_chars, :trimmed_whitespace, :escaped_html]} =
+             Sanitizer.text("  \x01<a>&  ")
+  end
+
+  test "text escapes quotes and apostrophes without double-escaping ampersands" do
+    assert {:ok, "He said &quot;hi&quot; &amp; it&#39;s fine", [:escaped_html]} =
+             Sanitizer.text(~s(He said "hi" & it's fine))
+  end
+
+  test "clean filename and text succeed identically in strict mode" do
+    assert {:ok, "report.pdf", []} = Sanitizer.filename("report.pdf", mode: :strict)
+    assert {:ok, "report.pdf", []} = Sanitizer.filename("report.pdf", mode: :lenient)
+    assert {:ok, "hello world", []} = Sanitizer.text("hello world", mode: :strict)
+    assert {:ok, "hello world", []} = Sanitizer.text("hello world", mode: :lenient)
+  end
+
+  test "filename collapses runs at the exactly-two-dot boundary only" do
+    assert {:ok, "a.b", []} = Sanitizer.filename("a.b")
+    assert {:ok, "a.b", [:collapsed_dots]} = Sanitizer.filename("a..b")
+    assert {:ok, "a.b", [:collapsed_dots]} = Sanitizer.filename("a...b")
+  end
 end
