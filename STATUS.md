@@ -13,8 +13,15 @@ Reference docs: `docs/14` (handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**§4.2.2 SPOT-REVIEW TRANCHE — in progress (in-session deep reads, no
-detached job; docs/12 §4.2 item 2, signed off 2026-07-16).** Tranche
+**§4.2.2 SPOT-REVIEW TRANCHE — in progress, 10/20 roots done: 6 ok /
+4 findings (002_001, 003_001, 004_001=F22 scheduler crash, 009_001
+minor task-death key-poisoning). Pattern confirmed so far: findings
+concentrate in April-register prompts; the July precision prompts
+(007_004) read flawless — direct T2.6 evidence. Recurring uniformity
+nit: the manual-:cleanup/:sweep re-schedule side effect is documented
+in 001_001 only (003/006/010 silent).**
+(Method reminder — in-session deep reads, no detached job; docs/12
+§4.2 item 2, signed off 2026-07-16.) Tranche
 list `logs/spot_review_tranche_20260717.txt` (20 seeds, deterministic:
 April-era ∩ audit-changed-harness-only ∩ 0 proven-defect promise tests
 — the machinery's blind spot — one per idea family, 58-candidate pool).
