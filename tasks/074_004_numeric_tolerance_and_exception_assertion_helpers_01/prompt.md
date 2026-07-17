@@ -14,4 +14,4 @@ Give me the complete module in a single file.
 
 ## Additional interface contract
 
-- In the `assert_raises_message` case where the function raises nothing at all, the failure message must contain the literal substring "no exception" (e.g. "but no exception was raised").
+- In the `assert_raises_message` case where the function raises nothing at all, the failure message must contain the literal substring "no exception" (e.g. "but no exception was raised"). In the case where the right exception type is raised but its message lacks `needle`, the failure message must contain the literal substring "did not contain".
