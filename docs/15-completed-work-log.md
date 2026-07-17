@@ -9,6 +9,32 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-17 — T1.11 REMINT + VERIFICATION COMPLETE (cascade item 2
+  closed).** 27/27 scoped idea backfills (`GEN_ONLY=backfill` per idea);
+  117 fresh bugfix pairs ACCEPTED and re-verified **117/117 on all six
+  properties** by the now-timeout-safe audit_bugfix; corpus back to 961
+  bugfix dirs. Riders: +68 verified repair pairs minted from the audit's
+  1,098 captured attempt chains (219 mintable; exists=86 including the 2
+  pre-restart strays — evidence they are the same standing flow's first
+  mints); +10 tfim carves; the deleted 077_002 FIM child re-carved as
+  `_05` through the standing carver's gates (25 passed, FIM mutant
+  killed). Logs `logs/remint_backfill.log`, `logs/audit_bugfix_fresh.log`;
+  pair list `logs/bugfix_fresh_20260717.txt`.
+
+- **2026-07-17 — PUSH UNBLOCKED after two real gate findings (origin
+  ca76a06c → b78fb4a3).** Push attempt 1 caught the invalidated
+  bugfix_001_003 pairs (led to the 116-pair deletion, be05b82a). Push
+  attempt 2 caught 78 "stale" blind verdicts: 28 were FALSE — the
+  audit's in-cycle candidate screens (needs_triage cycles, grown harness
+  discarded) masked valid disk-pair rows under latest-row-per-prompt
+  keying; check_screen_freshness now keys by (prompt, harness) PAIR
+  (74650dcf, self-test bites). The true 50 were pre-existing R10-era
+  screen-coverage debt — re-screened via a gate-driven resumable sweep
+  (50/50, 25 green / 25 red-quarantined into the triage_screen queue);
+  freshness then read OK (fresh=310/legacy=6/via_strengthen=16) and the
+  pre-push suite passed clean. Also: audit_bugfix hardened against
+  :timeout_or_crash grades (0bfa8476).
+
 - **2026-07-17 — T1.11 EMBED CASCADE COMPLETE + GREEN: check_embeds
   reads 1,321 clean / 0 reflow / 0 drift / 0 skipped (990 module-FIM +
   331 wt).** Five sub-steps, one commit each (user directive: commit per

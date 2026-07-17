@@ -13,23 +13,21 @@ Reference docs: `docs/14` (handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**T1.11 remint — scoped backfill over the 27 idea numbers of the 40
-solution-changed families (launched 2026-07-17). Log
-`logs/remint_backfill.log` (+ `.pid` sidecar); loop ledgers
-(runs.jsonl, bugfix_rejected.jsonl sha-keyed) make it resumable.**
-Idempotent relaunch:
-`scripts/run_detached.sh logs/remint_backfill.log bash -c 'for n in 1 10 12 13 14 16 17 19 23 31 33 35 37 40 41 44 62 73 77 95 97 99 107 109 624 625 626; do GEN_ONLY=backfill mix run scripts/generate.exs $n; done'`
-Mints exactly the missing derived units per idea: the 116 deleted bugfix
-pairs (deterministic mutation-mining, no LLM — fresh candidate pool since
-rejected-ledger rows are keyed to the OLD solution shas) + the deleted
-077_002 FIM child re-carved through the standing carver's gates (LLM) +
-any other pending derived work for these seeds. All gates default-ON.
-On exit: verify mint counts + spot-read pairs (rule 8), commit per
-family batch, then run `scripts/audit_bugfix.exs` (now timeout-safe)
-over the fresh pairs as the accept-side spot check.
-NOTE: no `mix compile`/mix runs in this tree while it lives.
-(PUSHED at b78fb4a3: origin has the whole audit + cascade + gate fixes;
-pre-push read OK across validate, freshness, and embed-drift checks.)
+**PUSH of the remint batch (detached, log `logs/push_v3_20260717.log`),
+then: BUILD + PILOT the 94-root needs_triage judge (T1.11 triage, next
+loop step — Kamil picked it 2026-07-17).** Remint is DONE and VERIFIED
+(117/117 six-property pass — docs/15); its batch commit includes the
+fresh bugfix/repair/tfim dirs + the 077_002 `_05` re-carve. Triage tool
+sketch: adapt the standing judge flow (`scripts/triage_screen.exs`
+skeleton + `GenTask.Opus`) to read the 94 needs_triage rows of
+`logs/retro_audit.jsonl` (94 = 95 rows minus 001_002 which resolved to
+changed), judge each root's failed promise-test against prompt.md +
+current harness, and ledger verdicts sha-keyed to
+`logs/needs_triage_verdicts.jsonl` with classes: `prompt_gap` (T2.6
+material, carries a proposed missing sentence), `bad_test` (auditor
+over-reach — drop), `hard_keep` (evidence row). Rule 9: pilot on 3 rows
++ detailed review BEFORE the full detached run. Rule 7: each CLASS gets
+its Task A + Task B when verdicts land.
 
 **NEW TRIAGE QUEUE from the re-screen: 25 of 50 roots came back RED
 (quarantined, "prompt under-specified OR solver too weak"; rows in
@@ -59,23 +57,16 @@ the cascade instructions are verbatim at the tail of
 `logs/retro_audit_full.log`. In order:
 
 1. ~~Embed resyncs + check_embeds~~ DONE GREEN 2026-07-17 (docs/15).
-2. **Bugfix-pair invalidation**: `scripts/audit_bugfix.exs` on the 40
-   solution-changed families (a redesigned gold invalidates its bugfix
-   pairs) — delete + remint invalidated pairs via `generate.exs <n>`
-   (LLM work: detached + ledgered, rule 1). Family list (reconciled
-   ledger↔git 2026-07-17):
-   `jq -r 'select(.outcome=="changed" and (.detail|contains("solution.ex")))|.task' logs/retro_audit.jsonl | sort -u`
-   → 001_003 010_004 012_002 013_002 014_001 014_004 016_002 016_003
-   017_002 019_002 023_001 023_003 031_002 033_001 033_002 033_003
-   033_004 035_001 035_003 035_004 037_004 040_001 040_002 040_003
-   041_001 044_001 062_004 073_001 077_001 077_002 077_003 095_001
-   095_004 097_001 099_001 107_001 109_002 624_002 625_003 626_004
-3. **Commit per family batch** — root + its resynced children + reminted
-   pairs together; explicit paths only.
-4. **Two stray dirs** minted in the audit's pre-restart first hour
+2. ~~Bugfix-pair invalidation + remint + six-property verification~~
+   DONE 2026-07-17 (docs/15; commits per tool step, not per family —
+   Kamil's 07-17 "commit on the way" directive).
+3. **Two stray dirs** minted in the audit's pre-restart first hour
    (untracked, full triplets, no ledger row):
    `tasks/repair_001_002_fixed_window_counter_01_audit_00/` and
-   `tasks/repair_001_003_hierarchical_limiter_01_audit_00/`. The
+   `tasks/repair_001_003_hierarchical_limiter_01_audit_00/`. New
+   evidence 07-17: mint_repairs counts both among its `exists` skips —
+   same standing flow, first two mints. Still Kamil's call: verify +
+   commit like the other 68, or delete + let the flow re-mint. The
    restarted audit minted no others — decide: verify + keep like any
    repair pair, or delete.
 
