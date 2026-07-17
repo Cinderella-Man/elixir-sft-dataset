@@ -11,6 +11,6 @@ I need these functions in the public API:
 - `WeightedDAG.earliest_finish(dag)` — returns `{:ok, map}` where each value is `earliest_start + duration`.
 - `WeightedDAG.makespan(dag)` — returns `{:ok, number}`, the total project duration = the maximum earliest-finish over all tasks (`{:ok, 0}` for an empty graph).
 - `WeightedDAG.critical_path(dag)` — returns `{:ok, path}` where `path` is a list of task ids forming a longest-duration path from a source task to a sink task (the chain that determines the makespan). `{:ok, []}` for an empty graph. Break ties deterministically (prefer the smallest task id by term ordering).
-- `WeightedDAG.predecessors(dag, id)` / `WeightedDAG.successors(dag, id)` — direct incoming / outgoing neighbours.
+- `WeightedDAG.predecessors(dag, id)` / `WeightedDAG.successors(dag, id)` — direct incoming / outgoing neighbours, returned as a plain list of task ids (not a result tuple), sorted ascending by term ordering; `[]` for a task with no such neighbours.
 
 Give me the complete module in a single file. Use only the Elixir/Erlang standard library, no external dependencies.
