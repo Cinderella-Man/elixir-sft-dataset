@@ -74,7 +74,8 @@ defmodule Catalog.KeysetSearch do
 
   Returns `{:ok, page}` on success, `{:error, :invalid_sort_field}` when the
   requested sort field is not allowed, or `{:error, :invalid_cursor}` when the
-  supplied cursor is malformed or was produced under a different sort.
+  supplied cursor is malformed, carries a wrongly typed payload, or was
+  produced under a different sort.
   """
   @spec search([product()], map()) ::
           {:ok, page()} | {:error, :invalid_sort_field | :invalid_cursor}
@@ -237,7 +238,8 @@ defmodule Catalog.KeysetSearch do
 
       c when is_binary(c) ->
         with {:ok, bin} <- Base.url_decode64(c, padding: false),
-             {:ok, {^field, value, id}} <- safe_to_term(bin) do
+             {:ok, {^field, value, id}} <- safe_to_term(bin),
+             true <- valid_key?(field, value, id) do
           {:ok, {value, id}}
         else
           _ -> {:error, :invalid_cursor}
@@ -247,6 +249,14 @@ defmodule Catalog.KeysetSearch do
         {:error, :invalid_cursor}
     end
   end
+
+  # The decoded payload is untrusted: its value must have the exact type the
+  # sort field produces, otherwise Erlang's cross-type term ordering would
+  # silently slice the page instead of failing loudly.
+  defp valid_key?("name", value, id), do: is_binary(value) and is_integer(id)
+  defp valid_key?("price", value, id), do: is_integer(value) and is_integer(id)
+  defp valid_key?("id", value, id), do: is_integer(value) and is_integer(id) and value == id
+  defp valid_key?(_, _, _), do: false
 
   defp safe_to_term(bin) do
     {:ok, :erlang.binary_to_term(bin, [:safe])}

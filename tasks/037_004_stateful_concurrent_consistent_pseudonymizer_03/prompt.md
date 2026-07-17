@@ -48,7 +48,6 @@ defmodule Anonymizer do
   race-free and referentially consistent within and across calls. Fields not
   named in the rules, and rule fields missing from a record, are left as-is.
   """
-  @spec anonymize(pid(), [map()]) :: [map()]
   def anonymize(pid, records) when is_list(records) do
     # TODO
   end
@@ -70,7 +69,7 @@ defmodule Anonymizer do
   end
 
   defp resolve(pid, field, value, {:pseudonym, prefix}) do
-    GenServer.call(pid, {:pseudonym, field, to_string(value), prefix})
+    GenServer.call(pid, {:pseudonym, field, value, prefix})
   end
 
   # --- GenServer callbacks ----------------------------------------------------

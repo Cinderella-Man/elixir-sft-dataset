@@ -31,23 +31,36 @@ defmodule TransactionAnalyzer do
   # Public API
   # ---------------------------------------------------------------------------
 
+  @doc "Analyzes the transaction log at `path`. Returns `{:ok, stats}` or `{:error, reason}`."
   @spec analyze(String.t()) :: {:ok, map()} | {:error, term()}
   def analyze(path) do
-    case File.stat(path) do
+    case File.open(path, [:read]) do
       {:error, reason} ->
         {:error, reason}
 
-      {:ok, _} ->
-        report =
-          path
-          |> File.stream!(:line, [])
-          |> Stream.map(&String.trim_trailing(&1, "\n"))
-          |> Stream.map(&String.trim_trailing(&1, "\r"))
-          |> Enum.reduce(initial_acc(), &process_line/2)
-          |> build_report()
-
-        {:ok, report}
+      {:ok, device} ->
+        :ok = File.close(device)
+        stream_report(path)
     end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Streaming
+  # ---------------------------------------------------------------------------
+
+  defp stream_report(path) do
+    report =
+      path
+      |> File.stream!(:line, [])
+      |> Stream.map(&String.trim_trailing(&1, "\n"))
+      |> Stream.map(&String.trim_trailing(&1, "\r"))
+      |> Enum.reduce(initial_acc(), &process_line/2)
+      |> build_report()
+
+    {:ok, report}
+  rescue
+    error in [File.Error] -> {:error, Map.get(error, :reason, :enoent)}
+    error in [IO.StreamError] -> {:error, Map.get(error, :reason, :terminated)}
   end
 
   # ---------------------------------------------------------------------------

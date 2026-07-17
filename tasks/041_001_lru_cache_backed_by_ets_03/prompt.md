@@ -36,9 +36,25 @@ defmodule LRUCache do
   | `<name>_data`  | `:set`         | `key → {value, timestamp}` | O(1) key lookup       |
   | `<name>_order` | `:ordered_set` | `timestamp → key`          | O(log n) LRU eviction |
 
+  Both tables are `:named_table`s whose names are derived deterministically
+  from the `:name` option, so they are stable and inspectable.  The data table
+  is created `:public` with `read_concurrency: true`, so any process may read
+  it directly; the order table is `:protected` – every process may read it but
+  only the owning GenServer writes to it.
+
+  ## Timestamps
+
   The *timestamp* is a monotonically increasing integer counter kept in the
   GenServer state – never a wall-clock value – so the cache is fully
   deterministic and testable without any clock mocking.
+
+  The counter starts at `0`, and every touch (a `put` of a new key, an
+  overwrite of a resident key, or a hit on `get`) consumes the next value by
+  adding exactly `1` to it.  The first entry written to a fresh cache therefore
+  carries timestamp `1`, the second `2`, and so on; the value returned for a
+  touch and the counter retained in the state are always the same number.  The
+  stale ordering row of a touched key is deleted as the fresh one is inserted,
+  so a key is never present twice in the order table.
 
   ## Write serialisation
 
@@ -110,6 +126,9 @@ defmodule LRUCache do
     names of the two backing ETS tables (`<name>_data` and `<name>_order`).
   * `:max_size` (required) – maximum number of entries the cache may hold.
     Must be a positive integer.
+
+  The freshly started cache is empty and its timestamp counter is `0`, so the
+  first entry it stores carries timestamp `1`.
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do

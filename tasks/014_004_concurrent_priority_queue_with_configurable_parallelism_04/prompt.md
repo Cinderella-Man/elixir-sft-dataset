@@ -9,8 +9,13 @@ resulting state. Otherwise, return the `state` unchanged.
 ```elixir
 defmodule ConcurrentPriorityQueue do
   @moduledoc """
-  A GenServer that processes tasks based on priority levels (:critical > :normal > :low)
-  with configurable concurrency. Up to `:max_concurrency` tasks can be processed simultaneously.
+  A GenServer that processes tasks based on priority levels (`:critical` > `:normal` > `:low`)
+  with configurable concurrency.
+
+  Up to `:max_concurrency` tasks can be processed simultaneously. Within a priority level tasks
+  are started in FIFO order. Each task is run by a spawned, monitored worker process which sends
+  its result back to the server before exiting; the server records `{task, result}` pairs in
+  completion order.
   """
 
   use GenServer
@@ -20,17 +25,31 @@ defmodule ConcurrentPriorityQueue do
 
   @priority_order [:critical, :normal, :low]
 
+  # Unique marker used to distinguish "no result was reported" from a legitimate `nil` result.
+  @no_result :"$concurrent_priority_queue_no_result"
+
   # ---------------------------------------------------------------------------
   # Public API
   # ---------------------------------------------------------------------------
 
+  @doc """
+  Starts the queue process.
+
+  Options:
+
+    * `:name` — optional name for process registration
+    * `:processor` — single-arity function invoked for each task (default: `fn task -> task end`)
+    * `:max_concurrency` — positive integer, maximum simultaneous tasks (default: `1`)
+
+  Raises `ArgumentError` when `:max_concurrency` is not a positive integer.
+  """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
     {processor, opts} = Keyword.pop(opts, :processor, fn task -> task end)
     {max_concurrency, opts} = Keyword.pop(opts, :max_concurrency, 1)
     {name, _opts} = Keyword.pop(opts, :name)
 
-    unless is_integer(max_concurrency) and max_concurrency > 0 do
+    if not (is_integer(max_concurrency) and max_concurrency > 0) do
       raise ArgumentError, ":max_concurrency must be a positive integer"
     end
 
@@ -43,11 +62,16 @@ defmodule ConcurrentPriorityQueue do
     )
   end
 
+  @doc "Enqueues `task` at `priority` for concurrent processing. Returns `:ok`."
   @spec enqueue(server(), term(), priority()) :: :ok
   def enqueue(server, task, priority) when priority in @priority_order do
     GenServer.call(server, {:enqueue, task, priority})
   end
 
+  @doc """
+  Returns a map with the pending count per priority level, the number of active tasks and the
+  configured max concurrency.
+  """
   @spec status(server()) :: %{
           critical: non_neg_integer(),
           normal: non_neg_integer(),
@@ -59,11 +83,13 @@ defmodule ConcurrentPriorityQueue do
     GenServer.call(server, :status)
   end
 
+  @doc "Returns the list of `{task, result}` pairs in the order the tasks finished processing."
   @spec processed(server()) :: [{term(), term()}]
   def processed(server) do
     GenServer.call(server, :processed)
   end
 
+  @doc "Blocks until the queue is empty and no tasks are actively being processed."
   @spec drain(server()) :: :ok
   def drain(server) do
     GenServer.call(server, :drain, :infinity)
@@ -129,14 +155,12 @@ defmodule ConcurrentPriorityQueue do
   @impl true
   def handle_info(:process_next, state) do
     if map_size(state.active_workers) >= state.max_concurrency do
-      # All slots full, do nothing — will be re-triggered when a worker finishes
+      # All slots full — processing is re-triggered when a worker finishes.
       {:noreply, state}
     else
       case pop_highest(state.queues) do
         {nil, _queues} ->
-          # Nothing to process
-          state = maybe_notify_drain(state)
-          {:noreply, state}
+          {:noreply, maybe_notify_drain(state)}
 
         {task, queues} ->
           parent = self()
@@ -150,10 +174,9 @@ defmodule ConcurrentPriorityQueue do
 
           active_workers = Map.put(state.active_workers, pid, {task, ref})
 
-          new_state = %{state | queues: queues, active_workers: active_workers}
-
-          # Try to fill more slots if available
-          new_state = maybe_trigger_processing(new_state)
+          new_state =
+            %{state | queues: queues, active_workers: active_workers}
+            |> maybe_trigger_processing()
 
           {:noreply, new_state}
       end
@@ -162,9 +185,8 @@ defmodule ConcurrentPriorityQueue do
 
   def handle_info({:task_result, pid, result}, state) do
     if Map.has_key?(state.active_workers, pid) do
-      # Store result, will be finalized on :DOWN
-      state = %{state | pending_results: Map.put(state.pending_results, pid, result)}
-      {:noreply, state}
+      # Store the result; it is finalized when the worker's :DOWN arrives.
+      {:noreply, %{state | pending_results: Map.put(state.pending_results, pid, result)}}
     else
       {:noreply, state}
     end
@@ -173,30 +195,27 @@ defmodule ConcurrentPriorityQueue do
   def handle_info({:DOWN, ref, :process, pid, _reason}, state) do
     case Map.pop(state.active_workers, pid) do
       {{task, ^ref}, remaining_workers} ->
-        # Finalize the result
-        {result, pending_results} = Map.pop(state.pending_results, pid)
+        {result, pending_results} = Map.pop(state.pending_results, pid, @no_result)
 
         processed =
-          if result != nil do
-            [{task, result} | state.processed]
-          else
-            state.processed
+          case result do
+            @no_result -> state.processed
+            value -> [{task, value} | state.processed]
           end
 
-        state = %{
-          state
-          | active_workers: remaining_workers,
-            pending_results: pending_results,
-            processed: processed
-        }
-
-        # Try to start more work
-        state = maybe_trigger_processing(state)
-        state = maybe_notify_drain(state)
+        state =
+          %{
+            state
+            | active_workers: remaining_workers,
+              pending_results: pending_results,
+              processed: processed
+          }
+          |> maybe_trigger_processing()
+          |> maybe_notify_drain()
 
         {:noreply, state}
 
-      {nil, _} ->
+      {_other, _workers} ->
         {:noreply, state}
     end
   end

@@ -77,7 +77,7 @@ defmodule Money do
   Raises `ArgumentError` if the currencies differ. The result may be negative.
   """
   @spec subtract(t(), t()) :: t()
-  def subtract(a, b) do
+  def subtract(%__MODULE__{amount: a, currency: cur}, %__MODULE__{amount: b, currency: cur}) do
     # TODO
   end
 
@@ -100,8 +100,9 @@ defmodule Money do
   Splits a money value evenly among `n` parties (a positive integer).
 
   Returns a list of `n` `Money` structs. The remainder is distributed one cent
-  at a time to the first `rem(amount, n)` parties, so the results always sum
-  back to the original amount.
+  at a time to the first `abs(rem(amount, n))` parties, so the results always
+  sum back to the original amount. For negative amounts the extra cent is a
+  negative cent, keeping every share within one cent of the others.
 
   Raises `ArgumentError` if `n` is not a positive integer.
   """
@@ -110,9 +111,11 @@ defmodule Money do
       when is_integer(n) and n > 0 do
     base = div(amount, n)
     remainder = rem(amount, n)
+    step = if remainder < 0, do: -1, else: 1
+    extras = abs(remainder)
 
     Enum.map(0..(n - 1), fn i ->
-      cents = if i < remainder, do: base + 1, else: base
+      cents = if i < extras, do: base + step, else: base
       %__MODULE__{amount: cents, currency: currency}
     end)
   end

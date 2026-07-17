@@ -45,12 +45,14 @@ defmodule DataFlowRunner do
 
   # ── Public API ──────────────────────────────────────────────────────────
 
+  @spec start_link(keyword()) :: GenServer.on_start()
+  @doc "Starts the runner. Accepts a `:name` option used for process registration."
   def start_link(opts) do
     name = Keyword.get(opts, :name)
     GenServer.start_link(__MODULE__, %{}, name: name)
   end
 
-  @spec submit(GenServer.server(), term(), keyword()) :: :ok | {:error, atom()}
+  @spec submit(GenServer.server(), term(), keyword()) :: :ok
   @doc "Submits `task_id` with its dependencies/opts to runner `name`. Returns `:ok`."
   def submit(name, task_id, opts) do
     depends_on = Keyword.get(opts, :depends_on, [])
@@ -70,6 +72,18 @@ defmodule DataFlowRunner do
     GenServer.call(name, {:submit, task_id, depends_on, func})
   end
 
+  @spec run_all(GenServer.server()) ::
+          {:ok, map()}
+          | {:error, {:cycle, [term()]}}
+          | {:error, {:unknown_dependencies, [term()]}}
+  @doc """
+  Validates the dependency graph and executes every submitted task.
+
+  Returns `{:ok, results}` on success, `{:error, {:cycle, involved}}` when the
+  graph contains a cycle, or `{:error, {:unknown_dependencies, missing}}` when a
+  task references a dependency that was never submitted. In both error cases no
+  task is executed.
+  """
   def run_all(name) do
     GenServer.call(name, :run_all, :infinity)
   end
@@ -126,7 +140,7 @@ defmodule DataFlowRunner do
 
     case ready do
       [] ->
-        {:error, {:cycle, Map.keys(in_degree)}}
+        {:error, {:cycle, cycle_nodes(Map.keys(in_degree), dependents)}}
 
       _ ->
         remaining = Map.drop(in_degree, ready)
@@ -144,6 +158,32 @@ defmodule DataFlowRunner do
           end)
 
         build_layers(remaining, dependents, [ready | layers])
+    end
+  end
+
+  # ── Cycle extraction ────────────────────────────────────────────────────
+
+  # The tasks left over when Kahn's algorithm stalls include both the tasks on a
+  # cycle and their downstream dependents. Repeatedly dropping tasks that nothing
+  # in the remaining set depends on leaves only the tasks on a cycle.
+  defp cycle_nodes(ids, dependents) do
+    ids |> MapSet.new() |> prune_downstream(dependents)
+  end
+
+  defp prune_downstream(set, dependents) do
+    next =
+      set
+      |> Enum.filter(fn id ->
+        dependents
+        |> Map.get(id, [])
+        |> Enum.any?(&MapSet.member?(set, &1))
+      end)
+      |> MapSet.new()
+
+    if MapSet.size(next) == MapSet.size(set) do
+      Enum.to_list(next)
+    else
+      prune_downstream(next, dependents)
     end
   end
 

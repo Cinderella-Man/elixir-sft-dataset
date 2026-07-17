@@ -16,8 +16,14 @@ If the params are not valid, leave the state unchanged and return
 defmodule IdempotentPayments do
   @moduledoc """
   A GenServer that simulates an idempotent payment processing system with
-  in-memory storage. Idempotency keys are remembered for a configurable TTL and
-  purged periodically. Payment records themselves are never removed.
+  in-memory storage.
+
+  Payments are stored in memory and given sequential ids (`"pay_1"`, `"pay_2"`,
+  ...). When an idempotency key is supplied, the response produced for that key
+  is cached until `now + ttl_ms`; replaying the key inside that window returns
+  the original response verbatim and creates no new payment record. A periodic
+  `:cleanup` sweep purges only entries whose expiry has been reached. Payment
+  records themselves are never removed.
   """
 
   use GenServer
@@ -29,23 +35,49 @@ defmodule IdempotentPayments do
   # Public API
   # ---------------------------------------------------------------------------
 
+  @doc """
+  Starts the payment server.
+
+  Options:
+
+    * `:clock` — zero-arity function returning the current time in milliseconds
+      (default `fn -> System.monotonic_time(:millisecond) end`).
+    * `:ttl_ms` — how long idempotency keys are remembered (default 86_400_000).
+    * `:cleanup_interval_ms` — how often expired idempotency entries are purged
+      (default 60_000). Pass `:infinity` to disable automatic cleanup.
+  """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, Keyword.take(opts, [:name]))
   end
 
   @doc """
-  Processes a payment. When `idempotency_key` is provided and still cached (not
-  expired), returns the exact original response without creating a new record.
+  Processes a payment.
+
+  When `idempotency_key` is provided and still cached (its expiry has not been
+  reached), returns the exact original response and creates no new record.
+  Otherwise the payment is processed, and — when a key was given — the result is
+  cached for a fresh TTL window. Missing `:amount`, `:currency` or `:recipient`
+  yields `{:error, :invalid_params}`, which is cached like any other response.
   """
+  @spec process_payment(GenServer.server(), map(), String.t() | nil) ::
+          {:ok, map()} | {:error, :invalid_params}
   def process_payment(server, params, idempotency_key \\ nil) do
     GenServer.call(server, {:process_payment, params, idempotency_key})
   end
 
+  @doc """
+  Returns every payment record created so far, in creation order.
+  """
+  @spec get_payments(GenServer.server()) :: [map()]
   def get_payments(server) do
     GenServer.call(server, :get_payments)
   end
 
+  @doc """
+  Looks up a single payment record by its id.
+  """
+  @spec get_payment(GenServer.server(), String.t()) :: {:ok, map()} | {:error, :not_found}
   def get_payment(server, id) do
     GenServer.call(server, {:get_payment, id})
   end
@@ -147,10 +179,10 @@ defmodule IdempotentPayments do
       Map.has_key?(params, :recipient)
   end
 
-  defp schedule_cleanup(:infinity), do: :ok
-
-  defp schedule_cleanup(interval) when is_integer(interval) do
-    Process.send_after(self(), :cleanup, interval)
+  defp schedule_cleanup(interval) do
+    if interval != :infinity do
+      Process.send_after(self(), :cleanup, interval)
+    end
   end
 end
 ```

@@ -19,6 +19,11 @@ defmodule PriorityQueue do
   Processing happens asynchronously one task at a time. The actual
   processor function runs in a spawned process so the GenServer remains
   responsive to enqueue/status/drain calls while a task is being worked on.
+
+  After each task completes the GenServer re-schedules itself via an internal
+  `:process_next` message. That message either picks the next highest-priority
+  task or, when nothing remains, transitions the server back to the idle state
+  so that a task enqueued later triggers processing again.
   """
 
   use GenServer
@@ -167,16 +172,10 @@ defmodule PriorityQueue do
     {:noreply, state}
   end
 
-  def handle_info({:DOWN, ref, :process, pid, _}, %{current_ref: {pid, ref}} = state) do
+  def handle_info({:DOWN, ref, :process, pid, _reason}, %{current_ref: {pid, ref}} = state) do
     state = %{state | current_task: nil, current_ref: nil}
-
-    if queue_empty?(state) do
-      state = %{state | processing: false} |> notify_drain_waiters()
-      {:noreply, state}
-    else
-      send(self(), :process_next)
-      {:noreply, state}
-    end
+    send(self(), :process_next)
+    {:noreply, state}
   end
 
   def handle_info(_msg, state), do: {:noreply, state}

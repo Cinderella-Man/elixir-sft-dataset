@@ -74,16 +74,19 @@ defmodule Money do
 
   @doc """
   Splits a money value evenly among `n` parties (a positive integer),
-  distributing the remainder to the first `rem(amount, n)` parties.
+  distributing the remainder to the first `rem(amount, n)` parties so the
+  shares always sum back to the original amount, including negative amounts.
   """
   @spec split(t(), pos_integer()) :: [t()]
   def split(%__MODULE__{amount: amount, currency: currency}, n)
       when is_integer(n) and n > 0 do
     base = div(amount, n)
     remainder = rem(amount, n)
+    step = if remainder < 0, do: -1, else: 1
+    extras = abs(remainder)
 
     Enum.map(0..(n - 1), fn i ->
-      cents = if i < remainder, do: base + 1, else: base
+      cents = if i < extras, do: base + step, else: base
       %__MODULE__{amount: cents, currency: currency}
     end)
   end

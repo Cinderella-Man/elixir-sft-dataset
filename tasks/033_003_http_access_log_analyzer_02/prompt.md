@@ -51,23 +51,40 @@ defmodule AccessLogAnalyzer do
   # Public API
   # ---------------------------------------------------------------------------
 
+  @doc "Analyzes the HTTP access log at `path`. Returns `{:ok, stats}` or `{:error, reason}`."
   @spec analyze(String.t()) :: {:ok, map()} | {:error, term()}
   def analyze(path) do
-    case File.stat(path) do
-      {:error, reason} ->
-        {:error, reason}
-
-      {:ok, _} ->
-        report =
-          path
-          |> File.stream!(:line, [])
-          |> Stream.map(&String.trim_trailing(&1, "\n"))
-          |> Stream.map(&String.trim_trailing(&1, "\r"))
-          |> Enum.reduce(initial_acc(), &process_line/2)
-          |> build_report()
-
-        {:ok, report}
+    with {:ok, :regular} <- check_readable(path) do
+      stream_report(path)
     end
+  end
+
+  # ---------------------------------------------------------------------------
+  # File checks
+  # ---------------------------------------------------------------------------
+
+  defp check_readable(path) do
+    case File.stat(path) do
+      {:ok, %File.Stat{type: :regular}} -> {:ok, :regular}
+      {:ok, %File.Stat{type: :directory}} -> {:error, :eisdir}
+      {:ok, %File.Stat{type: _other}} -> {:error, :einval}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp stream_report(path) do
+    report =
+      path
+      |> File.stream!(:line, [])
+      |> Stream.map(&String.trim_trailing(&1, "\n"))
+      |> Stream.map(&String.trim_trailing(&1, "\r"))
+      |> Enum.reduce(initial_acc(), &process_line/2)
+      |> build_report()
+
+    {:ok, report}
+  rescue
+    error in File.Error -> {:error, error.reason}
+    error in ErlangError -> {:error, error.original}
   end
 
   # ---------------------------------------------------------------------------

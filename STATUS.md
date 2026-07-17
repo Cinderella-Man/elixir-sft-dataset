@@ -13,16 +13,22 @@ Reference docs: `docs/14` (handover: gates, tools, ledgers, runbooks),
 
 ## ▶️ RUNNING RIGHT NOW
 
-**T1.11 cascade step 5 of 5 — check_embeds corpus-wide verification
-(launched 2026-07-17). Log `logs/check_embeds_full.log` (+ `.pid`
-sidecar with the pid).** Idempotent relaunch:
-`scripts/run_detached.sh logs/check_embeds_full.log elixir scripts/check_embeds.exs`
-On exit: hand-fix any `fix_child_gold` rows (expected: tfim golds whose
-blanked test the audit rewrote — the tfim resync updates prompts only),
-re-run until clean, commit. Push becomes safe only when this is green.
+**T1.11 cascade step 5c — hand-fix the 27 `fix_child_gold` module-FIM
+children (in the main session, no detached job; list = the
+`fix_child_gold / hand-fix:` lines in `logs/resync_fim_full.log`).**
+These are children whose blanked gold FUNCTION the audit rewrote: for
+each, replace the child `solution.ex` with the parent's new version of
+that function (same clauses + attached @doc/@spec if present), then
+re-run the resync on the fixed dirs:
+`scripts/run_detached.sh logs/resync_fim_fixed.log mix run scripts/resync_embeds.exs -- --dirs-file logs/embed_fix_child_dirs_20260717.txt --apply`
+then `elixir scripts/check_embeds.exs` until 0 drift, commit. A child
+whose function was REMOVED/renamed beyond recognition cannot be
+hand-fixed — flag it for deletion/re-carve instead. Push becomes safe
+only when the re-check is green.
 (Steps done: 1 wt 228/331 → 204e9fc9; 2 bugfix no-op → 83765590; 3 tfim
-2,256/3,269 → db07a5fc; 4 adapt 184/249, spot-verified the 626_004 child
-carries the audit's absent-key matcher fix.)
+2,256/3,269 → db07a5fc; 4 adapt 184/249 → be23b4a0; 5a check first pass
+wt clean + 117 FIM drift; 5b FIM resync 90/117 healed, 27 errors = this
+step.)
 
 ⚠️ Standing hazard until check_embeds (step 5) is green: children lag the
 audit-edited roots — a nightly sweep firing mid-cascade can report false

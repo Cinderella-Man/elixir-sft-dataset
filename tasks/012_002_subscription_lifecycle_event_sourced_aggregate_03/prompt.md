@@ -141,11 +141,9 @@ defmodule SubscriptionAggregate do
   defp validate_command(_state, {:suspend, _reason}), do: {:error, :not_active}
 
   # Cancel
-  # Must fail if already cancelled
+  # Must fail only if already cancelled; any other existing status may cancel.
   defp validate_command(%{status: :cancelled}, {:cancel}), do: {:error, :already_cancelled}
-  # Must fail if not yet active (pending)
-  defp validate_command(%{status: :pending}, {:cancel}), do: {:error, :not_active}
-  # Success for :active or :suspended
+
   defp validate_command(_state, {:cancel}) do
     {:ok, [%{type: :subscription_cancelled}]}
   end
@@ -159,7 +157,7 @@ defmodule SubscriptionAggregate do
 
   # --- Domain Logic: Event Application ---
 
-  defp apply_event(event, state) do
+  defp apply_event(%{type: :subscription_created, plan: plan}, _nil_state) do
     # TODO
   end
 end

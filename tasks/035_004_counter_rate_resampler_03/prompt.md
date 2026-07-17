@@ -57,13 +57,18 @@ defmodule CounterResampler do
     * `:fill` — `:zero` (default) or `:nil`, choosing how buckets with no measured
       increase are filled.
 
+  Timestamps may be negative; they are floored toward negative infinity onto the
+  `interval_ms` grid.
+
+  Arguments are always validated, even for an empty `data` list: a non-positive or
+  non-integer `interval_ms`, or an option value outside the documented sets, raises
+  an `ArgumentError`.
+
   Returns a list of `{bucket_start_ms, resampled_value}` tuples sorted ascending
   by bucket start. Empty input returns `[]`.
   """
   @spec resample([datapoint()], pos_integer(), keyword()) :: [{integer(), number() | nil}]
   def resample(data, interval_ms, opts \\ [])
-
-  def resample([], _interval_ms, _opts), do: []
 
   def resample(data, interval_ms, opts)
       when is_list(data) and is_integer(interval_ms) and interval_ms > 0 do
@@ -71,6 +76,21 @@ defmodule CounterResampler do
     reset = fetch_opt!(opts, :reset, :detect, @valid_reset)
     fill = fetch_opt!(opts, :fill, :zero, @valid_fill)
 
+    do_resample(data, interval_ms, mode, reset, fill)
+  end
+
+  def resample(_data, interval_ms, _opts) do
+    raise ArgumentError,
+          "interval_ms must be a positive integer, got: #{inspect(interval_ms)}"
+  end
+
+  # --------------------------------------------------------------------------
+  # Private helpers
+  # --------------------------------------------------------------------------
+
+  defp do_resample([], _interval_ms, _mode, _reset, _fill), do: []
+
+  defp do_resample(data, interval_ms, mode, reset, fill) do
     sorted = Enum.sort_by(data, &elem(&1, 0))
 
     {min_ts, _} = hd(sorted)
@@ -102,19 +122,7 @@ defmodule CounterResampler do
     end)
   end
 
-  def resample(_data, interval_ms, _opts) when not is_integer(interval_ms) do
-    raise ArgumentError, "interval_ms must be a positive integer, got: #{inspect(interval_ms)}"
-  end
-
-  def resample(_data, interval_ms, _opts) when interval_ms <= 0 do
-    raise ArgumentError, "interval_ms must be positive, got: #{interval_ms}"
-  end
-
-  # --------------------------------------------------------------------------
-  # Private helpers
-  # --------------------------------------------------------------------------
-
-  defp increment(v0, v1, reset) do
+  defp increment(v0, v1, :raw) do
     # TODO
   end
 
@@ -124,7 +132,7 @@ defmodule CounterResampler do
   defp empty_value(_mode, _interval_ms, nil), do: nil
   defp empty_value(mode, interval_ms, :zero), do: project(0, mode, interval_ms)
 
-  defp floor_bucket(ts, interval_ms), do: div(ts, interval_ms) * interval_ms
+  defp floor_bucket(ts, interval_ms), do: Integer.floor_div(ts, interval_ms) * interval_ms
 
   defp fetch_opt!(opts, key, default, valid) do
     value = Keyword.get(opts, key, default)

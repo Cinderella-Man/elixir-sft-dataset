@@ -97,7 +97,7 @@ defmodule CursorPaginator do
   Returns `{:ok, id}` for a valid cursor, or `:error` for anything malformed.
   """
   @spec decode_cursor(term()) :: {:ok, integer()} | :error
-  def decode_cursor(cursor) do
+  def decode_cursor(cursor) when is_binary(cursor) do
     # TODO
   end
 
@@ -113,9 +113,11 @@ defmodule CursorPaginator do
   defp parse_direction(%{"direction" => "prev"}), do: :prev
   defp parse_direction(_), do: :next
 
+  # Only a fully numeric value counts: "12abc" has trailing junk and is rejected,
+  # falling back to the default limit rather than silently reading as 12.
   defp parse_limit(%{"limit" => raw}) do
     case Integer.parse(to_string(raw)) do
-      {n, _} when n >= 1 -> min(n, @max_limit)
+      {n, ""} when n >= 1 -> min(n, @max_limit)
       _ -> @default_limit
     end
   end

@@ -80,14 +80,17 @@ defmodule Catalog do
     indices = Enum.to_list(0..(n - 1)//1)
     attrs_by_index = list |> Enum.with_index() |> Map.new(fn {a, i} -> {i, a} end)
 
-    # Reference index (unique refs only) and duplicate detection.
+    # Reference index and duplicate detection. A ref declared more than once is
+    # a `:duplicate_ref` error for each declaring item, but the ref itself is
+    # still *known*: dependents point at the first declaring index so they are
+    # reported as `:skipped` rather than `:unknown_parent`.
     refs = for i <- indices, r = attrs_by_index[i]["ref"], is_binary(r), do: {r, i}
     ref_groups = Enum.group_by(refs, fn {r, _} -> r end, fn {_, i} -> i end)
 
     dup_ref_indices =
       for {_r, is} <- ref_groups, length(is) > 1, i <- is, into: MapSet.new(), do: i
 
-    ref_index = for {r, [i]} <- ref_groups, into: %{}, do: {r, i}
+    ref_index = for {r, is} <- ref_groups, into: %{}, do: {r, Enum.min(is)}
 
     # Parent resolution.
     {parent_of, unknown_parent} =
@@ -98,7 +101,8 @@ defmodule Catalog do
 
           p when is_binary(p) ->
             case Map.fetch(ref_index, p) do
-              {:ok, pi} -> {Map.put(po, i, pi), up}
+              {:ok, pi} when pi != i -> {Map.put(po, i, pi), up}
+              {:ok, _self} -> {Map.put(po, i, i), up}
               :error -> {Map.put(po, i, nil), MapSet.put(up, i)}
             end
 

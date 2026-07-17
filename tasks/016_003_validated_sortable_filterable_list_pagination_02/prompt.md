@@ -87,16 +87,23 @@ defmodule QueryPaginator do
 
   defp parse_int_filter(params, key) do
     case Map.get(params, key) do
-      nil ->
-        {:ok, nil}
-
-      raw ->
-        case Integer.parse(to_string(raw)) do
-          {n, ""} -> {:ok, n}
-          _ -> {:error, :invalid_filter}
-        end
+      nil -> {:ok, nil}
+      raw -> parse_integer(raw)
     end
   end
+
+  # Only integers and integer-formatted strings are accepted; every other shape
+  # (maps, lists, floats, booleans, partial numbers) is a bad request.
+  defp parse_integer(value) when is_integer(value), do: {:ok, value}
+
+  defp parse_integer(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {n, ""} -> {:ok, n}
+      _ -> {:error, :invalid_filter}
+    end
+  end
+
+  defp parse_integer(_value), do: {:error, :invalid_filter}
 
   defp apply_filters(items, filters) do
     items
@@ -123,8 +130,8 @@ defmodule QueryPaginator do
   defp to_existing_atom_safe(_), do: nil
 
   defp parse_page(%{"page" => raw}) do
-    case Integer.parse(to_string(raw)) do
-      {n, _} when n >= 1 -> n
+    case parse_paging_int(raw) do
+      {:ok, n} when n >= 1 -> n
       _ -> @default_page
     end
   end
@@ -132,12 +139,25 @@ defmodule QueryPaginator do
   defp parse_page(_), do: @default_page
 
   defp parse_page_size(%{"page_size" => raw}) do
-    case Integer.parse(to_string(raw)) do
-      {n, _} when n >= 1 -> min(n, @max_page_size)
+    case parse_paging_int(raw) do
+      {:ok, n} when n >= 1 -> min(n, @max_page_size)
       _ -> @default_page_size
     end
   end
 
   defp parse_page_size(_), do: @default_page_size
+
+  # Paging inputs never fail the request: unparseable shapes fall back to the
+  # caller's default, so this only reports success or `:error`.
+  defp parse_paging_int(value) when is_integer(value), do: {:ok, value}
+
+  defp parse_paging_int(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {n, _rest} -> {:ok, n}
+      :error -> :error
+    end
+  end
+
+  defp parse_paging_int(_value), do: :error
 end
 ```

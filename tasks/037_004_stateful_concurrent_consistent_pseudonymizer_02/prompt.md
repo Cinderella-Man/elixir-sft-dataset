@@ -99,7 +99,7 @@ defmodule Anonymizer do
   end
 
   defp resolve(pid, field, value, {:pseudonym, prefix}) do
-    GenServer.call(pid, {:pseudonym, field, to_string(value), prefix})
+    GenServer.call(pid, {:pseudonym, field, value, prefix})
   end
 
   # --- GenServer callbacks ----------------------------------------------------
@@ -109,8 +109,7 @@ defmodule Anonymizer do
     {:ok, %{rules: rules, maps: %{}, counters: %{}}}
   end
 
-  @impl true
-  def handle_call(request, from, state) do
+  def handle_call(:get_rules, _from, state) do
     # TODO
   end
 end

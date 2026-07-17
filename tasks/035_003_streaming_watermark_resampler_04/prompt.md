@@ -175,7 +175,7 @@ defmodule StreamingResampler do
 
   defp ensure_started(state, _ts), do: state
 
-  defp finalize(state) do
+  defp finalize(%{next_emit: nil} = state) do
     # TODO
   end
 
@@ -230,7 +230,9 @@ defmodule StreamingResampler do
   defp bump(nil, ts), do: ts
   defp bump(current, ts), do: max(current, ts)
 
-  defp floor_bucket(ts, interval), do: div(ts, interval) * interval
+  # Integer.floor_div/2 rounds toward negative infinity, so negative timestamps
+  # land in the bucket below them (e.g. -500 with a 1000ms grid -> -1000).
+  defp floor_bucket(ts, interval), do: Integer.floor_div(ts, interval) * interval
 
   defp aggregate(points, :last), do: points |> List.last() |> elem(1)
   defp aggregate(points, :first), do: points |> hd() |> elem(1)
