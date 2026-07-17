@@ -19,17 +19,7 @@ RESOLVED (docs/15): 18 fixes applied across two layers, 3 rejections
 ledgered, all cascades + re-screens green. Next queue item: the T2.6
 prompt-precision tool — its inputs are now the judge+spot-review
 ledgers and the tranche findings; remaining Kamil inputs are only the
-F22 fix direction and the two stray repair dirs (items below). Tranche
-list `logs/spot_review_tranche_20260717.txt` (20 seeds, deterministic:
-April-era ∩ audit-changed-harness-only ∩ 0 proven-defect promise tests
-— the machinery's blind spot — one per idea family, 58-candidate pool).
-Verdicts append sha-keyed to `logs/spot_review.jsonl` (task, file shas,
-verdict ok|finding, notes) — resume = skip rows whose shas match.
-Method: fresh-eyes read of prompt + solution + harness targeting
-MEANING (gold bugs, contract mismatches, harness blind spots); rule 7
-on every finding. Precedent rate: ~2 defects per 12 roots (the 07-13
-tranche) and 1 gold bug per 4 roots (the 07-15 T2.6 pilot).
-(Pushed through e9681997: T1.11 + T1.6 arcs fully closed on origin.)
+F22 fix direction and the two stray repair dirs (items below).
 
 ---
 
@@ -88,12 +78,11 @@ metadata (ledger-side, tiny — fold into the export work).
 
 ### ⏭️ QUEUE ORDER
 
-1. **§4.2.2 spot-review tranche**: ~20 April-era seeds stratified against
-   the sweep ledger toward audit-clean roots (doubles as the T2.2 residue
-   check; signed off 2026-07-16).
-2. **T2.6 prompt-precision tool** (same skeleton as retro_audit.exs; feed
-   it the judge-sweep verdicts in `logs/screen_triage.jsonl`) — never
-   concurrently with the sweep.
+1. **T2.6 prompt-precision tool** (same skeleton as retro_audit.exs; feed
+   it the judge-sweep + spot-review ledgers in `logs/screen_triage.jsonl`
+   and `logs/spot_review.jsonl`) — never concurrently with the sweep.
+   Should also add a resolution concept to the triage report (the three
+   ledgered rejections still render as open gaps).
 
 ### 📦 DATA EXTENSION (docs/13 §2; after the above)
 
