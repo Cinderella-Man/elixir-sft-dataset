@@ -93,6 +93,7 @@ or re-weight by tier without re-deriving anything.
 | `bugfix` | `solution.ex` | the repaired module |
 | `adapt` | `solution.ex` | the variation's module, produced by modifying the embedded base gold |
 | `dedoc` | `solution.ex` | the parent's documented module (the prompt embeds it stripped of all doc/spec attributes) |
+| `style` | `solution.ex` | the accepted attempt's module (the prompt embeds the working-but-style-rejected attempt + the style review) |
 
 `write_test` is the one shape whose gold is NOT `solution.ex` (its
 `solution.ex` is the *input* module, embedded in the prompt). Getting this
@@ -159,6 +160,7 @@ training time, never by dropping rows:
 | `bugfix` | 0.5 | shares the parent spec + a near-copy module |
 | `adapt` | 0.5 | distinct skill (brownfield editing) but shares the base gold verbatim and the variation's gold+spec |
 | `dedoc` | 0.5 | distinct skill (documenting existing behavior) but its completion IS the parent gold byte-for-byte |
+| `style` | 0.5 | distinct skill (style-preserving refactor of working code) but shares the parent spec + a near-copy module |
 | `test_fim` | 0.25 | 3,267 units sharing parent module AND harness text |
 
 These numbers are a starting point, deliberately written down so the first

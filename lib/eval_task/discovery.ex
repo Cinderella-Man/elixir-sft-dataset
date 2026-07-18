@@ -10,7 +10,15 @@ defmodule EvalTask.Discovery do
           name: String.t(),
           dir: String.t(),
           shape:
-            :single | :fim | :multifile | :write_test | :test_fim | :bugfix | :adapt | :dedoc,
+            :single
+            | :fim
+            | :multifile
+            | :write_test
+            | :test_fim
+            | :bugfix
+            | :adapt
+            | :dedoc
+            | :style,
           solution: String.t(),
           found: boolean()
         }
@@ -56,6 +64,11 @@ defmodule EvalTask.Discovery do
       # carries a copy of the parent harness and grades like single/multifile.
       String.starts_with?(base, "dedoc_") ->
         task(dir, :dedoc, sol, found)
+
+      # Style-repair pairs: working-but-style-rejected attempt → accepted fix;
+      # frozen captured evidence with its own harness copy (docs/13 §2.4).
+      String.starts_with?(base, "style_") ->
+        task(dir, :style, sol, found)
 
       # No harness of its own → a FIM subtask (parent _01 has the harness).
       not has_harness ->

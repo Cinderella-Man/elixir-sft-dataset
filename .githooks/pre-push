@@ -25,7 +25,7 @@ git rev-parse --abbrev-ref '@{upstream}' >/dev/null 2>&1 || range="HEAD~10..HEAD
 # bugfix mint) it closes the pipe early, sort dies of SIGPIPE, and pipefail
 # kills the whole hook with no output (found live 2026-07-13).
 all_families=$(git diff --name-only "$range" -- tasks/ 2>/dev/null |
-  sed -E 's#^tasks/(wt_|tfim_|bugfix_|repair_|adapt_|dedoc_)?([0-9]+_[0-9]+).*#\2#' | sort -u)
+  sed -E 's#^tasks/(wt_|tfim_|bugfix_|repair_|adapt_|dedoc_|style_)?([0-9]+_[0-9]+).*#\2#' | sort -u)
 # herestring, not a pipe: `printf | head` re-created the SIGPIPE-under-pipefail
 # death the comment above describes once the dedoc mint pushed ~960 paths
 # through here (found live 2026-07-19, hook died silently with rc=141).
