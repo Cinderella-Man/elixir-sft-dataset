@@ -663,7 +663,19 @@ defmodule MonitorTest do
   # -------------------------------------------------------
 
   test "failure on one service does not affect another", %{mon: mon} do
-    # TODO
+    CheckFn.set_result("bad", {:error, :fail})
+    CheckFn.set_result("good", :ok)
+    Monitor.register(mon, "bad", CheckFn.build("bad"), 1_000)
+    Monitor.register(mon, "good", CheckFn.build("good"), 1_000)
+
+    for _ <- 1..3 do
+      Clock.advance(1_000)
+      trigger_check(mon, "bad")
+      trigger_check(mon, "good")
+    end
+
+    assert {:ok, %{status: :down}} = Monitor.status(mon, "bad")
+    assert {:ok, %{status: :up, consecutive_failures: 0}} = Monitor.status(mon, "good")
   end
 
   # -------------------------------------------------------
@@ -770,17 +782,7 @@ defmodule MonitorTest do
   end
 
   test "a manual {:check, name} performs one check and the single chain keeps ticking", %{
-    mon: mon
-  } do
-    check = reporting_check("folded", :ok)
-    assert :ok = Monitor.register(mon, "folded", check, 400)
-
-    trigger_check(mon, "folded")
-    assert_receive {:checked, "folded"}, 500
-
-    # The manual check folded into the chain (one live timer, cadence reset):
-    # the next check arrives timer-driven, with no help from the test.
-    assert_receive {:checked, "folded"}, 2_000
+    # TODO
   end
 
   test "manual checks never arm a second chain: no orphan timer resurrects into a re-registration",

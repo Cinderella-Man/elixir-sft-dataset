@@ -224,6 +224,9 @@ defmodule Monitor do
     # TODO
   end
 
+  # Catch-all — ignore unexpected messages.
+  def handle_info(_msg, state), do: {:noreply, state}
+
   # ---------------------------------------------------------------------------
   # Private helpers
   # ---------------------------------------------------------------------------

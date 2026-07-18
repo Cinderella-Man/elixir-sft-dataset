@@ -461,4 +461,39 @@ defmodule MonitorTest do
     # check function, even though several intervals go by.
     refute_receive {:checked, "cancelled"}, 300
   end
+
+  test "a manual {:check, name} performs one check and the single chain keeps ticking", %{
+    mon: mon
+  } do
+    check = reporting_check("folded", :ok)
+    assert :ok = Monitor.register(mon, "folded", check, 400)
+
+    trigger_check(mon, "folded")
+    assert_receive {:checked, "folded"}, 500
+
+    # The manual check folded into the chain (one live timer, cadence reset):
+    # the next check arrives timer-driven, with no help from the test.
+    assert_receive {:checked, "folded"}, 2_000
+  end
+
+  test "manual checks never arm a second chain: no orphan timer resurrects into a re-registration",
+       %{mon: mon} do
+    check = reporting_check("single_chain", :ok)
+    assert :ok = Monitor.register(mon, "single_chain", check, 200)
+
+    # A burst of manual checks. Each must retire the pending chain tick and
+    # re-arm — never add an extra chain whose timer ref would be lost.
+    for _ <- 1..3, do: trigger_check(mon, "single_chain")
+
+    # Replace the registration with one whose first legitimate tick is far
+    # away. Any orphaned 200 ms timer left by the burst would fire into the
+    # NEW registration long before that — and must not exist.
+    assert :ok = Monitor.deregister(mon, "single_chain")
+    drain_checks()
+
+    fresh = reporting_check("single_chain", :ok)
+    assert :ok = Monitor.register(mon, "single_chain", fresh, 60_000)
+
+    refute_receive {:checked, "single_chain"}, 600
+  end
 end
