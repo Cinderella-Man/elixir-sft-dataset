@@ -85,11 +85,15 @@ plus Kamil's standing decisions (strays, follow-up C).
 
 ### 🔨 BUILDS
 
-**In-loop quarantine-triage path** (docs/17 §6.3): the loop can quarantine
-but has no "hard-task KEEP" verdict (the retro screen had 49 keeps).
-Phase 3 needs: triage judge over `logs/quarantine/*` + Kamil review + a
-keep-promotion path writing the evidence row. Until built, quarantines
-block their idea and surface here.
+**KEEP PACKETS PENDING KAMIL (`scripts/keep_land.exs`, built
+2026-07-19):** review each packet in `logs/keep_review/<root>/`
+(candidate vs current prompt, first failure, judge verdict) and either
+`mix run scripts/keep_land.exs -- --approve <root>` (lands + writes the
+keep resolution row; then cascade + commit) or delete the packet.
+Pending now: 007_002_weightedmovingaverage_01 (guard-sentence
+candidate; blind red at the WMA-weighting test whose formula the
+candidate states VERBATIM — judge quoted it; textbook solver-weak
+keep). 110_002 runs next — check `logs/keep_land_110_002.log`.
 
 **T1.4 sliver (d)**: record each seed's blind-screen outcome as difficulty
 metadata (ledger-side, tiny — fold into the export work).
