@@ -93,10 +93,14 @@ keep resolution row; then cascade + commit) or delete the packet.
 Pending now: 007_002_weightedmovingaverage_01 (guard-sentence
 candidate; blind red at the WMA-weighting test whose formula the
 candidate states VERBATIM — judge quoted it; textbook solver-weak
-keep). 110_002 runs next — check `logs/keep_land_110_002.log`.
-
-**T1.4 sliver (d)**: record each seed's blind-screen outcome as difficulty
-metadata (ledger-side, tiny — fold into the export work).
+keep). 110_002_histogram_based_approximate_rolling_percentile_01
+(the three-fix candidate from the T2.6 rounds; blind red was the
+SOLVER crashing on :array.new badarg — solver-weak, nothing prompt-side
+— judge ENTAILED quoting the estimation-algorithm paragraph). After
+approving 110_002, re-run
+`mix run scripts/retro_audit.exs -- --only "110_002*"` so its
+four-times-staging-green growth (incl. the proven gold-defect repair)
+gets its landing chance against the improved prompt.
 
 ### ⏭️ QUEUE ORDER
 

@@ -83,9 +83,10 @@ defmodule ExportDataset do
       |> Enum.reject(&excluded?/1)
 
     fam_sizes = family_sizes(tasks)
+    difficulty = screen_difficulty()
 
     tasks
-    |> Enum.map(&example(&1, fam_sizes))
+    |> Enum.map(&example(&1, fam_sizes, difficulty))
     |> Enum.sort_by(& &1["metadata"]["task"])
   end
 
@@ -96,10 +97,11 @@ defmodule ExportDataset do
   # family instead of by shape (docs/16 §4).
   defp family_sizes(tasks), do: Enum.frequencies_by(tasks, &family_of(&1.name))
 
-  defp example(task, fam_sizes) do
+  defp example(task, fam_sizes, difficulty) do
     prompt = File.read!(Path.join(task.dir, "prompt.md"))
     gold = File.read!(Path.join(task.dir, gold_file!(task.shape)))
     family = family_of(task.name)
+    diff = Map.get(difficulty, ab_of(task.name), %{tier: "unscreened", attempts: 0, greens: 0})
 
     %{
       "messages" => [
@@ -114,9 +116,57 @@ defmodule ExportDataset do
         "sample_weight" => Map.fetch!(@weights, task.shape),
         "family_size" => Map.fetch!(fam_sizes, family),
         "prompt_sha" => CycleLog.content_sha(prompt),
-        "completion_sha" => CycleLog.content_sha(gold)
+        "completion_sha" => CycleLog.content_sha(gold),
+        # T1.4(d): the parent root's blind-screen record as difficulty
+        # metadata — derived, advisory, ledger-sourced (docs/16 §4b). Derived
+        # shapes inherit their `a_b` root's tier.
+        "difficulty_tier" => diff.tier,
+        "screen_attempts" => diff.attempts,
+        "screen_greens" => diff.greens
       }
     }
+  end
+
+  # T1.4 sliver (d): per `a_b` root, the blind-screen ledger aggregated into an
+  # advisory difficulty tier — "blind_solvable" (latest verdict green),
+  # "keep_class" (latest verdict red: the judged-keep / hard-task family), or
+  # "unscreened". Deterministic from logs/screen_blind.jsonl; derived shapes
+  # inherit the tier of the root that owns their family task.
+  @doc false
+  def screen_difficulty(ledger \\ "logs/screen_blind.jsonl") do
+    case File.read(ledger) do
+      {:ok, body} ->
+        body
+        |> String.split("\n", trim: true)
+        |> Enum.flat_map(fn line ->
+          case Jason.decode(line) do
+            {:ok, %{"task" => t, "green" => g}} when is_boolean(g) -> [{ab_of(t), g}]
+            _ -> []
+          end
+        end)
+        |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+        |> Map.new(fn {ab, greens} ->
+          {ab,
+           %{
+             tier: if(List.last(greens), do: "blind_solvable", else: "keep_class"),
+             attempts: length(greens),
+             greens: Enum.count(greens, & &1)
+           }}
+        end)
+
+      _ ->
+        %{}
+    end
+  end
+
+  # The `a_b` group (e.g. "016_001") — one per root; every derived shape maps
+  # to its owner root's pair.
+  @doc false
+  def ab_of(name) do
+    case Regex.run(~r/^(?:repair_|bugfix_|tfim_|wt_|adapt_|dedoc_)?(\d{3}_\d{3})/, name) do
+      [_, ab] -> ab
+      _ -> raise "cannot derive a_b from #{inspect(name)} — naming convention broken"
+    end
   end
 
   defp gold_file!(shape) do

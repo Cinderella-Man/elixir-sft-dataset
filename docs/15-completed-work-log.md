@@ -9,6 +9,30 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-19 (later) — KEEP PATH BUILT + T1.4 SLIVER (d) SHIPPED
+  (Kamil's "improve the existing dataset" direction).** (1) The
+  quarantine-triage BUILDS item closed: `scripts/keep_land.exs`
+  mechanizes the sanctioned keep route (blind-verify → land on green;
+  on red the triage-entailment judge decides — ENTAILED writes a
+  review packet + pending_kamil ledger row, nothing lands without
+  `--approve`, which appends the kamil_keep resolution row; quarantine
+  modes give the in-loop dead-end the same judged path and unblock the
+  idea on approval). Self-test 5/5; pilots on the real queued material
+  produced BOTH pending packets: 007_002 (judge quoted the WMA formula
+  verbatim from the candidate — textbook solver-weak keep) and 110_002
+  (solver crashed on its own :array misuse; judge quoted the estimation
+  paragraph). Both await Kamil's --approve in logs/keep_review/. (2)
+  T1.4 sliver (d): the exporter now emits ledger-derived difficulty
+  metadata per example (difficulty_tier blind_solvable/keep_class/
+  unscreened + screen_attempts/greens, derived shapes inheriting their
+  a_b root's tier) — full coverage measured: 5,895 blind_solvable /
+  589 keep_class / 0 unscreened; docs/16 contract updated; round-trip
+  + selfcheck + suite green. Also resolved en route: the stray-repair
+  STATUS item was half STALE (Kamil had already verified+kept the
+  first two on 07-17, commit 789ee207); the two new strays verified to
+  the same precedent (fixed side 1.0, buggy side genuinely red,
+  post-repair harnesses) and committed — working tree fully clean.
+
 - **2026-07-19 — PARITY ROWS 15+23 CLOSED (Kamil's go): the spec-truth
   gate is IN THE ACCEPT PATH.** Carrier decision resolved to the strong
   option ("quality gates are never optional"): the T1.6-calibrated

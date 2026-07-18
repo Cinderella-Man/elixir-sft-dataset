@@ -57,10 +57,20 @@ One JSONL row per task directory, chat-shaped:
     "split": "train",
     "sample_weight": 1.0,
     "family_size": 61,
-    "prompt_sha": "…", "completion_sha": "…"
+    "prompt_sha": "…", "completion_sha": "…",
+    "difficulty_tier": "blind_solvable",
+    "screen_attempts": 3, "screen_greens": 2
   }
 }
 ```
+
+The three difficulty fields (T1.4 sliver d, 2026-07-19) are ADVISORY,
+ledger-derived (`logs/screen_blind.jsonl` aggregated per `a_b` root):
+`difficulty_tier` is `blind_solvable` (the root's latest blind verdict is
+green), `keep_class` (latest red — the judged-keep hard-task family), or
+`unscreened`; `screen_attempts`/`screen_greens` are the raw counts. Derived
+shapes inherit their owner root's tier — a training run can curriculum-sort
+or re-weight by tier without re-deriving anything.
 
 - **`user` is `prompt.md` verbatim.** Every prompt in this corpus is already a
   complete, self-describing request (the blind-solve screen, S6, is precisely
