@@ -161,8 +161,8 @@ defmodule MintStyleRepairs do
   defp write_dir!(target, id, broken, final) do
     File.mkdir_p!(target)
     File.write!(Path.join(target, "prompt.md"), style_prompt(id, broken))
-    File.write!(Path.join(target, "solution.ex"), ensure_nl(final.files["solution.ex"]))
-    File.write!(Path.join(target, "test_harness.exs"), ensure_nl(final.files["test_harness.exs"]))
+    File.write!(Path.join(target, "solution.ex"), canonical(final.files["solution.ex"]))
+    File.write!(Path.join(target, "test_harness.exs"), canonical(final.files["test_harness.exs"]))
 
     case parent_manifest(id) do
       nil -> :ok
@@ -289,6 +289,17 @@ defmodule MintStyleRepairs do
   end
 
   defp ensure_nl(body), do: String.trim_trailing(body, "\n") <> "\n"
+
+  # Captured attempt files are written verbatim; MINTED corpus files must be
+  # formatter-canonical (the corpus format gate bit on the first full mint —
+  # 2026-07-19). The PROMPT's embedded broken module stays verbatim (frozen
+  # captured evidence, not format-gated); only the on-disk gold + harness are
+  # canonicalized. Whitespace-only, so the pre-write verification stands.
+  defp canonical(body) do
+    body |> Code.format_string!() |> IO.iodata_to_binary() |> ensure_nl()
+  rescue
+    _ -> ensure_nl(body)
+  end
 
   # ── dead-candidate ledger (rules 2 + 7) ─────────────────────────────────────
 
