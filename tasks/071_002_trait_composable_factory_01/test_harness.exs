@@ -168,4 +168,54 @@ defmodule FactoryTest do
     results = Task.await_many(tasks)
     assert length(Enum.uniq(results)) == 50
   end
+
+  test "insert/1 persists a post row plus its association row" do
+    before = length(FakeRepo.all())
+    post = Factory.insert(:post)
+    assert is_integer(post.id)
+    records = FakeRepo.all()
+    assert length(records) == before + 2
+
+    assert Enum.any?(records, fn r ->
+             match?(%MyApp.Post{}, r) and r.id == post.id
+           end)
+  end
+
+  test "build(:post) populates user_id with the id of the user actually inserted" do
+    post = Factory.build(:post)
+    [newest | _] = FakeRepo.all()
+    assert match?(%MyApp.User{}, newest)
+    assert is_integer(newest.id)
+    assert post.user_id == newest.id
+  end
+
+  test "distinct sequence names keep independent counters" do
+    a1 = Factory.sequence(:seq_indep_a, fn n -> n end)
+    a2 = Factory.sequence(:seq_indep_a, fn n -> n end)
+    b1 = Factory.sequence(:seq_indep_b, fn n -> n end)
+    a3 = Factory.sequence(:seq_indep_a, fn n -> n end)
+    b2 = Factory.sequence(:seq_indep_b, fn n -> n end)
+    assert [a1, a2, a3] == [1, 2, 3]
+    assert [b1, b2] == [1, 2]
+  end
+
+  test "insert(:post) with a user_id override creates only the post row" do
+    existing = Factory.insert(:user)
+    before = length(FakeRepo.all())
+    post = Factory.insert(:post, [:published], user_id: existing.id)
+    assert post.user_id == existing.id
+    assert post.published == true
+    assert length(FakeRepo.all()) == before + 1
+  end
+
+  test "an explicit false override beats a trait that sets the flag true" do
+    post = Factory.build(:post, [:published], published: false, user_id: 42)
+    assert post.published == false
+    assert post.user_id == 42
+  end
+
+  test "unknown trait raises through the inferred two-arity trait form" do
+    assert_raise ArgumentError, fn -> Factory.build(:post, [:featured]) end
+    assert_raise ArgumentError, fn -> Factory.insert(:user, [:wizard]) end
+  end
 end

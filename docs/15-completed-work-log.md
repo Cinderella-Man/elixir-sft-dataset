@@ -9,6 +9,39 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-18 (evening) — COMPILE-15 RE-AUDIT CLOSED (Kamil's go): all
+  15 poisoned retro-audit rows resolved; 9 roots' promise-audit growth
+  landed; auditor bug fixed at the gate.** Root cause: the 15
+  "compile:" needs_triage rows were the blind SOLVER's candidate
+  failing to compile (truncated/malformed replies) — zero evidence
+  about the grown harness, mis-ledgered as a terminal verdict. Task B:
+  `retro_audit.exs` verify_and_write now retries a non-compiling blind
+  candidate once and ledgers a second failure under its own distinct
+  label ("solver artifact — NO harness evidence"); self-test green.
+  Task A: the 15 rows removed (backup
+  `logs/retro_audit.jsonl.bak_20260718_compile_triage`), roots
+  re-audited at the current gate (pilot 078_001 first per rule 9,
+  reviewed in detail: harness 17→21, semantic-mutant kill 0.97, blind
+  green). Outcomes: 9 GROWN+LANDED blind-verified (043_004, 061_003,
+  071_002, 071_003, 078_001, 100_001, 100_004, 104_004, 110_003); 3
+  chronic compile-artifact (071_001, 100_002, 100_003 — truncation 3/3
+  samples, parked in STATUS with the row-key finding); 3 REAL prompt
+  gaps surfaced (063_004, 110_002, 134_003 — growth discarded, queued
+  T2.6-class in STATUS). 104_004 post-audit correction (rule 8 spot
+  check paid off TWICE): (a) its "solution repair" was doc-only — the
+  audit-cycle test failure it "fixed" was a flake re-roll — reverted,
+  restoring byte-identity for its 3 bugfix pairs (audit_bugfix 0/3 →
+  3/3); (b) one of its six grown tests (waiter-deadline stale timer)
+  proved empirically flaky (~2 red / 21 grades of
+  behaviorally-identical code) — removed; the five stable grown tests
+  kept (17→22), stability-5 perfect, fresh blind green landed on the
+  second sample (first sample red on an ORIGINAL max_uses test —
+  solver variance; a green candidate for the 23-test superset already
+  existed). The unexplained interleaving + deterministic re-pin of the
+  waiter promise stand as a 2-tier item in STATUS. Cascade: 9 wt_ + 89
+  tfim + 7 adapt children resynced; check_embeds 1,322 clean / 0
+  reflow / 0 drift / 0 skipped.
+
 - **2026-07-18 (later) — T2.6 FOLLOW-UPS A+B EXECUTED (Kamil's go): 9 of
   11 precision edits LANDED blind-green, incl. two chronically-red roots
   flipped green.** Flow per the queued runbook: the 8 saved false-reject

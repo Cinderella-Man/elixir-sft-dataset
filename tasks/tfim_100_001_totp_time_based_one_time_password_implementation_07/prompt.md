@@ -411,5 +411,48 @@ defmodule TOTPTest do
     assert params["digits"] == "6"
     assert params["period"] == "30"
   end
+
+  test "generate_secret encodes exactly 160 bits as 32 unpadded base32 characters" do
+    for _ <- 1..10 do
+      secret = TOTP.generate_secret()
+      assert byte_size(secret) == 32
+      refute String.contains?(secret, "=")
+      assert String.match?(secret, ~r/\A[A-Z2-7]{32}\z/)
+    end
+  end
+
+  test "valid? without a window option tolerates exactly one step of drift in each direction" do
+    secret = TOTP.generate_secret()
+    now = 90_000
+
+    assert TOTP.valid?(secret, TOTP.generate_code(secret, now - 30), time: now)
+    assert TOTP.valid?(secret, TOTP.generate_code(secret, now + 30), time: now)
+    refute TOTP.valid?(secret, TOTP.generate_code(secret, now - 60), time: now)
+    refute TOTP.valid?(secret, TOTP.generate_code(secret, now + 60), time: now)
+  end
+
+  test "valid? accepts an integer code whose decimal form is shorter than six digits" do
+    time = 1_234_567_890
+    assert TOTP.generate_code(@rfc_secret, time) == "005924"
+
+    assert TOTP.valid?(@rfc_secret, 5924, time: time, window: 0)
+    refute TOTP.valid?(@rfc_secret, 5925, time: time, window: 0)
+  end
+
+  test "provisioning_uri label decodes back to issuer colon account_name" do
+    uri = TOTP.provisioning_uri(@rfc_secret, "Acme Co", "alice@example.com")
+    parsed = URI.parse(uri)
+
+    label =
+      parsed.path
+      |> String.trim_leading("/")
+      |> URI.decode()
+
+    assert label == "Acme Co:alice@example.com"
+
+    params = URI.decode_query(parsed.query)
+    assert params["issuer"] == "Acme Co"
+    assert params["algorithm"] == "SHA1"
+  end
 end
 ```

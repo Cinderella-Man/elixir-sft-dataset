@@ -556,5 +556,191 @@ defmodule RecyclingPoolTest do
 
     send(holder, :release)
   end
+
+  test "a returned connection goes to the longest-waiting caller first" do
+    start_supervised!({RecyclingPool, name: :rp_fifo_return, max_size: 1, max_uses: 10})
+    parent = self()
+
+    await_blocked = fn pid ->
+      Enum.reduce_while(1..2_000, :never, fn _, acc ->
+        case Process.info(pid, :status) do
+          {:status, :waiting} ->
+            {:halt, :blocked}
+
+          _ ->
+            Process.sleep(1)
+            {:cont, acc}
+        end
+      end)
+    end
+
+    start_waiter = fn tag ->
+      spawn(fn ->
+        send(parent, {:served, tag, RecyclingPool.checkout(:rp_fifo_return, 5_000)})
+
+        receive do
+          :release -> :ok
+        end
+      end)
+    end
+
+    assert {:ok, c} = RecyclingPool.checkout(:rp_fifo_return, 2_000)
+
+    first = start_waiter.(:first)
+    assert await_blocked.(first) == :blocked
+    second = start_waiter.(:second)
+    assert await_blocked.(second) == :blocked
+
+    assert :ok = RecyclingPool.checkin(:rp_fifo_return, c)
+    assert_receive {:served, :first, {:ok, ^c}}, 5_000
+    refute_receive {:served, :second, _}, 200
+
+    send(first, :release)
+    send(second, :release)
+  end
+
+  test "the fresh replacement for a retired connection goes to the longest-waiting caller" do
+    {_counter, create} = counting_create()
+    {destroy, destroyed} = destroy_tracker()
+
+    start_supervised!(
+      {RecyclingPool,
+       name: :rp_fifo_fresh, max_size: 1, max_uses: 1, create: create, destroy: destroy}
+    )
+
+    parent = self()
+
+    await_blocked = fn pid ->
+      Enum.reduce_while(1..2_000, :never, fn _, acc ->
+        case Process.info(pid, :status) do
+          {:status, :waiting} ->
+            {:halt, :blocked}
+
+          _ ->
+            Process.sleep(1)
+            {:cont, acc}
+        end
+      end)
+    end
+
+    start_waiter = fn tag ->
+      spawn(fn ->
+        send(parent, {:served, tag, RecyclingPool.checkout(:rp_fifo_fresh, 5_000)})
+
+        receive do
+          :release -> :ok
+        end
+      end)
+    end
+
+    assert {:ok, c0} = RecyclingPool.checkout(:rp_fifo_fresh, 2_000)
+    assert c0 == {:conn, 0}
+
+    first = start_waiter.(:first)
+    assert await_blocked.(first) == :blocked
+    second = start_waiter.(:second)
+    assert await_blocked.(second) == :blocked
+
+    assert :ok = RecyclingPool.checkin(:rp_fifo_fresh, c0)
+    assert_receive {:served, :first, {:ok, {:conn, 1}}}, 5_000
+    refute_receive {:served, :second, _}, 200
+    assert destroyed.() == [c0]
+
+    send(first, :release)
+    send(second, :release)
+  end
+
+  test "a crash while holding retires the connection and hands a waiter a fresh one" do
+    {_counter, create} = counting_create()
+    {destroy, destroyed} = destroy_tracker()
+
+    start_supervised!(
+      {RecyclingPool,
+       name: :rp_crash_waiter, max_size: 1, max_uses: 1, create: create, destroy: destroy}
+    )
+
+    parent = self()
+
+    await_blocked = fn pid ->
+      Enum.reduce_while(1..2_000, :never, fn _, acc ->
+        case Process.info(pid, :status) do
+          {:status, :waiting} ->
+            {:halt, :blocked}
+
+          _ ->
+            Process.sleep(1)
+            {:cont, acc}
+        end
+      end)
+    end
+
+    {holder, {:ok, c0}} = spawn_holder(:rp_crash_waiter, 5_000)
+    assert c0 == {:conn, 0}
+
+    waiter =
+      spawn(fn ->
+        send(parent, {:served, RecyclingPool.checkout(:rp_crash_waiter, 5_000)})
+
+        receive do
+          :release -> :ok
+        end
+      end)
+
+    assert await_blocked.(waiter) == :blocked
+
+    Process.exit(holder, :kill)
+
+    assert_receive {:served, {:ok, cnew}}, 5_000
+    assert cnew == {:conn, 1}
+    assert destroyed.() == [c0]
+
+    s = RecyclingPool.stats(:rp_crash_waiter)
+    assert s.total == 1
+    assert s.in_use == 1
+    assert s.available == 0
+
+    send(waiter, :release)
+  end
+
+  test "a returned connection is not charged a second use when its old holder later dies" do
+    {_counter, create} = counting_create()
+    {destroy, destroyed} = destroy_tracker()
+
+    start_supervised!(
+      {RecyclingPool,
+       name: :rp_once_use, max_size: 1, max_uses: 2, create: create, destroy: destroy}
+    )
+
+    parent = self()
+
+    holder =
+      spawn(fn ->
+        {:ok, c} = RecyclingPool.checkout(:rp_once_use, 5_000)
+        :ok = RecyclingPool.checkin(:rp_once_use, c)
+        send(parent, {:returned, c})
+
+        receive do
+          :release -> :ok
+        end
+      end)
+
+    assert_receive {:returned, {:conn, 0}}, 5_000
+
+    ref = Process.monitor(holder)
+    Process.exit(holder, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^holder, _}, 5_000
+
+    # Only one use was completed, so the connection is still alive and reusable.
+    assert {:ok, {:conn, 0}} = RecyclingPool.checkout(:rp_once_use, 2_000)
+    assert destroyed.() == []
+  end
+
+  test "a max_uses that is not a positive integer or :infinity is rejected at startup" do
+    Process.flag(:trap_exit, true)
+
+    assert {:error, _} = RecyclingPool.start_link(max_uses: :never)
+    assert {:error, _} = RecyclingPool.start_link(max_uses: -1)
+    assert {:error, _} = RecyclingPool.start_link(max_uses: 1.0)
+  end
 end
 ```

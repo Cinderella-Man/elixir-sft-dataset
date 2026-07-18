@@ -275,5 +275,91 @@ defmodule RankPercentileTest do
   test "series are independent" do
     # TODO
   end
+
+  test "time and count windows both apply when combined" do
+    start_server(window_ms: 1_000, max_samples: 3)
+
+    for v <- 1..5, do: RankPercentile.record(:m, v)
+
+    # count window keeps only [3, 4, 5]
+    assert {:ok, 3} = RankPercentile.query(:m, 0.0)
+    assert {:ok, 5} = RankPercentile.query(:m, 1.0)
+    assert {:ok, 2} = RankPercentile.count_above(:m, 3)
+    assert {:ok, q} = RankPercentile.rank(:m, 3)
+    assert_in_delta q, 1 / 3, 0.000_001
+
+    # the time window then expires the survivors too
+    Clock.advance(1_000)
+    assert {:error, :empty} = RankPercentile.query(:m, 0.5)
+    assert {:error, :empty} = RankPercentile.rank(:m, 3)
+    assert {:ok, 0} = RankPercentile.count_above(:m, 0)
+  end
+
+  test "a fully expired series behaves exactly like a never-recorded one" do
+    start_server(window_ms: 500)
+
+    for v <- 1..3, do: RankPercentile.record(:gone, v)
+
+    assert {:ok, 2} = RankPercentile.query(:gone, 0.5)
+
+    Clock.advance(500)
+
+    assert {:error, :empty} = RankPercentile.query(:gone, 0.5)
+    assert {:error, :empty} = RankPercentile.rank(:gone, 2)
+    assert {:ok, 0} = RankPercentile.count_above(:gone, 0)
+
+    # identical answers for a series that was never recorded at all
+    assert {:error, :empty} = RankPercentile.query(:never, 0.5)
+    assert {:error, :empty} = RankPercentile.rank(:never, 2)
+    assert {:ok, 0} = RankPercentile.count_above(:never, 0)
+  end
+
+  test "a sample stays live until elapsed time reaches window_ms exactly" do
+    start_server(window_ms: 1_000)
+
+    RankPercentile.record(:edge, 7)
+
+    Clock.advance(999)
+    assert {:ok, 7} = RankPercentile.query(:edge, 0.5)
+    assert {:ok, 1.0} = RankPercentile.rank(:edge, 7)
+    assert {:ok, 1} = RankPercentile.count_above(:edge, 6)
+
+    # now - t == window_ms is no longer strictly less than the window
+    Clock.advance(1)
+    assert {:error, :empty} = RankPercentile.query(:edge, 0.5)
+    assert {:error, :empty} = RankPercentile.rank(:edge, 7)
+    assert {:ok, 0} = RankPercentile.count_above(:edge, 6)
+  end
+
+  test "query rejects percentiles outside the documented range" do
+    start_server([])
+    for v <- 1..10, do: RankPercentile.record(:g, v)
+
+    assert_raise FunctionClauseError, fn -> RankPercentile.query(:g, 1.5) end
+    assert_raise FunctionClauseError, fn -> RankPercentile.query(:g, -0.5) end
+
+    # the boundaries themselves remain accepted
+    assert {:ok, 1} = RankPercentile.query(:g, 0.0)
+    assert {:ok, 10} = RankPercentile.query(:g, 1.0)
+  end
+
+  test "duplicate sample values each count toward the empirical CDF" do
+    start_server([])
+    for v <- [5, 5, 5, 10], do: RankPercentile.record(:dup, v)
+
+    assert {:ok, 0.75} = RankPercentile.rank(:dup, 5)
+    assert {:ok, +0.0} = RankPercentile.rank(:dup, 4)
+    assert {:ok, 1.0} = RankPercentile.rank(:dup, 10)
+    assert {:ok, 5} = RankPercentile.query(:dup, 0.5)
+    assert {:ok, 1} = RankPercentile.count_above(:dup, 5)
+  end
+
+  test "the process registers under the default name when none is given" do
+    start_server([])
+
+    assert is_pid(Process.whereis(RankPercentile))
+    assert :ok = RankPercentile.record(:n, 1)
+    assert {:ok, 1} = RankPercentile.query(:n, 0.5)
+  end
 end
 ```

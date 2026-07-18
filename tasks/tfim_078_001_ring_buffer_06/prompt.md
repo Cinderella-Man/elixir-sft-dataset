@@ -348,5 +348,94 @@ defmodule RingBufferTest do
 
     assert RingBuffer.to_list(buf) == [42, "hello", :atom, {:tuple, 1}, [1, 2, 3]]
   end
+
+  test "peek_newest is correct when the write head wraps to slot zero" do
+    buf =
+      RingBuffer.new(3)
+      |> RingBuffer.push(:a)
+      |> RingBuffer.push(:b)
+      |> RingBuffer.push(:c)
+
+    # Exactly full: the write head has wrapped back to slot 0.
+    assert {:ok, :c} = RingBuffer.peek_newest(buf)
+    assert {:ok, :a} = RingBuffer.peek_oldest(buf)
+    assert RingBuffer.to_list(buf) == [:a, :b, :c]
+
+    # One complete extra cycle: read and write heads coincide again while full.
+    buf =
+      buf
+      |> RingBuffer.push(:d)
+      |> RingBuffer.push(:e)
+      |> RingBuffer.push(:f)
+
+    assert RingBuffer.size(buf) == 3
+    assert {:ok, :f} = RingBuffer.peek_newest(buf)
+    assert {:ok, :d} = RingBuffer.peek_oldest(buf)
+    assert RingBuffer.to_list(buf) == [:d, :e, :f]
+  end
+
+  test "push leaves the source buffer untouched and branches independently" do
+    base =
+      RingBuffer.new(2)
+      |> RingBuffer.push(:a)
+      |> RingBuffer.push(:b)
+
+    left = RingBuffer.push(base, :left)
+    right = RingBuffer.push(base, :right)
+
+    assert RingBuffer.to_list(base) == [:a, :b]
+    assert RingBuffer.size(base) == 2
+    assert {:ok, :a} = RingBuffer.peek_oldest(base)
+    assert {:ok, :b} = RingBuffer.peek_newest(base)
+
+    assert RingBuffer.to_list(left) == [:b, :left]
+    assert RingBuffer.to_list(right) == [:b, :right]
+    assert {:ok, :left} = RingBuffer.peek_newest(left)
+    assert {:ok, :right} = RingBuffer.peek_newest(right)
+  end
+
+  test "nil is stored and reported like any other pushed item" do
+    buf =
+      RingBuffer.new(3)
+      |> RingBuffer.push(nil)
+      |> RingBuffer.push(:b)
+
+    assert RingBuffer.size(buf) == 2
+    assert RingBuffer.to_list(buf) == [nil, :b]
+    assert {:ok, nil} = RingBuffer.peek_oldest(buf)
+    assert {:ok, :b} = RingBuffer.peek_newest(buf)
+
+    buf =
+      buf
+      |> RingBuffer.push(:c)
+      |> RingBuffer.push(nil)
+
+    assert RingBuffer.size(buf) == 3
+    assert RingBuffer.to_list(buf) == [:b, :c, nil]
+    assert {:ok, nil} = RingBuffer.peek_newest(buf)
+    assert {:ok, :b} = RingBuffer.peek_oldest(buf)
+  end
+
+  test "backing store is a pre-allocated tuple with one slot per capacity unit" do
+    cap = 5
+    empty = RingBuffer.new(cap)
+
+    fixed_tuples = fn buf ->
+      buf
+      |> Map.from_struct()
+      |> Map.values()
+      |> Enum.filter(fn value -> is_tuple(value) and tuple_size(value) == cap end)
+    end
+
+    # Pre-allocated at construction time, before anything was ever pushed.
+    assert fixed_tuples.(empty) != []
+
+    full = Enum.reduce(1..(cap * 3), empty, fn i, b -> RingBuffer.push(b, i) end)
+
+    # Still exactly `capacity` slots after many wrapping overwrites.
+    assert fixed_tuples.(full) != []
+    assert RingBuffer.size(full) == cap
+    assert RingBuffer.to_list(full) == [11, 12, 13, 14, 15]
+  end
 end
 ```

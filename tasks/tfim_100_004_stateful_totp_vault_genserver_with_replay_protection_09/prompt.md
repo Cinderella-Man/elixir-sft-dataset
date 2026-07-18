@@ -524,5 +524,60 @@ defmodule TOTPVaultTest do
     |> Integer.to_string()
     |> String.pad_leading(6, "0")
   end
+
+  test "a rejected replay leaves the highest consumed step intact", %{vault: v} do
+    {:ok, _} = TOTPVault.register(v, "alice")
+    {:ok, current} = TOTPVault.current_code(v, "alice", time: 90_000)
+    {:ok, prev} = TOTPVault.current_code(v, "alice", time: 90_000 - 30)
+
+    assert TOTPVault.consume(v, "alice", current, time: 90_000) == :ok
+    assert TOTPVault.consume(v, "alice", prev, time: 90_000) == {:error, :replayed}
+
+    # The rejected attempt must not have lowered or cleared the stored step:
+    # the base-step code stays spent, and a later step is still spendable.
+    assert TOTPVault.consume(v, "alice", current, time: 90_000) == {:error, :replayed}
+    {:ok, next} = TOTPVault.current_code(v, "alice", time: 90_030)
+    assert TOTPVault.consume(v, "alice", next, time: 90_030) == :ok
+  end
+
+  test "a spent step stays rejected later even under a much wider window", %{vault: v} do
+    {:ok, _} = TOTPVault.register(v, "alice")
+    {:ok, code} = TOTPVault.current_code(v, "alice", time: 90_000)
+
+    assert TOTPVault.consume(v, "alice", code, time: 90_000) == :ok
+
+    # At time 90_120 the base step is 3004, so window 5 spans steps 2999..3009
+    # and therefore re-offers the already-spent step 3000.
+    assert TOTPVault.consume(v, "alice", code, time: 90_120, window: 5) == {:error, :replayed}
+  end
+
+  test "an integer code whose string form has a leading zero is accepted", %{vault: v} do
+    {:ok, _} = TOTPVault.register(v, "alice")
+
+    # A code below 100_000 loses its leading zero when handed over as an
+    # integer; the integer form must still match the padded code.
+    found =
+      Enum.find_value(0..999, fn step ->
+        {:ok, code} = TOTPVault.current_code(v, "alice", time: step * 30)
+        if String.starts_with?(code, "0"), do: {step, code}
+      end)
+
+    assert {step, code} = found
+    assert TOTPVault.consume(v, "alice", String.to_integer(code), time: step * 30) == :ok
+  end
+
+  test "a code numerically below 100000 is still six characters wide", %{vault: v} do
+    {:ok, _} = TOTPVault.register(v, "alice")
+
+    short =
+      Enum.find_value(0..999, fn step ->
+        {:ok, code} = TOTPVault.current_code(v, "alice", time: step * 30)
+        if String.to_integer(code) < 100_000, do: code
+      end)
+
+    assert is_binary(short)
+    assert byte_size(short) == 6
+    assert String.match?(short, ~r/\A0\d{5}\z/)
+  end
 end
 ```

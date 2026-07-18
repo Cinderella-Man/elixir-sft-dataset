@@ -166,4 +166,19 @@ defmodule FactoryTest do
     results = Task.await_many(tasks)
     assert length(Enum.uniq(results)) == 50
   end
+
+  test "sequence/2 counters are independent per name" do
+    assert Factory.sequence(:audit_indep_a, fn n -> n end) == 1
+    assert Factory.sequence(:audit_indep_a, fn n -> n end) == 2
+    assert Factory.sequence(:audit_indep_b, fn n -> n end) == 1
+    assert Factory.sequence(:audit_indep_a, fn n -> n end) == 3
+    assert Factory.sequence(:audit_indep_b, fn n -> n end) == 2
+  end
+
+  test "params_for(:post) user_id matches a user actually persisted in the repo" do
+    params = Factory.params_for(:post)
+    user = Enum.find(FakeRepo.all(), &(&1.id == params.user_id))
+    assert %MyApp.User{} = user
+    assert is_binary(user.email)
+  end
 end

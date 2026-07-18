@@ -32,6 +32,29 @@ delete + let the flow re-mint.
 
 ### 🔎 OPEN FINDINGS
 
+**3 real prompt gaps surfaced by the compile-15 re-audit (T2.6-class,
+Kamil's go needed — ~1 hand-edit + 1 blind solve each):** the promise
+audit grew vetted tests these prompts cannot carry blind, growth
+DISCARDED (roots untouched, green): 063_004 (grown pool test expects
+`{:ok, result}` per source but the blind solve returned `{:error,
+:normal}` task-die shapes — the prompt doesn't pin the result-map
+contract under pool exhaustion), 110_002 (histogram quantile
+determinism for a known distribution unstated), 134_003 (empty-fragment
+merge commutativity at the finalized level unstated). Flow: add the
+missing promise sentence(s), blind-verify, land, then re-run
+retro_audit on the root so the growth lands too.
+
+**104_004 waiter-deadline promise lacks a test + unexplained
+interleaving (2-tier):** the audit's grown "waiter served before its
+deadline gets no timeout reply after that deadline" test was removed as
+empirically flaky (~2 red / 21 grades; in_use==0 observed after a
+successful serve — NOT explained by code reading: both serve branches
+cancel the timer, stale fires no-op, uses bookkeeping correct). Task A
+candidate: re-pin that promise with a DETERMINISTIC test (no 150ms
+real-timer race). Task B candidate: bounded investigation of whether a
+real gold interleaving hides here (2 independent failures of
+behaviorally-identical code say the window is real, cause unknown).
+
 **prompt_precision.exs tool gaps, measured by the full run (Task B — apply
 before any future precision round):** (a) structural-vet failures discard
 the proposal WITHOUT saving to `logs/prompt_precision_candidates/` —
@@ -47,29 +70,14 @@ wiring in the strengthen path.
 terminate promptly without crashing" — F22 is the proof; fold into the
 T1.4 template rules alongside the LIFECYCLE RULE when next edited.
 
-**15 audit compile-class needs_triage rows — RE-AUDIT IN PROGRESS
-(Kamil's go 2026-07-18).** Root cause found: the 15 "compile:" rows were
-the blind SOLVER's candidate failing to compile (truncated/malformed
-replies) — zero evidence about the grown harness, mis-ledgered as a
-verdict. Task B DONE: `retro_audit.exs` verify_and_write now retries a
-non-compiling blind candidate once and ledgers a second failure under
-its own distinct label (self-test green). Task A RUNNING: the 15 rows
-removed from `logs/retro_audit.jsonl` (backup
-`logs/retro_audit.jsonl.bak_20260718_compile_triage`) so the roots
-re-open at the current gate; re-audit via
-`scripts/retro_audit.exs --only "<names>"` detached — pilot 078_001
-GREEN (harness grown 17→21, full gate stack + blind verify, WRITTEN;
-reviewed in detail), remaining 14 RUNNING as pid 496168; log
-`logs/retro_audit_compile15.log` (idempotent relaunch: same command —
-ledger resumes).
-Roots: 043_004, 061_003, 063_004, 071_001, 071_002, 071_003, 078_001,
-100_001, 100_002, 100_003, 100_004, 104_004, 110_002, 110_003, 134_003.
-AFTER: changed roots → cascade + commit; verdicts recorded in docs/15.
-NOTE (new two-tier finding, Task B pending): retro_audit's row key
-omits its own script bytes (gate_sha covers the four judged modules
-only — prompt_precision.exs hashes its own file and is the right
-pattern); fold the alignment in at the next deliberate ledger re-open,
-NOT now (adding it now would silently re-open all 314 sound verdicts).
+**retro_audit row-key gap (Task B pending):** the row key omits the
+script's own bytes (gate_sha covers the four judged modules only —
+prompt_precision.exs hashes its own file and is the right pattern);
+fold the alignment in at the next deliberate ledger re-open, NOT now
+(adding it now would silently re-open all 314 sound verdicts). Also
+park there: 3 chronic compile-artifact roots (071_001, 100_002,
+100_003 — long-solution blind replies truncate 3/3 samples; a
+continuation-aware blind solve would unlock their promise audits).
 
 **Cutover-checklist fold-in still to land (docs/12 §5.5): repairs must
 re-run the spec gate on the repaired file — F20 (a spec lie introduced
