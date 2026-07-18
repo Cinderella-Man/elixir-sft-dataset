@@ -80,6 +80,14 @@ jobs:
           out=$(mix run scripts/resync_adapt_embeds.exs)
           echo "$out"
           echo "$out" | grep -q "would_resync\|error" && exit 1 || true
+      # dedoc_ dirs are deterministic projections of the parent _01 (docs/13
+      # §2.3): a parent gold/harness edit must propagate, or 325 documentation
+      # pairs teach a stale module. Same self-test-then-dry-run pattern.
+      - run: mix run scripts/resync_dedoc_embeds.exs -- --self-test
+      - run: |
+          out=$(mix run scripts/resync_dedoc_embeds.exs)
+          echo "$out"
+          echo "$out" | grep -q "would_resync\|error" && exit 1 || true
       # Harnesses must not share a temp path across parallel evals: the validator
       # runs one BEAM per task, and System.unique_integer is unique only WITHIN a
       # BEAM, so two evals can open the same SQLite file (flaky 1-in-3 failures in
