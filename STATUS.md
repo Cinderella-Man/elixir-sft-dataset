@@ -17,30 +17,38 @@ the generator; pilots before full runs; one solved item = one commit)
 ### ▶️ NEXT SESSION RUNBOOK (written 2026-07-19 at context limit —
 ### follow IN ORDER; each step says exactly what and why)
 
-**STEP 0 — check the sfim reclaim (may still be running).**
-`kill -0 $(cat logs/sfim_reclaim.pid | grep -oE 'pid=[0-9]+' | cut -d= -f2)`
-— or just `pgrep -f mint_sfim`. Log `logs/sfim_reclaim.log`; final line is
-`sfim: %{...}`. It retries 175 targets that the FIRST full mint rejected
-because of a carver bug (clause_end truncated multi-line-guard heads to the
-bare head line; gut() then rejected every such degenerate carve — the 2,438
-units MINTED by the first pass are sound: single-line heads + proven
-test-kills). The bug is FIXED in scripts/mint_sfim.exs; the reclaim runs
-with the fix. Idempotent relaunch: `scripts/run_detached.sh
-logs/sfim_reclaim.log mix run scripts/mint_sfim.exs` (minted dirs +
-sha-keyed logs/sfim_rejected.jsonl rows skip).
+**OVERNIGHT SESSION 2026-07-19 (running now).** MONITOR PROTOCOL (Kamil
+01:10): a 15-min heartbeat background monitor is ALWAYS armed — fires on
+job exit OR every 15 min, re-armed on every wake; if the 5h token window
+exhausts, the queued heartbeat re-invokes the session the moment it
+refreshes (detached scripts ride outages on their own). Successor
+sessions: keep this cadence all night. Order tonight: STEP 1 land (in
+flight) → STEP 2 keep_land → STEP 3 refresh → STEP 4 file + IMPLEMENT
+the spec-embed gate → Phase B prep (docs/16 multi-turn format) if night
+remains. STEP 0 (sfim reclaim) is DONE; Phase C + the F24 carver finding
+it surfaced are fixed, verified and logged — full story in docs/15
+(2026-07-19 night entry).
 
-**STEP 1 — land the sfim yield (the corpus must be QUIET first: no
-mint/generate running).**
-1. Sample-validate: `elixir scripts/validate.exs --fim --only
-   "003_00*,020_00*,090_00*"` (any few families) — expect ALL PASS.
-2. `git add tasks/ scripts/mint_sfim.exs && git add -f
-   logs/sfim_rejected.jsonl && git commit` (~2,400-2,600 new `_0N` fim
-   dirs). NOTE: two LOCAL commits are already waiting unpushed (the miner
-   build + pilots) — this push carries them too.
-3. `git push` — earlier pushes FAILED only because corpus-wide gates
-   (freshness/format scans of tasks/) raced the running mint; on a quiet
-   corpus they pass. If a gate fails, read the push log FULLY (tail -20
-   loses the reason — capture to a file).
+**STEP 1 — land the sfim yield. STATE 02:05: verified end-to-end (F24
+fixed + gated at miner AND validate/CI; parse-scan 0 bad; dry-run census
+0 uncovered; sample validate 253 fim dirs ALL PASS incl. every former
+red) — commit + push IN FLIGHT.**
+Landing commit stages: tasks/ via `git add -A tasks/` (2,530 new `_0N`
+dirs + 4 tracked pilot-dir deletions; corpus QUIET so -A is safe),
+scripts/mint_sfim.exs + scripts/validate.exs (F24 fix + gates),
+STATUS.md + docs/15, `git add -f` logs/sfim_rejected.jsonl (rebuilt
+fresh, 118 rows) + logs/sfim_rejected_pre_f24.jsonl (forensic archive) +
+logs/tfim_rejected.jsonl (prior-phase residue). Two LOCAL commits ride
+along. Push runs DETACHED (pre-push hook is long): logs/push_step1.log —
+if a gate fails, read that log FULLY. Open notes for Kamil (non-
+blocking): (a) template-parenthetical harmonization — "including the
+@doc/@spec lines shown above it, if any" is mildly stale for doc-carved
+units (docs live in the GOLD now, absent from the skeleton; docless
+answers still grade 1.0; the gold's shape teaches house-style
+documenting, which is what we want) — harmonize via the STEP-4 resync
+gate in one deterministic pass if desired; (b) optional --self-test
+T-gate alignment for the validate-side F24 check (bite machine-proven
+tonight: fired on 1,084 real units + 4 fresh honest rejects).
 
 **STEP 2 — follow-up C landings (Kamil approved 2026-07-19; candidates
 are DRAFTED and verified-by-diff in `logs/followup_c_candidates/`).**

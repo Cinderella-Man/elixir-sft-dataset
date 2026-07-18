@@ -1,0 +1,1 @@
+  defp rank(role), do: Map.fetch!(@role_rank, role)

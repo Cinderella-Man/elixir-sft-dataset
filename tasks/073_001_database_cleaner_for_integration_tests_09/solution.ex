@@ -1,0 +1,1 @@
+  defp clear_state, do: Process.delete(@state_key)

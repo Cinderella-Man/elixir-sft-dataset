@@ -1,0 +1,1 @@
+  defp sort_field(params), do: Map.get(params, "sort", "id")

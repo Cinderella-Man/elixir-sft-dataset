@@ -1,0 +1,1 @@
+  def update_document(server, id, attrs), do: GenServer.call(server, {:update, id, attrs})

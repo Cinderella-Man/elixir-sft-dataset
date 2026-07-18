@@ -1,0 +1,1 @@
+  defp put_node(state, node), do: %{state | nodes: Map.put(state.nodes, node.id, node)}

@@ -1,0 +1,1 @@
+  def totals(pid), do: GenServer.call(pid, :totals)

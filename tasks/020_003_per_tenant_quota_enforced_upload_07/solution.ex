@@ -1,0 +1,1 @@
+  def save(server, account, metadata), do: GenServer.call(server, {:save, account, metadata})

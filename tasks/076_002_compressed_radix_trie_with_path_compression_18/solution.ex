@@ -1,0 +1,1 @@
+  defp drop(str, n), do: String.slice(str, n, String.length(str))

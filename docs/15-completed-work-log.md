@@ -9,6 +9,44 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-19 (night) — PHASE C SHIPPED THROUGH F24: deterministic sfim
+  landed at 2,530 units, all golds standalone-parseable, after the
+  runbook's own sample validation caught a carver defect in a third of
+  the first wave.** The story straight: the first mint (2,438) + fixed-
+  guard-head reclaim (614) + pilot (17, 4 of them defective) were staged
+  when STEP 1's sample validate returned 12 "mutant did not COMPILE"
+  reds. Diagnosis: attach_attrs committed `@doc`-heredoc CLOSERS eagerly
+  and halted on doc prose — 1,084 of 3,055 staged golds OPENED with a
+  dangling `"""` (skeletons kept the matching opener: both sides
+  malformed) while every splice-based mint gate stayed green, because
+  byte-perfect reconstruction cannot see truncation; validate --fim saw
+  it as mutant-C (unparseable gold → EvalTask.Fim.mutate rescue →
+  raise-splice). The earlier "2,438 first-pass units sound" claim was
+  wrong on this axis. Two-tier fix (F24): Task A — 1,088 dirs deleted
+  (incl. 4 committed pilot units), reject ledger archived to
+  logs/sfim_rejected_pre_f24.jsonl + PURGED (stale rows provably blocked
+  re-mints; every reject class is downstream of attach positions —
+  docs/12 §5.1.12 applied as full invalidation), full re-mint under the
+  fixed carver: 557 minted / 35 not-perfect / 73 uncarvable / 4
+  gut-uncompilable / 6 vacuous; the delete-set arithmetic closes exactly
+  (2,438+614+5 pilot+557−1,084 = 2,530). Task B — attach_attrs
+  rewritten pending/commit (closers cross only to an @doc-family opener,
+  whole heredoc attaches; unresolvable REJECTS; same for `)`/`|`/`"`
+  @spec continuations); in-miner hard gate: carved span must
+  Code.string_to_quoted-parse standalone (fired 4× on real exotics);
+  validate.exs corpus-integrity fails any :fim/:test_fim gold that does
+  not parse standalone — CI runs it in all three validate invocations.
+  Verification: corpus parse-scan 0 bad (bundle dirs are the only
+  by-design non-parsers), dry-run census 0 uncovered targets, sample
+  validate over 6 glob families (253 fim dirs incl. every former red)
+  ALL PASS, detailed reads of pilot + re-minted units (full @doc blocks
+  in golds — better SFT shape than the accident it replaces;
+  heredoc-balanced skeletons). Also understood + correctly refused:
+  bodiless-clause-head targets (~10, byte-perfect reconstruction
+  impossible → zero-warnings gate refuses honestly). Benign historical
+  note: 042_004 _03/_04 both carve handle_call (LLM-era per-clause
+  split, coherent units, pre-dates tonight).
+
 - **2026-07-20 — RUBRIC PASS #2 COMPLETE: the corpus's first
   judge-audit of PASSING tasks — one real finding (F23), instrument
   validated.** Two-model panel over the full 42-root stratified sample

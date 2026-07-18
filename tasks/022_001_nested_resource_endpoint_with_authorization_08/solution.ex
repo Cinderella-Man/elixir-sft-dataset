@@ -1,0 +1,1 @@
+  def get_user_by_token(server, token), do: GenServer.call(server, {:get_user_by_token, token})

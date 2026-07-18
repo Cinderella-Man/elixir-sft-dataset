@@ -1,0 +1,1 @@
+  defp key_of(p, params), do: {sort_value(p, sort_field(params)), p.id}

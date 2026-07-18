@@ -1,0 +1,1 @@
+  defp hash(item, seed, m), do: :erlang.phash2({seed, item}, m)

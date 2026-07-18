@@ -1,0 +1,1 @@
+  defp new_entry, do: %{buffer: [], count: 0, timer: nil, timer_ref: nil}

@@ -1,0 +1,1 @@
+  def team_exists?(server, team_id), do: GenServer.call(server, {:team_exists?, team_id})

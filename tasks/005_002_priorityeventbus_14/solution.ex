@@ -1,0 +1,1 @@
+  defp without(list, ref), do: Enum.reject(list, &(&1.ref == ref))

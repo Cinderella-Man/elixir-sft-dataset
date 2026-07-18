@@ -1,0 +1,1 @@
+  def get_payment(server, id), do: GenServer.call(server, {:get_payment, id})

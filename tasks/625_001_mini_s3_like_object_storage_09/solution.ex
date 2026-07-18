@@ -1,0 +1,1 @@
+  defp objects_dir(state, bucket), do: Path.join(bucket_dir(state, bucket), "objects")

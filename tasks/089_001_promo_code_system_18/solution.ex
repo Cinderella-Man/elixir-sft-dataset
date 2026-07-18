@@ -1,0 +1,1 @@
+  defp total_uses(state, code_string), do: Map.get(state.total_uses, code_string, 0)

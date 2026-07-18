@@ -1,0 +1,1 @@
+  defp merge_counts(acc, c), do: Map.merge(acc, c, fn _k, a, b -> a + b end)

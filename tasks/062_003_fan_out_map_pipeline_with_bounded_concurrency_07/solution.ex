@@ -1,0 +1,6 @@
+  @doc "Appends a sequential stage."
+  @spec stage(t(), atom(), stage_fun()) :: t()
+  def stage(%__MODULE__{stages: stages} = pipeline, name, fun)
+      when is_atom(name) and is_function(fun, 1) do
+    %__MODULE__{pipeline | stages: stages ++ [{:seq, name, fun}]}
+  end

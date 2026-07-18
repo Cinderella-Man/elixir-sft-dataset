@@ -1,0 +1,1 @@
+  defp new_node, do: %{children: %{}, end_of_word: false}

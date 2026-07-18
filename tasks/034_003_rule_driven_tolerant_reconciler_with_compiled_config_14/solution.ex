@@ -1,0 +1,1 @@
+  defp atoms?(list), do: Enum.all?(list, &is_atom/1)

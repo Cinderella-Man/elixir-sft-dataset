@@ -164,12 +164,23 @@ defmodule Validate do
           match_only?(name, only),
           do: name
 
+    # F24 gate: a fim/tfim gold is a SNIPPET spliced into a skeleton — the
+    # splice round-trip can be byte-perfect while the snippet itself is
+    # truncated (e.g. opens with a dangling `"""` heredoc closer, 2026-07-19).
+    # Standalone parseability catches every truncation class at the corpus
+    # boundary, on every validate invocation.
+    unparseable =
+      for t <- found,
+          t.shape in [:fim, :test_fim],
+          match?({:error, _}, Code.string_to_quoted(File.read!(t.solution))),
+          do: {:fail, t.name, "gold snippet is not standalone-parseable (F24 truncation class)"}
+
     failures =
       Enum.map(missing, &{:fail, &1.name, "solution.ex missing — task cannot be validated"}) ++
         Enum.map(
           unclassified,
           &{:fail, &1, "unclassifiable dir (no harness, not FIM-shaped) — dead weight or rot"}
-        )
+        ) ++ unparseable
 
     {found, failures}
   end

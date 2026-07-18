@@ -1,0 +1,1 @@
+  defp pow2(n), do: :math.pow(2, n) |> round()

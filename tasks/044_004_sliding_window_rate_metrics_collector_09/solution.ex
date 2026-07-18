@@ -1,0 +1,1 @@
+  defp now, do: :persistent_term.get({@table, :clock}).()

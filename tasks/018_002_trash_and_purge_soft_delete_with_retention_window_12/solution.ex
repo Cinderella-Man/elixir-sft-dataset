@@ -1,0 +1,1 @@
+  def purge_document(server, id), do: GenServer.call(server, {:purge, id})

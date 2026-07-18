@@ -1,0 +1,1 @@
+  defp next_counter(%{counter: c} = state), do: {c + 1, %{state | counter: c + 1}}

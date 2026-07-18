@@ -1,0 +1,1 @@
+  defp routing_table_name(name), do: :"#{name}_routing"

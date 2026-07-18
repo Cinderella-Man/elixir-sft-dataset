@@ -1,0 +1,1 @@
+  def get_document(server, id, opts \\ []), do: GenServer.call(server, {:get, id, opts})

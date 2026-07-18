@@ -1,0 +1,1 @@
+  defp dispensed_of(state, cs), do: Map.get(state.dispensed, cs, 0)

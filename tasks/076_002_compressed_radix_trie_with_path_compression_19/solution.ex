@@ -1,0 +1,1 @@
+  defp common_prefix(a, b), do: do_common(String.graphemes(a), String.graphemes(b), [])

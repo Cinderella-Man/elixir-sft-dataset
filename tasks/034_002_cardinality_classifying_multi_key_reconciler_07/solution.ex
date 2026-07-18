@@ -1,0 +1,1 @@
+  defp prepend(acc, bucket, entry), do: Map.update!(acc, bucket, &[entry | &1])

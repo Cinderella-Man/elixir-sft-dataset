@@ -1,0 +1,1 @@
+  defp new_stream, do: %{values: [], max_window_size: 0}

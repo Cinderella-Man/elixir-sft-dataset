@@ -1,0 +1,1 @@
+  defp live?(node), do: node.archived_at == nil

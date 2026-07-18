@@ -1,0 +1,1 @@
+  def get(server, key), do: GenServer.call(server, {:get, key})

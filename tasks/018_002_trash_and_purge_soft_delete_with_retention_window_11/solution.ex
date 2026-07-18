@@ -1,0 +1,1 @@
+  def restore_document(server, id), do: GenServer.call(server, {:restore, id})

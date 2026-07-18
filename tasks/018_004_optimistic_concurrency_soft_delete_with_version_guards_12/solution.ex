@@ -1,0 +1,1 @@
+  defp present?(value), do: is_binary(value) and String.trim(value) != ""

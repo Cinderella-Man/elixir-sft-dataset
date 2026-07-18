@@ -1,0 +1,1 @@
+  defp fresh_topic(default_size), do: %{history: [], history_size: default_size, subs: []}

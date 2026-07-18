@@ -1,0 +1,1 @@
+  def checkin(name, conn), do: GenServer.call(name, {:checkin, conn})

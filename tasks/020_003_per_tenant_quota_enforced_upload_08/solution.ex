@@ -1,0 +1,1 @@
+  def delete(server, account, id), do: GenServer.call(server, {:delete, account, id})

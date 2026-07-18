@@ -1,0 +1,1 @@
+  def check(server, name), do: GenServer.call(server, {:check, name})

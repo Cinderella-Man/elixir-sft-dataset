@@ -1,0 +1,1 @@
+  defp bit_offset(bit_index), do: rem(bit_index, 64)

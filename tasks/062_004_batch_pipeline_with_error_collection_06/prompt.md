@@ -1,0 +1,127 @@
+# Implement the missing function
+
+Below is the complete specification of a task, followed by a working,
+fully tested module that solves it — except that `stat_entry` has been
+removed: every clause body is blanked to `# TODO`. Implement exactly that
+function so the whole module passes the task's full test suite again.
+Change nothing else — every other function, attribute, and clause must
+stay exactly as shown.
+
+## The task
+
+Write me an Elixir module called `Pipeline` that builds linear stage pipelines and runs them over a **batch** of inputs, collecting successes and failures independently instead of halting the whole run on the first error.
+
+I need these functions in the public API:
+- `Pipeline.new()` — returns a fresh, empty pipeline struct.
+- `Pipeline.stage(pipeline, name, fun)` — appends a named stage. `name` is an atom; `fun` is a one-arity function that receives the current value and returns `{:ok, result}` or `{:error, reason}`. Stages are stored in insertion order. Reject invalid arguments — a non-atom `name`, or a `fun` whose arity is not one — with a `FunctionClauseError` (enforce this with guard clauses).
+- `Pipeline.run(pipeline, inputs)` — `inputs` is a **list** of items; a non-list `inputs` must raise a `FunctionClauseError` (enforce with a guard). Each item is threaded **independently** through all stages in order. If an item's stage returns `{:error, reason}`, that item halts (its later stages are skipped) and is recorded as a failure, but the batch continues processing the remaining items. Return `{:ok, report}` where `report` is a map:
+  - `:successes` — a list of `%{index: non_neg_integer, result: term}` for items that completed every stage, ordered by input index.
+  - `:failures` — a list of `%{index: non_neg_integer, stage: atom, reason: term}` for items that halted, ordered by input index.
+  - `:stage_stats` — a list, in pipeline stage order with **one entry per stage position** (so two stages that share a `name` keep independent counters), of `%{stage: atom, executions: non_neg_integer, total_duration_us: non_neg_integer}` where `executions` counts how many items actually ran that stage (items that halted earlier never reach it) and `total_duration_us` is the summed `:timer.tc/1` microseconds across those executions.
+
+An empty pipeline treats every item as an immediate success whose `result` is the input itself, and produces an empty `:stage_stats`. An empty `inputs` list yields empty `:successes` and `:failures`, with each stage's `executions` at `0` and `total_duration_us` at `0`.
+
+The module must not use a GenServer or any global state — it is a plain Elixir module working in the caller's process. Timing must use `:timer.tc/1` (microsecond resolution). Use only the standard library, no external dependencies. Give me the complete implementation in a single file.
+
+## The module with `stat_entry` missing
+
+```elixir
+defmodule Pipeline do
+  @moduledoc """
+  Linear stage pipelines run over a batch of inputs.
+
+  Each input item is threaded independently through the stages. A failing stage
+  halts only that item (recording it as a failure); the batch continues with the
+  remaining items. The final report separates successes from failures and
+  aggregates per-stage execution counts and timing.
+
+  Stage statistics are tracked per pipeline position, so two stages that share a
+  name keep independent counters.
+  """
+
+  defstruct stages: []
+
+  @type stage_fun :: (any() -> {:ok, any()} | {:error, any()})
+  @type t :: %__MODULE__{stages: [{atom(), stage_fun()}]}
+
+  @doc "Returns a fresh, empty pipeline."
+  @spec new() :: t()
+  def new, do: %__MODULE__{stages: []}
+
+  @doc "Appends a named stage in insertion order."
+  @spec stage(t(), atom(), stage_fun()) :: t()
+  def stage(%__MODULE__{stages: stages} = pipeline, name, fun)
+      when is_atom(name) and is_function(fun, 1) do
+    %__MODULE__{pipeline | stages: stages ++ [{name, fun}]}
+  end
+
+  @doc """
+  Runs every item in `inputs` independently through the pipeline, collecting a
+  report of `:successes`, `:failures`, and per-stage `:stage_stats`.
+  """
+  @spec run(t(), [any()]) :: {:ok, map()}
+  def run(%__MODULE__{stages: stages}, inputs) when is_list(inputs) do
+    indexed_stages = Enum.with_index(stages)
+
+    {successes, failures, stats} =
+      inputs
+      |> Enum.with_index()
+      |> Enum.reduce({[], [], %{}}, fn {input, index}, {succ, fail, stats} ->
+        case process_item(indexed_stages, input, stats) do
+          {:ok, result, stats2} ->
+            {[%{index: index, result: result} | succ], fail, stats2}
+
+          {:error, name, reason, stats2} ->
+            {succ, [%{index: index, stage: name, reason: reason} | fail], stats2}
+        end
+      end)
+
+    stage_stats =
+      Enum.map(indexed_stages, fn {{name, _fun}, position} ->
+        stat_entry(name, position, stats)
+      end)
+
+    {:ok,
+     %{
+       successes: Enum.reverse(successes),
+       failures: Enum.reverse(failures),
+       stage_stats: stage_stats
+     }}
+  end
+
+  # ---------------------------------------------------------------------------
+
+  defp process_item([], value, stats), do: {:ok, value, stats}
+
+  defp process_item([{{name, fun}, position} | rest], value, stats) do
+    {duration, result} = :timer.tc(fn -> fun.(value) end)
+    stats = bump(stats, position, duration)
+
+    case result do
+      {:ok, next_value} ->
+        process_item(rest, next_value, stats)
+
+      {:error, reason} ->
+        {:error, name, reason, stats}
+
+      other ->
+        raise ArgumentError,
+              "stage #{inspect(name)} returned an invalid value: #{inspect(other)}."
+    end
+  end
+
+  defp bump(stats, position, duration) do
+    Map.update(stats, position, {1, duration}, fn {count, total} ->
+      {count + 1, total + duration}
+    end)
+  end
+
+  defp stat_entry(name, position, stats) do
+    # TODO
+  end
+end
+```
+
+Give me only the complete implementation of `stat_entry` (including the
+`@doc`/`@spec`/`@impl` lines shown above it in the module, if any) — the
+function alone, not the whole module.

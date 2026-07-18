@@ -1,0 +1,1 @@
+  defp user_uses(state, cs, uid), do: Map.get(state.user_uses, {cs, uid}, 0)

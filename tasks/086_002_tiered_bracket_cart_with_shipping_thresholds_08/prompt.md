@@ -1,0 +1,183 @@
+# Implement the missing function
+
+Below is the complete specification of a task, followed by a working,
+fully tested module that solves it — except that `build_summary` has been
+removed: every clause body is blanked to `# TODO`. Implement exactly that
+function so the whole module passes the task's full test suite again.
+Change nothing else — every other function, attribute, and clause must
+stay exactly as shown.
+
+## The task
+
+Write me an Elixir context module called `Cart` that implements an in-memory shopping cart with **tiered bulk-discount brackets** and **shipping-threshold** logic.
+
+I need these functions in the public API:
+- `Cart.new(opts \\ [])` to create a new cart struct. It should accept:
+  - `:tax_rate` — a float (e.g. `0.08` for 8%). Defaults to `0.0`.
+  - `:discount_tiers` — a list of `{min_quantity, rate}` tuples describing per-line quantity brackets. Defaults to `[{10, 0.05}, {25, 0.10}, {50, 0.15}]`.
+  - `:shipping_flat` — a flat shipping cost (float) added to the order. Defaults to `0.0`.
+  - `:free_shipping_threshold` — if the discounted subtotal is greater than or equal to this value, shipping is waived. Defaults to `nil` (never waived automatically).
+- `Cart.add_item(cart, product_id, quantity, unit_price)` which adds the given quantity of a product at the given unit price. If the product already exists, increase its quantity. Reject with `{:error, :invalid_quantity}` if quantity is not a positive integer. Returns `{:ok, cart}` on success.
+- `Cart.remove_item(cart, product_id)` which removes a product entirely. If the product is not present, return the cart unchanged.
+- `Cart.update_quantity(cart, product_id, quantity)` which sets the quantity of an existing item. If quantity is 0, remove the item. If the product is not in the cart, return `{:error, :not_found}`. Reject with `{:error, :invalid_quantity}` if quantity is negative. Returns `{:ok, cart}` on success.
+- `Cart.calculate_totals(cart)` which returns a map with:
+  - `:subtotal` — sum of each item's line total after its bracket discount
+  - `:tax` — `subtotal * tax_rate` (tax is charged on the discounted subtotal only, NOT on shipping)
+  - `:shipping` — the shipping cost for this order (see rules below)
+  - `:grand_total` — `subtotal + tax + shipping`
+  - `:items` — a list of maps, one per cart item, each with `:product_id`, `:quantity`, `:unit_price`, `:discount_rate`, and `:line_total`
+
+Bracket discount rule: for each line item, choose the **highest applicable tier** — the tier with the largest `min_quantity` that is less than or equal to the line's quantity. Apply that tier's rate to the unit price before computing the line total. If no tier applies, the discount rate is `0.0`.
+
+Shipping rule: if the cart has **no items**, shipping is `0.0`. Otherwise, if `:free_shipping_threshold` is a number and the discounted subtotal is greater than or equal to it, shipping is `0.0`; otherwise shipping is `:shipping_flat`.
+
+The `Cart` struct must be a pure data structure — no database, no GenServer, no processes. All monetary values are floats. Give me the complete module in a single file with no external dependencies.
+
+## Additional interface contract
+
+- The cart returned by `Cart.new/1` is a struct whose configuration is exposed as public fields matching the options above — `:tax_rate`, `:discount_tiers`, `:shipping_flat`, and `:free_shipping_threshold` hold the configured (or default) values — plus an `:items` field, a map keyed by product id that is `%{}` for a new, empty cart.
+
+## The module with `build_summary` missing
+
+```elixir
+defmodule Cart do
+  @moduledoc """
+  An in-memory shopping cart with tiered bulk-discount brackets and
+  shipping-threshold logic.
+
+  Each line item receives the highest applicable quantity-bracket discount.
+  Shipping is a flat cost that may be waived once the discounted subtotal
+  reaches a configured threshold.  Tax is charged on the discounted subtotal
+  only — never on shipping.
+  """
+
+  @default_tiers [{10, 0.05}, {25, 0.10}, {50, 0.15}]
+
+  defmodule Item do
+    @moduledoc "A single line item inside a `Cart`."
+    @enforce_keys [:product_id, :quantity, :unit_price]
+    defstruct [:product_id, :quantity, :unit_price]
+  end
+
+  @enforce_keys [:tax_rate, :items, :discount_tiers, :shipping_flat, :free_shipping_threshold]
+  defstruct tax_rate: 0.0,
+            items: %{},
+            discount_tiers: @default_tiers,
+            shipping_flat: 0.0,
+            free_shipping_threshold: nil
+
+  @doc "Creates a new, empty cart. See the module doc for supported options."
+  @spec new(keyword()) :: %Cart{}
+  def new(opts \\ []) do
+    %Cart{
+      tax_rate: Keyword.get(opts, :tax_rate, 0.0),
+      items: %{},
+      discount_tiers: Keyword.get(opts, :discount_tiers, @default_tiers),
+      shipping_flat: Keyword.get(opts, :shipping_flat, 0.0),
+      free_shipping_threshold: Keyword.get(opts, :free_shipping_threshold, nil)
+    }
+  end
+
+  @doc "Adds `quantity` of `product_id` at `unit_price`, summing existing quantities."
+  @spec add_item(%Cart{}, term(), pos_integer(), float()) ::
+          {:ok, %Cart{}} | {:error, :invalid_quantity}
+  def add_item(%Cart{} = cart, product_id, quantity, unit_price)
+      when is_integer(quantity) and quantity > 0 do
+    updated =
+      Map.update(
+        cart.items,
+        product_id,
+        %Item{product_id: product_id, quantity: quantity, unit_price: unit_price},
+        fn %Item{} = existing -> %Item{existing | quantity: existing.quantity + quantity} end
+      )
+
+    {:ok, %Cart{cart | items: updated}}
+  end
+
+  def add_item(%Cart{}, _product_id, _quantity, _unit_price),
+    do: {:error, :invalid_quantity}
+
+  @doc "Removes `product_id` entirely; a no-op when absent."
+  @spec remove_item(%Cart{}, term()) :: %Cart{}
+  def remove_item(%Cart{} = cart, product_id),
+    do: %Cart{cart | items: Map.delete(cart.items, product_id)}
+
+  @doc "Sets an existing item's quantity; 0 removes it."
+  @spec update_quantity(%Cart{}, term(), non_neg_integer()) ::
+          {:ok, %Cart{}} | {:error, :not_found | :invalid_quantity}
+  def update_quantity(%Cart{} = cart, product_id, quantity)
+      when is_integer(quantity) and quantity >= 0 do
+    case Map.fetch(cart.items, product_id) do
+      :error ->
+        {:error, :not_found}
+
+      {:ok, _item} when quantity == 0 ->
+        {:ok, remove_item(cart, product_id)}
+
+      {:ok, %Item{} = item} ->
+        updated = Map.put(cart.items, product_id, %Item{item | quantity: quantity})
+        {:ok, %Cart{cart | items: updated}}
+    end
+  end
+
+  def update_quantity(%Cart{}, _product_id, _quantity),
+    do: {:error, :invalid_quantity}
+
+  @doc "Computes the totals map for the cart's current state."
+  @spec calculate_totals(%Cart{}) :: %{
+          subtotal: float(),
+          tax: float(),
+          shipping: float(),
+          grand_total: float(),
+          items: [map()]
+        }
+  def calculate_totals(%Cart{} = cart) do
+    items =
+      cart.items
+      |> Map.values()
+      |> Enum.map(&build_summary(&1, cart.discount_tiers))
+
+    subtotal = Enum.reduce(items, 0.0, fn i, acc -> acc + i.line_total end)
+    tax = subtotal * cart.tax_rate
+    shipping = shipping_cost(items, subtotal, cart)
+
+    %{
+      items: items,
+      subtotal: subtotal,
+      tax: tax,
+      shipping: shipping,
+      grand_total: subtotal + tax + shipping
+    }
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private helpers
+  # ---------------------------------------------------------------------------
+
+  defp build_summary(%Item{} = item, tiers) do
+    # TODO
+  end
+
+  defp discount_for(quantity, tiers) do
+    tiers
+    |> Enum.filter(fn {min, _rate} -> quantity >= min end)
+    |> case do
+      [] -> 0.0
+      applicable -> applicable |> Enum.max_by(fn {min, _rate} -> min end) |> elem(1)
+    end
+  end
+
+  defp shipping_cost([], _subtotal, _cart), do: 0.0
+
+  defp shipping_cost(_items, subtotal, %Cart{
+         free_shipping_threshold: threshold,
+         shipping_flat: flat
+       }) do
+    if is_number(threshold) and subtotal >= threshold, do: 0.0, else: flat
+  end
+end
+```
+
+Give me only the complete implementation of `build_summary` (including the
+`@doc`/`@spec`/`@impl` lines shown above it in the module, if any) — the
+function alone, not the whole module.

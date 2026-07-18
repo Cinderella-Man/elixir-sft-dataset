@@ -1,0 +1,1 @@
+  def window(server, name), do: GenServer.call(server, {:window, name})

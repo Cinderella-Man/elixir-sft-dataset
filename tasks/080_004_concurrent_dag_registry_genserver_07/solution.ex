@@ -1,0 +1,1 @@
+  def add_edge(server, from, to), do: GenServer.call(server, {:add_edge, from, to})

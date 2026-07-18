@@ -1,0 +1,1 @@
+  defp sort_desc(chunk), do: Enum.sort_by(chunk, fn {priority, _payload} -> priority end, :desc)

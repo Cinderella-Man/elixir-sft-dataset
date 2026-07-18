@@ -1,0 +1,1 @@
+  defp table, do: :persistent_term.get(@pt_table, @default_table)

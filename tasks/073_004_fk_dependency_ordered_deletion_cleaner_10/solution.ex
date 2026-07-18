@@ -1,0 +1,1 @@
+  defp get_state, do: Process.get(@state_key)

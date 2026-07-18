@@ -1,0 +1,6 @@
+  defp increment(counters, idx) do
+    case elem(counters, idx) do
+      v when v >= @max_count -> counters
+      v -> put_elem(counters, idx, v + 1)
+    end
+  end

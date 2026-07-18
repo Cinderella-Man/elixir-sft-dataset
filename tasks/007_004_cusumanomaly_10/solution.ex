@@ -1,0 +1,1 @@
+  defp stream_for(state, name), do: Map.get(state.streams, name, reset_stream())

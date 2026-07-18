@@ -1,0 +1,1 @@
+  defp advance(state), do: %{state | next_emit: state.next_emit + state.interval}

@@ -1,0 +1,1 @@
+  defp order_table_name(name), do: :"#{name}_order"

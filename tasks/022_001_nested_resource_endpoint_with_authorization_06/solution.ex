@@ -1,0 +1,1 @@
+  def create_user(server, id, token), do: GenServer.call(server, {:create_user, id, token})

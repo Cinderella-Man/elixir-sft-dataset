@@ -1,0 +1,1 @@
+  def jobs(server), do: GenServer.call(server, :jobs)

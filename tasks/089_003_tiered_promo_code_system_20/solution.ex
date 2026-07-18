@@ -1,0 +1,1 @@
+  defp total_uses(state, cs), do: Map.get(state.total_uses, cs, 0)

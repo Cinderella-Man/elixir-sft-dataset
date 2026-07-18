@@ -1,0 +1,1 @@
+  defp state_table, do: :persistent_term.get(@pt_state, @default_table)

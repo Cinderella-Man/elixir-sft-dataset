@@ -1,0 +1,1 @@
+  defp run(func), do: spawn(fn -> func.() end)

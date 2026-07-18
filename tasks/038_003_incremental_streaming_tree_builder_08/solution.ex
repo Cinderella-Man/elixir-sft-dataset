@@ -1,0 +1,1 @@
+  def forest(server), do: GenServer.call(server, :forest)

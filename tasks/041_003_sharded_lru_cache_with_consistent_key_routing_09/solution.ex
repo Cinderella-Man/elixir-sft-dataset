@@ -1,0 +1,1 @@
+  defp shard_name_for_index(name, idx), do: :"#{name}_shard_#{idx}"

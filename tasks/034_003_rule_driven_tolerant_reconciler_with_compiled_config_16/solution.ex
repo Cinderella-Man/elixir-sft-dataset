@@ -1,0 +1,1 @@
+  defp key_of(record, key_fields), do: Enum.map(key_fields, &Map.get(record, &1))

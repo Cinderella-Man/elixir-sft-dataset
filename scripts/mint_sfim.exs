@@ -159,14 +159,32 @@ defmodule MintSfim do
         :uncarvable
 
       {:ok, gold} ->
-        case try_skeleton(cand.src, gold) do
-          {:error, why} ->
-            record_dead(cand, "skeleton: " <> why)
+        # F24 hard gate: the gold must be a standalone-parseable snippet. The
+        # splice-based round-trip/eval gates cannot see truncated attachments
+        # (a dangling heredoc closer reconstructs byte-perfectly); this can.
+        case Code.string_to_quoted(gold) do
+          {:error, {_meta, msg, tok}} ->
+            record_dead(
+              cand,
+              "span not standalone-parseable: #{inspect(msg) |> String.slice(0, 120)} #{inspect(tok)}"
+            )
+
             :uncarvable
 
-          {:ok, skeleton} ->
-            stage_and_gate(cand, gold, skeleton)
+          {:ok, _} ->
+            mint_parseable(cand, gold)
         end
+    end
+  end
+
+  defp mint_parseable(cand, gold) do
+    case try_skeleton(cand.src, gold) do
+      {:error, why} ->
+        record_dead(cand, "skeleton: " <> why)
+        :uncarvable
+
+      {:ok, skeleton} ->
+        stage_and_gate(cand, gold, skeleton)
     end
   end
 
@@ -287,53 +305,135 @@ defmodule MintSfim do
 
       _ ->
         spans = Enum.map(starts, fn s -> {attach_attrs(lines, s), clause_end(lines, s)} end)
-        {lo, _} = Enum.min_by(spans, &elem(&1, 0))
-        hi = spans |> Enum.map(&elem(&1, 1)) |> Enum.max()
 
-        # Contiguity: nothing but the clauses + attrs + blank lines between lo..hi
-        # may belong to OTHER functions. If another def sits inside, reject.
-        foreign =
-          Enum.any?(lo..hi, fn i ->
-            l = Enum.at(lines, i)
+        case Enum.find_value(spans, fn
+               {{:reject, why}, _} -> why
+               _ -> nil
+             end) do
+          why when is_binary(why) ->
+            {:error, "attach: " <> why}
 
-            String.match?(l, ~r/^  (def|defp) /) and not Regex.match?(re, l)
-          end)
-
-        if foreign do
-          {:error, "clauses of #{name} interleave with other functions"}
-        else
-          {:ok, lines |> Enum.slice(lo..hi) |> Enum.join("\n")}
+          nil ->
+            carve_span(lines, spans, re, name)
         end
     end
   end
 
-  # Attach @doc/@spec/@impl/@typedoc + comment lines directly above a clause.
-  defp attach_attrs(lines, start) do
-    Stream.iterate(start - 1, &(&1 - 1))
-    |> Enum.reduce_while(start, fn i, acc ->
-      if i < 0 do
-        {:halt, acc}
-      else
-        t = String.trim(Enum.at(lines, i))
+  defp carve_span(lines, spans, re, name) do
+    lo = spans |> Enum.map(fn {{:ok, a}, _} -> a end) |> Enum.min()
+    hi = spans |> Enum.map(&elem(&1, 1)) |> Enum.max()
 
-        cond do
-          String.starts_with?(t, ["@doc", "@spec", "@impl", "@typedoc", "#"]) -> {:cont, i}
-          t == "\"\"\"" or String.starts_with?(t, ["\"", "|", ")"]) -> {:cont, i}
-          true -> {:halt, acc}
-        end
-      end
-    end)
+    # Contiguity: nothing but the clauses + attrs + blank lines between lo..hi
+    # may belong to OTHER functions. If another def sits inside, reject.
+    foreign =
+      Enum.any?(lo..hi, fn i ->
+        l = Enum.at(lines, i)
+
+        String.match?(l, ~r/^  (def|defp) /) and not Regex.match?(re, l)
+      end)
+
+    if foreign do
+      {:error, "clauses of #{name} interleave with other functions"}
+    else
+      {:ok, lines |> Enum.slice(lo..hi) |> Enum.join("\n")}
+    end
   end
 
-  # A clause ends at its matching 2-space `end`, or at the last continuation
-  # line of a `, do:` one-liner (dedoc's balance discipline).
-  defp clause_end(lines, start) do
-    head = Enum.at(lines, start)
+  # Attach @doc/@spec/@impl/@typedoc + comment lines directly above a clause.
+  #
+  # Pending/commit design (F24): the span start only advances onto a line
+  # PROVEN to belong to an attachable block. A bare heredoc closer directly
+  # above the clause means the function is documented — it attaches only by
+  # crossing to its `@doc`-family opener, bringing the WHOLE block; if the
+  # opener can't be resolved the target is REJECTED, never minted clause-only
+  # under visible docs (the prompt's "including the @doc/@spec lines shown
+  # above it" contract). Multi-line `@spec` continuations (`)`/`|`/`"`-led
+  # lines) cross to their `@spec` opener the same way. The first version
+  # committed closers eagerly and halted on doc prose, shipping golds that
+  # OPENED with a dangling `"""` (1,084 units, caught by validate --fim's
+  # mutant-C verdicts 2026-07-19); the standalone-parse gate in mint_one is
+  # the belt to this suspenders.
+  defp attach_attrs(lines, start), do: do_attach(lines, start - 1, start)
 
-    if String.match?(head, ~r/\bdo\s*$/) do
-      Enum.find(start..(length(lines) - 1), start, fn i -> Enum.at(lines, i) == "  end" end)
-    else
-      finish_oneliner(lines, start)
+  defp do_attach(_lines, i, acc) when i < 0, do: {:ok, acc}
+
+  defp do_attach(lines, i, acc) do
+    t = String.trim(Enum.at(lines, i))
+
+    cond do
+      t in [~s("""), ~s(''')] ->
+        case opener_above(lines, i - 1, :doc) do
+          {:ok, j} -> do_attach(lines, j - 1, j)
+          :not_found -> {:reject, "doc heredoc closer above the clause has no @doc opener"}
+        end
+
+      String.starts_with?(t, [")", "|", "\""]) ->
+        case opener_above(lines, i - 1, :spec) do
+          {:ok, j} -> do_attach(lines, j - 1, j)
+          :not_found -> {:reject, "attr continuation line above the clause has no @spec opener"}
+        end
+
+      String.starts_with?(t, ["@doc", "@spec", "@impl", "@typedoc", "#"]) ->
+        do_attach(lines, i - 1, i)
+
+      true ->
+        {:ok, acc}
+    end
+  end
+
+  # Nearest line above that opens the construct we are inside. :doc wants an
+  # `@doc`-family line ending with a heredoc opener; :spec wants an `@spec`
+  # line. A bare closer en route is structurally impossible (a heredoc's
+  # interior cannot contain its own bare terminator line) and aborts; :spec
+  # additionally aborts on blank/def/end lines, which type syntax never spans.
+  defp opener_above(_lines, i, _kind) when i < 0, do: :not_found
+
+  defp opener_above(lines, i, kind) do
+    t = String.trim(Enum.at(lines, i))
+
+    cond do
+      kind == :doc and String.starts_with?(t, "@doc") and
+          (String.ends_with?(t, ~s(""")) or String.ends_with?(t, ~s('''))) ->
+        {:ok, i}
+
+      kind == :spec and String.starts_with?(t, "@spec") ->
+        {:ok, i}
+
+      t in [~s("""), ~s(''')] ->
+        :not_found
+
+      kind == :spec and
+          (t == "" or t == "end" or String.starts_with?(t, ["def ", "defp ", "defmacro"])) ->
+        :not_found
+
+      true ->
+        opener_above(lines, i - 1, kind)
+    end
+  end
+
+  # A clause ends at its matching 2-space `end` (block form), or at the last
+  # continuation line of a `, do:` one-liner. The clause's `do` may sit on a
+  # CONTINUATION line (multi-line guard heads: `def f(a)\n  when g(a) do`) —
+  # the first version checked only the head line, truncated such golds to the
+  # bare head, and 120 units died in gut() as "no clause head" (the accidental
+  # integrity gate). Search forward for this clause's do-line first; a foreign
+  # def encountered en route is left to carve's contiguity check to reject.
+  defp clause_end(lines, start) do
+    do_i =
+      Enum.find(start..(length(lines) - 1), fn i ->
+        l = Enum.at(lines, i)
+        String.match?(l, ~r/\bdo\s*$/) or String.match?(l, ~r/,\s*do:/)
+      end)
+
+    cond do
+      do_i == nil ->
+        start
+
+      String.match?(Enum.at(lines, do_i), ~r/,\s*do:/) ->
+        finish_oneliner(lines, do_i)
+
+      true ->
+        Enum.find(do_i..(length(lines) - 1), do_i, fn i -> Enum.at(lines, i) == "  end" end)
     end
   end
 

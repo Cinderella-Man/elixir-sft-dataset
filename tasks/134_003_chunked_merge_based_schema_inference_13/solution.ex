@@ -1,0 +1,1 @@
+  defp float?(value), do: Regex.match?(~r/^[+-]?\d+\.\d+$/, value)

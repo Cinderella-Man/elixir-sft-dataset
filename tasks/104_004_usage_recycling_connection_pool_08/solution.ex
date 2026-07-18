@@ -1,0 +1,1 @@
+  def stats(name), do: GenServer.call(name, :stats)

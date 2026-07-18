@@ -1,0 +1,1 @@
+  defp data_table_name(name), do: :"#{name}_data"

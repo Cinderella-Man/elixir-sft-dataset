@@ -1,0 +1,1 @@
+  defp category_facets(products), do: Enum.frequencies_by(products, & &1.category)

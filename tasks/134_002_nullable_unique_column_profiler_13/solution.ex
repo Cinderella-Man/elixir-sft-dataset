@@ -1,0 +1,1 @@
+  defp integer?(value), do: Regex.match?(~r/^[+-]?\d+$/, value)

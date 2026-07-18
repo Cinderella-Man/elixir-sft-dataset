@@ -1,0 +1,1 @@
+  def soft_delete_document(server, id), do: GenServer.call(server, {:soft_delete, id})

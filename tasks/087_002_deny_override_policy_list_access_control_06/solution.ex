@@ -1,0 +1,1 @@
+  defp effect_of(stmt), do: Map.get(stmt, :effect, :allow)

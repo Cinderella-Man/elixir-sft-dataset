@@ -1,0 +1,1 @@
+  defp locked?(kpath, %{locked_paths: locked}), do: kpath in locked

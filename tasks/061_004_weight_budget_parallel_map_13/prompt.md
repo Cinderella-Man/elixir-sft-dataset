@@ -1,0 +1,225 @@
+# Implement the missing function
+
+Below is the complete specification of a task, followed by a working,
+fully tested module that solves it — except that `pmap` has been
+removed: every clause body is blanked to `# TODO`. Implement exactly that
+function so the whole module passes the task's full test suite again.
+Change nothing else — every other function, attribute, and clause must
+stay exactly as shown.
+
+## The task
+
+Write me an Elixir module called `WeightedMap` that applies a function to a collection in
+parallel, but where the concurrency limit is a **weight budget** rather than a simple task
+count.
+
+I need one public function:
+- `WeightedMap.pmap(collection, func, weight_fun, budget)` where `weight_fun` maps an
+  element to a **positive integer** weight and `budget` is a positive integer. It applies
+  `func` to each element in parallel such that the **sum of the weights of all in-flight
+  tasks never exceeds `budget`**. Results are returned in the **same order** as the input
+  collection, regardless of completion order.
+
+Admission rules:
+- Admit elements in **strict input order (head-of-line blocking)**: only the element at the
+  head of the queue is eligible to start, and it starts only once the currently running
+  total weight plus its own weight is `<= budget`. If the head does not fit, nothing behind
+  it may start — a lighter element further back must **not** jump ahead of a blocked heavier
+  head.
+- Special case: if a single element's weight is **greater than `budget`**, it would
+  otherwise never run — so allow it to run **alone** (only when nothing else is currently
+  running). While it runs, no other element may start.
+
+Task crash handling: if `func` raises or the spawned task exits abnormally for a given
+element, that element's result should be `{:error, reason}` — this must not affect or cancel
+other in-flight tasks, and the element's weight must be released back to the budget.
+
+You will also need to write a helper GenServer called `WeightMeter` in the same file. It must
+expose:
+- `WeightMeter.start_link(opts)` — starts the process, accepts `:name`
+- `WeightMeter.add(server, weight)` — adds `weight` to the in-flight total, returns the new total
+- `WeightMeter.sub(server, weight)` — subtracts `weight` from the in-flight total, returns the new total
+- `WeightMeter.peak(server)` — returns the highest in-flight total the meter has ever reached
+
+`WeightMeter` is intended for use in tests to verify that the weight budget is actually
+respected at runtime; your `pmap` implementation itself does not need to use it.
+
+Give me the complete implementation in a single file. Use only OTP and the standard library —
+no external dependencies. Do not use `Task.async_stream`; implement the weight-aware
+admission and scheduling logic yourself using `spawn_monitor`.
+
+## Additional interface contract
+
+- `pmap/4` validates weights: if `weight_fun` returns anything other than a positive
+  integer for some element (e.g. `0`), it raises an `ArgumentError`.
+
+## The module with `pmap` missing
+
+```elixir
+defmodule WeightMeter do
+  @moduledoc """
+  A GenServer that tracks a running total of in-flight weight and remembers the
+  highest total it has ever reached. Intended for tests to verify that
+  `WeightedMap.pmap/4` never exceeds its declared weight budget at runtime.
+  """
+
+  use GenServer
+
+  @doc """
+  Starts the meter. Accepts `:name` to register the process; any other options
+  are passed through to `GenServer.start_link/3`.
+  """
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    {name, server_opts} =
+      case Keyword.pop(opts, :name) do
+        {nil, rest} -> {__MODULE__, rest}
+        {name, rest} -> {name, rest}
+      end
+
+    GenServer.start_link(__MODULE__, %{current: 0, peak: 0}, [{:name, name} | server_opts])
+  end
+
+  @doc "Adds `weight` to the in-flight total and returns the new total."
+  @spec add(GenServer.server(), integer()) :: integer()
+  def add(server, weight), do: GenServer.call(server, {:add, weight})
+
+  @doc "Subtracts `weight` from the in-flight total and returns the new total."
+  @spec sub(GenServer.server(), integer()) :: integer()
+  def sub(server, weight), do: GenServer.call(server, {:sub, weight})
+
+  @doc "Returns the highest in-flight total the meter has ever reached."
+  @spec peak(GenServer.server()) :: integer()
+  def peak(server), do: GenServer.call(server, :peak)
+
+  @impl true
+  def init(state), do: {:ok, state}
+
+  @impl true
+  def handle_call({:add, weight}, _from, %{current: current, peak: peak} = state) do
+    new_current = current + weight
+    {:reply, new_current, %{state | current: new_current, peak: max(new_current, peak)}}
+  end
+
+  def handle_call({:sub, weight}, _from, %{current: current} = state) do
+    new_current = current - weight
+    {:reply, new_current, %{state | current: new_current}}
+  end
+
+  def handle_call(:peak, _from, %{peak: peak} = state), do: {:reply, peak, state}
+end
+
+defmodule WeightedMap do
+  @moduledoc """
+  Parallel map whose concurrency is bounded by a weight *budget*: the sum of the
+  weights of all in-flight tasks never exceeds `budget`. Elements are admitted in
+  input order; an element heavier than the whole budget is allowed to run alone.
+
+  Results are returned in input order; a raised exception or abnormal task exit
+  yields `{:error, reason}` for that element and releases its weight, leaving all
+  other in-flight tasks untouched.
+  """
+
+  def pmap(collection, func, weight_fun, budget)
+      when is_function(func, 1) and is_function(weight_fun, 1) and
+             is_integer(budget) and budget >= 1 do
+    # TODO
+  end
+
+  # Admit as many queued elements as the budget allows, then wait for one to
+  # finish; repeat until everything is done.
+  defp run(state) do
+    state = admit(state)
+
+    if map_size(state.running) == 0 and state.queue == [] do
+      state.results
+    else
+      state |> collect_one() |> run()
+    end
+  end
+
+  # Head-of-line admission: keep starting the queue head while it fits, or while
+  # it is an oversize element and nothing else is running.
+  defp admit(%{queue: []} = state), do: state
+
+  defp admit(%{queue: [{elem, idx, w} | rest]} = state) do
+    %{running: running, weight: weight, budget: budget} = state
+
+    cond do
+      weight + w <= budget ->
+        {ref, entry} = spawn_task(state.parent, state.func, elem, idx, w)
+        admit(%{state | queue: rest, running: Map.put(running, ref, entry), weight: weight + w})
+
+      weight == 0 and w > budget ->
+        {ref, entry} = spawn_task(state.parent, state.func, elem, idx, w)
+        admit(%{state | queue: rest, running: Map.put(running, ref, entry), weight: weight + w})
+
+      true ->
+        state
+    end
+  end
+
+  defp spawn_task(parent, func, elem, idx, w) do
+    ref = make_ref()
+
+    {_pid, mon} =
+      spawn_monitor(fn ->
+        result =
+          try do
+            {:ok, func.(elem)}
+          rescue
+            e -> {:error, {e, __STACKTRACE__}}
+          catch
+            :exit, r -> {:error, r}
+            :throw, t -> {:error, {:throw, t}}
+          end
+
+        send(parent, {ref, result})
+      end)
+
+    {ref, {mon, idx, w}}
+  end
+
+  defp collect_one(%{running: running} = state) do
+    receive do
+      {ref, result} when is_map_key(running, ref) ->
+        {mon, idx, w} = Map.fetch!(running, ref)
+        Process.demonitor(mon, [:flush])
+
+        outcome =
+          case result do
+            {:ok, value} -> value
+            {:error, reason} -> {:error, reason}
+          end
+
+        %{
+          state
+          | running: Map.delete(running, ref),
+            weight: state.weight - w,
+            results: Map.put(state.results, idx, outcome)
+        }
+
+      {:DOWN, mon, :process, _pid, reason} ->
+        case Enum.find(running, fn {_ref, {m, _idx, _w}} -> m == mon end) do
+          {ref, {_mon, idx, w}} ->
+            %{
+              state
+              | running: Map.delete(running, ref),
+                weight: state.weight - w,
+                results: Map.put(state.results, idx, {:error, reason})
+            }
+
+          nil ->
+            collect_one(state)
+        end
+
+      _other ->
+        collect_one(state)
+    end
+  end
+end
+```
+
+Give me only the complete implementation of `pmap` (including the
+`@doc`/`@spec`/`@impl` lines shown above it in the module, if any) — the
+function alone, not the whole module.

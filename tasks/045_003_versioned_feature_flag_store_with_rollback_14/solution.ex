@@ -1,0 +1,1 @@
+  defp hist_table, do: :persistent_term.get(@pt_hist)

@@ -1,0 +1,1 @@
+  defp new_vault, do: %{forward: %{}, reverse: %{}, counters: %{}}

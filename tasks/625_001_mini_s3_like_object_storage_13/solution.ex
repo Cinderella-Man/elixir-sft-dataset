@@ -1,0 +1,1 @@
+  defp bucket_exists?(state, bucket), do: File.dir?(bucket_dir(state, bucket))

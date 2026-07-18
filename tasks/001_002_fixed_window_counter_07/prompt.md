@@ -74,15 +74,6 @@ defmodule FixedWindowLimiter do
   # Public API
   # ---------------------------------------------------------------------------
 
-  @doc """
-  Starts the FixedWindowLimiter process and links it to the caller.
-
-  ## Options
-
-    * `:name`                 – optional registered name
-    * `:clock`                – `(-> integer())` returning now in milliseconds
-    * `:cleanup_interval_ms`  – sweep interval (default `60_000`)
-
   def start_link(opts \\ []) do
     # TODO
   end

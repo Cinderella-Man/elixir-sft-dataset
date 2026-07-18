@@ -1,0 +1,1 @@
+  defp empty_last(names), do: Map.new(names, &{&1, nil})

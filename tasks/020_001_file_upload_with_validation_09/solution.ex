@@ -1,0 +1,1 @@
+  def list(server), do: GenServer.call(server, :list)
