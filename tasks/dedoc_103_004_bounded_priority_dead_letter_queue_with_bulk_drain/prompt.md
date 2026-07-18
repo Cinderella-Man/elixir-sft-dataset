@@ -1,0 +1,173 @@
+# Document this module
+
+Below is a complete, working, tested Elixir module. Its behavior is correct
+and must not change — but every piece of documentation has been stripped.
+
+Add the missing documentation and typespecs:
+
+- a `@moduledoc` that explains what the module does and how it is used,
+- a `@doc` for every public function,
+- a `@spec` for every public function (add `@type`s where they make the
+  specs clearer).
+
+Do not change any behavior: every function clause, guard, and expression
+must keep working exactly as it does now. Do not rename anything, do not
+"improve" the code, and do not add or remove functions. Give me the
+complete documented module in a single file.
+
+## The module
+
+```elixir
+defmodule PriorityDLQ do
+  use GenServer
+
+  @rank %{high: 3, normal: 2, low: 1}
+
+  ## Client API
+
+  def start_link(opts \\ []) do
+    {name, opts} = Keyword.pop(opts, :name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, gen_opts)
+  end
+
+  def push(server, queue_name, message, error_reason, metadata, priority)
+      when is_map(metadata) and priority in [:high, :normal, :low] do
+    GenServer.call(server, {:push, queue_name, message, error_reason, metadata, priority})
+  end
+
+  def peek(server, queue_name, count) when is_integer(count) and count >= 0 do
+    GenServer.call(server, {:peek, queue_name, count})
+  end
+
+  def drain(server, queue_name, handler_fn, count)
+      when is_function(handler_fn, 1) and is_integer(count) and count >= 0 do
+    GenServer.call(server, {:drain, queue_name, handler_fn, count})
+  end
+
+  def purge(server, queue_name, older_than) when is_integer(older_than) do
+    GenServer.call(server, {:purge, queue_name, older_than})
+  end
+
+  ## Server callbacks
+
+  @impl true
+  def init(opts) do
+    clock = Keyword.get(opts, :clock, fn -> System.monotonic_time(:millisecond) end)
+    capacity = Keyword.get(opts, :capacity, :infinity)
+    {:ok, %{clock: clock, capacity: capacity, next_id: 0, queues: %{}}}
+  end
+
+  @impl true
+  def handle_call({:push, queue, message, error_reason, metadata, priority}, _from, state) do
+    entries = Map.get(state.queues, queue, [])
+
+    if full?(state.capacity, length(entries)) do
+      {:reply, {:error, :full}, state}
+    else
+      id = state.next_id
+
+      entry = %{
+        id: id,
+        message: message,
+        error_reason: error_reason,
+        metadata: metadata,
+        priority: priority,
+        retry_count: 0,
+        pushed_at: state.clock.()
+      }
+
+      state = put_queue(%{state | next_id: id + 1}, queue, entries ++ [entry])
+      {:reply, {:ok, id}, state}
+    end
+  end
+
+  def handle_call({:peek, queue, count}, _from, state) do
+    entries =
+      state.queues
+      |> Map.get(queue, [])
+      |> ordered()
+      |> Enum.take(count)
+      |> Enum.map(&public/1)
+
+    {:reply, entries, state}
+  end
+
+  def handle_call({:drain, queue, handler, count}, _from, state) do
+    entries = Map.get(state.queues, queue, [])
+    to_visit = entries |> ordered() |> Enum.take(count)
+
+    {outcomes, stats} =
+      Enum.reduce(to_visit, {%{}, %{succeeded: 0, failed: 0, processed: []}}, fn
+        entry, {out, acc} ->
+          acc = %{acc | processed: acc.processed ++ [entry.id]}
+
+          case run_handler(handler, entry.message) do
+            :success ->
+              {Map.put(out, entry.id, :remove), %{acc | succeeded: acc.succeeded + 1}}
+
+            {:failure, _reason} ->
+              {Map.put(out, entry.id, {:keep, entry.retry_count + 1}),
+               %{acc | failed: acc.failed + 1}}
+          end
+      end)
+
+    new_entries =
+      entries
+      |> Enum.reduce([], fn e, acc ->
+        case Map.get(outcomes, e.id) do
+          :remove -> acc
+          {:keep, rc} -> [%{e | retry_count: rc} | acc]
+          nil -> [e | acc]
+        end
+      end)
+      |> Enum.reverse()
+
+    {:reply, {:ok, stats}, put_queue(state, queue, new_entries)}
+  end
+
+  def handle_call({:purge, queue, older_than}, _from, state) do
+    entries = Map.get(state.queues, queue, [])
+    now = state.clock.()
+    {kept, purged} = Enum.split_with(entries, fn e -> now - e.pushed_at < older_than end)
+    {:reply, {:ok, length(purged)}, put_queue(state, queue, kept)}
+  end
+
+  ## Helpers
+
+  defp full?(:infinity, _len), do: false
+  defp full?(cap, len) when is_integer(cap), do: len >= cap
+
+  # highest priority first, then FIFO (ascending id = insertion order)
+  defp ordered(entries) do
+    Enum.sort_by(entries, fn e -> {-Map.fetch!(@rank, e.priority), e.id} end)
+  end
+
+  defp run_handler(handler, message) do
+    case handler.(message) do
+      :ok -> :success
+      {:ok, _term} -> :success
+      {:error, reason} -> {:failure, reason}
+      other -> {:failure, {:unexpected_return, other}}
+    end
+  rescue
+    exception -> {:failure, {:handler_raised, exception}}
+  catch
+    kind, value -> {:failure, {kind, value}}
+  end
+
+  defp put_queue(state, queue, entries) do
+    queues =
+      case entries do
+        [] -> Map.delete(state.queues, queue)
+        _ -> Map.put(state.queues, queue, entries)
+      end
+
+    %{state | queues: queues}
+  end
+
+  defp public(e) do
+    Map.take(e, [:id, :message, :error_reason, :metadata, :priority, :retry_count])
+  end
+end
+```

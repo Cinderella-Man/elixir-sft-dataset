@@ -1,0 +1,294 @@
+# Document this module
+
+Below is a complete, working, tested Elixir module. Its behavior is correct
+and must not change — but every piece of documentation has been stripped.
+
+Add the missing documentation and typespecs:
+
+- a `@moduledoc` that explains what the module does and how it is used,
+- a `@doc` for every public function,
+- a `@spec` for every public function (add `@type`s where they make the
+  specs clearer).
+
+Do not change any behavior: every function clause, guard, and expression
+must keep working exactly as it does now. Do not rename anything, do not
+"improve" the code, and do not add or remove functions. Give me the
+complete documented module in a single file.
+
+## The module
+
+```elixir
+defmodule CascadeCrud.Archive do
+  use GenServer
+
+  # ── Public API ────────────────────────────────────────────────────────────
+
+  def start_link(opts \\ []) do
+    case Keyword.fetch(opts, :name) do
+      {:ok, name} -> GenServer.start_link(__MODULE__, :ok, name: name)
+      :error -> GenServer.start_link(__MODULE__, :ok)
+    end
+  end
+
+  def create_folder(server, attrs) when is_map(attrs) do
+    GenServer.call(server, {:create_folder, attrs})
+  end
+
+  def create_file(server, attrs) when is_map(attrs) do
+    GenServer.call(server, {:create_file, attrs})
+  end
+
+  def fetch_node(server, id, opts \\ []) do
+    GenServer.call(server, {:fetch_node, id, include_archived?(opts)})
+  end
+
+  def list_children(server, folder_id, opts \\ []) do
+    GenServer.call(server, {:list_children, folder_id, include_archived?(opts)})
+  end
+
+  def rename_node(server, id, new_name) do
+    GenServer.call(server, {:rename_node, id, new_name})
+  end
+
+  def archive_node(server, id) do
+    GenServer.call(server, {:archive_node, id})
+  end
+
+  def unarchive_node(server, id) do
+    GenServer.call(server, {:unarchive_node, id})
+  end
+
+  def list_archived(server) do
+    GenServer.call(server, :list_archived)
+  end
+
+  # ── GenServer callbacks ───────────────────────────────────────────────────
+
+  @impl GenServer
+  def init(:ok) do
+    {:ok, %{nodes: %{}, next_id: 1}}
+  end
+
+  @impl GenServer
+  def handle_call({:create_folder, attrs}, _from, state) do
+    with {:ok, name} <- validate_name(Map.get(attrs, :name)),
+         parent_id = Map.get(attrs, :parent_id),
+         :ok <- validate_parent(state, parent_id, :optional) do
+      do_create(state, %{type: :folder, name: name, parent_id: parent_id, content: nil})
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:create_file, attrs}, _from, state) do
+    with {:ok, name} <- validate_name(Map.get(attrs, :name)),
+         parent_id = Map.get(attrs, :parent_id),
+         :ok <- validate_parent(state, parent_id, :required),
+         {:ok, content} <- validate_content(Map.get(attrs, :content, "")) do
+      do_create(state, %{type: :file, name: name, parent_id: parent_id, content: content})
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:fetch_node, id, include_archived}, _from, state) do
+    case Map.fetch(state.nodes, id) do
+      {:ok, node} ->
+        if include_archived or live?(node) do
+          {:reply, {:ok, node}, state}
+        else
+          {:reply, {:error, :not_found}, state}
+        end
+
+      :error ->
+        {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:list_children, folder_id, include_archived}, _from, state) do
+    with {:ok, folder} <- Map.fetch(state.nodes, folder_id),
+         true <- folder.type == :folder,
+         true <- include_archived or live?(folder) do
+      children =
+        state.nodes
+        |> Map.values()
+        |> Enum.filter(fn child ->
+          child.parent_id == folder_id and (include_archived or live?(child))
+        end)
+        |> Enum.sort_by(& &1.id)
+
+      {:reply, {:ok, children}, state}
+    else
+      _other -> {:reply, {:error, :not_found}, state}
+    end
+  end
+
+  def handle_call({:rename_node, id, new_name}, _from, state) do
+    with {:ok, name} <- validate_name(new_name),
+         {:ok, node} <- fetch_live(state, id) do
+      updated = %{node | name: name}
+      {:reply, {:ok, updated}, put_node(state, updated)}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:archive_node, id}, _from, state) do
+    case Map.fetch(state.nodes, id) do
+      :error ->
+        {:reply, {:error, :not_found}, state}
+
+      {:ok, node} ->
+        if live?(node) do
+          do_archive(state, node)
+        else
+          {:reply, {:error, :already_archived}, state}
+        end
+    end
+  end
+
+  def handle_call({:unarchive_node, id}, _from, state) do
+    with {:ok, node} <- Map.fetch(state.nodes, id),
+         :ok <- check_archived(node),
+         :ok <- check_direct(node),
+         :ok <- check_parent_live(state, node) do
+      do_unarchive(state, node)
+    else
+      :error -> {:reply, {:error, :not_found}, state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call(:list_archived, _from, state) do
+    archived =
+      state.nodes
+      |> Map.values()
+      |> Enum.reject(&live?/1)
+      |> Enum.sort_by(& &1.id)
+
+    {:reply, {:ok, archived}, state}
+  end
+
+  # ── Internal helpers ──────────────────────────────────────────────────────
+
+  defp include_archived?(opts) when is_list(opts) do
+    Keyword.get(opts, :include_archived, false) == true
+  end
+
+  defp do_create(state, fields) do
+    id = state.next_id
+
+    node =
+      Map.merge(fields, %{id: id, archived_at: nil, archive_origin: nil})
+
+    new_state = %{state | nodes: Map.put(state.nodes, id, node), next_id: id + 1}
+    {:reply, {:ok, node}, new_state}
+  end
+
+  defp validate_name(name) when is_binary(name) do
+    if String.trim(name) == "" do
+      {:error, :invalid_name}
+    else
+      {:ok, name}
+    end
+  end
+
+  defp validate_name(_name), do: {:error, :invalid_name}
+
+  defp validate_content(content) when is_binary(content), do: {:ok, content}
+  defp validate_content(_content), do: {:ok, ""}
+
+  defp validate_parent(_state, nil, :optional), do: :ok
+  defp validate_parent(_state, nil, :required), do: {:error, :parent_not_found}
+
+  defp validate_parent(state, parent_id, _mode) do
+    case Map.fetch(state.nodes, parent_id) do
+      {:ok, %{type: :folder} = parent} ->
+        if live?(parent), do: :ok, else: {:error, :parent_archived}
+
+      _other ->
+        {:error, :parent_not_found}
+    end
+  end
+
+  defp fetch_live(state, id) do
+    case Map.fetch(state.nodes, id) do
+      {:ok, node} -> if live?(node), do: {:ok, node}, else: {:error, :not_found}
+      :error -> {:error, :not_found}
+    end
+  end
+
+  defp live?(node), do: node.archived_at == nil
+
+  defp put_node(state, node), do: %{state | nodes: Map.put(state.nodes, node.id, node)}
+
+  defp check_archived(node) do
+    if live?(node), do: {:error, :not_archived}, else: :ok
+  end
+
+  defp check_direct(node) do
+    if node.archive_origin == :cascade, do: {:error, :cascade_archived}, else: :ok
+  end
+
+  defp check_parent_live(_state, %{parent_id: nil}), do: :ok
+
+  defp check_parent_live(state, node) do
+    case Map.fetch(state.nodes, node.parent_id) do
+      {:ok, parent} -> if live?(parent), do: :ok, else: {:error, :parent_archived}
+      :error -> :ok
+    end
+  end
+
+  defp do_archive(state, node) do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+    target = %{node | archived_at: now, archive_origin: :direct}
+    state = put_node(state, target)
+
+    {state, cascaded} = cascade_archive(state, node.id, now, [])
+    {:reply, {:ok, %{node: target, cascaded: Enum.sort(cascaded)}}, state}
+  end
+
+  defp cascade_archive(state, parent_id, now, acc) do
+    state
+    |> children_of(parent_id)
+    |> Enum.reduce({state, acc}, fn child, {st, ids} ->
+      if live?(child) do
+        archived = %{child | archived_at: now, archive_origin: :cascade}
+        st = put_node(st, archived)
+        cascade_archive(st, child.id, now, [child.id | ids])
+      else
+        {st, ids}
+      end
+    end)
+  end
+
+  defp do_unarchive(state, node) do
+    restored_target = %{node | archived_at: nil, archive_origin: nil}
+    state = put_node(state, restored_target)
+
+    {state, restored} = cascade_unarchive(state, node.id, [])
+    {:reply, {:ok, %{node: restored_target, restored: Enum.sort(restored)}}, state}
+  end
+
+  defp cascade_unarchive(state, parent_id, acc) do
+    state
+    |> children_of(parent_id)
+    |> Enum.reduce({state, acc}, fn child, {st, ids} ->
+      if child.archive_origin == :cascade do
+        restored = %{child | archived_at: nil, archive_origin: nil}
+        st = put_node(st, restored)
+        cascade_unarchive(st, child.id, [child.id | ids])
+      else
+        {st, ids}
+      end
+    end)
+  end
+
+  defp children_of(state, parent_id) do
+    state.nodes
+    |> Map.values()
+    |> Enum.filter(&(&1.parent_id == parent_id))
+    |> Enum.sort_by(& &1.id)
+  end
+end
+```

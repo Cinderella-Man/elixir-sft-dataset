@@ -1,0 +1,273 @@
+# Document this module
+
+Below is a complete, working, tested Elixir module. Its behavior is correct
+and must not change — but every piece of documentation has been stripped.
+
+Add the missing documentation and typespecs:
+
+- a `@moduledoc` that explains what the module does and how it is used,
+- a `@doc` for every public function,
+- a `@spec` for every public function (add `@type`s where they make the
+  specs clearer).
+
+Do not change any behavior: every function clause, guard, and expression
+must keep working exactly as it does now. Do not rename anything, do not
+"improve" the code, and do not add or remove functions. Give me the
+complete documented module in a single file.
+
+## The module
+
+```elixir
+defmodule InvertedIndex do
+  use GenServer
+
+  @default_stop_words MapSet.new([
+                        "the",
+                        "a",
+                        "an",
+                        "is",
+                        "are",
+                        "was",
+                        "were",
+                        "in",
+                        "on",
+                        "at",
+                        "to",
+                        "of",
+                        "and",
+                        "or",
+                        "it",
+                        "this",
+                        "that",
+                        "for",
+                        "with",
+                        "as",
+                        "by",
+                        "not",
+                        "be",
+                        "has",
+                        "had",
+                        "have",
+                        "do",
+                        "does",
+                        "did",
+                        "but",
+                        "if",
+                        "from"
+                      ])
+
+  # ------------------------------------------------------------------
+  # Public API
+  # ------------------------------------------------------------------
+
+  def start_link(opts) do
+    {name, opts} = Keyword.pop(opts, :name)
+    gen_opts = if name, do: [name: name], else: []
+    GenServer.start_link(__MODULE__, opts, gen_opts)
+  end
+
+  def index(server, id, fields) do
+    GenServer.call(server, {:index, id, fields})
+  end
+
+  def remove(server, id) do
+    GenServer.call(server, {:remove, id})
+  end
+
+  def search(server, query) do
+    GenServer.call(server, {:search, query})
+  end
+
+  def suggest(server, prefix, limit \\ 10) do
+    GenServer.call(server, {:suggest, prefix, limit})
+  end
+
+  def stats(server) do
+    GenServer.call(server, :stats)
+  end
+
+  # ------------------------------------------------------------------
+  # GenServer callbacks
+  # ------------------------------------------------------------------
+
+  @impl true
+  def init(opts) do
+    stop_words = Keyword.get(opts, :stop_words, @default_stop_words)
+    {:ok, %{stop_words: stop_words, documents: %{}, postings: %{}}}
+  end
+
+  @impl true
+  def handle_call({:index, id, fields}, _from, state) do
+    state = do_remove(state, id)
+
+    tokenized =
+      fields
+      |> Enum.map(fn {field, text} -> {field, tokenize(text, state.stop_words)} end)
+      |> Map.new()
+
+    terms = doc_terms(tokenized)
+
+    postings =
+      Enum.reduce(terms, state.postings, fn term, acc ->
+        Map.update(acc, term, MapSet.new([id]), &MapSet.put(&1, id))
+      end)
+
+    documents = Map.put(state.documents, id, tokenized)
+    {:reply, :ok, %{state | documents: documents, postings: postings}}
+  end
+
+  def handle_call({:remove, id}, _from, state) do
+    {:reply, :ok, do_remove(state, id)}
+  end
+
+  def handle_call({:search, query}, _from, state) do
+    ids = query |> eval(state) |> MapSet.to_list() |> Enum.sort()
+    {:reply, ids, state}
+  end
+
+  def handle_call({:suggest, prefix, limit}, _from, state) do
+    prefix = String.downcase(prefix)
+
+    terms =
+      state.postings
+      |> Enum.filter(fn {term, _ids} -> String.starts_with?(term, prefix) end)
+      |> Enum.sort_by(fn {term, ids} -> {-MapSet.size(ids), term} end)
+      |> Enum.take(limit)
+      |> Enum.map(fn {term, _ids} -> term end)
+
+    {:reply, terms, state}
+  end
+
+  def handle_call(:stats, _from, state) do
+    stats = %{
+      document_count: map_size(state.documents),
+      term_count: map_size(state.postings)
+    }
+
+    {:reply, stats, state}
+  end
+
+  # ------------------------------------------------------------------
+  # Indexing / removal helpers
+  # ------------------------------------------------------------------
+
+  defp do_remove(state, id) do
+    case Map.pop(state.documents, id) do
+      {nil, _documents} ->
+        state
+
+      {tokenized, documents} ->
+        terms = doc_terms(tokenized)
+
+        postings =
+          Enum.reduce(terms, state.postings, fn term, acc ->
+            drop_posting(acc, term, id)
+          end)
+
+        %{state | documents: documents, postings: postings}
+    end
+  end
+
+  defp drop_posting(postings, term, id) do
+    case Map.get(postings, term) do
+      nil ->
+        postings
+
+      set ->
+        set = MapSet.delete(set, id)
+
+        if MapSet.size(set) == 0 do
+          Map.delete(postings, term)
+        else
+          Map.put(postings, term, set)
+        end
+    end
+  end
+
+  defp doc_terms(tokenized) do
+    tokenized
+    |> Enum.flat_map(fn {_field, tokens} -> tokens end)
+    |> MapSet.new()
+  end
+
+  defp tokenize(text, stop_words) do
+    text
+    |> String.downcase()
+    |> String.split(~r/[^a-z0-9]+/, trim: true)
+    |> Enum.reject(&MapSet.member?(stop_words, &1))
+  end
+
+  # ------------------------------------------------------------------
+  # Query evaluation — returns a MapSet of matching ids
+  # ------------------------------------------------------------------
+
+  defp eval({:term, word}, state) do
+    case tokenize(word, state.stop_words) do
+      [] -> MapSet.new()
+      [term | _rest] -> Map.get(state.postings, term, MapSet.new())
+    end
+  end
+
+  defp eval({:phrase, text}, state) do
+    case tokenize(text, state.stop_words) do
+      [] ->
+        MapSet.new()
+
+      [single] ->
+        Map.get(state.postings, single, MapSet.new())
+
+      terms ->
+        terms
+        |> candidate_ids(state)
+        |> Enum.filter(fn id -> doc_has_phrase?(Map.get(state.documents, id), terms) end)
+        |> MapSet.new()
+    end
+  end
+
+  defp eval({:and, []}, state), do: all_ids(state)
+
+  defp eval({:and, list}, state) do
+    list
+    |> Enum.map(&eval(&1, state))
+    |> intersect_all()
+  end
+
+  defp eval({:or, list}, state) do
+    Enum.reduce(list, MapSet.new(), fn q, acc -> MapSet.union(acc, eval(q, state)) end)
+  end
+
+  defp eval({:not, expr}, state) do
+    MapSet.difference(all_ids(state), eval(expr, state))
+  end
+
+  defp candidate_ids(terms, state) do
+    terms
+    |> Enum.map(&Map.get(state.postings, &1, MapSet.new()))
+    |> intersect_all()
+  end
+
+  defp doc_has_phrase?(nil, _terms), do: false
+
+  defp doc_has_phrase?(tokenized, terms) do
+    Enum.any?(tokenized, fn {_field, tokens} -> contains_sequence?(tokens, terms) end)
+  end
+
+  defp contains_sequence?(tokens, terms) do
+    len = length(terms)
+
+    tokens
+    |> Stream.chunk_every(len, 1, :discard)
+    |> Enum.any?(&(&1 == terms))
+  end
+
+  defp all_ids(state) do
+    state.documents |> Map.keys() |> MapSet.new()
+  end
+
+  defp intersect_all([]), do: MapSet.new()
+
+  defp intersect_all([first | rest]) do
+    Enum.reduce(rest, first, fn set, acc -> MapSet.intersection(acc, set) end)
+  end
+end
+```

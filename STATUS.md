@@ -96,26 +96,13 @@ metadata (ledger-side, tiny — fold into the export work).
 
 ### 📦 DATA EXTENSION (docs/13 §2; after the above)
 
-- **TD.3 — dedoc (~331 free units) — BUILD IN PROGRESS (2026-07-18
-  late).** Design settled per §2.3 + the Adapt/Bugfix template:
-  `GenTask.Dedoc` as a registered `:derived` work type (the work.ex
-  comment slot), dirs `dedoc_<a>_<b>_<slug>/` with templated prompt
-  (stripped module + "add typespecs and documentation"), gold + harness
-  byte-copies. Deterministic, zero LLM. Mint gates: (1) strip is
-  non-trivial and the original carried the @moduledoc/@doc/@spec trio;
-  (2) parent gold sha reads clean-or-waived in
-  `logs/dialyzer_golds.jsonl` (T1.6 gate — lying specs never become
-  targets); (3) STRIPPED module grades green + 0 warnings vs the parent
-  harness (behavior unchanged; subsumes the doctest risk — no harness
-  uses doctest today; strip also removes @type/@typep/@opaque so no
-  unused-type warnings); (4) staged triplet green + 0 warnings →
-  promote. Sha-keyed ledger `logs/dedoc_strip.jsonl` (stripper code in
-  the key). Grading needs nothing new: the analysis score already pins
-  has_moduledoc/has_doc/has_typespecs. Task-B parity built in: Work
-  registration = Phase-3 mints automatically; drift gate =
-  `scripts/resync_dedoc_embeds.exs` + pre-push report line (mirrors
-  adapt). Rule 9: unit tests + one-family pilot before the full
-  backfill (`GEN_ONLY=backfill` re-uses the standing executor).
+- **TD.3 follow-up (tiny, CPU-only): dialyzer re-pass over fresh-sha
+  golds to unlock the 5 dedoc-gated roots** (004_001, 063_004, 080_002,
+  100_002, 102_001, 134_003 minus whichever the pass clears — today's
+  gold repairs and post-pass edits have no clean-or-waived verdict at
+  their CURRENT sha, so the dedoc dialyzer gate correctly skipped them;
+  100_002's sha-keyed waiver also needs its re-verdict). Then one
+  `GEN_ONLY=backfill generate.exs` sweep mints the stragglers.
 - **T2.6 proper — prompt-register monotony rewrite** (improvement round
   #2 — NOT before steady state) [BIG: 2,396 tfim + 302 wt_ + 80/332 seed
   openers; own tool + ledger + blind re-screen budget] — docs/12 §7.4.

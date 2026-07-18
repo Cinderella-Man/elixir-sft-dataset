@@ -9,6 +9,33 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-19 (early) — TD.3 DEDOC SHIPPED END-TO-END: 321 units on
+  disk (317 full-run + 4 pilot), 100% accept rate, zero LLM.** The
+  build (committed 9bf3d1d7 + 3df56271): `GenTask.Dedoc` as a
+  registered `:derived` work type — `dedoc_<a>_<b>_<slug>/` =
+  templated "document this module" prompt (heredoc-aware,
+  bracket-balancing, lookahead stripper removing
+  @moduledoc/@doc/@typedoc/@spec/@type/@typep/@opaque +
+  Code.format_string! canonicalization) over gold + harness
+  byte-copies. Four mint gates: house trio; dialyzer clean-or-waived
+  at the CURRENT gold sha (T1.6); STRIPPED module green + 0 warnings
+  vs the parent harness (behavior-neutrality machine-proof, sha-keyed
+  ledger `logs/dedoc_strip.jsonl` with the stripper in the gate key);
+  staged triplet green. `:dedoc` is a first-class EvalTask shape
+  (grades 1.0 via the analysis doc pins); drift gate
+  `resync_dedoc_embeds.exs` (self-test 5/5) wired into pre-push; Work
+  registration = Phase-3 parity for free. The safety nets each caught
+  a real bug before the run: corpus strip-smoke → the `:error`-ends-
+  with-"or" token-boundary swallow; rule-9 pilot → the missing GateLog
+  :dedoc manifest; pre-push S6 → dedoc dirs masquerading as unscreened
+  :single roots. Full run: 317/317 ACCEPTED; shortfall vs 332 roots
+  decomposes exactly as 6 bundle skips + 5 dialyzer-gated fresh-sha
+  roots (follow-up queued in STATUS). Rule-8 spot-checks: byte
+  identities, eval 1.0 shape=dedoc, zero doc residue in embedded
+  modules; resync gate 321/321 unchanged; embeds 1,322 clean;
+  freshness OK. Riders from the standing backfill: 13 tfim top-ups +
+  1 bugfix (034_001_02) minted alongside.
+
 - **2026-07-18 (late night) — PROMPT-GAP 3 CLOSED: 2 of 3 roots landed
   gold-defect repairs + growth; 110_002 verdicted keep-class with its
   improved prompt saved for the strengthen path.** Deep-look revision

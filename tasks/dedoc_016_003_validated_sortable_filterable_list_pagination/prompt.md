@@ -1,0 +1,161 @@
+# Document this module
+
+Below is a complete, working, tested Elixir module. Its behavior is correct
+and must not change — but every piece of documentation has been stripped.
+
+Add the missing documentation and typespecs:
+
+- a `@moduledoc` that explains what the module does and how it is used,
+- a `@doc` for every public function,
+- a `@spec` for every public function (add `@type`s where they make the
+  specs clearer).
+
+Do not change any behavior: every function clause, guard, and expression
+must keep working exactly as it does now. Do not rename anything, do not
+"improve" the code, and do not add or remove functions. Give me the
+complete documented module in a single file.
+
+## The module
+
+```elixir
+defmodule QueryPaginator do
+  @default_page 1
+  @default_page_size 20
+  @max_page_size 100
+  @sortable [:id, :name, :age]
+
+  def paginate(items, params \\ %{}) when is_list(items) do
+    with {:ok, sort} <- parse_sort(params),
+         {:ok, order} <- parse_order(params),
+         {:ok, filters} <- parse_filters(params) do
+      page = parse_page(params)
+      page_size = parse_page_size(params)
+
+      filtered = apply_filters(items, filters)
+      total_count = length(filtered)
+      total_pages = if total_count == 0, do: 0, else: ceil(total_count / page_size)
+
+      data =
+        filtered
+        |> sort_items(sort, order)
+        |> Enum.drop((page - 1) * page_size)
+        |> Enum.take(page_size)
+
+      {:ok,
+       %{
+         data: data,
+         meta: %{
+           current_page: page,
+           page_size: page_size,
+           total_count: total_count,
+           total_pages: total_pages,
+           sort: sort,
+           order: order,
+           filters: filters
+         }
+       }}
+    end
+  end
+
+  defp parse_sort(%{"sort" => raw}) do
+    field = to_existing_atom_safe(raw)
+    if field in @sortable, do: {:ok, field}, else: {:error, :invalid_sort_field}
+  end
+
+  defp parse_sort(_), do: {:ok, :id}
+
+  defp parse_order(%{"order" => "asc"}), do: {:ok, :asc}
+  defp parse_order(%{"order" => "desc"}), do: {:ok, :desc}
+  defp parse_order(%{"order" => _}), do: {:error, :invalid_order}
+  defp parse_order(_), do: {:ok, :asc}
+
+  defp parse_filters(params) do
+    with {:ok, min_age} <- parse_int_filter(params, "min_age"),
+         {:ok, max_age} <- parse_int_filter(params, "max_age") do
+      name_contains =
+        case Map.get(params, "name_contains") do
+          v when is_binary(v) -> v
+          _ -> nil
+        end
+
+      {:ok, %{min_age: min_age, max_age: max_age, name_contains: name_contains}}
+    end
+  end
+
+  defp parse_int_filter(params, key) do
+    case Map.get(params, key) do
+      nil -> {:ok, nil}
+      raw -> parse_integer(raw)
+    end
+  end
+
+  # Only integers and integer-formatted strings are accepted; every other shape
+  # (maps, lists, floats, booleans, partial numbers) is a bad request.
+  defp parse_integer(value) when is_integer(value), do: {:ok, value}
+
+  defp parse_integer(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {n, ""} -> {:ok, n}
+      _ -> {:error, :invalid_filter}
+    end
+  end
+
+  defp parse_integer(_value), do: {:error, :invalid_filter}
+
+  defp apply_filters(items, filters) do
+    items
+    |> maybe_filter(filters.min_age, fn i, v -> i.age >= v end)
+    |> maybe_filter(filters.max_age, fn i, v -> i.age <= v end)
+    |> maybe_filter(filters.name_contains, fn i, v ->
+      String.contains?(String.downcase(i.name), String.downcase(v))
+    end)
+  end
+
+  defp maybe_filter(items, nil, _fun), do: items
+  defp maybe_filter(items, value, fun), do: Enum.filter(items, &fun.(&1, value))
+
+  defp sort_items(items, field, order) do
+    sorted = Enum.sort_by(items, &{Map.get(&1, field), &1.id})
+    if order == :desc, do: Enum.reverse(sorted), else: sorted
+  end
+
+  defp to_existing_atom_safe(raw) when is_binary(raw) do
+    String.to_existing_atom(raw)
+  rescue
+    ArgumentError -> nil
+  end
+
+  defp to_existing_atom_safe(_), do: nil
+
+  defp parse_page(%{"page" => raw}) do
+    case parse_paging_int(raw) do
+      {:ok, n} when n >= 1 -> n
+      _ -> @default_page
+    end
+  end
+
+  defp parse_page(_), do: @default_page
+
+  defp parse_page_size(%{"page_size" => raw}) do
+    case parse_paging_int(raw) do
+      {:ok, n} when n >= 1 -> min(n, @max_page_size)
+      _ -> @default_page_size
+    end
+  end
+
+  defp parse_page_size(_), do: @default_page_size
+
+  # Paging inputs never fail the request: unparseable shapes fall back to the
+  # caller's default, so this only reports success or `:error`.
+  defp parse_paging_int(value) when is_integer(value), do: {:ok, value}
+
+  defp parse_paging_int(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {n, _rest} -> {:ok, n}
+      :error -> :error
+    end
+  end
+
+  defp parse_paging_int(_value), do: :error
+end
+```

@@ -1,0 +1,275 @@
+# Document this module
+
+Below is a complete, working, tested Elixir module. Its behavior is correct
+and must not change — but every piece of documentation has been stripped.
+
+Add the missing documentation and typespecs:
+
+- a `@moduledoc` that explains what the module does and how it is used,
+- a `@doc` for every public function,
+- a `@spec` for every public function (add `@type`s where they make the
+  specs clearer).
+
+Do not change any behavior: every function clause, guard, and expression
+must keep working exactly as it does now. Do not rename anything, do not
+"improve" the code, and do not add or remove functions. Give me the
+complete documented module in a single file.
+
+## The module
+
+```elixir
+defmodule DataIngestion do
+  require Logger
+
+  # ---------------------------------------------------------------------------
+  # Types
+  # ---------------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------------
+  # Defaults
+  # ---------------------------------------------------------------------------
+
+  @default_batch_size 500
+  @default_on_conflict :replace_all
+  @default_conflict_target []
+  @default_returning true
+
+  # Tolerance window (seconds) used to tell a fresh INSERT from an UPDATE when
+  # comparing the returned inserted_at / updated_at timestamps.
+  @insert_window_seconds 1
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  def ingest(repo, schema, file_path, opts \\ []) do
+    batch_size = Keyword.get(opts, :batch_size, @default_batch_size)
+    on_conflict = Keyword.get(opts, :on_conflict, @default_on_conflict)
+    conflict_target = Keyword.get(opts, :conflict_target, @default_conflict_target)
+    returning = Keyword.get(opts, :returning, @default_returning)
+
+    with {:ok, raw} <- read_file(file_path),
+         {:ok, parsed} <- parse_json(raw),
+         {:ok, records} <- validate_list(parsed),
+         :ok <- validate_conflict_opts(records, on_conflict, conflict_target) do
+      cfg = %{
+        batch_size: batch_size,
+        on_conflict: on_conflict,
+        conflict_target: conflict_target,
+        returning: returning
+      }
+
+      {:ok, process_batches(repo, schema, records, cfg)}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # File I/O and validation
+  # ---------------------------------------------------------------------------
+
+  defp read_file(path) do
+    case File.read(path) do
+      {:ok, contents} ->
+        {:ok, contents}
+
+      {:error, reason} ->
+        Logger.error("[DataIngestion] Could not read file #{inspect(path)}: #{inspect(reason)}")
+        {:error, :file_not_found}
+    end
+  end
+
+  defp parse_json(raw) do
+    case Jason.decode(raw) do
+      {:ok, value} ->
+        {:ok, value}
+
+      {:error, reason} ->
+        Logger.error("[DataIngestion] JSON parse error: #{inspect(reason)}")
+        {:error, :invalid_json}
+    end
+  end
+
+  defp validate_list(value) when is_list(value), do: {:ok, value}
+
+  defp validate_list(value) do
+    Logger.error("[DataIngestion] Expected a JSON array, got: #{inspect(value, limit: 5)}")
+    {:error, :not_a_list}
+  end
+
+  # ---------------------------------------------------------------------------
+  # Batch processing
+  # ---------------------------------------------------------------------------
+
+  defp process_batches(repo, schema, records, cfg) do
+    total = length(records)
+    schema_keys = schema_field_set(schema)
+    initial_acc = %{total: total, inserted: 0, updated: 0, failed: 0}
+
+    stats =
+      records
+      |> Enum.chunk_every(cfg.batch_size)
+      |> Enum.reduce(initial_acc, fn raw_batch, acc ->
+        # Prepare rows: atomise keys, drop unknown fields, inject timestamps.
+        prepared = prepare_rows(raw_batch, schema_keys)
+        process_batch(repo, schema, prepared, length(raw_batch), cfg, acc)
+      end)
+
+    Logger.info("[DataIngestion] Finished. Final stats: #{format_stats(stats)}")
+    stats
+  end
+
+  defp process_batch(repo, schema, prepared_batch, raw_count, cfg, acc) do
+    insert_opts = build_insert_opts(cfg)
+
+    try do
+      {_count, returned_rows} = repo.insert_all(schema, prepared_batch, insert_opts)
+      {ins, upd} = classify_rows(returned_rows, raw_count, cfg.returning)
+
+      new_acc = %{acc | inserted: acc.inserted + ins, updated: acc.updated + upd}
+
+      Logger.info(
+        "[DataIngestion] Batch done — " <>
+          "size: #{raw_count}, inserted: #{ins}, updated: #{upd}. " <>
+          "Running totals — #{format_stats(new_acc)}"
+      )
+
+      new_acc
+    rescue
+      error ->
+        Logger.error(
+          "[DataIngestion] Batch failed (#{raw_count} records skipped): " <>
+            Exception.format(:error, error, __STACKTRACE__)
+        )
+
+        %{acc | failed: acc.failed + raw_count}
+    catch
+      kind, reason ->
+        Logger.error(
+          "[DataIngestion] Batch failed with #{kind} " <>
+            "(#{raw_count} records skipped): #{inspect(reason)}"
+        )
+
+        %{acc | failed: acc.failed + raw_count}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Row preparation
+  # ---------------------------------------------------------------------------
+
+  # Returns the set of field name *strings* declared on the schema, excluding
+  # virtual fields.  We compare against strings (not atoms) because that is
+  # what Jason gives us, avoiding the need for String.to_atom/1 on arbitrary
+  # untrusted input.
+  defp schema_field_set(schema) do
+    schema.__schema__(:fields)
+    |> Enum.map(&Atom.to_string/1)
+    |> MapSet.new()
+  end
+
+  # Converts a list of string-keyed JSON maps into the atom-keyed maps that
+  # `insert_all` expects, filtering to only the columns the schema knows about
+  # and injecting `inserted_at` / `updated_at` when the schema declares them.
+  defp prepare_rows(raw_rows, schema_keys) do
+    now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+
+    Enum.map(raw_rows, fn row ->
+      base =
+        row
+        |> Enum.filter(fn {k, _v} -> MapSet.member?(schema_keys, k) end)
+        |> Enum.map(fn {k, v} ->
+          # Safe: the atom already exists because it was interned when the
+          # schema module was compiled.
+          {String.to_existing_atom(k), v}
+        end)
+        |> Map.new()
+
+      # Only inject timestamps if the schema actually has them; avoids errors
+      # on schemas that do not call `timestamps()`.
+      base
+      |> maybe_put_new(:inserted_at, now, schema_keys)
+      |> maybe_put_new(:updated_at, now, schema_keys)
+    end)
+  end
+
+  defp maybe_put_new(row, field, value, schema_keys) do
+    if MapSet.member?(schema_keys, Atom.to_string(field)) do
+      Map.put_new(row, field, value)
+    else
+      row
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Helpers
+  # ---------------------------------------------------------------------------
+
+  # `:replace_all` cannot be built without knowing which columns identify the
+  # conflict — surfaced as one caller error before any batch is attempted,
+  # rather than one opaque Ecto raise per batch. File/JSON problems are
+  # reported first, and an empty array has no upsert to build, so both keep
+  # their own documented results.
+  defp validate_conflict_opts([], _on_conflict, _target), do: :ok
+
+  defp validate_conflict_opts([_ | _], :replace_all, []),
+    do: {:error, :conflict_target_required}
+
+  defp validate_conflict_opts(_records, _on_conflict, _target), do: :ok
+
+  defp build_insert_opts(cfg) do
+    # An empty conflict_target means "none": the option is omitted rather
+    # than passed — Ecto accepts only column lists / fragments there, and
+    # on_conflict values like :raise or :nothing need no target at all.
+    base =
+      if cfg.conflict_target == [] do
+        [on_conflict: cfg.on_conflict]
+      else
+        [on_conflict: cfg.on_conflict, conflict_target: cfg.conflict_target]
+      end
+
+    if cfg.returning, do: Keyword.put(base, :returning, true), else: base
+  end
+
+  # Determines how many rows in a batch were inserted vs updated.
+  #
+  # When `returning: true`, Ecto gives back one struct / map per affected row.
+  # A row is treated as a fresh insert when its `inserted_at` and `updated_at`
+  # timestamps are equal within @insert_window_seconds (both were written in
+  # this call).  A row whose `updated_at` trails `inserted_at` was overwriting
+  # a pre-existing record whose original `inserted_at` was preserved.
+  #
+  # When `returning: false`, `insert_all` returns `{count, nil}`, so we cannot
+  # distinguish inserts from updates — credit everything to `:inserted`.
+  defp classify_rows(_rows, count, false), do: {count, 0}
+  defp classify_rows(nil, count, _ret), do: {count, 0}
+
+  defp classify_rows(rows, _count, true) do
+    Enum.reduce(rows, {0, 0}, fn row, {ins, upd} ->
+      if timestamps_equal?(get_ts(row, :inserted_at), get_ts(row, :updated_at)) do
+        {ins + 1, upd}
+      else
+        {ins, upd + 1}
+      end
+    end)
+  end
+
+  # Accepts both atom-keyed structs/maps and string-keyed plain maps.
+  defp get_ts(row, field) when is_map(row) do
+    Map.get(row, field) || Map.get(row, Atom.to_string(field))
+  end
+
+  defp timestamps_equal?(nil, _), do: false
+  defp timestamps_equal?(_, nil), do: false
+
+  defp timestamps_equal?(%NaiveDateTime{} = a, %NaiveDateTime{} = b),
+    do: abs(NaiveDateTime.diff(a, b, :second)) <= @insert_window_seconds
+
+  defp timestamps_equal?(%DateTime{} = a, %DateTime{} = b),
+    do: abs(DateTime.diff(a, b, :second)) <= @insert_window_seconds
+
+  defp timestamps_equal?(_, _), do: false
+
+  defp format_stats(%{total: t, inserted: i, updated: u, failed: f}),
+    do: "total=#{t} inserted=#{i} updated=#{u} failed=#{f}"
+end
+```
