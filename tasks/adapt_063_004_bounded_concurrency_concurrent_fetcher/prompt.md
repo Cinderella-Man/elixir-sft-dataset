@@ -168,7 +168,7 @@ A fetch can never crash the caller. Whatever `fetch_fn` does, the corresponding 
 - Throws a value → `{:error, {:throw, thrown_value}}`.
 - Exits → `{:error, {:exit, exit_reason}}`.
 - Returns anything that is **not** an `{:ok, _}` or `{:error, _}` tuple (e.g. `:ok`, `42`, `nil`, a bare map) → `{:error, {:unexpected_return, the_returned_term}}`.
-- Its process dies without delivering a result at all (e.g. it is killed by something outside this module) → `{:error, reason}` with that process's exit reason.
+- Its process dies without delivering a result at all (e.g. it is killed by something outside this module) → `{:error, reason}` with that process's exit reason (for a `:kill`, that reason is `:killed`).
 
 ### Edge cases
 
@@ -176,7 +176,7 @@ A fetch can never crash the caller. Whatever `fetch_fn` does, the corresponding 
 - `name` is used as a map key, so **names should be unique**. If a name appears more than once, the entries collapse into a single key whose value is whichever of them was recorded last, and the returned map therefore has fewer entries than `sources` has elements.
 - Names are arbitrary terms and are never inspected, converted, or reordered — they come back as-is.
 - `fetch_all` holds no shared or global state: calling it repeatedly (or concurrently from several processes) is safe, and each call gets a fresh pool, a fresh deadline, and an independent result map. A call leaves nothing behind that affects the next one.
-- Calls with a `max_concurrency` that is not a positive integer, or a `timeout_ms` that is not a non-negative integer, are outside the supported contract — guard against them rather than silently doing something surprising.
+- Calls with a `max_concurrency` that is not a positive integer, or a `timeout_ms` that is not a non-negative integer, are outside the supported contract — reject them with a guard clause on `fetch_all` so that such a call raises `FunctionClauseError`, rather than silently doing something surprising.
 
 ## Constraints
 

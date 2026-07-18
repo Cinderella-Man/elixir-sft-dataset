@@ -11,7 +11,7 @@ Write me an Elixir module called `WorkStealQueue` that distributes work across N
 
 I need one primary public function:
 
-- `WorkStealQueue.run(items, worker_count, process_fn)` — takes a list of items, a number of worker processes to spawn, and a one-arity function to apply to each item. Returns a list of `%{item: item, result: term, worker_id: non_neg_integer}` maps — one per input item, in any order.
+- `WorkStealQueue.run(items, worker_count, process_fn)` — takes a list of items, a number of worker processes to spawn, and a one-arity function to apply to each item. Returns a list of `%{item: item, result: term, worker_id: non_neg_integer}` maps — one per input item, in any order — where `item` is the original input element, `result` is the value returned by `process_fn.(item)`, and `worker_id` identifies the worker that processed it. An empty `items` list returns `[]`.
 
 **How it should work internally:**
 

@@ -49,6 +49,10 @@ Where `report` is a plain map with exactly these keys:
                          valid JSON or were missing any required field or had
                          a non-string timestamp that could not be decoded
 
+Timestamps that carry an offset (e.g. `"2024-05-01T01:30:00+02:00"`) must be
+normalized to UTC before bucketing into `:errors_per_hour`, so a line at
+`+02:00` 01:30 falls in the `23` hour bucket of the previous UTC day.
+
 Lines that are blank or contain only whitespace should be skipped silently
 (they don't count as malformed).
 
@@ -60,7 +64,9 @@ Error handling rules:
   - It is not valid JSON
   - The top-level JSON value is not an object
   - Any of `"timestamp"`, `"level"`, `"message"`, or `"metadata"` is absent
-  - `"timestamp"` cannot be parsed as an ISO 8601 datetime
+  - `"timestamp"` is present but is not a string (e.g. a number or a nested
+    object)
+  - `"timestamp"` is a string that cannot be parsed as an ISO 8601 datetime
 
 Use `Jason` for JSON parsing and the standard `DateTime` module for timestamp
 parsing. No other external dependencies.

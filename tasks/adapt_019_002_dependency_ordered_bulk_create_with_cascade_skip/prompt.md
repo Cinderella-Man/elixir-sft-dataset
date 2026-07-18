@@ -247,7 +247,7 @@ This is a variation on a plain bulk-create endpoint: here the items in a single 
 - Each stored item is a map `%{id: integer, name: String.t(), ref: String.t() | nil, parent_id: integer | nil}` with an auto-incrementing integer `id`.
 
 **Input shape**
-- Each attribute map may contain: `"name"` (required, 1–100 chars), `"ref"` (optional string — a temporary in-batch identifier), and `"parent"` (optional string — a reference to another item's `"ref"` in the same batch; `nil`/absent means a root item).
+- Each attribute map may contain: `"name"` (required, 1–100 chars), `"ref"` (optional string — a temporary in-batch identifier; a `ref` value declared by more than one item marks **every** one of those declaring items as a `:duplicate_ref` error), and `"parent"` (optional string — a reference to another item's `"ref"` in the same batch; `nil`/absent means a root item).
 
 **`Catalog.bulk_create(list_of_attrs, opts \\ [])`**
 Compute per-item validity and dependency status, then:
@@ -258,6 +258,8 @@ Compute per-item validity and dependency status, then:
   - `{index, :skipped, ancestor_index}` — a valid item skipped because an ancestor was bad/skipped.
 - **Default (all-or-nothing):** if *any* item is bad (invalid, duplicate ref, unknown parent) or involved in a cycle — meaning not every item is creatable — roll everything back (store nothing) and return `{:error, results}`. If every item is creatable, create them all in dependency order (parents before children, resolving `parent_id` to the real created id) and return `{:ok, results}`.
 - **`partial: true`:** create every creatable item in dependency order; bad items are reported as errors and their transitive dependents are reported as `:skipped` (with the index of the nearest bad/skipped ancestor). Return `{:ok, results}`.
+
+A dependent whose parent `ref` is *declared but duplicated* still points at a known ref, so in partial mode it is reported as `:skipped` (ancestor being one of the declaring indices), not `:unknown_parent`.
 
 Cycle detection must mark exactly the items **on** a cycle as `:cycle`; items merely downstream of a cycle are `:skipped`. Use only Elixir/OTP standard library — no external dependencies.
 

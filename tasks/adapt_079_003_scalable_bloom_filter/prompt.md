@@ -211,9 +211,9 @@ Use these growth rules (fixed constants): capacity growth factor `s = 2` and err
 I need these functions in the public API:
 
 - `ScalableBloomFilter.new(initial_capacity, false_positive_rate)` — creates a filter with a single empty slice (index 0). `initial_capacity` is a positive integer; `false_positive_rate` is a float strictly between 0.0 and 1.0. Store enough state in a struct to build further slices on demand and to track a total `count` of inserted items.
-- `ScalableBloomFilter.add(filter, item)` — if the item is already a member, return the filter unchanged (this prevents duplicate inserts from inflating capacity). Otherwise set the item's bits in the active slice and increment its count; if the active slice is now at capacity, append a fresh larger slice for future inserts. Return the updated filter. Items may be any Elixir term.
-- `ScalableBloomFilter.member?(filter, item)` — returns `true` if the item is present in **any** slice, `false` only if it is absent from all of them (no false negatives).
-- `ScalableBloomFilter.count(filter)` — total number of distinct items inserted.
+- `ScalableBloomFilter.add(filter, item)` — if the item has already been added, return the filter unchanged (this prevents duplicate inserts from inflating capacity). Duplicate detection must be **exact**: a genuinely new item must never be mistaken for a duplicate, even when the probabilistic membership query would report a false positive on it. Otherwise set the item's bits in the active slice and increment the total count; when the active slice reaches its capacity (its own item count is at least its capacity), append a fresh larger slice for future inserts. Return the updated filter. Items may be any Elixir term.
+- `ScalableBloomFilter.member?(filter, item)` — returns `true` if the item is present in **any** slice, `false` only if it is absent from all of them (no false negatives). This is a probabilistic Bloom-filter query, so it may occasionally return `true` for an item that was never added.
+- `ScalableBloomFilter.count(filter)` — total number of distinct items inserted. This count is exact (unaffected by Bloom-filter false positives): it equals the number of genuinely distinct items passed to `add`.
 - `ScalableBloomFilter.num_slices(filter)` — the current number of slices (grows as the filter fills).
 
 Derive `k` independent hashes per slice from `:erlang.phash2/2` on a `{index, item}` tuple. Stdlib only — no external dependencies. Give me the complete module in a single file.

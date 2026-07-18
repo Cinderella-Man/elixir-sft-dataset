@@ -22,12 +22,12 @@ To keep the collector testable, time must be **injectable**: `start_link` accept
 I need these functions in the public API:
 
 - `Metrics.start_link(opts \\ [])` to start the backing GenServer. It accepts `:name` (process registration, default `__MODULE__`) and `:clock` (as above).
-- `Metrics.increment(name, amount \\ 1)` to record `amount` events (a non-negative integer) for `name` at the current second. This is the hot path and MUST NOT serialize through the GenServer — it must go directly to ETS via `:ets.update_counter`, bumping the per-second bucket for `name`.
-- `Metrics.rate(name, window_seconds)` to return the total number of events recorded for `name` within the last `window_seconds` — i.e. all events whose bucket second is strictly greater than `now - window_seconds`, where `now` comes from the injected clock.
-- `Metrics.count(name)` to return the all-time total number of events recorded for `name` across every bucket.
+- `Metrics.increment(name, amount \\ 1)` to record `amount` events for `name` at the current second, returning `:ok`. `amount` must be a non-negative integer, enforced by a guard clause: a negative or non-integer `amount` raises `FunctionClauseError`, while an `amount` of `0` is accepted and records nothing. This is the hot path and MUST NOT serialize through the GenServer — it must go directly to ETS via `:ets.update_counter`, bumping the per-second bucket for `name`.
+- `Metrics.rate(name, window_seconds)` to return the total number of events recorded for `name` within the last `window_seconds` — i.e. all events whose bucket second is strictly greater than `now - window_seconds`, where `now` comes from the injected clock. Returns `0` for an unknown name.
+- `Metrics.count(name)` to return the all-time total number of events recorded for `name` across every bucket, or `0` if nothing has been recorded for `name`.
 - `Metrics.reset(name)` to delete every bucket for `name`.
-- `Metrics.prune(retention_seconds)` to delete all buckets (across every name) whose second is `<= now - retention_seconds`, returning the number of buckets deleted. This lets the table be bounded over time.
-- `Metrics.all()` to return a map of `%{name => all_time_total}`.
+- `Metrics.prune(retention_seconds)` to delete all buckets (across every name) whose second is `<= now - retention_seconds`, returning the number of buckets deleted (not the number of events removed). This lets the table be bounded over time.
+- `Metrics.all()` to return a map of `%{name => all_time_total}`, containing only names that currently have buckets.
 
 The ETS table must be public and named so `increment` can bypass the owning process. The GenServer exists only to own the table; the clock is stored so both the hot path and queries can read it. Use only OTP/stdlib — no external dependencies. Give me the complete implementation in a single file.
 

@@ -144,7 +144,8 @@ rates = %{USD: 1.0, EUR: 1.10, GBP: 1.25}
 
 To convert an amount from currency `from` to currency `to`, compute
 `round(amount * rates[from] / rates[to])`. Converting to the same currency
-returns the same amount.
+returns the same amount — but the rate lookup still applies, so a currency
+missing from `rates` raises even when the source and target are equal.
 
 ## Public API
 
@@ -190,7 +191,8 @@ Money.convert(Money.new(80, :USD), :USD, rates)
 ```
 
 If either the source or target currency is missing from `rates`, raise
-`ArgumentError`.
+`ArgumentError`. This applies even when the source and target currency are the
+same: converting an unknown currency to itself still raises.
 
 ### `Money.total(list_of_money, currency, rates)`
 

@@ -17,6 +17,8 @@ I need two independent stateful generators in the public API:
 
 - `CommandGenerators.account_program(max_length \\ 20)` — produces a list of `0..max_length` commands for a bank-account model whose balance must never go negative. Commands are `{:deposit, amount}` (amount `1..1000`) and `{:withdraw, amount}` (amount `1..current_balance`). A `:withdraw` may only be generated when the modeled balance is positive, and its amount must not exceed the modeled balance at that point.
 
+Across many samples the full length range must be reachable: both the empty program (0 commands) and a program of exactly `max_length` commands must be attainable outputs (so `max_length 0` yields only the empty program). Likewise the range endpoints of each amount and command must be reachable — deposits of both `1` and `1000`, withdrawals of both `1` and the entire current balance, and every one of `:push`, `:pop`, `:peek`, `:clear` must all be generated given enough samples.
+
 Both invariants must be enforced *inside* the generators by conditioning each step's available commands on the current model state — consumers must never need `StreamData.filter/2`. Each generator must return a `%StreamData{}` struct that composes with the standard `StreamData` combinators.
 
 Give me the complete module in a single file. Use only `stream_data` as an external dependency, no others.

@@ -20,7 +20,7 @@ I need these functions in the public API:
 
   Validation checks the counters `counter, counter + 1, …, counter + look_ahead` in ascending order. This is **forward-only**: counters below `counter` are never checked. If the code matches at some counter `c`, return `{:ok, c + 1}` (the next counter the server should store so the used code cannot be replayed). If no counter in the range matches, return `:error`. The code is normalized by left-padding to 6 digits before comparison. When multiple counters would match, the first (lowest) match wins.
 
-- `HOTP.provisioning_uri(secret, issuer, account_name, counter)` returns an `otpauth://hotp/` URI (note: `hotp`, not `totp`, since HOTP authenticators require a counter). The label is `issuer:account_name` with both parts URI-encoded. The query parameters are `secret`, `issuer`, `algorithm=SHA1`, `digits=6`, and `counter` (the given integer). All parameters must be properly URI-encoded.
+- `HOTP.provisioning_uri(secret, issuer, account_name, counter)` returns an `otpauth://hotp/` URI (note: `hotp`, not `totp`, since HOTP authenticators require a counter). The label is `issuer:account_name` with both parts percent-encoded (spaces as `%20`, not `+`; e.g. `Acme Co` → `Acme%20Co`, `user+tag@domain.io` → `user%2Btag%40domain.io`) and the `:` separator left literal. The query parameters are `secret`, `issuer`, `algorithm=SHA1`, `digits=6`, and `counter` (the given integer). All parameters must be properly URI-encoded.
 
 Requirements and constraints:
 - Base32 encoding/decoding must follow RFC 4648 (uppercase alphabet A–Z, 2–7, unpadded). Implement it yourself rather than relying on a library.

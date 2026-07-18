@@ -146,7 +146,7 @@ A principal's effective permissions are the **union** of the patterns from every
 
 I need the following public API:
 
-- `Rbac.effective_permissions(principal, role_defs)` — returns a `MapSet` of the principal's effective permission-pattern strings.
-- `Rbac.permitted?(principal, resource, action, role_defs)` — takes `resource` and `action` as atoms, builds the target `"resource:action"`, and returns `true` if **any** effective pattern matches the target (segment by segment, with `"*"` matching anything), else `false`. Unknown roles contribute no permissions rather than raising.
+- `Rbac.effective_permissions(principal, role_defs)` — returns a `MapSet` of the principal's effective permission-pattern strings (deduplicated by the set). An empty principal, or one holding only unknown roles, yields `MapSet.new()`.
+- `Rbac.permitted?(principal, resource, action, role_defs)` — takes `resource` and `action` as atoms, builds the target `"resource:action"`, and returns `true` if **any** effective pattern matches the target, else `false`. Matching is segment-by-segment after splitting both pattern and target on `":"`, where `"*"` matches any value in its position. A pattern matches only when it has the **same number of segments** as the two-segment target: a pattern with a different segment count (e.g. a bare `"posts"`, or a three-segment `"posts:read:extra"` / `"*:*:*"`) never matches. Unknown roles contribute no permissions rather than raising.
 
 Give me the complete module in a single file with no external dependencies.

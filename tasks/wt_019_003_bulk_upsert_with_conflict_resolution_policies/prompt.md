@@ -35,6 +35,7 @@ This is a variation on a create-only bulk endpoint: here each item either **inse
 - Processing is **in order**, so a repeated sku *within the same batch* is treated as a conflict against the running state (e.g., two `:merge` entries for the same sku accumulate).
 - `opts[:partial]` (default `false`) selects the failure mode.
 - Result tuples carry the zero-based input index: `{index, :inserted, record}`, `{index, :updated, record}`, `{index, :skipped, record}`, or `{index, :error, errors_map}`.
+- The accompanying `record` is the record now in the store: for `:inserted` the newly inserted record, for `:updated` the resulting updated record, and for `:skipped` the existing record left in place (not the incoming attrs).
 - The `errors_map` is keyed by the offending field's **string** name exactly as it appears in the input attrs, and each value is a list of human-readable message strings — e.g. `%{"name" => ["can't be blank"]}`.
 - **Default (all-or-nothing):** if any item fails validation, write nothing and return `{:error, results}` where valid items appear as `{index, :ok, :valid}` and invalid ones as `{index, :error, errors}`. Otherwise apply all items in order and return `{:ok, results}`.
 - **`partial: true`:** apply every valid item in order (insert/update/skip per policy and existence), report invalid items as errors, and return `{:ok, results}`.

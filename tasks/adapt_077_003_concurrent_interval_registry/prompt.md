@@ -304,8 +304,8 @@ Write me an Elixir module called `IntervalRegistry` that provides a **concurrent
 
 Implement it as a `GenServer` with this public API:
 - `IntervalRegistry.start_link(opts \\ [])` which starts the server and returns `{:ok, pid}`. It must accept standard `GenServer` options (e.g. `:name`).
-- `IntervalRegistry.stop(server)` which stops the server.
-- `IntervalRegistry.insert(server, {start, finish})` which stores an interval and returns `{:ok, id}` where `id` is a unique integer handle for that stored interval. Both `start` and `finish` are integers with `start <= finish`. Inserting identical intervals is allowed and each gets its own id.
+- `IntervalRegistry.stop(server)` which stops the server and returns `:ok`.
+- `IntervalRegistry.insert(server, {start, finish})` which stores an interval and returns `{:ok, id}` where `id` is a unique integer handle for that stored interval. Both `start` and `finish` are integers with `start <= finish`; calling `insert` with `start > finish` raises a `FunctionClauseError` (the argument is guarded) and stores nothing. Ids are assigned per server: the first successful insert returns `{:ok, 1}` and each later insert returns the previous id plus one. Ids are never reused, even after their interval is removed, and a freshly started server restarts the sequence at `1`. Inserting identical intervals is allowed and each gets its own id.
 - `IntervalRegistry.remove(server, id)` which removes the interval previously stored under `id`. It returns `:ok` if that id was present, or `{:error, :not_found}` if it was not (or was already removed).
 - `IntervalRegistry.overlapping(server, {start, finish})` which returns the sorted list of `{start, finish}` intervals currently stored that overlap the query range. Two intervals overlap if they share at least one point, so `{1, 3}` and `{3, 5}` overlap.
 - `IntervalRegistry.enclosing(server, point)` which returns the sorted list of stored `{start, finish}` intervals that contain the integer `point`.

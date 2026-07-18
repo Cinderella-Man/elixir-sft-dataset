@@ -15,17 +15,23 @@ I need these functions in the public API:
   reference/identifier you can pass to the other functions.
 - `CumulativeLeaderboard.add_points(board, player_id, points)` to award `points` to a player.
   `player_id` can be any term (string, integer, atom). `points` must be an **integer** (it may be
-  negative to deduct points). If the player is new, their total starts from 0 and `points` is added.
-  If the player already exists, `points` is added to the existing total. Return `{:ok, new_total}`
-  with the player's total after applying the increment.
+  negative to deduct points). If the player is new, their total starts from 0 and `points` is added
+  (so a first award of 0 registers the player with a total of 0). If the player already exists,
+  `points` is added to the existing total. Return `{:ok, new_total}` with the player's total after
+  applying the increment. If `points` is not an integer (e.g. a float or a string), the call must
+  raise a `FunctionClauseError` (guard the argument with `when is_integer(points)`), and the player
+  must not be registered.
 - `CumulativeLeaderboard.total(board, player_id)` to read a player's current total. Return
   `{:ok, total}` or `{:error, :not_found}` if the player has never been awarded points.
 - `CumulativeLeaderboard.top(board, n)` to retrieve the top N players by total, sorted descending.
-  Return a list of `{player_id, total}` tuples. If fewer than N players exist, return all of them.
+  Return a list of `{player_id, total}` tuples. If fewer than N players exist, return all of them
+  (and `[]` when the board is empty). Negative totals sort below zero and positive totals.
   Ties can be returned in any order.
 - `CumulativeLeaderboard.rank(board, player_id)` to get a player's rank and total. Return
   `{:ok, rank, total}` where rank is 1-based (rank 1 = highest total), using standard competition
-  ranking (tied players share the same rank). If the player does not exist, return `{:error, :not_found}`.
+  ranking (tied players share the same rank, and the next lower group is bumped by the full size of
+  the tied group — e.g. two players tied at rank 1 make the next player rank 3). If the player does
+  not exist, return `{:error, :not_found}`.
 
 Implementation requirements:
 - Use ETS as the backing store, a `:set` table (one row per player), created `:public`.
@@ -34,6 +40,8 @@ Implementation requirements:
   updates. Do not use a GenServer and do not do a read-modify-write in Elixir.
 - All operations must be correct when called from multiple processes concurrently: if 100 processes
   each award 1 point to the same player, the final total must be exactly 100.
+- Distinct boards must not share state, and different `player_id` types (e.g. `"1"`, `1`, `:one`)
+  must be treated as independent players.
 - Do not use any external dependencies — only the OTP standard library.
 
 Give me the complete module in a single file.

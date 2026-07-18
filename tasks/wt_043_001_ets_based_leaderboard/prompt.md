@@ -29,10 +29,9 @@ I need these functions in the public API:
   Return a list of `{player_id, score}` tuples. If fewer than N players exist, return all
   of them. Ties in score can be returned in any order.
 - `Leaderboard.rank(board, player_id)` to get a specific player's rank and score. Return
-  `{:ok, rank, score}` where rank is 1-based (rank 1 = highest score). If the player does
-  not exist, return `{:error, :not_found}`. Ties should give the same rank to all tied
-  players (dense ranking is not required — any consistent tie-breaking is fine as long as
-  the contract is documented).
+  `{:ok, rank, score}` where rank is 1-based (rank 1 = highest score). Rank is one plus the
+  number of players with a strictly higher score, so players tied on the same score all
+  receive the same rank. If the player does not exist, return `{:error, :not_found}`.
 
 Implementation requirements:
 - Use ETS as the backing store. The table should be of type `:set` (one row per player).

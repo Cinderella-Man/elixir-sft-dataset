@@ -11,20 +11,43 @@ Reference docs: `docs/14` (handover: gates, tools, ledgers, runbooks),
 
 ---
 
-## ▶️ RUNNING RIGHT NOW
+## ▶️ IN PROGRESS THIS SESSION (2026-07-18)
 
-**T2.6 PRECISION FULL RUN — corpus-wide (Kamil's go 2026-07-17,
-launched; pid in the `.pid` sidecar). Log `logs/precision_full.log`;
-ledger `logs/prompt_precision.jsonl` (sha+gate keyed, resumable — the 3
-pilot roots skip automatically).** Idempotent relaunch:
-`scripts/run_detached.sh logs/precision_full.log mix run scripts/prompt_precision.exs`
-~326 roots x (1 editor + 1 blind-verify) LLM calls; expect hours-to-days
-riding token windows. Every write is blind-verified green BEFORE landing
-and appends its S6 row (freshness stays green throughout). AFTER the
-run: embed cascade (wt/bugfix/adapt resyncs + check), review
-needs_triage rejects in `logs/prompt_precision_candidates/`, commit in
-batches, push. The nightly sweep auto-skips while this lives. Never run
-another prompt-writing tool concurrently.
+**T2.6 PRECISION FULL RUN FINISHED** — summary
+`%{unchanged: 156, improved: 151, needs_triage: 17}` (ledger totals incl.
+3 pilot roots: 152/158/17). Process exited; log `logs/precision_full.log`;
+ledger `logs/prompt_precision.jsonl`. Post-run work, in order:
+
+- [ ] **Triage the 17 needs_triage roots** (prompts on disk are UNTOUCHED —
+      proposal discarded; 14 rejected candidates saved in
+      `logs/prompt_precision_candidates/`, the 3 structural-vet fails have
+      no saved candidate). Per root: diff candidate vs prompt, read the
+      named failing test, check the root's standing blind-screen verdict;
+      verdict one of: ORIGINAL-FINE (reject was correct) / HAND-FIX
+      (real precision gap → rule-7 two-tier item) / RERUN (tool retry
+      worth it). Checklist (verdict inline as each closes):
+      - [ ] 007_001_moving_average_calculator_01 — blind RED: SMA different periods on same stream
+      - [ ] 007_002_weightedmovingaverage_01 — blind RED: larger period grows max_period / retains history
+      - [ ] 009_003_retry_aware_request_deduplicator_01 — blind RED: GenServer not blocked during retries
+      - [ ] 012_001_event_sourced_aggregate_01 — blind RED: not green
+      - [ ] 013_003_budget_constrained_retry_worker_with_decorrelated_jitter_01 — vet: dropped Process.send_after
+      - [ ] 014_001_priority_queue_processor_01 — vet: dropped spawn_monitor/1
+      - [ ] 024_002_replay_protected_timestamped_webhook_receiver_01 — blind RED: in-window signature stores event
+      - [ ] 025_001_long_polling_endpoint_01 — blind RED: notification published mid-poll
+      - [ ] 025_003_coalescing_batch_long_poll_with_linger_window_01 — blind RED: burst → one batched response
+      - [ ] 041_003_sharded_lru_cache_with_consistent_key_routing_01 — blind RED: missing required option fails loudly
+      - [ ] 044_001_ets_based_metrics_collector_01 — vet: dropped Metrics.increment/2
+      - [ ] 045_001_ets_based_feature_flag_store_01 — blind RED: enable sets flag on for everyone
+      - [ ] 061_001_parallel_map_with_concurrency_limit_01 — blind RED: never exceeds max_concurrency=3
+      - [ ] 064_004_instrumented_work_stealing_queue_with_steal_metrics_01 — blind RED: default steal batch = half of victim's queue
+      - [ ] 072_004_scripted_sequence_clock_01 — blind RED: :on_exhaust :raise blows up when script exhausted
+      - [ ] 073_001_database_cleaner_for_integration_tests_01 — blind RED: failed transaction start/2 still replaces prior truncation state
+      - [ ] 624_002_merge_commit_dag_with_topological_log_and_merge_base_01 — blind RED: log walks linear chain newest-to-oldest
+
+Relaunch note: ledger rows are content+gate-sha keyed, so a relaunch of
+`prompt_precision.exs` skips ALL 329 roots (incl. the 17 — their prompts
+are unchanged, so their needs_triage rows still match). A per-root retry
+requires a prompt/harness/tool change or a deliberate ledger-row removal.
 
 ---
 

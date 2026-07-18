@@ -25,8 +25,10 @@ batched index updates, grouped notifications).
 - `BatchDebouncer.call(key, delay_ms, item, handler)` — records `item` (any
   term) under `key` and (re)arms the debounce timer for `delay_ms`. `handler` is
   a **1-arity** function that will eventually receive the list of accumulated
-  items. Returns `:ok` promptly and must not block on `handler`. Targets the
-  default registered process.
+  items. A handler whose arity is not one is a caller error: `call/4` raises
+  `FunctionClauseError` (guard it with `is_function(handler, 1)`). Returns `:ok`
+  promptly and must not block on `handler`. Targets the default registered
+  process.
 
 - `BatchDebouncer.pending(key)` — returns the number of items currently buffered
   for `key` (0 if none). Useful for inspection/testing.
@@ -37,7 +39,8 @@ batched index updates, grouped notifications).
   `item` to that key's buffer and resets the timer from `delay_ms`. When the
   burst settles (i.e. `delay_ms` elapses with no further calls for that key), the
   handler is invoked **exactly once** with the list of all accumulated items **in
-  submission order**.
+  submission order**. Items are never deduplicated — identical items each occupy
+  their own slot in the batch.
 
 - **Latest handler wins.** If different calls in the same burst supply different
   handlers, the handler from the **most recent** call is the one invoked (it
@@ -51,12 +54,13 @@ batched index updates, grouped notifications).
 
 - **State is cleared after flushing.** Once a key's batch has flushed, its buffer
   is gone and `pending/1` returns 0; a subsequent `call/4` starts a brand-new
-  batch.
+  batch — including a `call/4` issued from inside a running handler.
 
 ## Implementation notes
 
 - Use `Process.send_after/3` / `Process.cancel_timer/1` for timers, cancelling
-  and re-arming on each call.
+  and re-arming on each call. A re-armed timer must flush exactly once — the
+  replaced deadline must never produce a second flush.
 - Run `handler` off the server's reduction path (e.g. `spawn`) so a slow or
   crashing handler can't wedge the GenServer. `pending/1` should be a synchronous
   call.

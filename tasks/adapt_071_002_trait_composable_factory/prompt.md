@@ -219,7 +219,7 @@ I need these functions in the public API:
 - `Factory.insert(factory_name)` / `insert(factory_name, opts)` /
   `insert(factory_name, traits, overrides)` — the same three shapes, but each
   persists the built struct via `MyApp.Repo.insert!` and returns the persisted
-  struct.
+  struct (so its `id` field is a populated integer).
 - `Factory.sequence(name, formatter_fn)` — returns the next value for a named
   sequence by calling `formatter_fn.(n)` where `n` is a monotonically increasing
   integer starting at 1. Each call with the same `name` increments its own
@@ -235,11 +235,14 @@ Requesting an unknown trait must raise `ArgumentError`.
 At minimum define factories for:
 
 - `:user` — fields `name`, `email`, `role` (default `"member"`), `active`
-  (default `true`).
+  (default `true`). Unless overridden, `name` and `email` are auto-populated with
+  non-empty string values, and the generated `email` must be unique across builds
+  (use `sequence/2` for this).
 - `:post` — fields `title`, `body`, `user_id`. The `:post` factory must
   automatically call `Factory.insert(:user)` to create its association and
-  populate `user_id`, unless `user_id` is supplied as an override (in which case no
-  user row is created).
+  populate `user_id` with the new user's integer `id` — even when building via
+  `build/1` (no separate `insert`) — unless `user_id` is supplied as an override
+  (in which case no user row is created).
 
 Define at least these traits: `{:user, :admin}` (sets `role` to `"admin"`),
 `{:user, :inactive}` (sets `active` to `false`), and `{:post, :published}` (sets a

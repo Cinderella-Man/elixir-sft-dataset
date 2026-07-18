@@ -214,7 +214,7 @@ Write me an Elixir module called `Saga` that implements the Saga pattern **with 
 
 Public API:
 - `Saga.new()` — creates a new, empty saga struct.
-- `Saga.step(saga, name, action_fn, compensate_fn)` — appends a **leaf** step. `action_fn` receives the accumulated context and returns `{:ok, result}` or `{:error, reason}`; on success the result is merged into the context under `name`. `compensate_fn` receives the context and its return value is recorded but never fails the chain.
+- `Saga.step(saga, name, action_fn, compensate_fn)` — appends a **leaf** step. `action_fn` receives the accumulated context and returns `{:ok, result}` or `{:error, reason}`; on success the result is merged into the context under `name`. `compensate_fn` receives the accumulated context as it stands when compensation runs (including the results of steps that completed before the failure) and its return value is recorded but never fails the chain.
 - `Saga.nest(saga, name, sub_saga)` — appends a **nested** step whose behaviour is another `Saga` value. When executed, the sub-saga runs against the current accumulated context; on success its final context is merged into the outer context under `name`.
 - `Saga.execute(saga, context)` — runs the steps in order.
 

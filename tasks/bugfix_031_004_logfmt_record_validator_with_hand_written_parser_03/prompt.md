@@ -17,7 +17,7 @@ level=error host=web02 method=POST path="/api/data import" duration=abc success=
 
 I need these functions in the public API:
 
-- `LogfmtValidator.validate_file(file_path, schema)` which reads the logfmt file at the given path and validates every line against the schema. It should return `{:ok, valid_records, error_report}` where `valid_records` is a list of maps (field name => string value) for records that passed all validations, and `error_report` is a list of `{line_number, field_name, error_message}` tuples describing every validation failure. Line numbers are 1-based. If the file doesn't exist, return `{:error, :file_not_found}`. If the file is empty (zero bytes), return `{:error, :empty_file}`.
+- `LogfmtValidator.validate_file(file_path, schema)` which reads the logfmt file at the given path and validates every line against the schema. It should return `{:ok, valid_records, error_report}` where `valid_records` is a list of maps (field name => string value) for records that passed all validations, listed in the order those records appear in the input, and `error_report` is a list of `{line_number, field_name, error_message}` tuples describing every validation failure. Line numbers are 1-based. If the file doesn't exist, return `{:error, :file_not_found}`. If the file is empty (zero bytes), return `{:error, :empty_file}`.
 
 - `LogfmtValidator.validate_string(logfmt_string, schema)` which does the same thing but accepts the logfmt content as a binary string instead of a file path.
 

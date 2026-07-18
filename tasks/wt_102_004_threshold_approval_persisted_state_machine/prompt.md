@@ -74,7 +74,11 @@ The required number of approvals is configured on the server (see `start_link/1`
 
 - `StateMachine.history(server, entity_id)` — returns `{:ok, list}` where list is every recorded
   transition for that entity in chronological (insertion) order. Each entry is a map with keys
-  `:event`, `:from_state`, `:to_state`, `:approvals`, and `:inserted_at`.
+  `:event`, `:from_state`, `:to_state`, `:approvals`, and `:inserted_at`. `:event`, `:from_state`,
+  and `:to_state` are **atoms** (the event/state atoms, not the strings they were persisted as),
+  `:approvals` is the integer count after that transition, and `:inserted_at` is the stored
+  timestamp. This reads directly from the database and does not require the entity to have been
+  started; an entity with no recorded transitions yields `{:ok, []}`.
 
 ## Persistence
 

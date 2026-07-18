@@ -35,11 +35,14 @@ I need this public API:
   so far, where `forest` is a list of root-level nodes, each being the original map with a
   `:children` key added (a list of child nodes, recursively structured the same way).
   Leaf nodes have `children: []`. When no nodes have been added, returns `{:ok, []}`.
-  Returns `{:error, {:cycle_detected, ids}}` if the current set of nodes contains a cycle.
+  Returns `{:error, {:cycle_detected, ids}}` if the current set of nodes contains a cycle,
+  where `ids` is a list of the node ids participating in the cycle (in no particular order).
 
 - `TreeStream.count(server)` — returns the number of nodes currently held (an integer).
+  This counts every node that was added, including orphans and nodes that never appear in
+  the forest.
 
-- `TreeStream.stop(server)` — stops the server.
+- `TreeStream.stop(server)` — stops the server and returns `:ok`.
 
 Ordering rules for `forest/1`: root nodes appear in the order they were added; the
 children of any parent appear in the order those items were added. All original fields
@@ -50,8 +53,10 @@ child was added before its parent — the resulting nesting must be identical re
 insertion order (only the *root order* and *sibling order* follow insertion order).
 
 `:orphan_strategy` governs nodes whose `parent_id` references an id not currently present:
-`:discard` drops them, `:raise_to_root` promotes them to roots. Cycle detection must catch
-both direct (A → B → A) and indirect (A → B → C → A) cycles.
+`:discard` drops them, `:raise_to_root` promotes them to roots. When a node is dropped
+under `:discard`, any nodes reachable only through it (its descendants) are also absent
+from the forest, even though their own `parent_id` refers to a present node. Cycle
+detection must catch both direct (A → B → A) and indirect (A → B → C → A) cycles.
 
 Do not use any external dependencies — only the Elixir / Erlang standard library.
 Give me the complete module in a single file.

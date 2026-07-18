@@ -31,15 +31,15 @@ The pool keeps a fixed base of persistent connections but can create a bounded n
   - If a caller is blocked waiting, hand the connection **directly** to the longest-waiting one (the connection stays alive regardless of overflow — demand still exists).
   - Otherwise, if the pool currently has **more than `size`** connections alive, this connection is an overflow connection: **destroy** it (via `:destroy`) and let the total shrink back toward `size`. If the pool is at or below `size`, keep the connection available for reuse.
 
-- `OverflowPool.stats(name)` — return `%{available: a, in_use: u, total: t, size: size, max_overflow: max_overflow, overflow: o}` where `total == a + u` and `overflow == max(0, total - size)`.
+- `OverflowPool.stats(name)` — return `%{available: a, in_use: u, total: t, size: size, max_overflow: max_overflow, overflow: o}` where `a` and `u` are the counts of available and in-use connections, `total == a + u`, and `overflow == max(0, total - size)`.
 
 ## Required behaviors
 
 - **Eager base, lazy overflow.** Exactly `:size` connections exist at startup; overflow connections are created only on demand and never exceed `max_size = size + max_overflow` total.
 - **Overflow connections are ephemeral.** A returned overflow connection with no waiter is destroyed, not pooled — but if a caller is waiting, it is handed over and stays alive.
 - **Distinct connections.** No connection is handed to two callers at once.
-- **Ownership monitoring / crash reclamation.** Monitor the checking-out process; if it dies while holding a connection, reclaim it (handing to a waiter, or destroying if it is now overflow).
-- **Clean, server-side timeout.** A blocked `checkout` returns `{:error, :timeout}` as a normal value — implement waiting/timeout in the server with a waiter queue and `Process.send_after` / `GenServer.reply`, not via `GenServer.call`'s own timeout.
+- **Ownership monitoring / crash reclamation.** Monitor the checking-out process; if it dies while holding a connection, reclaim it (handing to a waiter, or destroying if it is now overflow). If instead it dies while still blocked in the waiter queue, drop it from the queue so it is never served — a later checkin then goes to the next still-live waiter.
+- **Clean, server-side timeout.** A blocked `checkout` returns `{:error, :timeout}` as a normal value, and a waiter that has already timed out is retired: a later checkin must not hand it a connection but instead reuse the connection normally. Implement waiting/timeout in the server with a waiter queue and `Process.send_after` / `GenServer.reply`, not via `GenServer.call`'s own timeout.
 
 Use only the OTP standard library — no external dependencies. Give me the complete module in a single file.
 

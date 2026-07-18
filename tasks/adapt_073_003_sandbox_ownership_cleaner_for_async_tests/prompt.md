@@ -241,7 +241,7 @@ I need this public API:
 
 - `DBCleaner.lookup(pid \\ self())` — resolve which connection serves `pid`, checking in order: is `pid` itself an owner, has `pid` been explicitly allowed onto an owner, or is there a global shared owner. Returns `{:ok, conn_ref}` or `:error`.
 
-- `DBCleaner.clean()` — called in `on_exit`. Check the connection back in via `repo.checkin/1`, and remove this owner from the registry along with any allowances pointing at it and the shared marker if it was the shared owner. Safe no-op if `start/2` was never called.
+- `DBCleaner.clean()` — called in `on_exit`. Check the connection back in via `repo.checkin/1`, and remove this owner from the registry along with any allowances pointing at it and the shared marker if it was the shared owner. Returns `:ok`. Safe no-op (returning `:ok` without checking anything in) if `start/2` was never called or the connection has already been cleaned — a second `clean()` after a successful one must not check the same connection in twice.
 
 Keep it self-contained in one file (no dependencies beyond Ecto). Per-process state goes in the process dictionary; the cross-process ownership map lives in a single named Agent. Model the registry state as `%{owners: %{pid => conn}, allow: %{allowed_pid => owner_pid}, shared: pid | nil}`.
 

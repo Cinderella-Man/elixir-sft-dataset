@@ -39,7 +39,7 @@ I need these functions in the public API:
 
 - `SharedPoolBucket.global_level(server)` — returns `{:ok, integer_remaining}` with the floor of the current global pool balance after applying the lazy refill.
 
-- `SharedPoolBucket.key_level(server, bucket_name, key_capacity, key_refill_rate)` — returns `{:ok, integer_remaining}` for the specified per-key bucket (refilled lazily) or `{:ok, key_capacity}` if the bucket has never been seen. The capacity/refill arguments are needed because they're not stored at bucket-creation time — the bucket is defined per-acquire.
+- `SharedPoolBucket.key_level(server, bucket_name, key_capacity, key_refill_rate)` — returns `{:ok, integer_remaining}` for the specified per-key bucket (refilled lazily) or `{:ok, key_capacity}` if the bucket has never been seen. The capacity/refill arguments are needed because they're not stored at bucket-creation time — the bucket is defined per-acquire. Querying `key_level` never creates or mutates a bucket: for an unseen name it just reports `{:ok, key_capacity}` without recording anything, so a repeated query for that same name with a different `key_capacity` still reports a fresh, full bucket at the new capacity.
 
 Per-bucket state (per key) must track the current token count (float), the last access timestamp, the last-known capacity, and the last-known refill rate. The global pool tracks its own token count (float) and last-refill timestamp in the top-level GenServer state (NOT in the buckets map).
 

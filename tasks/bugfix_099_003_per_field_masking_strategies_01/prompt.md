@@ -24,7 +24,7 @@ I need these functions in the public API:
 
 - `FieldMasker.mask_string(masker, string)` — scans a raw string and masks these three patterns:
   - **Credit card numbers**: any sequence of 13–19 digits (optionally separated by single spaces or hyphens) — replace every digit except the last 4 with `*`, keeping separators intact. E.g. `"4111-1111-1111-1234"` → `"****-****-****-1234"`.
-  - **Email addresses**: keep only the first character of the local part and replace the rest with `***`. E.g. `"john.doe@example.com"` → `"j***@example.com"`.
+  - **Email addresses**: keep only the first character of the local part and replace the rest with the literal `***`. Always append exactly `***` after the first character — even when the local part is a single character (so `"x@example.com"` → `"x***@example.com"`). E.g. `"john.doe@example.com"` → `"j***@example.com"`.
   - **SSN patterns**: sequences matching `\d{3}-\d{2}-\d{4}` — replace with `"***-**-****"`.
 
 Give me the complete module in a single file. Use only the Elixir standard library and built-in (`:crypto`, regex) support — no external dependencies.

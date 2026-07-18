@@ -24,8 +24,9 @@ advances**, with support for bounded late-arriving data.
 I need this public API:
 
 - `StreamingResampler.start_link(interval_ms, opts)` — start the server. `interval_ms` is
-  the bucket width in milliseconds. Returns `{:ok, pid}`. Raises `ArgumentError` for an
-  invalid `interval_ms` or invalid options.
+  the bucket width in milliseconds. `opts` is optional and defaults to `[]`, so
+  `start_link(interval_ms)` must also work. Returns `{:ok, pid}`. Raises `ArgumentError` for
+  an invalid `interval_ms` or invalid options.
 - `StreamingResampler.push(pid, timestamp_ms, value)` — ingest one data point. Returns `:ok`.
   The **watermark** is the maximum timestamp ever seen. Pushing advances the watermark and
   may finalize buckets.

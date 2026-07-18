@@ -43,6 +43,9 @@ C = mean                 # the prior mean the rating is pulled toward
 score = (v / (v + m)) * R + (m / (v + m)) * C
 ```
 
+The result must always be a **float** (e.g. `3.0`, never the integer `3`), even
+when `:mean`, `:rating`, or `:min_votes` are given as integers.
+
 Supported options (all optional):
 
 - `:min_votes` — the prior weight `m`, a non-negative number. Defaults to `25`.
@@ -52,7 +55,7 @@ Supported options (all optional):
 Notes:
 
 - If `v + m == 0` (only possible when both `vote_count` and `:min_votes` are 0),
-  return `C`. The function must never raise or divide by zero.
+  return `C` as a float. The function must never raise or divide by zero.
 - An item with `vote_count == 0` scores exactly `C` — with no evidence, its
   score is the prior mean.
 - An item whose `rating` equals `C` scores exactly `C` regardless of vote count.

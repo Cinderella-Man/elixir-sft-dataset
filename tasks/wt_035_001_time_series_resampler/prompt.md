@@ -30,11 +30,12 @@ Bucketing rules:
 - The last bucket is the one that contains the latest data point.
 - Every bucket between first and last must appear in the output, even if empty.
 - A data point at timestamp `t` belongs to the bucket with start `floor(t / interval_ms) * interval_ms`.
+- Here `floor` is the true mathematical floor (round toward negative infinity), not truncation toward zero. Timestamps may be negative, so a point at `t = -100` with `interval_ms = 2000` falls in the bucket starting at `-2000` (not `0`), and a point at `t = -3000` falls in the bucket starting at `-4000`. A point landing exactly on a boundary (e.g. `t = 2000`) belongs to the bucket that starts there, not the one before it.
 
 Aggregation rules per mode:
 - `:last` — the value of the latest timestamp in the bucket.
 - `:first` — the value of the earliest timestamp in the bucket.
-- `:mean` — arithmetic mean of all values in the bucket (float).
+- `:mean` — arithmetic mean of all values in the bucket, always returned as a float (e.g. two integer values `10` and `20` yield `15.0`, not `15`).
 - `:sum` — sum of all values.
 - `:count` — number of data points in the bucket (integer).
 - `:max` — maximum value.
@@ -42,7 +43,7 @@ Aggregation rules per mode:
 
 Gap filling:
 - `:nil` — empty buckets get `nil` as their value.
-- `:forward` — empty buckets get the aggregated value of the most recent non-empty bucket to their left. If there is no such bucket (gap at the very start), use `nil`.
+- `:forward` — empty buckets get the aggregated value of the most recent non-empty bucket to their left (this applies to every aggregation mode, including `:count`). If there is no such bucket (gap at the very start), use `nil`.
 
 Edge cases to handle:
 - Empty input list → return `[]`.

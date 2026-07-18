@@ -226,6 +226,7 @@ Diagnostic rules to implement (line numbers are 1-indexed against the original d
 Additional requirements:
 - `categories` are in document order; items within a category are in document order.
 - Every reported error carries the original (trailing-whitespace-trimmed) line content and its 1-indexed line number; `errors` are in ascending line order.
+- Input may use `\n` or `\r\n` line endings; each line's trailing whitespace (including a trailing carriage return) is stripped before it is classified, so CRLF documents parse identically to LF ones.
 - Tags are trimmed individually and empty tags dropped; category titles are trimmed.
 - The empty string returns `%{categories: [], errors: []}`.
 

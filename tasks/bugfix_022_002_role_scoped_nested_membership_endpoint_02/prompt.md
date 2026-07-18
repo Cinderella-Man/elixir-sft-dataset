@@ -27,13 +27,13 @@ I need these modules:
 - `TeamStore.add_member_safe(server, team_id, user_id, role)` — adds a member with a role if the team exists and the user isn't already on the team. Returns `{:ok, user_id}`, `{:error, :not_found}`, or `{:error, :conflict}`.
 - `TeamStore.remove_member_safe(server, team_id, user_id)` — removes a member. Returns `{:ok, user_id}`, `{:error, :not_found}` (no team), or `{:error, :not_member}`.
 
-**`AuthPlug`** — reads the `authorization` header, expects `Bearer <token>`, looks the user up via `TeamStore.get_user_by_token/2`, and assigns `:current_user`. On missing/invalid token, halts with 401 JSON `{"error": "unauthorized"}`. Accepts a `:store` option at init.
+**`AuthPlug`** — reads the `authorization` header, expects `Bearer <token>`, looks the user up via `TeamStore.get_user_by_token/2`, and assigns `:current_user`. On missing/invalid token, halts with 401 JSON `{"error": "unauthorized"}`. Accepts a `:store` option at init; `AuthPlug.init/1` must return the given options unchanged (so the same value can be passed straight to `call/2`).
 
 **`TeamRouter`** — a `Plug.Router` accepting a `:store` option, plugging `AuthPlug` before matching. Endpoints:
 
 - `GET /api/teams/:team_id/members` — 404 `{"error":"not_found"}` if the team is missing; 403 `{"error":"forbidden"}` if the caller isn't a member; otherwise 200 `{"members": [{"user_id": ..., "role": ...}]}`.
 
-- `POST /api/teams/:team_id/members` — body `{"user_id": "...", "role": "..."}` (role optional, defaults to `"member"`, must be one of the three valid roles or the response is 400 `{"error":"bad_request"}`). 404 if the team is missing. If the caller is **not** an `owner` or `admin` of the team (including non-members), 403 `{"error":"forbidden"}`. 409 `{"error":"conflict"}` if the target is already a member. On success 201 `{"added": user_id, "role": role}`.
+- `POST /api/teams/:team_id/members` — body `{"user_id": "...", "role": "..."}`. The body must be JSON carrying a string `user_id`; a missing or non-string `user_id` (or otherwise malformed body) yields 400 `{"error":"bad_request"}`. `role` is optional and defaults to `"member"`; it must be one of the three valid roles or the response is 400 `{"error":"bad_request"}`. 404 if the team is missing. If the caller is **not** an `owner` or `admin` of the team (including non-members), 403 `{"error":"forbidden"}`. 409 `{"error":"conflict"}` if the target is already a member. On success 201 `{"added": user_id, "role": role}`.
 
 - `DELETE /api/teams/:team_id/members/:user_id` — 404 if the team is missing. If the caller isn't an `owner`/`admin`, 403. If the target isn't a member, 404 `{"error":"not_found"}`. An `admin` may **not** remove an `owner` (403); only an `owner` may remove an `owner`. On success 200 `{"removed": user_id}`.
 

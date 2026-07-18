@@ -20,7 +20,7 @@ Write me an Elixir context module called `Cart` that implements an in-memory sho
 I need these functions in the public API:
 - `Cart.new(opts \\ [])` — creates a new cart struct. Accepts a `:tax_rate` float (e.g. `0.08`), defaulting to `0.0`.
 - `Cart.add_item(cart, product_id, quantity, unit_price)` — adds the quantity of a product at the unit price, summing quantities for existing products. Reject with `{:error, :invalid_quantity}` if quantity is not a positive integer. Returns `{:ok, cart}`.
-- `Cart.remove_item(cart, product_id)` — removes a product entirely; a no-op if absent.
+- `Cart.remove_item(cart, product_id)` — removes a product entirely; a no-op if absent. Returns the updated cart struct directly (not wrapped in an `{:ok, _}` tuple).
 - `Cart.update_quantity(cart, product_id, quantity)` — sets an existing item's quantity. 0 removes it; unknown product returns `{:error, :not_found}`; negative returns `{:error, :invalid_quantity}`. Returns `{:ok, cart}`.
 - `Cart.apply_coupon(cart, coupon)` — records a coupon on the cart. A coupon is a map with keys `:code`, `:type` (`:percentage` or `:fixed`), `:value` (a non-negative number), and an optional `:min_subtotal` (defaulting to `0.0`). Validation:
   - If the coupon map is malformed (missing `:code`, unknown `:type`, or a non-number/negative `:value`), return `{:error, :invalid_coupon}`.

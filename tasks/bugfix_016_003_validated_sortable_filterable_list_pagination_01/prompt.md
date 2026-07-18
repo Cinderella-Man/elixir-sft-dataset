@@ -17,13 +17,13 @@ I need `paginate(items, params)` returning `{:ok, %{data: [...], meta: %{...}}}`
 - `"page_size"` — default `20`; clamp to a maximum of `100`; values `< 1` or non-numeric fall back to `20`.
 - `"sort"` — the field to sort by. Allowed fields are exactly `"id"`, `"name"`, `"age"`. Any other value returns `{:error, :invalid_sort_field}`. Default `:id`.
 - `"order"` — `"asc"` (default) or `"desc"`. Any other value returns `{:error, :invalid_order}`.
-- `"min_age"` / `"max_age"` — optional integer filters. A present-but-non-integer value returns `{:error, :invalid_filter}`.
+- `"min_age"` / `"max_age"` — optional integer filters, each an inclusive bound on `:age` (an item passes when `age >= min_age` and `age <= max_age`). A present-but-non-integer value returns `{:error, :invalid_filter}`.
 - `"name_contains"` — optional case-insensitive substring filter on `:name`.
 
 Validation happens before any work: if any of sort/order/filters are invalid, return the corresponding `{:error, reason}` and do NOT return partial data.
 
 On success:
-- Sorting is deterministic: sort by the chosen field, using `:id` ascending as the tiebreak; `"desc"` reverses the ordering.
+- Sorting is deterministic: sort by the chosen field, using `:id` ascending as the tiebreak; `"desc"` reverses the ordering. String fields sort by default term (codepoint) order, so uppercase names sort before lowercase ones.
 - `total_count` is the count AFTER filtering. `total_pages` is `ceil(total_count / page_size)`, or `0` when there are zero matching items.
 - `meta` includes `:current_page`, `:page_size`, `:total_count`, `:total_pages`, `:sort` (atom), `:order` (atom), and `:filters` (a map with `:min_age`, `:max_age`, `:name_contains`, each `nil` when unset).
 - Requesting a page beyond `total_pages` returns an empty `data` list but still-correct metadata (mirror the base endpoint's behavior here).

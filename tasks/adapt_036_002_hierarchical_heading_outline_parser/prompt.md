@@ -227,6 +227,8 @@ Specific behaviours to implement:
 - Tags are trimmed of surrounding whitespace individually and empty tags dropped.
 - Category/node titles are trimmed of surrounding whitespace.
 - Headings with seven or more `#` characters are ignored (treated as unrecognised lines).
+- A `#` line with no whitespace between the hashes and the text (e.g. `#NotAHeading`) is not a heading and is ignored.
+- Both `\n` (LF) and `\r\n` (CRLF) line endings must be supported: a trailing carriage return is stripped and never becomes part of a title, description, or tag.
 - The function must handle an empty string input, returning `[]`.
 
 Give me the complete module in a single file. Use only the Elixir standard library — no external dependencies.

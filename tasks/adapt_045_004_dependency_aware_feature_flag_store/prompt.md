@@ -190,7 +190,7 @@ A flag can declare that it depends on other flags: it is only considered enabled
 
 I need these functions in the public API:
 
-- `FeatureFlags.start_link(opts)` to start the process. It should accept an optional `:table_name` for the ETS table (default `:feature_flags`), and an optional `:name` for process registration (pass `nil` to skip registration).
+- `FeatureFlags.start_link(opts)` to start the process, returning `{:ok, pid}` on success. It should accept an optional `:table_name` for the ETS table (default `:feature_flags`), and an optional `:name` for process registration (pass `nil` to skip registration). The write functions below take no server argument, so they must still reach the running process even when it is started with `name: nil` (i.e. unregistered) — track the running instance globally.
 - `FeatureFlags.enable(flag_name)` — sets the flag's own state to `:on`.
 - `FeatureFlags.disable(flag_name)` — sets the flag's own state to `:off`.
 - `FeatureFlags.enable_for_percentage(flag_name, percentage)` — sets the flag's own state to `:percentage` mode with an integer 0–100.

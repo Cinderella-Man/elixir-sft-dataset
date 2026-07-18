@@ -217,7 +217,7 @@ The filter is expressed as a small **match-spec**-like DSL that the bus can eval
 - `{:any, [clause, clause, ...]}` — at least one of the sub-clauses matches (OR). Each element is a single clause tuple from this list — a nested clause-*list* (a whole filter) is **not** a valid element.
 - `{:none, [clause, clause, ...]}` — none of the sub-clauses match (NOT-OR, i.e. NAND of the disjunction). Elements are single clause tuples, exactly as for `:any`.
 
-A `path` is a list of map keys or integer list indices, e.g. `[:user, :role]` navigates `event[:user][:role]` for a map or `event.user.role` for a struct via `Access`. A path that doesn't resolve returns `nil` (never raises) and fails all clauses except `{:eq, path, nil}` and `{:neq, path, non_nil}`.
+A `path` is a list of map keys or integer list indices. Each element of the path descends one level: a key looks up that key in a map (structs are navigated by key like maps), and an integer selects the element at that 0-based index of a list, e.g. `[:user, :role]` navigates `event[:user][:role]`, and `[:items, 0]` selects the first element of the list at `event[:items]`. A path that doesn't resolve returns `nil` (never raises) and fails all clauses except `{:eq, path, nil}` and `{:neq, path, non_nil}`.
 
 An entire subscription filter is a list of clauses, ALL of which must match (empty list = always match). This is different from `{:any, [...]}` which is OR within a nested group of clauses.
 

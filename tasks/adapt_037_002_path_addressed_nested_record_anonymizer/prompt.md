@@ -209,7 +209,7 @@ Write me an Elixir module called `Anonymizer` that anonymizes fields inside **de
 
 I need this function in the public API:
 - `Anonymizer.anonymize(records, rules)` where `records` is a list of (possibly deeply nested) maps and `rules` is a map whose keys are **string paths** and whose values are one of the following rule atoms or tuples:
-  - `:hash` — replace the value with its SHA-256 hex digest
+  - `:hash` — replace the value with its SHA-256 digest encoded as a **lower-case** hexadecimal string
   - `:mask` — keep the first and last character of the string, replace every middle character with `*`. A string of 2 characters shows both with no masking. A string of 1 character is fully masked as `*`.
   - `:redact` — replace the value with the string `"[REDACTED]"`
   - `{:fake, seed}` — generate a deterministic fake value (a realistic-looking but fabricated string) derived solely from the original value and the given `seed`. The same input value + seed must always produce the same fake output across calls.

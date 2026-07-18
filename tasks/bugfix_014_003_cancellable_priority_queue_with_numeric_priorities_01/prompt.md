@@ -15,9 +15,9 @@ I need these functions in the public API:
 
 - `CancellablePriorityQueue.enqueue(server, task, priority)` where priority is a non-negative integer (lower number = higher priority, like Unix nice values). Priority `0` is the highest. This adds a task to the queue and triggers processing if the processor is currently idle. Return `{:ok, ref}` where `ref` is a unique reference (use `make_ref()`) that can be used to cancel the task later.
 
-- `CancellablePriorityQueue.cancel(server, ref)` which attempts to cancel a pending (not-yet-started) task identified by `ref`. Returns `:ok` if the task was found and removed from the queue, or `{:error, :not_found}` if the ref doesn't match any pending task (either it was already processed, already cancelled, or never existed). You cannot cancel a task that is currently being processed.
+- `CancellablePriorityQueue.cancel(server, ref)` which attempts to cancel a pending (not-yet-started) task identified by `ref`. Returns `:ok` if the task was found and removed from the queue, or `{:error, :not_found}` if the ref doesn't match any pending task (either it was already processed, already cancelled, or never existed). You cannot cancel a task that is currently being processed; such a call also returns `{:error, :not_found}`.
 
-- `CancellablePriorityQueue.status(server)` returning a map with the total pending count, a breakdown of pending counts per priority level, and the count of cancelled tasks. For example: `%{pending: 5, by_priority: %{0 => 2, 1 => 1, 5 => 2}, cancelled: 3}`. Only include priority levels that have pending tasks in the `by_priority` map.
+- `CancellablePriorityQueue.status(server)` returning a map with the total pending count, a breakdown of pending counts per priority level, and the count of cancelled tasks. For example: `%{pending: 5, by_priority: %{0 => 2, 1 => 1, 5 => 2}, cancelled: 3}`. Only include priority levels that have pending tasks in the `by_priority` map (so an empty queue reports `by_priority: %{}`).
 
 - `CancellablePriorityQueue.drain(server)` which blocks until all currently enqueued tasks have been processed and the queue is empty. This is essential for testing. Return `:ok`.
 

@@ -23,19 +23,21 @@ I need these functions in the public API:
 
 - `IdempotentPayments.process_payment(server, params, idempotency_key \\ nil)` where `params` is a map containing `:amount` (integer, cents), `:currency` (string), and `:recipient` (string). The function must:
   1. If `idempotency_key` is `nil`, always create a new payment record and return `{:ok, response}`.
-  2. If `idempotency_key` is provided and has been seen before (and hasn't expired), return `{:ok, response}` with the exact same response map that was returned the first time, without creating a duplicate payment record.
-  3. If `idempotency_key` is provided but has expired or has never been seen, process the payment normally, cache the response keyed by the idempotency key with a TTL, and return `{:ok, response}`.
-  4. If required fields are missing from `params`, return `{:error, :invalid_params}` — and if an idempotency key was provided, cache this error response too so that replaying the same key returns the same error.
+  2. If `idempotency_key` is provided and has been seen before and has not yet expired, return `{:ok, response}` with the exact same response map that was returned the first time, without creating a duplicate payment record. This holds even if the replay carries different `params`.
+  3. If `idempotency_key` is provided but has expired or has never been seen, process the payment normally, cache the response keyed by the idempotency key with a fresh TTL, and return `{:ok, response}`.
+  4. If required fields are missing from `params`, return `{:error, :invalid_params}` — and if an idempotency key was provided, cache this error response too so that replaying the same key returns the same error (even if the replay carries valid `params`), and no payment record is created.
 
-  The `response` map must contain: `:id` (a unique string, e.g. a UUID), `:amount`, `:currency`, `:recipient`, `:status` (always `"completed"`), and `:created_at` (the timestamp from the clock).
+  An entry cached at clock time `T` expires at `T + ttl_ms`. It counts as a cache hit only while the current clock time is strictly less than that expiry; at exactly the expiry timestamp, and after it, the key is treated as expired. So with `ttl_ms` of 10,000 a key cached at `t = 0` is still a hit at `t = 9_999` but is expired at `t = 10_000`.
 
-- `IdempotentPayments.get_payments(server)` returns a list of all payment records stored (for test assertions about how many records were actually created).
+  The `response` map must contain: `:id` (a unique payment id string — see the ID rule below), `:amount`, `:currency`, `:recipient`, `:status` (always `"completed"`), and `:created_at` (the timestamp read from the clock at the moment the payment is processed).
+
+- `IdempotentPayments.get_payments(server)` returns a list of all payment records stored, in creation order (oldest first), for test assertions about how many records were actually created.
 
 - `IdempotentPayments.get_payment(server, id)` returns `{:ok, payment}` or `{:error, :not_found}`.
 
-Each idempotency key entry in internal state should store the full response and the expiry timestamp. The periodic cleanup (triggered by a `:cleanup` message handled via `handle_info`) must remove only expired idempotency entries. Payment records themselves are never cleaned up.
+Each idempotency key entry in internal state should store the full response and the expiry timestamp. The periodic cleanup (triggered by a `:cleanup` message handled via `handle_info`) must remove only expired idempotency entries — an entry whose expiry timestamp is less than or equal to the current clock time counts as expired and is removed, while one whose expiry is still strictly greater than the current time is kept. Payment records themselves are never cleaned up.
 
-Generate payment IDs using something simple and unique — a counter-based ID like `"pay_1"`, `"pay_2"`, etc. is fine so tests are deterministic. Do not pull in any external dependencies; use only OTP standard library.
+Generate payment IDs as sequential counter-based strings: `"pay_1"`, `"pay_2"`, `"pay_3"`, and so on. The first payment record created is `"pay_1"`, and the counter increments by exactly one per record in creation order. The counter is consumed only when a new payment record is actually created — idempotent cache hits and cached errors must not consume a number. Do not pull in any external dependencies; use only OTP standard library.
 
 Give me the complete module in a single file.
 

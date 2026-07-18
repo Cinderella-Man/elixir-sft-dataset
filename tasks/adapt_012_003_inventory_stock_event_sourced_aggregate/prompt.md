@@ -147,7 +147,7 @@ I need these functions in the public API:
 
 - `InventoryAggregate.events(server, id)` which returns the full ordered list of events for that aggregate, oldest first.
 
-The event sourcing logic should work as follows: each command is first validated against the current state, then zero or more event structs/maps are produced, then those events are applied one by one to the state, then they are appended to the event history. Events should be maps with at least a `:type` key. Use types like `:product_registered`, `:stock_received`, `:stock_shipped`, `:stock_adjusted`.
+The event sourcing logic should work as follows: each command is first validated against the current state, then zero or more event structs/maps are produced, then those events are applied one by one to the state, then they are appended to the event history. Events should be maps with at least a `:type` key. Use types like `:product_registered`, `:stock_received`, `:stock_shipped`, `:stock_adjusted`. Beyond `:type`, each event must carry the data relevant to it: the `:product_registered` event must include the product name (under `:name` or `:product_name`) and the `:sku`; the `:stock_received`, `:stock_shipped`, and `:stock_adjusted` events must each include a `:quantity` key holding the command's quantity — the signed value for adjustments (e.g. `-20` for `{:adjust, -20}`).
 
 Validation rules:
 - `:register` must fail with `{:error, :already_registered}` if the product is already registered.

@@ -22,7 +22,7 @@ The `context` argument is a map that drives both configuration and per-user data
 - `:require_special` (optional, default `true`) — must contain at least one character that is not alphanumeric.
 - `:common_passwords` (optional, default `[]`) — a list of plaintext strings considered too common; the password must not appear in this list (case-insensitive comparison).
 - `:previous_passwords` (optional, default `[]`) — a list of previously used plaintext passwords; the new password must not match any of them exactly.
-- `:max_username_similarity` (optional, default `3`) — the password is rejected if its Levenshtein distance from the username is less than or equal to this value (i.e. distance must be strictly greater than this threshold).
+- `:max_username_similarity` (optional, default `3`) — the password is rejected if its Levenshtein distance from the username is less than or equal to this value (i.e. distance must be strictly greater than this threshold). The distance is computed on the literal password and username, case-sensitively, with no case folding applied to either side.
 
 The violation atoms to use are: `:too_short`, `:too_long`, `:no_uppercase`, `:no_lowercase`, `:no_digit`, `:no_special`, `:common_password`, `:reused_password`, `:too_similar_to_username`.
 

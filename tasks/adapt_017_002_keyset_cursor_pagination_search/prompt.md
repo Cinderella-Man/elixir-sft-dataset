@@ -279,7 +279,7 @@ Implement `Catalog.KeysetSearch.search(products, params)` where `products` is a 
 - **`"limit"`** — page size (integer or integer string). Default `3`, clamped to a max of `100`; non-positive/garbage falls back to the default.
 - **`"cursor"`** — an **opaque** token. When present, the page contains only the items that fall **strictly after** the cursor in the current ordering (by `(sort_value, id)`), never using numeric offsets.
 - `next_cursor` is a fresh opaque token derived from the **last item on the returned page**, or `nil` when no further items remain. `has_more` reflects whether items remain beyond this page.
-- The cursor must encode the **sort field** it was produced under. If a cursor is presented alongside a *different* `sort`, return `{:error, :invalid_cursor}`. A structurally malformed cursor is also `{:error, :invalid_cursor}`. This prevents callers from paginating incoherently across mismatched orderings.
+- The cursor must encode the **sort field** it was produced under. If a cursor is presented alongside a *different* `sort`, return `{:error, :invalid_cursor}`. A structurally malformed cursor is also `{:error, :invalid_cursor}`. A cursor whose decoded payload carries a value of the wrong type for its sort field (e.g. a non-integer where price cents or an id are expected) is likewise `{:error, :invalid_cursor}`, rather than being trusted to slice the page. This prevents callers from paginating incoherently across mismatched orderings.
 
 ## Response format
 

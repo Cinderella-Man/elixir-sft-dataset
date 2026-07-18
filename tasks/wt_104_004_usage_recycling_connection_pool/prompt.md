@@ -31,6 +31,8 @@ Long-lived connections accumulate state and eventually should be recycled. This 
   - `:create` — a zero-arity function returning a **new, distinct** connection. Defaults to `fn -> make_ref() end`.
   - `:destroy` — a one-arity function `fn conn -> :ok end` called when a connection is retired. Defaults to a no-op.
 
+  If an option is invalid — in particular `min_size > max_size`, or a `max_uses` that is neither `:infinity` nor a positive integer — `start_link` must fail startup so that it returns `{:error, reason}`.
+
 - `RecyclingPool.checkout(name, timeout)` — borrow a connection.
   - If a connection is available, hand it out: `{:ok, conn}`.
   - Otherwise, if the pool has fewer than `max_size` connections alive, lazily create one (use count `0`) and hand it out.
@@ -46,7 +48,7 @@ Long-lived connections accumulate state and eventually should be recycled. This 
 
 - **Bounded reuse.** No connection is handed out more than `:max_uses` times; once exhausted it is destroyed and replaced lazily. With `:infinity` no connection is ever retired.
 - **Lazy growth up to max**, distinct connections, and reuse of not-yet-exhausted returned connections.
-- **Ownership monitoring / crash reclamation.** Monitor the checking-out process; if it dies while holding a connection, reclaim it — this **counts as a use** and may retire the connection (creating a fresh replacement for any waiter).
+- **Ownership monitoring / crash reclamation.** Monitor the checking-out process; if it dies while holding a connection, reclaim it — this **counts as a use** and may retire the connection (creating a fresh replacement for any waiter). A process that dies while merely blocked waiting is dropped from the waiter queue and never handed a connection.
 - **Clean, server-side timeout.** A blocked `checkout` returns `{:error, :timeout}` as a normal value — implement waiting/timeout in the server with a waiter queue and `Process.send_after` / `GenServer.reply`, not via `GenServer.call`'s own timeout.
 
 Use only the OTP standard library — no external dependencies. Give me the complete module in a single file.

@@ -11,9 +11,9 @@ Write me an Elixir module called `CsvLoader` that reads a CSV file, validates ea
 
 I need these functions in the public API:
 
-- `CsvLoader.load_file(file_path, schema)` which reads the CSV file at the given path, validates and coerces every data row against the schema. It should return `{:ok, valid_rows, error_report}` where `valid_rows` is a list of maps with field names as atom keys and properly typed Elixir values (not raw strings), and `error_report` is a list of `{row_number, field_name, error_message}` tuples describing every validation failure. Row numbers should be 1-based counting only data rows (the header row is not counted). If the file doesn't exist, return `{:error, :file_not_found}`. If the file is empty (zero bytes), return `{:error, :empty_file}`.
+- `CsvLoader.load_file(file_path, schema)` which reads the CSV file at the given path, validates and coerces every data row against the schema. It should return `{:ok, valid_rows, error_report}` where `valid_rows` is a list of maps with field names as atom keys and properly typed Elixir values (not raw strings), and `error_report` is a list of `{row_number, field_name, error_message}` tuples describing every validation failure. Valid rows appear in the same order they occur in the CSV. Row numbers should be 1-based counting only data rows (the header row is not counted). If the file doesn't exist, return `{:error, :file_not_found}`. If the file is empty (zero bytes), return `{:error, :empty_file}`.
 
-- `CsvLoader.load_string(csv_string, schema)` which does the same thing but accepts the CSV content as a binary string instead of a file path. This is useful for testing.
+- `CsvLoader.load_string(csv_string, schema)` which does the same thing but accepts the CSV content as a binary string instead of a file path. This is useful for testing. If the content is empty (after stripping any BOM, trims to an empty string), return `{:error, :empty_file}`.
 
 The schema should be a list of field definitions, where each field is a map with these keys:
 - `:name` (required) — the column header name as a string
@@ -33,6 +33,7 @@ Type coercion rules (applied after validation passes):
 - `:enum` — the trimmed value must be one of the strings in the `:values` list (case-sensitive). Error message: `"must be one of: <comma-separated values>"`.
 
 Validation rules:
+- Only schema fields whose `:name` matches a column in the header row are processed. A schema field whose name does not appear in the header is skipped entirely — it is neither validated nor included in the result maps, and its key never appears even if it defines a `:default`.
 - Required fields that are empty or whitespace-only should produce an error `"is required"`.
 - Type coercion errors produce the messages listed above.
 - Format checks should produce `"does not match expected format"` and are evaluated before type coercion.

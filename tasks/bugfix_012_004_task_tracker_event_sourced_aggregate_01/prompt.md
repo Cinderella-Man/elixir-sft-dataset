@@ -17,9 +17,9 @@ I need these functions in the public API:
 
 - `TaskAggregate.state(server, id)` which returns the current state of the aggregate. If the aggregate has never received a command, return `nil`. Otherwise return a map with at least `:title`, `:assignee`, `:status`, and `:priority` keys (`:status` starts as `:created` after creation, `:assignee` starts as `nil`).
 
-- `TaskAggregate.events(server, id)` which returns the full ordered list of events for that aggregate, oldest first.
+- `TaskAggregate.events(server, id)` which returns the full ordered list of events for that aggregate, oldest first. If the aggregate has never received a command, return an empty list.
 
-The event sourcing logic should work as follows: each command is first validated against the current state, then zero or more event structs/maps are produced, then those events are applied one by one to the state, then they are appended to the event history. Events should be maps with at least a `:type` key. Use types like `:task_created`, `:task_assigned`, `:task_started`, `:task_completed`, `:task_reopened`.
+The event sourcing logic should work as follows: each command is first validated against the current state, then zero or more event structs/maps are produced, then those events are applied one by one to the state, then they are appended to the event history. Events should be maps with at least a `:type` key. Use types like `:task_created`, `:task_assigned`, `:task_started`, `:task_completed`, `:task_reopened`. In addition to `:type`, the `:task_created` event must carry the title and priority under `:title` and `:priority` keys, and the `:task_assigned` event must carry the assignee name under an `:assignee` key.
 
 Validation rules:
 - `:create` must fail with `{:error, :already_exists}` if the task already exists. Priority must be one of `:low`, `:medium`, `:high` — otherwise fail with `{:error, :invalid_priority}`.

@@ -245,8 +245,11 @@ I need one public function:
   collection, regardless of completion order.
 
 Admission rules:
-- Admit elements in input order (head-of-line). A queued element may only start once the
-  currently running total weight plus its own weight is `<= budget`.
+- Admit elements in **strict input order (head-of-line blocking)**: only the element at the
+  head of the queue is eligible to start, and it starts only once the currently running
+  total weight plus its own weight is `<= budget`. If the head does not fit, nothing behind
+  it may start — a lighter element further back must **not** jump ahead of a blocked heavier
+  head.
 - Special case: if a single element's weight is **greater than `budget`**, it would
   otherwise never run — so allow it to run **alone** (only when nothing else is currently
   running). While it runs, no other element may start.

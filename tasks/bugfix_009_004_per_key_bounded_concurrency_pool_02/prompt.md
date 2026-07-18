@@ -11,13 +11,13 @@ Write me an Elixir GenServer module called `KeyedPool` that limits the number of
 
 I need these functions in the public API:
 
-- `KeyedPool.start_link(opts)` to start the process. It should accept a `:name` option for process registration and a required `:max_concurrency` option (the maximum number of simultaneous executions allowed per key, must be a positive integer).
+- `KeyedPool.start_link(opts)` to start the process. It should accept a `:name` option for process registration and a required `:max_concurrency` option (the maximum number of simultaneous executions allowed per key, which must be a positive integer). If the `:max_concurrency` option is missing, raise a `KeyError`. If it is present but is not a positive integer (for example `0`, `-1`, or `1.5`), raise an `ArgumentError`.
 
 - `KeyedPool.execute(server, key, func)` where `func` is a zero-arity function. If the number of currently running executions for `key` is below `:max_concurrency`, the function is executed immediately in a spawned Task (so the GenServer remains responsive) and the caller blocks until the result is ready. If `:max_concurrency` executions are already running for that key, the caller is placed in a FIFO queue and blocks until a slot opens. When a running execution completes, the next queued caller's function is started.
 
   Each caller gets the result of **their own** function — this is NOT request deduplication. Every caller's function runs independently.
 
-  Return value normalisation: if `func` returns `{:ok, value}`, the caller gets `{:ok, value}`. If `func` returns `{:error, reason}`, the caller gets `{:error, reason}`. If `func` returns any other term `v`, the caller gets `{:ok, v}`. If `func` raises, the caller gets `{:error, {:exception, exception}}`.
+  Return value normalisation: if `func` returns `{:ok, value}`, the caller gets `{:ok, value}`. If `func` returns `{:error, reason}`, the caller gets `{:error, reason}`. If `func` returns any other term `v`, the caller gets `{:ok, v}`. If `func` raises, the caller gets `{:error, {:exception, exception}}`, where `exception` is the raised exception struct (e.g. `{:error, {:exception, %RuntimeError{message: "boom"}}}`).
 
 - `KeyedPool.status(server, key)` which returns a map `%{running: non_neg_integer(), queued: non_neg_integer()}` showing how many executions are running and how many callers are waiting in the queue for the given key. Returns `%{running: 0, queued: 0}` for keys with no activity.
 

@@ -222,18 +222,23 @@ Bucketing rules:
 - Every bucket between first and last must appear in the output, even if all series are
   empty there.
 - A data point at timestamp `t` belongs to the bucket with start
-  `floor(t / interval_ms) * interval_ms`.
+  `floor(t / interval_ms) * interval_ms`. This is floored division, so a boundary
+  timestamp opens the next bucket (`t=2000` with `interval_ms=2000` → bucket `2000`, not
+  `0`) and a negative timestamp lands at or below itself (`t=-1500` → bucket `-2000`).
 
 Aggregation is computed **independently per series** within each bucket, using the same
 rules as a single-series resampler:
-- `:last` / `:first` — value at the latest / earliest timestamp in the bucket for that series.
-- `:mean` — arithmetic mean of that series' values in the bucket (float).
+- `:last` / `:first` — value at the latest / earliest timestamp in the bucket for that
+  series (ordered by timestamp, not by input position).
+- `:mean` — arithmetic mean of that series' values in the bucket, always a float (e.g. a
+  mean of exactly twelve is `12.0`, not `12`).
 - `:sum` — sum of that series' values.
 - `:count` — number of that series' points in the bucket (integer).
 - `:max` / `:min` — max / min of that series' values.
 
 Gap filling is **per series**:
-- `:nil` — a series with no points in a bucket gets `nil` for that bucket.
+- `:nil` — a series with no points in a bucket gets `nil` for that bucket. This applies to
+  every aggregation mode: an empty bucket under `:sum` or `:count` is `nil`, not `0`.
 - `:forward` — a series with no points in a bucket gets its own most recent non-empty
   aggregated value. If that series has had no value yet (leading gap), use `nil`.
 
@@ -249,5 +254,8 @@ external dependencies.
 ## Additional interface contract
 
 - `resample/3` validates its arguments: an `interval_ms` that is not a positive integer
-  (e.g. `0`), or an `:agg`/`:fill` option value outside the documented sets (e.g.
-  `agg: :median` or `fill: :backward`), raises an `ArgumentError`.
+  (e.g. `0`, `-2000`, or `2_000.0`), or an `:agg`/`:fill` option value outside the
+  documented sets (e.g. `agg: :median` or `fill: :backward`), raises an `ArgumentError`.
+- This validation runs **before** the empty-input short-circuit: an invalid `:agg`/`:fill`
+  still raises `ArgumentError` even when the input has no data points (an empty map like
+  `%{}` or a map of all-empty series like `%{a: []}`), rather than returning `[]`.

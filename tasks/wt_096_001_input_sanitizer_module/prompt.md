@@ -26,7 +26,7 @@ I need these functions in the public API:
   - Return the sanitized string.
 
 - `Sanitizer.sql_identifier(input)` which ensures a string is safe for interpolation as a SQL identifier (e.g. a table or column name). Rules:
-  - Strip or replace any character that is not alphanumeric or an underscore.
+  - Remove (strip out) any character that is not alphanumeric or an underscore — dropped characters are deleted, not replaced with a placeholder.
   - If the result is empty, return `{:error, :empty}`.
   - If the result starts with a digit, prepend an underscore.
   - Return `{:ok, sanitized}` on success.

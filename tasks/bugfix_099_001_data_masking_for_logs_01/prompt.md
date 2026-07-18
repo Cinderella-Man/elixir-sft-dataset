@@ -14,10 +14,12 @@ I need these functions in the public API:
 - `LogMasker.mask(masker, data)` which accepts either a map, a keyword list, or a string, and returns the same type with sensitive data scrubbed. For maps and keyword lists, recursively walk all values — if a key matches a sensitive key (comparison should be case-insensitive and work for both atom and string keys), replace its value with `"[MASKED]"` regardless of what the value is. Lists of maps or keyword lists should also be walked recursively. Non-sensitive keys must be left completely untouched.
 - `LogMasker.mask_string(masker, string)` which scans a raw string and masks three patterns:
   - **Credit card numbers**: any sequence of 13–19 digits (optionally separated by spaces or hyphens) — replace all digit groups except the last 4 digits with `*` characters of equal length, keeping separators intact. E.g. `"4111-1111-1111-1234"` → `"****-****-****-1234"`.
-  - **Email addresses**: mask the local part (before `@`) keeping only the first character and replacing the rest with `***`. E.g. `"john.doe@example.com"` → `"j***@example.com"`.
+  - **Email addresses**: mask the local part (before `@`) keeping only the first character and replacing the rest with `***`. E.g. `"john.doe@example.com"` → `"j***@example.com"`. A single-character local part like `"a@b.com"` becomes `"a***@b.com"`.
   - **SSN patterns**: sequences matching `\d{3}-\d{2}-\d{4}` — replace with `"***-**-****"`.
 
-`LogMasker.mask/2` should also apply `mask_string/2` to any string *values* it encounters while walking a map or keyword list, even for non-sensitive keys, so stray PII embedded in strings is caught everywhere.
+  Mask SSN patterns before applying the credit-card pattern, so that two adjacent SSNs are each replaced independently rather than being consumed as one long credit-card number. E.g. `"123-45-6789 987-65-4321"` → `"***-**-**** ***-**-****"` (no trailing digits left visible).
+
+`LogMasker.mask/2` should also apply `mask_string/2` to any string *values* it encounters while walking a map or keyword list, even for non-sensitive keys, so stray PII embedded in strings is caught everywhere. A masker built from an empty `sensitive_keys` list therefore masks nothing by key, but still pattern-masks string values it encounters.
 
 Give me the complete module in a single file. Use only the Elixir standard library and built-in regex support — no external dependencies.
 

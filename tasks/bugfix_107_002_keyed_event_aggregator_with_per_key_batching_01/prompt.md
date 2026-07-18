@@ -38,6 +38,12 @@ buffered events — whichever comes first.
   `{:error, {:already_started, pid}}` for a name clash, etc.). Options do not need
   to be validated: callers are trusted to pass sane values.
 
+  The module must also be startable as a **supervised child** using the standard
+  `{KeyedAggregator, opts}` child specification (i.e. it must provide a
+  `child_spec/1` that starts the process via `start_link(opts)` with the given
+  keyword list), so it can be placed under a supervisor or launched with
+  `start_supervised!/1`.
+
 - `KeyedAggregator.push(server, key, event)` — buffer a single `event` under `key`
   on the aggregator referenced by `server` (a pid or a registered name). This is
   **asynchronous** (fire-and-forget): it always returns `:ok` immediately, before

@@ -11,7 +11,7 @@ Write me an Elixir GenServer module called `LWWSet` that maintains a Last-Writer
 
 I need these functions in the public API:
 
-- `LWWSet.start_link(opts)` to start the process. It should accept a `:name` option for process registration.
+- `LWWSet.start_link(opts)` to start the process. It should accept a `:name` option for process registration. Returns `{:ok, pid}`.
 
 - `LWWSet.add(server, element, timestamp)` which adds an element to the set with the given timestamp. If the element was already added with an earlier timestamp, the timestamp is updated to the newer one. Returns `:ok`.
 
@@ -21,9 +21,9 @@ I need these functions in the public API:
 
 - `LWWSet.members(server)` which returns a `MapSet` of all elements currently in the set (i.e., all elements whose add timestamp is strictly greater than their remove timestamp, or who have been added but never removed).
 
-- `LWWSet.merge(server, remote_state)` which merges a remote set state into the local one. For each element, the merged result should take the maximum of the local and remote add timestamps, and separately the maximum of the local and remote remove timestamps. This is the standard LWW-Element-Set merge rule. Returns `:ok`.
+- `LWWSet.merge(server, remote_state)` which merges a remote set state into the local one. `remote_state` has the same shape returned by `LWWSet.state/1` (a map with `:adds` and `:removes` keys), and either map may omit elements. For each element, the merged result should take the maximum of the local and remote add timestamps, and separately the maximum of the local and remote remove timestamps. This is the standard LWW-Element-Set merge rule. Returns `:ok`.
 
-- `LWWSet.state(server)` which returns the raw internal state of the set so it can be sent to another node for merging. Return it as a map with two keys: `:adds` for the add map (element => timestamp) and `:removes` for the remove map (element => timestamp).
+- `LWWSet.state(server)` which returns the raw internal state of the set so it can be sent to another node for merging. Return it as a map with two keys: `:adds` for the add map (element => timestamp) and `:removes` for the remove map (element => timestamp). An element appears in a given map only if the corresponding operation was applied to it, so looking up an element that was never added returns `nil` in `:adds`, and one that was never removed returns `nil` in `:removes`. The state of a fresh set is `%{adds: %{}, removes: %{}}`.
 
 The internal state should track, for each element, the latest add timestamp and the latest remove timestamp as two separate maps. For example, after `add(s, :x, 10)` and `remove(s, :x, 5)`, the element `:x` is still in the set because `10 > 5`. After `remove(s, :x, 15)`, it would no longer be in the set because `15 > 10`.
 

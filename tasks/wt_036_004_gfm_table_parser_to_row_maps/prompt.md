@@ -35,9 +35,10 @@ The single public function should be:
   ```
 
 Parsing rules to implement:
+- **Line endings**: split the document on `\n`, and strip any trailing carriage return (`\r`) from each line so that `\r\n` (CRLF) input parses identically to `\n` input and no `\r` leaks into cell text.
 - **Pipe rows**: leading and trailing `|` are optional; cells are the text between unescaped `|` characters, each trimmed of surrounding whitespace.
 - **Escaped pipes**: a `\|` inside a cell is a literal `|` and does NOT split the cell.
-- **Separator validation**: the row directly under the header only forms a table if it has the same number of cells as the header AND every cell matches `:?-+:?`. Otherwise the "header" line is not a table start and scanning continues from the next line.
+- **Separator validation**: the row directly under the header only forms a table if it has the same number of cells as the header AND every cell matches `:?-+:?`. Otherwise the "header" line is not a table start and scanning continues from the next line (a later line can still become the header).
 - **Alignments**, derived per separator cell: `:---` → `:left`, `---:` → `:right`, `:---:` → `:center`, `---` → `:none`. The `alignments` list has one entry per header column.
 - **Rows**: each data row is keyed by the header strings. A ragged row with **fewer** cells than headers pads the missing columns with `""`; a row with **more** cells than headers drops the extras.
 - Lines that are not part of any table (prose, blank lines) are ignored.

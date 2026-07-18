@@ -19,9 +19,11 @@ I need these functions in the public API:
   collects parsed records into batches, and inserts each batch via
   `repo.insert_all/3`. It must return `{:ok, stats}` on success or
   `{:error, reason}` on failure.
-  `stats` is a map with these integer keys:
-    - `:total`    — total non-blank lines encountered in the file
-    - `:inserted` — records successfully inserted / upserted
+  `stats` is a map with exactly these four integer keys and no others:
+    - `:total`    — total non-blank lines encountered in the file (this
+                    includes lines that were later skipped)
+    - `:inserted` — records successfully inserted / upserted, as reported by
+                    the count `insert_all` returns
     - `:skipped`  — individual lines that could not be parsed as valid JSON
                     objects (malformed JSON or non-object JSON values like
                     arrays, strings, numbers)
@@ -40,8 +42,9 @@ I need these functions in the public API:
     - `:timeout` (integer, default 30_000) — per-batch timeout in
       milliseconds, used as the `:timeout` option for `Task.async_stream`
 
-Because the file is streamed line-by-line with `File.stream!/1`, the module
-must never load the entire file into memory. Build a streaming pipeline:
+Because the file is read with `File.stream!/1` rather than `File.read!/1`,
+lines are pulled from disk lazily instead of reading the whole raw file in one
+call. Build a streaming pipeline:
 
 1. `File.stream!(path)` to get a lazy line stream
 2. `Stream.reject/2` to drop blank lines (after trimming)
@@ -59,7 +62,8 @@ inject `inserted_at` / `updated_at` timestamps if the schema declares them.
 The module must handle these error conditions gracefully — never raise:
 - File not found → `{:error, :file_not_found}`
 - File exists but is completely empty (0 non-blank lines) — this is valid,
-  return `{:ok, stats}` with all zeroes
+  return `{:ok, stats}` with all zeroes, i.e.
+  `{:ok, %{total: 0, inserted: 0, skipped: 0, failed: 0}}`
 - An individual line fails JSON parsing → count as `:skipped`, continue
 - A batch `insert_all` call fails → log the error, add the batch size to
   `:failed`, and continue with the remaining batches

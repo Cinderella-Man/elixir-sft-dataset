@@ -356,10 +356,10 @@ Write me an Elixir GenServer module called `RollupTSDB` that implements a time-s
 
 ## Public API
 
-- `RollupTSDB.start_link(opts)` to start the process. It should accept:
+- `RollupTSDB.start_link(opts)` to start the process, returning `{:ok, pid}`. It should accept:
   - `:bucket_duration_ms` — the width of each rollup bucket in milliseconds (default `60_000`, i.e. one minute). Every unique series (metric name + exact label set) gets one rollup accumulator per time bucket.
-  - `:clock` — a zero-arity function returning the current time in milliseconds. Default to `fn -> System.monotonic_time(:millisecond) end`.
-  - `:name` — optional process registration name.
+  - `:clock` — a zero-arity function returning the current time in milliseconds. Default to `fn -> System.monotonic_time(:millisecond) end`. The clock is consulted **only when a cleanup run happens** — never during `init`, `insert`, or `query`.
+  - `:name` — optional process registration name. When omitted, the process is started unregistered.
   - `:retention_ms` — how long to keep buckets before they are eligible for cleanup (default `3_600_000`, i.e. one hour).
   - `:cleanup_interval_ms` — how often to run automatic cleanup of expired buckets via `Process.send_after` (default `60_000`). Accept `:infinity` to disable.
 
@@ -381,15 +381,17 @@ Write me an Elixir GenServer module called `RollupTSDB` that implements a time-s
 - `RollupTSDB.query(server, metric_name, label_matchers, {start_ts, end_ts})` where:
   - `label_matchers` is a map of label key-value pairs. A series matches if it contains **all** of the specified key-value pairs (it may have additional labels). An empty map `%{}` matches all series with that metric name.
   - The return value is a list of `{labels, buckets}` tuples, where `labels` is the full label map for that series and `buckets` is a list of `{bucket_start, stats}` tuples, sorted ascending by `bucket_start`, and restricted to buckets whose `bucket_start` satisfies `start_ts <= bucket_start <= end_ts`.
-  - `stats` is a map with exactly these keys:
+  - `stats` is a map with exactly these keys and no others:
     - `:count`, `:sum`, `:min`, `:max` — as accumulated above.
-    - `:avg` — `sum / count` (a float).
+    - `:avg` — `sum / count` (always a float).
     - `:first`, `:last` — as accumulated above.
-  - A series that matches but which has NO bucket in the `[start_ts, end_ts]` range must be omitted from the result entirely — never returned as a `{labels, []}` tuple. When no matched series has any bucket in range, the result is `[]`.
+  - A series that matches but which has NO bucket in the `[start_ts, end_ts]` range must be omitted from the result entirely — never returned as a `{labels, []}` tuple. When no matched series has any bucket in range (including when the metric name is unknown), the result is `[]`.
 
 ## Cleanup
 
-Handle a `:cleanup` info message that removes any bucket whose `bucket_start + bucket_duration_ms` is less than or equal to `now - retention_ms` (where `now` comes from `:clock`). A series left with zero buckets after cleanup is removed entirely. Also schedule this periodically using `Process.send_after` based on `:cleanup_interval_ms`.
+Handle a `:cleanup` info message that removes any bucket whose `bucket_start + bucket_duration_ms` is less than or equal to `now - retention_ms` (where `now` comes from `:clock`). A series left with zero buckets after cleanup is removed entirely. This message may also be sent directly to the process (`send(db, :cleanup)`) to force a cleanup run; any other info message must be ignored without crashing.
+
+Also schedule this periodically using `Process.send_after`: arm the first timer during `init` using `:cleanup_interval_ms`, and re-arm it after each `:cleanup` run so automatic cleanup keeps repeating. When `:cleanup_interval_ms` is `:infinity`, no timer is armed at all and no automatic cleanup ever runs.
 
 ## Constraints
 

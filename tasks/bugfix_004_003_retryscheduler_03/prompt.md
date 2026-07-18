@@ -19,15 +19,15 @@ I need these functions in the public API:
   - `name` is a unique string or atom identifier for the job
   - `run_at` is a `NaiveDateTime` specifying when the first attempt should happen
   - The mfa tuple is what gets invoked
-  - `opts` may contain `:max_attempts` (default 3), `:base_delay_ms` (default 1_000), and `:backoff_factor` (default 2.0, must be >= 1.0)
+  - `opts` may contain `:max_attempts` (default 3, must be an integer >= 1), `:base_delay_ms` (default 1_000, must be an integer >= 0), and `:backoff_factor` (default 2.0, must be a number >= 1.0)
 
-  Returns `:ok` on success, `{:error, :already_exists}` if the name is taken, or `{:error, :invalid_opts}` if any option is out of range. A job scheduled with run_at in the past is still valid — it will fire on the next tick whose clock time is >= run_at.
+  Returns `:ok` on success, `{:error, :already_exists}` if the name is taken, or `{:error, :invalid_opts}` if any option is out of range (e.g. `max_attempts: 0`, `base_delay_ms: -1`, or `backoff_factor: 0.5`). A job scheduled with run_at in the past is still valid — it will fire on the next tick whose clock time is >= run_at.
 
 - `RetryScheduler.cancel(server, name)` — removes a job from the registry if it exists. Returns `:ok` or `{:error, :not_found}`. Cancellation is valid in any state, including terminal states (:completed, :dead); the job is simply removed.
 
 - `RetryScheduler.status(server, name)` — returns `{:ok, status, attempts_so_far}` where `status` is one of `:pending` (not yet attempted, or currently waiting for a retry), `:completed` (successful attempt), or `:dead` (exhausted retry budget). Returns `{:error, :not_found}` if no such job.
 
-- `RetryScheduler.jobs(server)` — returns a list of `{name, status, next_attempt_at, attempts_so_far}` tuples for all jobs. Jobs in `:completed` or `:dead` state still have a `next_attempt_at` value, which refers to the attempt that ultimately succeeded or failed.
+- `RetryScheduler.jobs(server)` — returns a list of `{name, status, next_attempt_at, attempts_so_far}` tuples for all jobs. Jobs in `:completed` or `:dead` state still have a `next_attempt_at` value (a `NaiveDateTime`), which refers to the attempt that ultimately succeeded or failed.
 
 On each `:tick` message, the scheduler should:
 1. Read `now` from the clock.

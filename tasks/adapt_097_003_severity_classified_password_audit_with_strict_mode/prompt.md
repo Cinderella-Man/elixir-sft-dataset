@@ -258,7 +258,7 @@ Rules are split into two severities:
 - **Warnings (advisory):** missing uppercase (`:no_uppercase`), missing lowercase (`:no_lowercase`), missing digit (`:no_digit`), missing special character (`:no_special`), and being too similar to the username (`:too_similar_to_username`).
 
 The `context` argument is a map that drives configuration and per-user data:
-- `:username` (required) — the username the password is being set for.
+- `:username` (required) — the username the password is being set for. If `context` does not contain a `:username` key, raise `ArgumentError`.
 - `:min_length` (optional, default `8`) — minimum number of characters.
 - `:max_length` (optional, default `128`) — maximum number of characters.
 - `:require_uppercase` (optional, default `true`) — must contain at least one uppercase ASCII letter.
