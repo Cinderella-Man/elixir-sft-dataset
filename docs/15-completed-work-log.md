@@ -9,6 +9,30 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-19 (night) — TD.4 SHIPPED: 50 verified style-repair pairs
+  (`style_<id>_<NN>`), the ninth corpus shape.** The miner
+  (`scripts/mint_style_repairs.exs`) targets exactly the class
+  mint_repairs skips: attempts that were GREEN but house-style-rejected
+  — prompt = spec + the working-but-rejected module + the verbatim
+  style review; gold = the accepted fix. Per-pair machine verification
+  (no LLM): both sides green vs the accepted harness, broken
+  style-dirty and fix style-clean under TODAY'S quality_shortfall.
+  Census honesty: the docs' ~207 and the dry-run's 196 both counted
+  CROSS-SNAPSHOT DUPLICATES (same chain in the live dir + both §3.2
+  archives); unique candidates were 168 → 50 verified + 118 dead
+  (68 old-era accepted fixes fail today's stricter checks, 38 old
+  findings no longer flag, 12 classic-repair class), all sha-pinned in
+  logs/style_rejected.jsonl. Two gate catches en route: the corpus
+  format gate bit the raw captured bytes (miner now canonicalizes
+  minted gold+harness at write time; prompt-embedded attempt code stays
+  verbatim as frozen evidence) — and my own "format clean" check was a
+  pipe-exit-code lie (tail && echo), which let the first push fail;
+  both fixed. :style integrated per the dedoc checklist (Discovery/
+  CLI/runner, exporter maps + docs/16 rows + family regexes, pre-push
+  prefix; freshness auto-excludes by shape; the corpus-derived totality
+  guard covers it automatically). Export refreshed: 6,534 examples
+  (…, dedoc 325, style 50), round-trip OK. All 50 perfect-score.
+
 - **2026-07-19 (later) — KEEP PATH BUILT + T1.4 SLIVER (d) SHIPPED
   (Kamil's "improve the existing dataset" direction).** (1) The
   quarantine-triage BUILDS item closed: `scripts/keep_land.exs`
