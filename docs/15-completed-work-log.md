@@ -9,6 +9,27 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-20 — RUBRIC PASS #2 COMPLETE: the corpus's first
+  judge-audit of PASSING tasks — one real finding (F23), instrument
+  validated.** Two-model panel over the full 42-root stratified sample
+  (37 re-judged this pass after the month's edits re-opened their
+  rows): agreement 40-41/41 per axis; the planted control flagged on
+  two axes (the panel bites); ONE real root flagged —
+  015_001_heartbeat_monitor_01, both judges low on logical
+  correctness with mechanism-level evidence. Triage against the code
+  CONFIRMED both mechanisms (unconditional timer re-arm on any
+  in-map check: documented manual checks double the cadence; stale
+  in-flight checks after deregister→re-register arm duplicate
+  chains) — a genuine gold defect every execution gate missed because
+  no harness pins those interleavings. Filed as F23 in STATUS with
+  the generation-ref fix design + full cascade plan (Task A, fresh
+  session) and the LIFECYCLE RULE sub-case (Task B, batched with
+  F22). The OpenCodeInstruct thesis — judge filtering adds quality
+  beyond execution filtering — is now measured true on this corpus:
+  1 latent defect per 42 execution-perfect roots. Rider: stability-3
+  sweep over all 232 frozen-evidence dirs (dialog_ + style_) ran
+  concurrently — ALL PERFECT, zero timing flakes in the new shapes.
+
 - **2026-07-19/20 (overnight) — TD.5 + TD.2 SHIPPED; corpus at 9,924
   exported examples across TEN shapes; README stats refreshed.**
   TD.5: tfim cap 10→30 as the config DEFAULT (Phase-3 parity) minted

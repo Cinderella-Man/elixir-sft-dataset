@@ -102,15 +102,32 @@ approving 110_002, re-run
 four-times-staging-green growth (incl. the proven gold-defect repair)
 gets its landing chance against the improved prompt.
 
-### ▶️ RUNNING RIGHT NOW
+### 🔎 OPEN FINDING — F23 (rubric panel's first real catch, triaged
+### CONFIRMED against the code 2026-07-20)
 
-**Rubric-judge sampled pass #2** — detached pid 2544848, log
-`logs/rubric_judge_pass2.log`; 37 re-opened strata roots, two-model
-panel, resumable ledger `logs/rubric_judge.jsonl`. Idempotent
-relaunch: `scripts/run_detached.sh logs/rubric_judge_pass2.log mix run
-scripts/rubric_judge.exs -- --go`. AFTER: `--report`, triage any
-both-judge lows against the artifacts (rule: an LLM verdict is a
-hypothesis) — that triage is the LAST open item of the 07-19 arc.
+**015_001_heartbeat_monitor_01: `handle_info({:check, name})` re-arms
+the timer unconditionally whenever the service is in the map.** Two
+proven consequences: (a) the DOCUMENTED manual `{:check, name}`
+message ("performs one check") arms a SECOND live chain — check
+cadence doubles permanently, a timer leak; (b) a stale in-flight
+check surviving deregister→re-register finds the NEW registration and
+arms a duplicate chain — the deregister comment's "discarding is
+sufficient" invariant is false under re-registration. Both judges
+flagged logical_correctness independently with these exact mechanisms;
+code reading confirms. The harness never pins either interleaving —
+that is WHY every execution gate passed.
+**Task A (fresh session):** fix = generation-tag the scheduled
+messages (`{:check, name, ref}`; re-arm only on ref match; the bare
+2-tuple manual form checks WITHOUT re-arming — the same
+generation-ref pattern probe #4's roots already use), grow the
+harness to pin manual-no-rearm + stale-after-rereg, then the FULL
+solution-change cascade (bugfix pairs remint, fim/wt/tfim/dedoc/
+dialog children, dialyzer re-verdict). Prefer driving it through
+`retro_audit --only "015_001*"` after the gold fix so the machinery
+proves + cascades safely.
+**Task B:** the LIFECYCLE RULE gains the sub-case "a manual/external
+trigger must not re-arm the periodic chain" — batches with the F22
+sentence at the next deliberate Prompts edit.
 
 ### ⏭️ ROADMAP (established 2026-07-19 night; Kamil's frame: improve +
 ### derive from existing, no new-task generation)
