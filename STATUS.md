@@ -32,28 +32,24 @@ delete + let the flow re-mint.
 
 ### 🔎 OPEN FINDINGS
 
-**3 real prompt gaps surfaced by the compile-15 re-audit (T2.6-class,
-Kamil's go needed — ~1 hand-edit + 1 blind solve each):** the promise
-audit grew vetted tests these prompts cannot carry blind, growth
-DISCARDED (roots untouched, green): 063_004 (grown pool test expects
-`{:ok, result}` per source but the blind solve returned `{:error,
-:normal}` task-die shapes — the prompt doesn't pin the result-map
-contract under pool exhaustion), 110_002 (histogram quantile
-determinism for a known distribution unstated), 134_003 (empty-fragment
-merge commutativity at the finalized level unstated). Flow: add the
-missing promise sentence(s), blind-verify, land, then re-run
-retro_audit on the root so the growth lands too.
-
-**104_004 waiter-deadline promise lacks a test + unexplained
-interleaving (2-tier):** the audit's grown "waiter served before its
-deadline gets no timeout reply after that deadline" test was removed as
-empirically flaky (~2 red / 21 grades; in_use==0 observed after a
-successful serve — NOT explained by code reading: both serve branches
-cancel the timer, stale fires no-op, uses bookkeeping correct). Task A
-candidate: re-pin that promise with a DETERMINISTIC test (no 150ms
-real-timer race). Task B candidate: bounded investigation of whether a
-real gold interleaving hides here (2 independent failures of
-behaviorally-identical code say the window is real, cause unknown).
+**3 prompt-gap roots — RE-AUDIT RUNNING (Kamil's go 2026-07-18
+evening).** Deep look revised the triage: only 134_003's blind red hit
+a GROWN test (real gap — the prompt never said an empty fragment's
+`:names` is nil/neutral for merge; the grown DEFECT test proved the
+CURRENT gold has this bug: `partial("")` yields `names: []` which
+clobbers real headers via `a.names || b.names`). 063_004/110_002 reds
+hit ORIGINAL tests (task-die / :noproc — single-sample solver
+variance); their discarded growths include machine-proven GOLD-DEFECT
+repairs (063_004 killed-fetch caller crash; 110_002 ring-slot reuse +
+percentile-1.0 edge). Executed: 134_003 prompt hand-fixed (empty
+fragment = neutral element, names nil never []); 063_004/110_002 rows
+removed (backup `logs/retro_audit.jsonl.bak_20260718_promptgap3`) —
+all three re-open. retro_audit --only over the 3 detached, log
+`logs/retro_audit_promptgap3.log`. AFTER: landed roots → cascade;
+solution-changed families → audit_bugfix (3 bugfix children each —
+REAL gold repairs will invalidate pairs → delete+remint per footer);
+any root left unchanged with a changed prompt needs a fresh screen row
+(freshness). Idempotent relaunch: same command.
 
 **prompt_precision.exs tool gaps, measured by the full run (Task B — apply
 before any future precision round):** (a) structural-vet failures discard

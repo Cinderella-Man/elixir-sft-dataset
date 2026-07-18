@@ -9,6 +9,31 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-18 (night) — 104_004 TWO-TIER INVESTIGATION CLOSED: no gold
+  race; the REAL flaker was a different, pre-existing racy test — fixed;
+  waiter promise re-pinned wide-margin; all blind-green.** Bounded
+  investigation (Kamil's go): static analysis exhausted every in-module
+  path (stale timer fires are no-ops once the waiter leaves the queue;
+  local delivery order rules out checkin-overtake; nothing else removes
+  an in_use entry), then a 1,640-iteration scripted race hunt — checkin
+  swept across the deadline boundary under full-core load — reproduced
+  NOTHING (852 served-ok all state-correct, 788 expected timeouts). The
+  audit-box in_use==0 one-off stands unexplained-environmental. The
+  hunt's harness loop (30×) instead caught the REAL local flaker 2/30:
+  the ORIGINAL "a retired connection is replaced with a fresh one for a
+  waiting caller" test — its spawned waiter dies immediately after
+  being served while holding the max_uses:1 replacement, so the
+  crash-reclaim DOWN (documented gold behavior) races the final
+  destroyed-list assert; the 2026-07-13 flake-ledger row for
+  tfim_104_004_07 is the SAME failure, so a standing corpus flake is
+  now root-caused. Fix: the waiter stays alive (receive :release)
+  until after the assert — 0/30 after vs 2/30 before; plus the
+  waiter-deadline promise re-pinned with wide margins (1.5 s deadline /
+  2 s stale-listen instead of 150 ms / 700 ms). 23/23, stability-3
+  perfect, formatter-canonical, fresh blind GREEN for the new harness
+  sha; tfim children resynced (curing the known-flaky tfim_104_004_07
+  at the source), embeds 1,322 clean.
+
 - **2026-07-18 (evening) — COMPILE-15 RE-AUDIT CLOSED (Kamil's go): all
   15 poisoned retro-audit rows resolved; 9 roots' promise-audit growth
   landed; auditor bug fixed at the gate.** Root cause: the 15
