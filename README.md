@@ -24,17 +24,38 @@ explains every gate.
 — whether we are generating new data or catching existing data up to a raised
 quality standard.
 
-## The dataset at a glance (2026-07-10)
+## The dataset at a glance (2026-07-19)
 
-| shape | dirs | one example = |
+**9,924 exported training examples (~40M tokens, estimated at ~4 chars/token)
+across 10 task shapes and 83 task families — or, counted conservatively,
+3,423 examples excluding the test-FIM carvings** (the 6,501 `tfim_` units
+each blank one test out of a shared parent suite, so they intentionally share
+family text; the advisory `sample_weight` 0.25 in the export reflects that).
+Split 9,540 train / 384 val, family-atomic (no family straddles the split).
+Zero overlaps against the public Elixir benchmarks (MultiPL-E
+humaneval/mbpp-elixir, McEval; 786 benchmark rows, 8/10-gram + exact match —
+re-checked 2026-07-19).
+
+Every example's completion is **execution-verified at a perfect score**
+(compiles, zero warnings, every harness test green, house style clean), and
+the harnesses themselves are quality-tested: per-function raise-mutants must
+be killed, a semantic-mutant kill floor holds, `@spec`s are Dialyzer-checked,
+and every prompt passed (or holds a judged keep for) an independent
+blind-solve screen. Export contract + round-trip validator: `docs/16`.
+
+| shape | examples | one example = |
 |---|---|---|
-| base + variation tasks (`*_01`) | 303 | prompt (a spec) → full module solution |
-| fill-in-the-middle (`*_02+`) | 854 | module with one function blanked → that function |
-| write-tests (`wt_*`) | 302 | module + spec → a full test suite |
-| test-fill-in-the-middle (`tfim_*`) | 2,396 | test suite with one test blanked → that test |
+| base + variation tasks (`*_01`) | 326 | prompt (a spec) → full module solution |
 | multi-file (bundles within `*_01`) | 6 | spec → several files (controller + schema + migration…) |
-| repair (`repair_*`) | 3 | broken code + real failure report → the fix |
-| **total** | **3,858** | ~12.4M tokens |
+| code fill-in-the-middle (`*_02+`) | 991 | module with one function blanked → that function |
+| write-tests (`wt_*`) | 331 | module + spec → a full test suite |
+| test fill-in-the-middle (`tfim_*`) | 6,501 | test suite with one test blanked → that test |
+| bug-repair pairs (`bugfix_*`) | 962 | working spec + one-line-bugged module + real failing report → the fix |
+| brownfield adaptation (`adapt_*`) | 249 | a related working module + a new spec → the modified module |
+| de-documentation (`dedoc_*`) | 326 | doc-stripped module → the fully documented module |
+| style repair (`style_*`) | 50 | working-but-style-rejected code + the review → house-style fix |
+| multi-turn repair dialogues (`dialog_*`) | 182 | spec → failing attempt → real failure report → … → accepted fix |
+| **total** | **9,924** | ~40M tokens |
 
 ## Task naming and families
 
