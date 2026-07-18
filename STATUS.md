@@ -22,14 +22,6 @@ responsive" counterweight), 007_002 guard sentences via strengthen path,
 014_001/044_001 fresh editor retries (token-vet fired; needs a
 ledger-row removal or tool change to re-run).
 
-**Four stray repair dirs** (untracked, full triplets, no ledger row) —
-the original two from the audit's pre-restart first hour
-(`repair_001_002_..._audit_00`, `repair_001_003_..._audit_00`) plus two
-new ones minted 07-18 by the backfill's mint_repairs phase from the
-063_004/134_003 gold-repair attempt chains
-(`repair_063_004_..._audit_00`, `repair_134_003_..._audit_00`). Same
-call for all four: verify + commit like the other 68, or delete + let
-the flow re-mint.
 
 ### 🔎 OPEN FINDINGS
 
