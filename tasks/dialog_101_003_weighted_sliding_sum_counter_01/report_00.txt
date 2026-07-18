@@ -1,0 +1,28 @@
+Tests failed (4 failed, 0 errors):
+  - test amounts outside the window are not included (SlidingSumTest): 
+
+Assertion with == failed
+code:  assert 0 == SlidingSum.sum(sc, "k", 1000)
+left:  0
+right: 5
+
+  - test sliding window sums only recent amounts (SlidingSumTest): 
+
+Assertion with == failed
+code:  assert 5 == SlidingSum.sum(sc, "k", 1000)
+left:  5
+right: 7
+
+  - test sum drops to zero once all amounts expire (SlidingSumTest): 
+
+Assertion with == failed
+code:  assert 0 == SlidingSum.sum(sc, "k", 1000)
+left:  0
+right: 9
+
+  - test expired keys are removed during cleanup (SlidingSumTest): 
+
+Assertion with == failed
+code:  assert map_size(state.keys) == 0
+left:  50
+right: 0

@@ -1,0 +1,14 @@
+Tests failed (2 failed, 0 errors):
+  - test p = 1.0 returns the maximum when every weight has decayed to a tiny value (DecayPercentileTest): 
+
+match (=) failed
+code:  assert {:ok, 100} = DecayPercentile.query(:tiny, 1.0)
+left:  {:ok, 100}
+right: {:ok, 1}
+
+  - test uniform aging is neutral at p75 after many half-lives (DecayPercentileTest): 
+
+match (=) failed
+code:  assert {:ok, 3} = DecayPercentile.query(:ua, 0.75)
+left:  {:ok, 3}
+right: {:ok, 1}

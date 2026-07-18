@@ -1,0 +1,11 @@
+Tests failed (2 failed, 0 errors):
+  - test argument validation happens even when the data list is empty (CounterResamplerTest): 
+
+Expected exception ArgumentError but nothing was raised
+
+  - test negative timestamps floor down to their bucket boundary (CounterResamplerTest): 
+
+Assertion with == failed
+code:  assert result == [{-2000, 0}, {-1000, 30}, {0, 50}]
+left:  [{-1000, 0}, {0, 80}]
+right: [{-2000, 0}, {-1000, 30}, {0, 50}]

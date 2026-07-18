@@ -1,0 +1,8 @@
+Tests failed (1 failed, 0 errors):
+  - test cursor carrying a wrongly typed payload is rejected instead of silently slicing (Catalog.KeysetSearchTest): 
+
+match (=) failed
+code:  assert {:error, :invalid_cursor} =
+              KeysetSearch.search(products(), %{"sort" => "price", "cursor" => forged})
+left:  {:error, :invalid_cursor}
+right: {:ok, %{data: [], next_cursor: nil, has_more: false}}

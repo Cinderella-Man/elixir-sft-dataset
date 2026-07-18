@@ -1,0 +1,17 @@
+Tests failed (3 failed, 0 errors):
+  - test ingests successfully with all default options and no opts given (MultiSchemaIngestionTest): 
+
+Assertion with == failed
+code:  assert stats.by_schema[Order] == %{inserted: 1, failed: 0}
+left:  %{failed: 1, inserted: 0}
+right: %{failed: 0, inserted: 1}
+
+  - test treats non-map JSON elements as missing_type without raising (MultiSchemaIngestionTest): expected a map, got:
+
+    "a bare string element"
+
+  - test counts non-string type values as unroutable without raising (MultiSchemaIngestionTest): protocol String.Chars not implemented for Map
+
+Got value:
+
+    %{"nested" => true}

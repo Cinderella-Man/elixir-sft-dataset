@@ -14,8 +14,12 @@
 #     test_harness.exs   # the accepted harness (canonical; dir grades :dialogue)
 #
 # VERIFICATION before promotion (no LLM): the accepted module re-grades GREEN
-# against the accepted harness (mint_repairs discipline). Rejected attempts +
-# reports are frozen captured evidence — embedded verbatim, never re-graded.
+# with ZERO warnings against the accepted harness (mint_repairs discipline).
+# KNOWN RESIDUAL (2026-07-19): a frozen harness can predate corpus-wide gates
+# that scan tasks/ (the temp-path System.pid rule caught 2 at first landing —
+# dropped + dead-ledgered); after minting, run scripts/lint_temp_paths.exs and
+# drop any flagged dir the same way. Rejected attempts + reports are frozen
+# captured evidence — embedded verbatim, never re-graded.
 # Dead chains are ledgered in logs/dialogue_rejected.jsonl by content sha.
 # Re-runnable: an existing dialog_ dir is skipped (add-only); duplicate chain
 # ids across the §3.2 archive snapshots dedupe the same way.
@@ -166,8 +170,12 @@ defmodule MintDialogues do
 
       json = grade(dir, "solution.ex")
 
+      # Green AND zero warnings: the gold must meet TODAY'S perfect-score bar
+      # (3 old-era accepts compiled with 1 warning and validate hard-failed
+      # them on the first full mint, 2026-07-19).
       json["compiled"] == true and (json["tests_passed"] || 0) > 0 and
-        (json["tests_failed"] || 0) == 0 and (json["tests_errors"] || 0) == 0
+        (json["tests_failed"] || 0) == 0 and (json["tests_errors"] || 0) == 0 and
+        (json["compile_warnings"] || 1) == 0
     after
       File.rm_rf!(stage)
     end

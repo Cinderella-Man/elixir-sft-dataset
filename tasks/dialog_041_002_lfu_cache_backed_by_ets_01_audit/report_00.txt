@@ -1,0 +1,7 @@
+Tests failed (1 failed, 0 errors):
+  - test start_link fails with ArgumentError when :max_size is missing entirely (LFUCacheTest): 
+
+match (=) failed
+code:  assert {:error, {%ArgumentError{}, _stack}} = LFUCache.start_link(name: name)
+left:  {:error, {%ArgumentError{}, _stack}}
+right: {:error, {%KeyError{key: :max_size, term: [name: :lfu_nomax_4933], message: nil}, [{Keyword, :fetch!, 2, [file: ~c"lib/keyword.ex", line: 618]}, {LFUCache, :init, 1, [file: ~c".gen_staging/041_002_lfu_cache_backed_by_ets_01_audit/solution.ex", line: 92]}, {:gen_server, :init_it, 2, [file: ~c"gen_server.erl", line: 2276]}, {:gen_server, :init_it, 6, [file: ~c"gen_server.erl", line: 2236]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c"proc_lib.erl", line: 333]}]}}

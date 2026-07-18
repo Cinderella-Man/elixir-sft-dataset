@@ -1,0 +1,19 @@
+Tests failed (2 failed, 0 errors):
+  - test distinct non-string and string values are not conflated into one pseudonym (AnonymizerTest): 
+
+Refute with == failed, both sides are exactly equal
+code: refute r1.name == r2.name
+left: "PERSON_1"
+
+  - test mapping/2 keys are the original values, not stringified copies (AnonymizerTest): 
+
+Expected truthy, got false
+code: assert Map.has_key?(mapping, 42)
+arguments:
+
+         # 1
+         %{"42" => "PERSON_1"}
+
+         # 2
+         42
+

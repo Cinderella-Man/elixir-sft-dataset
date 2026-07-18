@@ -1,0 +1,8 @@
+Tests failed (1 failed, 0 errors):
+  - test parse rejects a period that is not the exact decimal string of the integer (AuthenticatorURITest): 
+
+Assertion with == failed
+code:  assert AuthenticatorURI.parse("otpauth://totp/Acme:alice?secret=#{@sha1_secret}&period=%2B30") ==
+              {:error, :invalid_period}
+left:  {:ok, %{period: 30, algorithm: :sha1, issuer: "Acme", account: "alice", secret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ", digits: 6}}
+right: {:error, :invalid_period}

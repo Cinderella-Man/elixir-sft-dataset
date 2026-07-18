@@ -1,0 +1,11 @@
+Tests failed (2 failed, 0 errors):
+  - test stale check timer does not drive a re-registered service (ManagedMonitorTest): 
+
+Unexpectedly received message :new_check_ran (which matched :new_check_ran)
+
+  - test leftover maintenance_end cannot end a re-registered service's window (ManagedMonitorTest): 
+
+match (=) failed
+code:  assert {:ok, %{status: :maintenance, maintenance_ends_at: 60000}} = ManagedMonitor.status(mon, "db")
+left:  {:ok, %{status: :maintenance, maintenance_ends_at: 60000}}
+right: {:ok, %{status: :pending, last_check_at: nil, consecutive_failures: 0, maintenance_ends_at: nil}}

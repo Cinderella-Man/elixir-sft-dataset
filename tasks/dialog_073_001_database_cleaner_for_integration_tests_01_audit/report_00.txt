@@ -1,0 +1,16 @@
+Tests failed (1 failed, 0 errors):
+  - test a failed transaction start/2 still replaces prior truncation state (no TRUNCATE on clean) (DBCleanerTest): 
+
+Expected false or nil, got true
+code: refute Enum.any?(FakeRepo.calls(), fn
+             {:query, sql} -> String.contains?(sql, "TRUNCATE")
+             _ -> false
+           end)
+arguments:
+
+         # 1
+         [query: "TRUNCATE users RESTART IDENTITY CASCADE"]
+
+         # 2
+         #Function<0.48992421/1 in DBCleanerTest."test a failed transaction start/2 still replaces prior truncation state (no TRUNCATE on clean)"/1>
+

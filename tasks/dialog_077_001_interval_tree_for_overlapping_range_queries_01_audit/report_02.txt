@@ -1,0 +1,13 @@
+The files graded green, but the harness kills only 52% of seeded behavior mutants — each survivor below is a single behavior change NO test caught:
+  - L98 s162: 0 -> 1
+  - L104 s197: 1 -> 2
+  - L166 s380: > -> >=
+  - L166 s384: 1 -> 2
+  - L166 s384: 1 -> 0
+  - L167 s386: >= -> >
+  - L167 s389: 0 -> 1
+  - L176 s405: > -> >=
+  - L176 s406: - -> +
+  - L176 s409: 1 -> 2
+  … 4 more
+Add tests that discriminate the DOCUMENTED behavior each survivor touches — assert through the public API (never internal state), keep every existing test, and do not weaken the implementation.

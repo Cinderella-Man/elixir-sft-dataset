@@ -1,0 +1,26 @@
+Tests failed (25 failed, 0 errors):
+  - test GET members returns 200 with active members for a member (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test GET members returns 403 for a non-member (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-carol"}, 5000]}}
+  - test GET members returns 401 with invalid token (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-nobody"}, 5000]}}
+  - test GET members returns 404 for non-existent team (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test GET invitations returns 200 with an empty list initially (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test GET invitations returns 403 for a non-member (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-carol"}, 5000]}}
+  - test GET invitations returns 404 for a non-existent team (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST invitations returns 201 and lists the pending invitation (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST invitations does not make the invited user a member yet (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST invitations returns 409 conflict when inviting an existing member (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST invitations returns 409 already_invited on a duplicate invite (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST invitations returns 403 when inviter is not a member (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-carol"}, 5000]}}
+  - test POST invitations returns 404 for a non-existent team (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST invitations returns 401 with an invalid token (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-nobody"}, 5000]}}
+  - test POST invitations returns 400 for a body missing user_id (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST accept turns the invitation into an active membership (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST accept removes the invitation from the pending list (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST accept returns 403 when accepting someone else's invitation (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST accept returns 409 no_invitation when there is no pending invite (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-dave"}, 5000]}}
+  - test POST accept returns 404 for a non-existent team (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-dave"}, 5000]}}
+  - test POST decline removes the invitation without making a member (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test POST decline returns 409 no_invitation when there is no pending invite (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-dave"}, 5000]}}
+  - test POST decline returns 403 when declining someone else's invitation (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test response content-type is application/json (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}
+  - test invitations on team-1 do not affect team-2 (TeamRouterInvitationTest): :exit: {:noproc, {GenServer, :call, [TeamStore, {:get_user_by_token, "token-alice"}, 5000]}}

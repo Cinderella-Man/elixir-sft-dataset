@@ -1,0 +1,7 @@
+Tests failed (1 failed, 0 errors):
+  - test a since value with trailing garbage is treated as cursor 0 (CursorLongPollTest): 
+
+Assertion with == failed
+code:  assert decode(conn) == %{"cursor" => 2, "events" => [%{"n" => 1}, %{"n" => 2}]}
+left:  %{"cursor" => 2, "events" => [%{"n" => 2}]}
+right: %{"cursor" => 2, "events" => [%{"n" => 1}, %{"n" => 2}]}

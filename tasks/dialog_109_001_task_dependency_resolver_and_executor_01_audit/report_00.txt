@@ -1,0 +1,13 @@
+Tests failed (2 failed, 0 errors):
+  - test cycle report lists only the tasks participating in the cycle (TaskRunnerTest): 
+
+Refute with in failed
+code:  refute :c in involved
+left:  :c
+right: [:c, :a, :b]
+
+  - test a task starts as soon as its own deps finish, not waiting on unrelated slow work (TaskRunnerTest): 
+
+Assertion with < failed, both sides are exactly equal
+code: assert Recorder.started_at(:b) < Recorder.ended_at(:slow)
+left: -576460750120

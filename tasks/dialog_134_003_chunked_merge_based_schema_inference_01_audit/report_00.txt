@@ -1,0 +1,14 @@
+Tests failed (2 failed, 0 errors):
+  - test an empty fragment has nil names, zero ncols and no categories (MergeSchemaTest): 
+
+Assertion with == failed
+code:  assert empty.names == nil
+left:  []
+right: nil
+
+  - test an empty fragment is a neutral element for merge in both orders (MergeSchemaTest): 
+
+Assertion with == failed
+code:  assert MergeSchema.finalize(MergeSchema.merge(empty, p)) == expected
+left:  %{}
+right: %{"m" => :float, "n" => :integer}

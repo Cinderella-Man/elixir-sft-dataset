@@ -1,0 +1,14 @@
+Tests failed (2 failed, 0 errors):
+  - test first bucket floors a negative earliest timestamp downwards, not toward zero (TimeSeriesResamplerTest): 
+
+Assertion with == failed
+code:  assert result == [{-2000, 1}, {0, 2}]
+left:  [{0, 2}]
+right: [{-2000, 1}, {0, 2}]
+
+  - test negative timestamps are assigned to their floored bucket, not a truncated one (TimeSeriesResamplerTest): 
+
+Assertion with == failed
+code:  assert result == [{-4000, 1}, {-2000, 1}]
+left:  [{-2000, 1}, {0, 1}]
+right: [{-4000, 1}, {-2000, 1}]

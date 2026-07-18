@@ -1,0 +1,395 @@
+defmodule DataIngestionTest do
+  use ExUnit.Case, async: false
+
+  # ---------------------------------------------------------------------------
+  # Minimal in-memory Ecto setup
+  # ---------------------------------------------------------------------------
+
+  # We use the Ecto sandbox with an SQLite3 (or PG) test repo.
+  # The schema below must match whatever table your migration creates.
+
+  defmodule TestRepo do
+    use Ecto.Repo, otp_app: :data_ingestion, adapter: Ecto.Adapters.SQLite3
+  end
+
+  defmodule Widget do
+    use Ecto.Schema
+
+    @primary_key {:id, :id, autogenerate: true}
+
+    schema "widgets" do
+      field(:external_id, :string)
+      field(:name, :string)
+      field(:value, :integer)
+      timestamps()
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Helpers
+  # ---------------------------------------------------------------------------
+
+  defp write_json!(path, data) do
+    File.write!(path, Jason.encode!(data))
+  end
+
+  defp tmp_path(name),
+    do:
+      Path.join(
+        System.tmp_dir!(),
+        "#{System.pid()}_#{System.unique_integer([:positive])}_#{name}"
+      )
+
+  defp all_widgets, do: TestRepo.all(Widget)
+
+  # ---------------------------------------------------------------------------
+  # Setup / teardown
+  # ---------------------------------------------------------------------------
+
+  setup_all do
+    Application.put_env(:data_ingestion, DataIngestionTest.TestRepo,
+      database: ":memory:",
+      pool_size: 1
+    )
+
+    {:ok, _} = DataIngestionTest.TestRepo.start_link()
+
+    DataIngestionTest.TestRepo.query!(
+      """
+      CREATE TABLE widgets (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        external_id TEXT    UNIQUE,
+        name        TEXT    NOT NULL,
+        value       INTEGER,
+        inserted_at TEXT    NOT NULL,
+        updated_at  TEXT    NOT NULL
+      )
+      """,
+      []
+    )
+
+    :ok
+  end
+
+  setup do
+    # Truncate table before each test
+    TestRepo.delete_all(Widget)
+    :ok
+  end
+
+  # ---------------------------------------------------------------------------
+  # Happy-path: fresh inserts
+  # ---------------------------------------------------------------------------
+
+  test "inserts all records from a simple JSON file" do
+    records =
+      Enum.map(1..10, fn i ->
+        %{"external_id" => "eid-#{i}", "name" => "widget #{i}", "value" => i}
+      end)
+
+    path = tmp_path("fresh_insert.json")
+    write_json!(path, records)
+
+    assert {:ok, stats} =
+             DataIngestion.ingest(TestRepo, Widget, path,
+               conflict_target: [:external_id],
+               batch_size: 3
+             )
+
+    assert stats.total == 10
+    assert stats.inserted == 10
+    assert stats.updated == 0
+    assert stats.failed == 0
+    assert length(all_widgets()) == 10
+  end
+
+  # ---------------------------------------------------------------------------
+  # Upsert: duplicates become updates
+  # ---------------------------------------------------------------------------
+
+  test "updates existing records on conflict" do
+    # Seed 5 rows
+    seed =
+      Enum.map(1..5, fn i ->
+        %{"external_id" => "eid-#{i}", "name" => "old #{i}", "value" => 0}
+      end)
+
+    path = tmp_path("seed.json")
+    write_json!(path, seed)
+    DataIngestion.ingest(TestRepo, Widget, path, conflict_target: [:external_id])
+
+    # Sleep long enough that the second ingest's timestamp (truncated to seconds)
+    # differs from the seed's inserted_at by > @insert_window_seconds (1 s), so the
+    # solution's timestamp-based classifier can tell inserts from updates.
+    Process.sleep(2000)
+
+    # Now run again: same 5 external_ids + 5 new ones
+    records =
+      Enum.map(1..10, fn i ->
+        %{"external_id" => "eid-#{i}", "name" => "new #{i}", "value" => i * 10}
+      end)
+
+    write_json!(path, records)
+
+    assert {:ok, stats} =
+             DataIngestion.ingest(TestRepo, Widget, path,
+               conflict_target: [:external_id],
+               # Preserve the original inserted_at so the classifier can distinguish
+               # fresh inserts (inserted_at ≈ updated_at) from updates (inserted_at
+               # is 2+ seconds older than updated_at).
+               on_conflict: {:replace_all_except, [:inserted_at]},
+               batch_size: 4
+             )
+
+    assert stats.total == 10
+    assert stats.failed == 0
+    # 5 new + 5 existing  → inserts + updates = 10
+    assert stats.inserted + stats.updated == 10
+    assert stats.updated >= 5
+
+    # Values in DB should reflect the new run
+    widget = TestRepo.get_by!(Widget, external_id: "eid-1")
+    assert widget.name == "new 1"
+    assert widget.value == 10
+  end
+
+  # ---------------------------------------------------------------------------
+  # Batching
+  # ---------------------------------------------------------------------------
+
+  test "respects batch_size: processes all records across multiple batches" do
+    records =
+      Enum.map(1..25, fn i ->
+        %{"external_id" => "b-#{i}", "name" => "b #{i}", "value" => i}
+      end)
+
+    path = tmp_path("batches.json")
+    write_json!(path, records)
+
+    assert {:ok, stats} =
+             DataIngestion.ingest(TestRepo, Widget, path,
+               conflict_target: [:external_id],
+               batch_size: 7
+             )
+
+    assert stats.total == 25
+    assert stats.inserted == 25
+    assert stats.failed == 0
+    assert length(all_widgets()) == 25
+  end
+
+  # ---------------------------------------------------------------------------
+  # Graceful error: file not found
+  # ---------------------------------------------------------------------------
+
+  test "returns {:error, :file_not_found} for missing file" do
+    assert {:error, :file_not_found} =
+             DataIngestion.ingest(TestRepo, Widget, "/no/such/file.json")
+  end
+
+  # ---------------------------------------------------------------------------
+  # Graceful error: malformed JSON
+  # ---------------------------------------------------------------------------
+
+  test "returns {:error, :invalid_json} for a malformed JSON file" do
+    path = tmp_path("bad.json")
+    File.write!(path, "{this is not json}")
+
+    assert {:error, :invalid_json} =
+             DataIngestion.ingest(TestRepo, Widget, path)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Graceful error: valid JSON but not an array
+  # ---------------------------------------------------------------------------
+
+  test "returns {:error, :not_a_list} when the JSON root is not an array" do
+    path = tmp_path("object.json")
+    write_json!(path, %{"key" => "value"})
+
+    assert {:error, :not_a_list} =
+             DataIngestion.ingest(TestRepo, Widget, path)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Partial failure: bad batch doesn't abort the rest
+  # ---------------------------------------------------------------------------
+
+  test "continues processing after a failed batch and reports failures" do
+    # 10 valid records + 1 batch that will fail due to a nil non-nullable field,
+    # then 10 more valid records.
+    # We simulate a bad batch by monkey-patching — instead, we pass records
+    # missing a required DB field in one specific batch.
+    # Here we rely on the implementation failing gracefully.
+
+    good_before =
+      Enum.map(1..10, fn i ->
+        %{"external_id" => "pre-#{i}", "name" => "pre #{i}", "value" => i}
+      end)
+
+    # These records are missing the "name" field; if "name" has a NOT NULL
+    # constraint they will cause the batch to fail.
+    bad_batch =
+      Enum.map(1..5, fn i ->
+        %{"external_id" => "bad-#{i}", "value" => i}
+      end)
+
+    good_after =
+      Enum.map(1..10, fn i ->
+        %{"external_id" => "post-#{i}", "name" => "post #{i}", "value" => i}
+      end)
+
+    path = tmp_path("partial_fail.json")
+    write_json!(path, good_before ++ bad_batch ++ good_after)
+
+    # batch_size=5 means batches are:
+    #   [pre-1..5], [pre-6..10], [bad-1..5], [post-1..5], [post-6..10]
+    assert {:ok, stats} =
+             DataIngestion.ingest(TestRepo, Widget, path,
+               conflict_target: [:external_id],
+               batch_size: 5
+             )
+
+    assert stats.total == 25
+    # the bad batch
+    assert stats.failed == 5
+    assert stats.inserted == 20
+    assert length(all_widgets()) == 20
+  end
+
+  # ---------------------------------------------------------------------------
+  # Empty file (valid JSON empty array)
+  # ---------------------------------------------------------------------------
+
+  test "handles an empty JSON array gracefully" do
+    path = tmp_path("empty.json")
+    write_json!(path, [])
+
+    assert {:ok, stats} = DataIngestion.ingest(TestRepo, Widget, path)
+
+    assert stats == %{total: 0, inserted: 0, updated: 0, failed: 0}
+    assert all_widgets() == []
+  end
+
+  # ---------------------------------------------------------------------------
+  # Conflict options: the default :replace_all requires a conflict_target
+  # ---------------------------------------------------------------------------
+
+  test "default options without a conflict_target are rejected up front" do
+    path = tmp_path("defaults_no_target.json")
+    write_json!(path, [%{"external_id" => "nt-1", "name" => "a", "value" => 1}])
+
+    assert {:error, :conflict_target_required} =
+             DataIngestion.ingest(TestRepo, Widget, path)
+
+    assert all_widgets() == []
+  end
+
+  test "on_conflict: :nothing needs no conflict_target and skips duplicates" do
+    path = tmp_path("nothing_fresh.json")
+    write_json!(path, [%{"external_id" => "skip-1", "name" => "orig", "value" => 1}])
+
+    assert {:ok, %{inserted: 1, failed: 0}} =
+             DataIngestion.ingest(TestRepo, Widget, path, on_conflict: :nothing)
+
+    # The same external_id again is skipped, not replaced, and nothing fails.
+    path2 = tmp_path("nothing_dup.json")
+    write_json!(path2, [%{"external_id" => "skip-1", "name" => "clobber", "value" => 9}])
+
+    assert {:ok, stats} =
+             DataIngestion.ingest(TestRepo, Widget, path2, on_conflict: :nothing)
+
+    assert stats.failed == 0
+    assert [%{name: "orig", value: 1}] = all_widgets()
+  end
+
+  test "returning: false credits every processed row to :inserted and leaves :updated at 0" do
+    seed =
+      Enum.map(1..4, fn i ->
+        %{"external_id" => "r-#{i}", "name" => "seed #{i}", "value" => i}
+      end)
+
+    path = tmp_path("returning_seed.json")
+    write_json!(path, seed)
+
+    assert {:ok, _} =
+             DataIngestion.ingest(TestRepo, Widget, path, conflict_target: [:external_id])
+
+    dup =
+      Enum.map(1..4, fn i ->
+        %{"external_id" => "r-#{i}", "name" => "again #{i}", "value" => i * 2}
+      end)
+
+    path2 = tmp_path("returning_false.json")
+    write_json!(path2, dup)
+
+    assert {:ok, stats} =
+             DataIngestion.ingest(TestRepo, Widget, path2,
+               conflict_target: [:external_id],
+               returning: false
+             )
+
+    assert stats == %{total: 4, inserted: 4, updated: 0, failed: 0}
+    assert length(all_widgets()) == 4
+  end
+
+  test "a batch of non-object JSON elements is reported as failed instead of raising" do
+    path = tmp_path("scalar_elements.json")
+    write_json!(path, ["one", "two", "three"])
+
+    assert {:ok, stats} =
+             DataIngestion.ingest(TestRepo, Widget, path, conflict_target: [:external_id])
+
+    assert stats.total == 3
+    assert stats.failed == 3
+    assert stats.inserted == 0
+    assert stats.updated == 0
+    assert all_widgets() == []
+  end
+
+  test "batch_size defaults to 500 records per insert_all call" do
+    records =
+      Enum.map(1..501, fn i ->
+        if i == 500 do
+          # No "name" → violates the NOT NULL constraint, failing this whole batch.
+          %{"external_id" => "d-#{i}", "value" => i}
+        else
+          %{"external_id" => "d-#{i}", "name" => "d #{i}", "value" => i}
+        end
+      end)
+
+    path = tmp_path("default_batch_size.json")
+    write_json!(path, records)
+
+    assert {:ok, stats} =
+             DataIngestion.ingest(TestRepo, Widget, path, conflict_target: [:external_id])
+
+    # With a 500-record batch the split is [1..500] (fails) and [501] (succeeds).
+    assert stats.total == 501
+    assert stats.failed == 500
+    assert stats.inserted == 1
+    assert [%{external_id: "d-501"}] = all_widgets()
+  end
+
+  test "a keyword on_conflict is handed straight to insert_all" do
+    path = tmp_path("keyword_seed.json")
+    write_json!(path, [%{"external_id" => "kw-1", "name" => "orig", "value" => 1}])
+
+    assert {:ok, _} =
+             DataIngestion.ingest(TestRepo, Widget, path, conflict_target: [:external_id])
+
+    path2 = tmp_path("keyword_dup.json")
+    write_json!(path2, [%{"external_id" => "kw-1", "name" => "clobber", "value" => 7}])
+
+    assert {:ok, stats} =
+             DataIngestion.ingest(TestRepo, Widget, path2,
+               conflict_target: [:external_id],
+               on_conflict: [set: [value: 99]]
+             )
+
+    assert stats.total == 1
+    assert stats.failed == 0
+    # Only :value was in the `set:` keyword, so :name keeps its seeded value.
+    assert [%{name: "orig", value: 99}] = all_widgets()
+  end
+end

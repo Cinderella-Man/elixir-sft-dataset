@@ -1,0 +1,8 @@
+Tests failed (1 failed, 0 errors):
+  - test a record missing a key field keys on nil and matches a counterpart missing it too (StreamReconcilerTest): 
+
+Assertion with == failed
+code:  assert StreamReconciler.push_right(pid, %{org_id: nil, user_id: 10, v: "r"}) ==
+              :pending |> then(fn _ -> StreamReconciler.pending(pid) end) |> then(fn _ -> :skip end)
+left:  {:matched, %{left: %{v: "l", user_id: 10}, right: %{v: "r", org_id: nil, user_id: 10}, key: %{org_id: nil, user_id: 10}, differences: %{v: %{left: "l", right: "r"}}}}
+right: :skip
