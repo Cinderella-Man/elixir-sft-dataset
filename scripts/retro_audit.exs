@@ -221,7 +221,13 @@ defmodule RetroAudit do
   # A grown/repaired root must carry fresh blind evidence before it lands on disk:
   # one independent prompt-only solve vs the NEW harness (the same S6 mechanism the
   # loop uses; the row keeps the freshness gate green for the changed bytes).
-  defp verify_and_write(dir, id, key, old_files, new_files, cfg) do
+  #
+  # A blind candidate that fails to COMPILE is a solver artifact (truncated or
+  # malformed reply) — it carries ZERO evidence about the grown harness, so it may
+  # not become a `needs_triage` verdict (the 2026-07-18 triage found 15 rows of
+  # exactly that class). One fresh solve is retried; a second compile failure is
+  # ledgered under its own distinct label so the class stays visible.
+  defp verify_and_write(dir, id, key, old_files, new_files, cfg, attempt \\ 1) do
     case GenTask.Variations.blind_solution(id, new_files["prompt.md"], cfg, "retro_audit_blind") do
       {:ok, blind_src} ->
         stage = Path.join(cfg.staging_dir, "retro_" <> id <> "_blind")
@@ -250,6 +256,22 @@ defmodule RetroAudit do
           %{green: nil} ->
             record(cfg, id, key, "error", "blind verify environmental: " <> (row[:error] || "?"))
             :error
+
+          %{green: false, compiled: false} when attempt == 1 ->
+            IO.puts("  blind candidate failed to COMPILE (solver artifact) — one retry")
+            verify_and_write(dir, id, key, old_files, new_files, cfg, 2)
+
+          %{green: false, compiled: false} ->
+            record(
+              cfg,
+              id,
+              key,
+              "needs_triage",
+              "blind candidate compile-failed twice (solver artifact — NO harness evidence): " <>
+                (row[:first_failure] || "?")
+            )
+
+            :needs_triage
 
           %{green: false} ->
             # The grown harness demands more than the prompt carries — a prompt

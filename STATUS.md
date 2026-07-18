@@ -47,13 +47,29 @@ wiring in the strengthen path.
 terminate promptly without crashing" — F22 is the proof; fold into the
 T1.4 template rules alongside the LIFECYCLE RULE when next edited.
 
-**~15 audit needs_triage rows are staging COMPILE errors** (the grown
-harness never compiled, so no blind screen row exists and the 07-17
-judge sweep could not cover them; the roots on disk are unaffected and
-green). List:
-`jq -r 'select(.outcome=="needs_triage") | select(.detail|contains("compile:")) | .task' logs/retro_audit.jsonl`
-Triage: re-run the promise audit on these roots (`generate.exs <n>`
-paths) or log them as auditor-bug evidence — rule 7 either way.
+**15 audit compile-class needs_triage rows — RE-AUDIT IN PROGRESS
+(Kamil's go 2026-07-18).** Root cause found: the 15 "compile:" rows were
+the blind SOLVER's candidate failing to compile (truncated/malformed
+replies) — zero evidence about the grown harness, mis-ledgered as a
+verdict. Task B DONE: `retro_audit.exs` verify_and_write now retries a
+non-compiling blind candidate once and ledgers a second failure under
+its own distinct label (self-test green). Task A RUNNING: the 15 rows
+removed from `logs/retro_audit.jsonl` (backup
+`logs/retro_audit.jsonl.bak_20260718_compile_triage`) so the roots
+re-open at the current gate; re-audit via
+`scripts/retro_audit.exs --only "<names>"` detached — pilot 078_001
+GREEN (harness grown 17→21, full gate stack + blind verify, WRITTEN;
+reviewed in detail), remaining 14 RUNNING as pid 496168; log
+`logs/retro_audit_compile15.log` (idempotent relaunch: same command —
+ledger resumes).
+Roots: 043_004, 061_003, 063_004, 071_001, 071_002, 071_003, 078_001,
+100_001, 100_002, 100_003, 100_004, 104_004, 110_002, 110_003, 134_003.
+AFTER: changed roots → cascade + commit; verdicts recorded in docs/15.
+NOTE (new two-tier finding, Task B pending): retro_audit's row key
+omits its own script bytes (gate_sha covers the four judged modules
+only — prompt_precision.exs hashes its own file and is the right
+pattern); fold the alignment in at the next deliberate ledger re-open,
+NOT now (adding it now would silently re-open all 314 sound verdicts).
 
 **Cutover-checklist fold-in still to land (docs/12 §5.5): repairs must
 re-run the spec gate on the repaired file — F20 (a spec lie introduced
