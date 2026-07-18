@@ -9,6 +9,50 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-18 — T2.6 PRECISION FULL RUN CLOSED OUT: 151 roots landed,
+  cascade green, all 17 needs_triage rejects triaged.** The corpus-wide
+  run finished `%{unchanged: 156, improved: 151, needs_triage: 17}`
+  (ledger incl. 3 pilot roots: 152/158/17); every landed prompt was
+  blind-verified green before its write with the S6 row appended
+  (pre-push freshness read fresh=321 / legacy=6 / via_strengthen=5).
+  Cascade: resync_embeds --wt-all 151 wt_ refreshed, resync_bugfix 444
+  (151 bugfix_ + 293 module-FIM prompt embeds), resync_tfim all-3,279
+  unchanged, resync_adapt 114; `check_embeds` 1,322 clean / 0 reflow /
+  0 drift / 0 skipped. Landed as two commits (prompts+S6 ledger;
+  cascade) + push — pre-push perfect-score, mutant-kill, format,
+  temp-path and staleness gates all green. TRIAGE of the 17 (per root:
+  candidate-vs-prompt diff, named failing test read in the harness,
+  standing screen verdict):
+  * FALSE REJECTS, 8 → rerun queue (STATUS follow-up A): 012_001,
+    024_002, 025_001, 025_003, 045_001, 064_004, 073_001, 624_002 —
+    in each, every candidate addition was verified harness-pinned
+    (e.g. 073_001's discard-state sentence = harness line 304 verbatim;
+    064_004's steal batches [3,4]→[2]→[1] prove half-min-1) and the
+    blind red hit a test the edit never touched, 5/8 timing- or
+    choreography-sensitive.
+  * REAL PRECISION GAPS, 3 → hand-fix queue (follow-up B): 007_001
+    (candidate stated the trim rule BACKWARD — gold trims only on a
+    non-growing get; the pinned different-periods test is the proof),
+    041_003 (unstated raise-vs-error-tuple split for missing options),
+    072_004 (HIGH VALUE: candidate names the pinned start-validation
+    error tuples — the exact cause of its standing screen red — and the
+    remaining seam is the caller-side RuntimeError re-raise in now/1,
+    which neither prompt version states).
+  * CORRECT REJECTS, 2: 009_003 (accurate additions but the amplified
+    caller-blocks emphasis empirically tips solvers into a blocking
+    handle_call loop), plus 007_001 doubling as a correct reject of a
+    wrong candidate.
+  * GATE-STRUCTURAL, 2: 007_002, 061_001 — keep-class/hard roots where
+    blind-green is unreachable regardless of wording; candidates were
+    harmless or valid.
+  * TOKEN-VET FIRED AS DESIGNED, 3: 013_003 (Process.send_after),
+    014_001 (spawn_monitor/1), 044_001 (Metrics.increment/2) — originals
+    name each dropped token; conservative and correct.
+  Tool gaps measured by the run moved to STATUS OPEN FINDINGS (save
+  structural-fail proposals; single-sample gate false-rejected 8/17;
+  keep-class roots need the strengthen path). Follow-ups A+B queued in
+  STATUS, waiting on Kamil.
+
 - **2026-07-17 — 004_004 VERIFIED CLEAN + T2.6 PROMPT-PRECISION TOOL
   BUILT AND PILOT-VALIDATED 3/3.** 004_004's calendar rules already make
   the conservative F22 choice (nth restricted to 1..4, bounded month

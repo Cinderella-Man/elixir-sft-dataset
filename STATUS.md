@@ -11,90 +11,40 @@ Reference docs: `docs/14` (handover: gates, tools, ledgers, runbooks),
 
 ---
 
-## ▶️ IN PROGRESS THIS SESSION (2026-07-18)
-
-**T2.6 PRECISION FULL RUN FINISHED** — summary
-`%{unchanged: 156, improved: 151, needs_triage: 17}` (ledger totals incl.
-3 pilot roots: 152/158/17). Process exited; log `logs/precision_full.log`;
-ledger `logs/prompt_precision.jsonl`. Post-run work, in order:
-
-- [ ] **Triage the 17 needs_triage roots** (prompts on disk are UNTOUCHED —
-      proposal discarded; 14 rejected candidates saved in
-      `logs/prompt_precision_candidates/`, the 3 structural-vet fails have
-      no saved candidate). Per root: diff candidate vs prompt, read the
-      named failing test, check the root's standing blind-screen verdict;
-      verdict one of: ORIGINAL-FINE (reject was correct) / HAND-FIX
-      (real precision gap → rule-7 two-tier item) / RERUN (tool retry
-      worth it). Checklist (verdict inline as each closes):
-      - [x] 007_001_moving_average_calculator_01 — VERDICT: reject CORRECT, candidate's
-            trim-timing promise is factually wrong (claims an earlier small `get` discards
-            history; gold trims ONLY on a non-growing `get` — a growing `get` reads the
-            untrimmed buffer, pinned by "SMA with different periods": get(2) then get(5)
-            → 6.0). Keep-class root (latest screen red 20/23 at this same test). REAL
-            precision gap remains → HAND-FIX QUEUE: state the gold's actual rule.
-      - [x] 007_002_weightedmovingaverage_01 — VERDICT: reject GATE-STRUCTURAL. Keep-class
-            root (latest screen red 18/19 at the hma-bootstrap test); the blind red hit the
-            retention test whose wording the candidate never touched. Candidate only added
-            two guard promises that ARE harness-pinned (assert_raise FunctionClauseError).
-            No wrong promise introduced; optional low-priority hand-apply via strengthen path.
-      - [x] 009_003_retry_aware_request_deduplicator_01 — VERDICT: reject CORRECT (empirically).
-            Original screens GREEN 22/22 and already says "executed asynchronously". Candidate's
-            additions are factually right (call must not use the default 5s timeout; exception
-            struct on exhaustion) but the amplified "caller blocks no matter how long" emphasis
-            plausibly tipped the solver into a blocking handle_call loop → red on the pinned
-            non-blocking test. Original stands. Optional retry with balanced wording (add "the
-            server loop stays responsive during retry delays"), low priority.
-      - [x] 012_001_event_sourced_aggregate_01 — VERDICT: FALSE REJECT (likely solver flake;
-            detail was just "not green", no failing test captured). All three candidate
-            additions are harness-pinned: events/2 → [] (line 135), ":name or :account_name"
-            matches the harness's literal either-key assert (line 211), exact-balance
-            withdrawal. Original screens GREEN 20/20 → RERUN QUEUE: apply candidate,
-            blind-verify, land if green / revert if red (hand-pilot flow).
-      - [x] 013_003_budget_constrained_retry_worker_with_decorrelated_jitter_01 — VERDICT:
-            vet WORKED AS DESIGNED (proposal dropped `Process.send_after`, which the original
-            names once). Keep-class root anyway (screen red 13/16 standing) — no candidate
-            could land without the strengthen path. Original untouched, healthy. No action.
-      - [x] 014_001_priority_queue_processor_01 — VERDICT: vet WORKED AS DESIGNED (proposal
-            dropped `spawn_monitor/1`, named in the original's non-blocking paragraph).
-            Original GREEN 16/16. Editor-retry eligible in a future round; low priority.
-      - [x] 024_002_replay_protected_timestamped_webhook_receiver_01 — VERDICT: FALSE REJECT.
-            Blind red hit the HAPPY-PATH test (untouched by the edit); the candidate only
-            refined the 401 taxonomy and both refinements are pinned verbatim (no-v1 →
-            invalid_signature line 119, non-integer t → invalid_signature line 125).
-            Original GREEN 24/24 → RERUN QUEUE.
-      - [x] 025_001_long_polling_endpoint_01 — VERDICT: FALSE REJECT. Red hit the untouched
-            timing-sensitive core test (mid-poll publish, 100ms subscribe window); candidate
-            adds only pinned facts (start_supervised!/child_spec IS harness line 12, {:ok,pid},
-            no-subscriber :ok, first-notification-only, "" 204 body). Original GREEN 11/11
-            → RERUN QUEUE.
-      - [x] 025_003_coalescing_batch_long_poll_with_linger_window_01 — VERDICT: FALSE REJECT.
-            Same family, same pattern: red at the untouched burst-coalescing timing test;
-            candidate restates the linger semantics the original already implies ("window
-            resets per message") + pinned details. Original GREEN 16/16 → RERUN QUEUE.
-      - [ ] 041_003_sharded_lru_cache_with_consistent_key_routing_01 — blind RED: missing required option fails loudly
-      - [x] 044_001_ets_based_metrics_collector_01 — VERDICT: vet WORKED AS DESIGNED (proposal
-            lost the `Metrics.increment/2` token; the original pins it twice, incl. "returns
-            :ok, not the new value"). Original GREEN 30/30. Editor-retry eligible; low
-            priority. TOOL GAP (Task B if another precision round runs): structural-vet
-            failures discard the proposal WITHOUT saving to candidates/ — unreviewable.
-      - [ ] 045_001_ets_based_feature_flag_store_01 — blind RED: enable sets flag on for everyone
-      - [ ] 061_001_parallel_map_with_concurrency_limit_01 — blind RED: never exceeds max_concurrency=3
-      - [ ] 064_004_instrumented_work_stealing_queue_with_steal_metrics_01 — blind RED: default steal batch = half of victim's queue
-      - [ ] 072_004_scripted_sequence_clock_01 — blind RED: :on_exhaust :raise blows up when script exhausted
-      - [ ] 073_001_database_cleaner_for_integration_tests_01 — blind RED: failed transaction start/2 still replaces prior truncation state
-      - [ ] 624_002_merge_commit_dag_with_topological_log_and_merge_base_01 — blind RED: log walks linear chain newest-to-oldest
-
-Relaunch note: ledger rows are content+gate-sha keyed, so a relaunch of
-`prompt_precision.exs` skips ALL 329 roots (incl. the 17 — their prompts
-are unchanged, so their needs_triage rows still match). A per-root retry
-requires a prompt/harness/tool change or a deliberate ledger-row removal.
-
----
-
 ## 📋 TODO (rules 7–10 apply: every finding = Task A fix data + Task B gate
 the generator; pilots before full runs; one solved item = one commit)
 
 ### 🧑‍⚖️ WAITING ON KAMIL
+
+**T2.6 post-triage follow-ups (2026-07-18; the 17-root triage record is in
+docs/15).** Two small prompt-writing LLM batches — same write gate as the
+full run (land only on blind green, revert on red; never concurrent with
+the nightly sweep or another prompt-writing tool), so Kamil's go first:
+
+- **Follow-up A — RERUN the 8 false rejects (~8 blind solves).** Per root:
+  apply the saved candidate from `logs/prompt_precision_candidates/<id>.md`,
+  run ONE blind solve (hand-pilot flow); green → keep + S6 row + cascade;
+  red → revert (the reverted sha's needs_triage ledger row still stands).
+  Roots: 012_001, 024_002, 025_001, 025_003, 045_001, 064_004, 073_001,
+  624_002. Triage evidence: every candidate addition verified
+  harness-pinned; every red hit a test the edit never touched (5 of the 8
+  are timing/choreography-sensitive tests).
+- **Follow-up B — HAND-FIX the 3 real precision gaps (~3 edits + blind
+  solves).** 007_001: state the gold's ACTUAL trim rule (trim only on a
+  non-growing `get`; a growing `get` reads the untrimmed buffer — the
+  rejected candidate stated it backward). 041_003: state the
+  raise-vs-error-tuple split (missing `:name` → KeyError raises in the
+  caller; missing `:num_shards`/`:max_size` → `{:error, {%KeyError{}, _}}`
+  from start_link, fetch in init). 072_004 (HIGH VALUE): apply its saved
+  candidate (names the pinned start-validation error tuples — the exact
+  cause of this root's STANDING screen red) + one sentence pinning the
+  CALLER-side RuntimeError re-raise in `now/1`. 007_001/072_004 are
+  keep-class → strengthen path if still red after the fix.
+- Optional low-priority C: 009_003 balanced rewording (candidate's
+  caller-blocks emphasis needs a "server loop stays responsive"
+  counterweight), 007_002 guard sentences via strengthen path,
+  014_001/044_001 fresh editor retries (token-vet fired; needs a
+  ledger-row removal or tool change to re-run).
 
 **Two stray repair dirs** minted in the audit's pre-restart first hour
 (untracked, full triplets, no ledger row):
@@ -105,6 +55,16 @@ flow, first two mints. Call: verify + commit like the other 68, or
 delete + let the flow re-mint.
 
 ### 🔎 OPEN FINDINGS
+
+**prompt_precision.exs tool gaps, measured by the full run (Task B — apply
+before any future precision round):** (a) structural-vet failures discard
+the proposal WITHOUT saving to `logs/prompt_precision_candidates/` —
+unreviewable (hit 013_003/014_001/044_001); (b) the single-sample blind
+gate false-rejected 8 of the 17 rejects (reds on tests the edit never
+touched, mostly timing-sensitive) — consider one retry before discarding;
+(c) keep-class roots (standing screen red, judge-kept) can NEVER pass the
+blind-green gate, so precision improvements are unreachable there without
+wiring in the strengthen path.
 
 **Template-rule candidate (F22 Task B, for the Phase-3 template work):**
 "for any input the prompt's own validation rules accept, the gold must
@@ -137,7 +97,7 @@ metadata (ledger-side, tiny — fold into the export work).
 
 ### ⏭️ QUEUE ORDER
 
-1. **T2.6 precision full run** — RUNNING (see above).
+1. **T2.6 post-triage follow-ups A + B** — WAITING ON KAMIL (see above).
 
 ### 📦 DATA EXTENSION (docs/13 §2; after the above)
 
