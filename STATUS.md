@@ -119,20 +119,39 @@ one-writer enforcement). Launch when the cap-lift exits:
 `logs/rubric_judge.jsonl`. AFTER: `--report`, triage any both-judge
 lows against the artifacts (rule: an LLM verdict is a hypothesis).
 
-### ⏭️ QUEUE ORDER
+### ⏭️ ROADMAP (established 2026-07-19 night; Kamil's frame: improve +
+### derive from existing, no new-task generation)
 
-1. Next up: DATA EXTENSION below (TD.3 first — unblocked).
+**Phase A — running now (automatic):** tfim cap-lift backfill → rubric
+pass #2 → triage any both-judge lows against artifacts (rule 7).
 
-### 📦 DATA EXTENSION (docs/13 §2; after the above)
+**Phase B — TD.2 multi-turn repair dialogues (~86 chains).** The ONLY
+shape that teaches iterative repair (spec → failing attempt → failure
+report → fix). Deterministic from the archived chains; per-pair
+re-verification like mint_repairs. Needs first: the multi-turn export
+format written into docs/16 (proposal: standard chat turns, gold = the
+accepted final attempt, earlier turns loss-masked by the training-run
+convention — documented, not enforced by us).
 
-- **T2.6 proper — prompt-register monotony rewrite** (improvement round
-  #2 — NOT before steady state) [BIG: 2,396 tfim + 302 wt_ + 80/332 seed
-  openers; own tool + ledger + blind re-screen budget] — docs/12 §7.4.
-- **TD.2 — multi-turn repair-dialogue exporter** (PERISHABLE raw material —
-  snapshot `logs/attempts/` before any big run; archives 2026-07-12 and
-  2026-07-14b; 745 chains / 100 mintable rejected→accepted pairs). §2.2.
-- **TD.4 — style-repair pairs (207) + cap lifts (~1,900 free tfim)** —
-  weigh against docs/16 §4's advisory weights. §2.4–2.5.
+**Phase C — deterministic sfim (~2,737 code-FIM units).** The last big
+volume lever. Templated-prompt register already precedented by
+tfim/adapt/dedoc/style. Build mirrors tfim (build_skeleton exists);
+per-unit gates: skeleton integrity, reconstruction green + 0 warnings,
+gutted-candidate mutant kill — the fim manifest, deterministically.
+
+**Phase D — training-readiness hygiene:** decontam RE-RUN over the
+grown corpus (first pass was clean 0/786 but predates ~1,100 new units
+— cheap CPU, standing pre-export check), export refresh, full sweep.
+
+**Phase E — the honest fork (Kamil):** after C, existing-corpus
+derivation is ESSENTIALLY EXHAUSTED. Remaining upside: (a) Phase 3 —
+base-idea diversity (57 of ~1000 ideas realized) is the binding
+constraint no derivation fixes; or (b) run a training/eval cycle on the
+export and let its results (register monotony? shape mix? difficulty
+curve?) decide the next data work — incl. whether T2.6-proper's big
+register rewrite is worth its LLM budget. PARKED until then:
+T2.6-proper, spec-fim (1,869 sites), TDD-inverse, bundle-v2 coverage
+(6 dirs), keep-packet approvals (Kamil, any time).
 
 ---
 
