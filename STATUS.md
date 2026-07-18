@@ -64,6 +64,11 @@ wiring in the strengthen path.
 "for any input the prompt's own validation rules accept, the gold must
 terminate promptly without crashing" — F22 is the proof; fold into the
 T1.4 template rules alongside the LIFECYCLE RULE when next edited.
+COUPLING (2026-07-19 review): `GenTask.Prompts` sits in the gate-sha of
+BOTH `prompt_precision.jsonl` and `retro_audit.jsonl` row keys, so ANY
+Prompts edit re-opens ~650 LLM-priced verdicts for future resumes —
+batch this one-sentence rule with the next deliberate Prompts change
+(the Phase-3 template pass), never as a solo edit.
 
 **retro_audit row-key gap (Task B pending):** the row key omits the
 script's own bytes (gate_sha covers the four judged modules only —
