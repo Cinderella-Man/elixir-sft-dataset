@@ -31,6 +31,7 @@ defmodule GenTask.Config do
           skip_test_fim: boolean(),
           skip_bugfix: boolean(),
           skip_adapt: boolean(),
+          skip_dedoc: boolean(),
           skip_variation_blind: boolean(),
           blind_rescreen: boolean(),
           semantic_floor: float() | nil,
@@ -74,6 +75,7 @@ defmodule GenTask.Config do
             skip_test_fim: false,
             skip_bugfix: false,
             skip_adapt: false,
+            skip_dedoc: false,
             skip_variation_blind: false,
             # T1.1 (docs/12 §5.2.1): accept-time blind re-screen for bases accepted
             # after ≥1 repair. OFF until Kamil signs off the policy (STATUS).
@@ -136,6 +138,7 @@ defmodule GenTask.Config do
       skip_test_fim: env_bool(env_fun, "GEN_SKIP_TEST_FIM"),
       skip_bugfix: env_bool(env_fun, "GEN_SKIP_BUGFIX"),
       skip_adapt: env_bool(env_fun, "GEN_SKIP_ADAPT"),
+      skip_dedoc: env_bool(env_fun, "GEN_SKIP_DEDOC"),
       skip_variation_blind: env_bool(env_fun, "GEN_SKIP_VARIATION_BLIND"),
       # Kamil, 2026-07-15: quality gates are NEVER optional — generation always
       # runs at the maximum standard. These three resolve ON by default; the env

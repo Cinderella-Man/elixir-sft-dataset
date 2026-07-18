@@ -27,7 +27,7 @@ defmodule GenTask.GateLog do
 
   alias GenTask.{Config, CycleLog}
 
-  @type shape :: :base | :variation | :fim | :wtest | :tfim | :bugfix | :adapt
+  @type shape :: :base | :variation | :fim | :wtest | :tfim | :bugfix | :adapt | :dedoc
   @type verdict :: :pass | :fail | :skip
 
   # Ordered gate manifests per shape. Descriptions are printed verbatim — plain
@@ -94,6 +94,17 @@ defmodule GenTask.GateLog do
       {:red_gate, "base gold grades RED under the variation harness (adaptation is non-trivial)"},
       {:gold_green, "variation gold green vs the embedded harness copy"},
       {:zero_warnings, "staged pair compiles with zero warnings"},
+      {:promote_guard, "promotion safety (refuse if the target dir exists; path containment)"}
+    ],
+    dedoc: [
+      {:house_trio, "parent carries @moduledoc + @doc + @spec and stripping removes them"},
+      {:dialyzer_clean,
+       "parent gold sha reads clean-or-waived in the dialyzer ledger (T1.6 — " <>
+         "a lying spec must never become a training target)"},
+      {:stripped_green,
+       "stripped module still green with zero warnings vs the parent harness " <>
+         "(stripping provably changed no behavior)"},
+      {:gold_green, "documented gold green with zero warnings vs the harness copy"},
       {:promote_guard, "promotion safety (refuse if the target dir exists; path containment)"}
     ]
   }

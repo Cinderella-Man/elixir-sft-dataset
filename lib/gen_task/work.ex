@@ -105,11 +105,16 @@ defmodule GenTask.Work do
         skip?: & &1.skip_adapt,
         missing: &missing_adapt/2,
         runner: {GenTask.Adapt, :run}
+      },
+      %{
+        key: :dedoc,
+        desc: "docs-stripped 'add specs and docs' pair per _01 (dedoc_…)",
+        llm?: false,
+        stage: :derived,
+        skip?: & &1.skip_dedoc,
+        missing: &missing_dedoc/2,
+        runner: {GenTask.Dedoc, :run}
       }
-      # Future work types slot in here, e.g.:
-      # %{key: :dedoc, desc: "docs-stripped 'add specs and docs' pair per _01",
-      #   llm?: false, stage: :derived, skip?: & &1.skip_dedoc,
-      #   missing: &missing_dedoc/2, runner: {GenTask.Dedoc, :run}}
     ]
   end
 
@@ -267,6 +272,10 @@ defmodule GenTask.Work do
   # count 0 (the gate-expensive RED measurement itself lives in the runner).
   defp missing_adapt(%Catalog.Seed{} = seed, cfg) do
     GenTask.Adapt.missing_units(seed, cfg)
+  end
+
+  defp missing_dedoc(%Catalog.Seed{} = seed, cfg) do
+    GenTask.Dedoc.missing_units(seed, cfg)
   end
 
   defp a(%Catalog.Seed{num: num}), do: Catalog.pad3(num)
