@@ -14,103 +14,73 @@ Reference docs: `docs/14` (handover: gates, tools, ledgers, runbooks),
 ## 📋 TODO (rules 7–10 apply: every finding = Task A fix data + Task B gate
 the generator; pilots before full runs; one solved item = one commit)
 
-### 🧑‍⚖️ WAITING ON KAMIL
+### ▶️ NEXT SESSION RUNBOOK (written 2026-07-19 at context limit —
+### follow IN ORDER; each step says exactly what and why)
 
-**Optional follow-up C (low priority):** 009_003 balanced rewording
-(candidate's caller-blocks emphasis needs a "server loop stays
-responsive" counterweight), 007_002 guard sentences via strengthen path,
-014_001/044_001 fresh editor retries (token-vet fired; needs a
-ledger-row removal or tool change to re-run).
+**STEP 0 — check the sfim reclaim (may still be running).**
+`kill -0 $(cat logs/sfim_reclaim.pid | grep -oE 'pid=[0-9]+' | cut -d= -f2)`
+— or just `pgrep -f mint_sfim`. Log `logs/sfim_reclaim.log`; final line is
+`sfim: %{...}`. It retries 175 targets that the FIRST full mint rejected
+because of a carver bug (clause_end truncated multi-line-guard heads to the
+bare head line; gut() then rejected every such degenerate carve — the 2,438
+units MINTED by the first pass are sound: single-line heads + proven
+test-kills). The bug is FIXED in scripts/mint_sfim.exs; the reclaim runs
+with the fix. Idempotent relaunch: `scripts/run_detached.sh
+logs/sfim_reclaim.log mix run scripts/mint_sfim.exs` (minted dirs +
+sha-keyed logs/sfim_rejected.jsonl rows skip).
 
+**STEP 1 — land the sfim yield (the corpus must be QUIET first: no
+mint/generate running).**
+1. Sample-validate: `elixir scripts/validate.exs --fim --only
+   "003_00*,020_00*,090_00*"` (any few families) — expect ALL PASS.
+2. `git add tasks/ scripts/mint_sfim.exs && git add -f
+   logs/sfim_rejected.jsonl && git commit` (~2,400-2,600 new `_0N` fim
+   dirs). NOTE: two LOCAL commits are already waiting unpushed (the miner
+   build + pilots) — this push carries them too.
+3. `git push` — earlier pushes FAILED only because corpus-wide gates
+   (freshness/format scans of tasks/) raced the running mint; on a quiet
+   corpus they pass. If a gate fails, read the push log FULLY (tail -20
+   loses the reason — capture to a file).
 
-### 🔎 OPEN FINDINGS
+**STEP 2 — follow-up C landings (Kamil approved 2026-07-19; candidates
+are DRAFTED and verified-by-diff in `logs/followup_c_candidates/`).**
+For each of the three, run the keep path (1 blind solve each; lands on
+green, judge-packet on red — never lands unverified):
+`mix run scripts/keep_land.exs -- --candidate 009_003_retry_aware_request_deduplicator_01 --prompt logs/followup_c_candidates/cand_009_003.md`
+`mix run scripts/keep_land.exs -- --candidate 014_001_priority_queue_processor_01 --prompt logs/followup_c_candidates/cand_014_001.md`
+`mix run scripts/keep_land.exs -- --candidate 044_001_ets_based_metrics_collector_01 --prompt logs/followup_c_candidates/cand_044_001.md`
+Then the directed approval (Kamil's 2026-07-19 message names 007_002):
+`mix run scripts/keep_land.exs -- --approve 007_002_weightedmovingaverage_01`
+FAMILY SWEEP ALREADY DONE: all siblings of 007/009/014/044 verified
+precise (test-name-vs-prompt scan; the suspicious greps all resolved to
+already-stated semantics). After any landing: the standing cascade
+(resync_embeds --wt-all, resync_bugfix/tfim/adapt/dedoc, check_embeds)
++ commit per landing.
 
-**110_002 is KEEP-CLASS at the rolling-window-expiry hard spot —
-strengthen-path queue (2026-07-18).** Four independent solver samples
-failed "slices outside the window are excluded" in one day (grown
-harness r4+r5, current harness fallback, plus the 07-17 standing red).
-Three surgical prompt improvements were written and each demonstrably
-fixed a distinct solver failure mode (series-vs-server addressing
-killed the :noproc class; caller-side validation raise killed the
-ArgumentError-EXIT class; the slot-expiry mechanism sentence) — but the
-expiry test still reds, so per the gate nothing landed: prompt reverted,
-improved version SAVED at
-`logs/retro_audit_backup/110_002_precision_candidate_20260718.md`.
-Blocked on the same strengthen path as the other keep-class roots. Also
-blocked behind it: the audit's repeatedly-proven growth (8→13/14 tests
-incl. a proven-defect gold repair, all gates green in staging four
-times). When the strengthen path exists: land the saved prompt via
-Kamil-reviewed keep, then re-run retro_audit on the root.
+**STEP 3 — refresh + close.**
+`mix run scripts/export_dataset.exs` + `-- --check`; update README's
+at-a-glance numbers (will be ~12,300 examples / count `_0N` via the
+export report's shape table; keep the conservative framing sentence);
+docs/15 entry for: sfim shipped (tally from both logs), carver-bug
+story, follow-up C closed. Push.
 
-**prompt_precision.exs tool gaps, measured by the full run (Task B — apply
-before any future precision round):** (a) structural-vet failures discard
-the proposal WITHOUT saving to `logs/prompt_precision_candidates/` —
-unreviewable (hit 013_003/014_001/044_001); (b) the single-sample blind
-gate false-rejected 8 of the 17 rejects (reds on tests the edit never
-touched, mostly timing-sensitive) — consider one retry before discarding;
-(c) keep-class roots (standing screen red, judge-kept) can NEVER pass the
-blind-green gate, so precision improvements are unreachable there without
-wiring in the strengthen path.
+**STEP 4 — new Task-B finding to file (discovered during the sfim build,
+not yet in any ledger): sfim children embed the PARENT SPEC verbatim in
+their prompts ("## The task" section), but NO drift gate covers that
+embed** (module-FIM resync only re-derives the skeleton fence; bugfix/
+dedoc-style spec-embed checking does not scan fim dirs). A parent-prompt
+edit now silently stales sfim children. Fix design: extend
+check_embeds/resync_embeds (or a small resync_sfim_specs.exs) to
+re-derive the "## The task" section for fim dirs whose prompt contains
+that marker, byte-compare, --apply heals. File it under rule 7 and wire
+into pre-push/CI like the other five drift gates.
 
-**Template-rule candidate (F22 Task B, for the Phase-3 template work):**
-"for any input the prompt's own validation rules accept, the gold must
-terminate promptly without crashing" — F22 is the proof; fold into the
-T1.4 template rules alongside the LIFECYCLE RULE when next edited.
-COUPLING (2026-07-19 review): `GenTask.Prompts` sits in the gate-sha of
-BOTH `prompt_precision.jsonl` and `retro_audit.jsonl` row keys, so ANY
-Prompts edit re-opens ~650 LLM-priced verdicts for future resumes —
-batch this one-sentence rule with the next deliberate Prompts change
-(the Phase-3 template pass), never as a solo edit.
-
-**retro_audit row-key gap (Task B pending):** the row key omits the
-script's own bytes (gate_sha covers the four judged modules only —
-prompt_precision.exs hashes its own file and is the right pattern);
-fold the alignment in at the next deliberate ledger re-open, NOT now
-(adding it now would silently re-open all 314 sound verdicts). Also
-park there: 3 chronic compile-artifact roots (071_001, 100_002,
-100_003 — long-solution blind replies truncate 3/3 samples; a
-continuation-aware blind solve would unlock their promise audits).
-
-**PARITY TABLE: ZERO hard pre-Phase-3 blockers remain (2026-07-19).**
-Rows 15+23 closed on Kamil's go with the ACCEPT-PATH carrier (the
-stronger option per "quality gates are never optional"): the
-T1.6-calibrated analysis now lives in `GenTask.Dialyzer`, wired as
-Cycle gate 4 (default-ON `GEN_DIALYZER`, warnings reject + feed the
-repair prompt; repair coverage falls out of the suite re-running per
-attempt). Every remaining row reads ENFORCED or has its defined
-post-cutover path (11/12/16/17/21 — see the table). What still gates
-Phase 3 is the PROCESS list in "Current mode" below (loop-parity now
-done; cutover acceptance test on the first batch; the §7.2 line),
-plus Kamil's standing decisions (strays, follow-up C).
-
-### 🔨 BUILDS
-
-**KEEP PACKETS PENDING KAMIL (`scripts/keep_land.exs`, built
-2026-07-19):** review each packet in `logs/keep_review/<root>/`
-(candidate vs current prompt, first failure, judge verdict) and either
-`mix run scripts/keep_land.exs -- --approve <root>` (lands + writes the
-keep resolution row; then cascade + commit) or delete the packet.
-Pending now: 007_002_weightedmovingaverage_01 (guard-sentence
-candidate; blind red at the WMA-weighting test whose formula the
-candidate states VERBATIM — judge quoted it; textbook solver-weak
-keep). 110_002_histogram_based_approximate_rolling_percentile_01
-(the three-fix candidate from the T2.6 rounds; blind red was the
-SOLVER crashing on :array.new badarg — solver-weak, nothing prompt-side
-— judge ENTAILED quoting the estimation-algorithm paragraph). After
-approving 110_002, re-run
-`mix run scripts/retro_audit.exs -- --only "110_002*"` so its
-four-times-staging-green growth (incl. the proven gold-defect repair)
-gets its landing chance against the improved prompt.
-
-**F23 Task B (batched with F22 at the next deliberate Prompts edit):**
-the LIFECYCLE RULE gains the sub-case "a manual/external trigger must
-not arm a second periodic chain — it folds into the existing one".
-Task A closed 2026-07-20: gold fixed (cancel-before-re-arm single-timer
-invariant + stale-tick drain), harness grew the two pins (old gold
-fails exactly the orphan pin), full cascade + pairs remint, all gates
-green; the blind red on the new pin is the family's standing keep
-class (third independent solver reproducing the F17-1 mistake),
-covered by the existing triage keep verdict at this prompt sha.
+**Standing decisions (Kamil, unchanged):** 110_002 keep packet
+(--approve or delete; then retro_audit --only "110_002*" so its staged
+growth lands); the strategic fork — Phase 3 (490 queued bases; ~57/1000
+ideas realized is the binding constraint) vs a training/eval cycle on
+the export (converts the parked questions — register monotony, shape
+weights, difficulty curve, T2.6-proper's worth — into measurements).
 
 ### ⏭️ ROADMAP (established 2026-07-19 night; Kamil's frame: improve +
 ### derive from existing, no new-task generation)
