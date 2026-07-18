@@ -43,8 +43,10 @@ defmodule MergeSchema do
   Parse a CSV fragment into an opaque partial inference state (a plain map).
 
   With `headers: true` (the default) the first record supplies column names;
-  with `headers: false` every record is data and columns are positional. The
-  returned map has `:names`, `:ncols`, and `:categories` keys.
+  with `headers: false` every record is data and columns are positional. A
+  fragment with no records at all has `:names` of `nil`, making it a neutral
+  element for `merge/2`. The returned map has `:names`, `:ncols`, and
+  `:categories` keys.
   """
   @spec partial(String.t(), keyword()) :: partial()
   def partial(csv, opts \\ []) when is_binary(csv) do
@@ -107,7 +109,6 @@ defmodule MergeSchema do
 
   # --- Category accumulation ------------------------------------------------
 
-  @spec build_categories([row()]) :: %{optional(non_neg_integer()) => MapSet.t(category())}
   defp build_categories(rows) do
     # TODO
   end
@@ -124,7 +125,7 @@ defmodule MergeSchema do
   # --- Schema helpers -------------------------------------------------------
 
   @spec split_records([row()], boolean()) :: {[String.t()] | nil, [row()]}
-  defp split_records([], true), do: {[], []}
+  defp split_records([], true), do: {nil, []}
 
   defp split_records([header | rest], true) do
     {Enum.map(header, fn {value, _quoted?} -> value end), rest}

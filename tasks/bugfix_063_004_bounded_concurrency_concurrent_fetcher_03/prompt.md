@@ -1,19 +1,11 @@
-# Write tests for this module
+# Fix the bug
 
-Below is a completed Elixir module and the original specification it was built to
-satisfy. Write a comprehensive ExUnit test harness that verifies a correct
-implementation of this module.
+The module below was written for the task that follows, but ONE behavior bug
+slipped in. The test suite (not shown) fails with the report at the bottom.
+Find the bug and fix it — change as little as possible; do not restructure
+working code. Reply with the complete corrected module.
 
-Requirements for the harness:
-- Define a module `<Module>Test` that does `use ExUnit.Case, async: false`.
-- Do NOT call `ExUnit.start()` — the evaluator starts ExUnit itself.
-- Make it self-contained: any fakes, clock Agents, or helpers are defined inline.
-- Cover the full public API and the important edge cases described in the spec.
-- It must compile with ZERO warnings (prefix unused variables with `_`; match float
-  zero as `+0.0`/`-0.0`).
-- Give me the complete harness in a single file.
-
-## Original specification
+## The task the module implements
 
 # Bounded-Concurrency Concurrent Fetcher
 
@@ -74,7 +66,7 @@ Do not use any external dependencies — only Elixir's standard library and OTP 
 
 Give me the complete implementation in a single file with a single module.
 
-## Module under test
+## The buggy module
 
 ```elixir
 defmodule PooledFetcher do
@@ -107,7 +99,7 @@ defmodule PooledFetcher do
   def fetch_all([], _max_concurrency, _timeout_ms), do: %{}
 
   def fetch_all(sources, max_concurrency, timeout_ms)
-      when is_list(sources) and is_integer(max_concurrency) and max_concurrency > 0 and
+      when is_list(sources) and is_integer(max_concurrency) and max_concurrency >= 0 and
              is_integer(timeout_ms) and timeout_ms >= 0 do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
     loop(sources, %{}, %{}, max_concurrency, deadline)
@@ -216,4 +208,15 @@ defmodule PooledFetcher do
     kind, value -> {:error, {kind, value}}
   end
 end
+```
+
+## Failing test report
+
+```
+1 of 18 test(s) failed:
+
+  * test a non-positive max_concurrency or negative timeout_ms is rejected by a guard
+      
+      
+      Expected exception FunctionClauseError but nothing was raised
 ```

@@ -14,9 +14,13 @@ defmodule PooledFetcher do
 
   At most `max_concurrency` fetches run at any instant; the rest wait in a
   queue and start as running slots free up. The timeout is a single wall-clock
-  budget measured from the first call — sources still running or still queued
-  when it fires are reported as `{:error, :timeout}`, and any live process is
-  killed before returning.
+  budget measured from the moment `fetch_all/3` is called — sources still
+  running or still queued when it fires are reported as `{:error, :timeout}`,
+  and any live process is killed before returning.
+
+  Fetch processes are spawned *monitored but unlinked*, so a fetch that is
+  killed from outside this module can never take the calling process down with
+  it, whether or not the caller traps exits.
   """
 
   @doc """
@@ -36,87 +40,90 @@ defmodule PooledFetcher do
       when is_list(sources) and is_integer(max_concurrency) and max_concurrency > 0 and
              is_integer(timeout_ms) and timeout_ms >= 0 do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
-    loop(sources, %{}, %{}, %{}, max_concurrency, deadline)
+    loop(sources, %{}, %{}, max_concurrency, deadline)
   end
 
   # Drives the pool: fill idle slots, then wait for the next completion or the
   # global deadline.
   #
-  #   pending      - list of {name, fetch_fn} not yet started
-  #   running      - map of monitor_ref => name for in-flight fetches
-  #   ref_to_task  - map of monitor_ref => %Task{} for shutdown on timeout
-  #   results      - map of name => result_tuple
-  defp loop(pending, running, ref_to_task, results, max, deadline) do
-    {pending, running, ref_to_task} = fill(pending, running, ref_to_task, max)
+  #   pending - list of {name, fetch_fn} not yet started
+  #   running - map of pid => {monitor_ref, name} for in-flight fetches
+  #   results - map of name => result_tuple
+  defp loop(pending, running, results, max, deadline) do
+    {pending, running} = fill(pending, running, max)
 
-    if pending == [] and running == %{} do
+    if pending == [] and map_size(running) == 0 do
       results
     else
       remaining = deadline - System.monotonic_time(:millisecond)
 
       if remaining <= 0 do
-        finalize_timeout(pending, running, ref_to_task, results)
+        finalize_timeout(pending, running, results)
       else
-        receive do
-          {ref, reply} when is_reference(ref) ->
-            case Map.fetch(running, ref) do
-              {:ok, name} ->
-                Process.demonitor(ref, [:flush])
-
-                loop(
-                  pending,
-                  Map.delete(running, ref),
-                  Map.delete(ref_to_task, ref),
-                  Map.put(results, name, reply),
-                  max,
-                  deadline
-                )
-
-              :error ->
-                loop(pending, running, ref_to_task, results, max, deadline)
-            end
-
-          {:DOWN, ref, :process, _pid, reason} ->
-            case Map.fetch(running, ref) do
-              {:ok, name} ->
-                loop(
-                  pending,
-                  Map.delete(running, ref),
-                  Map.delete(ref_to_task, ref),
-                  Map.put(results, name, {:error, reason}),
-                  max,
-                  deadline
-                )
-
-              :error ->
-                loop(pending, running, ref_to_task, results, max, deadline)
-            end
-        after
-          remaining ->
-            finalize_timeout(pending, running, ref_to_task, results)
-        end
+        collect(pending, running, results, max, deadline, remaining)
       end
     end
   end
 
-  # Starts queued fetches until the pool is full or the queue is empty.
-  defp fill(pending, running, ref_to_task, max) do
-    if pending == [] or map_size(running) >= max do
-      {pending, running, ref_to_task}
-    else
-      [{name, fetch_fn} | rest] = pending
-      task = Task.async(fn -> safe_call(fetch_fn) end)
-      fill(rest, Map.put(running, task.ref, name), Map.put(ref_to_task, task.ref, task), max)
+  # Waits for one worker message. The guards make sure only messages belonging
+  # to this pool are consumed — unrelated mail in the caller's inbox is left
+  # untouched.
+  defp collect(pending, running, results, max, deadline, remaining) do
+    receive do
+      {:fetch_result, pid, reply} when is_map_key(running, pid) ->
+        {ref, name} = Map.fetch!(running, pid)
+        Process.demonitor(ref, [:flush])
+        loop(pending, Map.delete(running, pid), Map.put(results, name, reply), max, deadline)
+
+      {:DOWN, _ref, :process, pid, reason} when is_map_key(running, pid) ->
+        {_ref, name} = Map.fetch!(running, pid)
+
+        loop(
+          pending,
+          Map.delete(running, pid),
+          Map.put(results, name, {:error, reason}),
+          max,
+          deadline
+        )
+    after
+      remaining ->
+        finalize_timeout(pending, running, results)
     end
   end
 
-  # Kills every live fetch and marks both running and still-queued sources as
-  # timed out.
-  defp finalize_timeout(pending, running, ref_to_task, results) do
-    Enum.each(ref_to_task, fn {_ref, task} -> Task.shutdown(task, :brutal_kill) end)
+  # Starts queued fetches until the pool is full or the queue is empty.
+  defp fill(pending, running, max) do
+    if pending == [] or map_size(running) >= max do
+      {pending, running}
+    else
+      [{name, fetch_fn} | rest] = pending
+      parent = self()
 
+      {pid, ref} =
+        spawn_monitor(fn -> send(parent, {:fetch_result, self(), safe_call(fetch_fn)}) end)
+
+      fill(rest, Map.put(running, pid, {ref, name}), max)
+    end
+  end
+
+  # Kills every live fetch, waits for confirmation that it is gone, discards any
+  # late result it may have sent, and marks running plus still-queued sources as
+  # timed out.
+  defp finalize_timeout(pending, running, results) do
     results =
-      Enum.reduce(running, results, fn {_ref, name}, acc ->
+      Enum.reduce(running, results, fn {pid, {ref, name}}, acc ->
+        Process.exit(pid, :kill)
+
+        receive do
+          {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
+        end
+
+        receive do
+          {:fetch_result, ^pid, _reply} -> :ok
+        after
+          0 -> :ok
+        end
+
         Map.put(acc, name, {:error, :timeout})
       end)
 
@@ -368,6 +375,105 @@ defmodule PooledFetcherTest do
     assert_raise FunctionClauseError, fn ->
       PooledFetcher.fetch_all(sources, 2, -1)
     end
+  end
+
+  test "a fetch killed from outside does not crash a non-trapping caller" do
+    parent = self()
+
+    {caller, ref} =
+      spawn_monitor(fn ->
+        sources = [
+          {:killed, fn -> Process.exit(self(), :kill) end},
+          {:healthy, fn -> {:ok, :done} end}
+        ]
+
+        send(parent, {:result, PooledFetcher.fetch_all(sources, 2, 1_000)})
+      end)
+
+    assert_receive {:result, result}, 2_000
+    assert result[:killed] == {:error, :killed}
+    assert result[:healthy] == {:ok, :done}
+    assert_receive {:DOWN, ^ref, :process, ^caller, :normal}, 1_000
+  end
+
+  test "duplicate names collapse to the last recorded value and shrink the map" do
+    sources = [
+      {:dup, fn -> {:ok, :first} end},
+      {:dup, fn -> {:ok, :second} end},
+      {:other, fn -> {:ok, :o} end}
+    ]
+
+    result = PooledFetcher.fetch_all(sources, 1, 2_000)
+
+    assert result == %{dup: {:ok, :second}, other: {:ok, :o}}
+    assert map_size(result) == 2
+  end
+
+  test "queued sources start in list order as slots free up" do
+    parent = self()
+
+    gate = fn name ->
+      fn ->
+        send(parent, {:started, name, self()})
+
+        receive do
+          :release -> {:ok, name}
+        end
+      end
+    end
+
+    sources = for n <- [:s1, :s2, :s3, :s4], do: {n, gate.(n)}
+    runner = Task.async(fn -> PooledFetcher.fetch_all(sources, 2, 5_000) end)
+
+    assert_receive {:started, :s1, p1}, 1_000
+    assert_receive {:started, :s2, p2}, 1_000
+    refute_receive {:started, :s3, _}, 100
+
+    send(p1, :release)
+    assert_receive {:started, :s3, p3}, 1_000
+    refute_receive {:started, :s4, _}, 100
+
+    send(p2, :release)
+    assert_receive {:started, :s4, p4}, 1_000
+
+    send(p3, :release)
+    send(p4, :release)
+
+    assert Task.await(runner, 5_000) ==
+             %{s1: {:ok, :s1}, s2: {:ok, :s2}, s3: {:ok, :s3}, s4: {:ok, :s4}}
+  end
+
+  test "a blocked fetch does not stop sibling results from being collected" do
+    blocker = fn ->
+      Process.sleep(10_000)
+      {:ok, :never}
+    end
+
+    sources = [
+      {:blocker, blocker},
+      {:fast1, fn -> {:ok, 1} end},
+      {:fast2, fn -> {:ok, 2} end}
+    ]
+
+    result = PooledFetcher.fetch_all(sources, 3, 300)
+
+    assert result[:fast1] == {:ok, 1}
+    assert result[:fast2] == {:ok, 2}
+    assert result[:blocker] == {:error, :timeout}
+  end
+
+  test "concurrent callers each get an independent result map" do
+    runners =
+      for i <- 1..4 do
+        Task.async(fn ->
+          PooledFetcher.fetch_all([{{:src, i}, fn -> {:ok, i} end}], 2, 2_000)
+        end)
+      end
+
+    assert Task.await_many(runners, 5_000) == for(i <- 1..4, do: %{{:src, i} => {:ok, i}})
+
+    assert PooledFetcher.fetch_all([{:later, fn -> {:ok, :fresh} end}], 1, 2_000) ==
+             %{later: {:ok, :fresh}}
   end
 end
 ```

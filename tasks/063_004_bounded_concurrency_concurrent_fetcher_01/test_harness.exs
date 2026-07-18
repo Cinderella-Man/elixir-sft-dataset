@@ -235,4 +235,103 @@ defmodule PooledFetcherTest do
       PooledFetcher.fetch_all(sources, 2, -1)
     end
   end
+
+  test "a fetch killed from outside does not crash a non-trapping caller" do
+    parent = self()
+
+    {caller, ref} =
+      spawn_monitor(fn ->
+        sources = [
+          {:killed, fn -> Process.exit(self(), :kill) end},
+          {:healthy, fn -> {:ok, :done} end}
+        ]
+
+        send(parent, {:result, PooledFetcher.fetch_all(sources, 2, 1_000)})
+      end)
+
+    assert_receive {:result, result}, 2_000
+    assert result[:killed] == {:error, :killed}
+    assert result[:healthy] == {:ok, :done}
+    assert_receive {:DOWN, ^ref, :process, ^caller, :normal}, 1_000
+  end
+
+  test "duplicate names collapse to the last recorded value and shrink the map" do
+    sources = [
+      {:dup, fn -> {:ok, :first} end},
+      {:dup, fn -> {:ok, :second} end},
+      {:other, fn -> {:ok, :o} end}
+    ]
+
+    result = PooledFetcher.fetch_all(sources, 1, 2_000)
+
+    assert result == %{dup: {:ok, :second}, other: {:ok, :o}}
+    assert map_size(result) == 2
+  end
+
+  test "queued sources start in list order as slots free up" do
+    parent = self()
+
+    gate = fn name ->
+      fn ->
+        send(parent, {:started, name, self()})
+
+        receive do
+          :release -> {:ok, name}
+        end
+      end
+    end
+
+    sources = for n <- [:s1, :s2, :s3, :s4], do: {n, gate.(n)}
+    runner = Task.async(fn -> PooledFetcher.fetch_all(sources, 2, 5_000) end)
+
+    assert_receive {:started, :s1, p1}, 1_000
+    assert_receive {:started, :s2, p2}, 1_000
+    refute_receive {:started, :s3, _}, 100
+
+    send(p1, :release)
+    assert_receive {:started, :s3, p3}, 1_000
+    refute_receive {:started, :s4, _}, 100
+
+    send(p2, :release)
+    assert_receive {:started, :s4, p4}, 1_000
+
+    send(p3, :release)
+    send(p4, :release)
+
+    assert Task.await(runner, 5_000) ==
+             %{s1: {:ok, :s1}, s2: {:ok, :s2}, s3: {:ok, :s3}, s4: {:ok, :s4}}
+  end
+
+  test "a blocked fetch does not stop sibling results from being collected" do
+    blocker = fn ->
+      Process.sleep(10_000)
+      {:ok, :never}
+    end
+
+    sources = [
+      {:blocker, blocker},
+      {:fast1, fn -> {:ok, 1} end},
+      {:fast2, fn -> {:ok, 2} end}
+    ]
+
+    result = PooledFetcher.fetch_all(sources, 3, 300)
+
+    assert result[:fast1] == {:ok, 1}
+    assert result[:fast2] == {:ok, 2}
+    assert result[:blocker] == {:error, :timeout}
+  end
+
+  test "concurrent callers each get an independent result map" do
+    runners =
+      for i <- 1..4 do
+        Task.async(fn ->
+          PooledFetcher.fetch_all([{{:src, i}, fn -> {:ok, i} end}], 2, 2_000)
+        end)
+      end
+
+    assert Task.await_many(runners, 5_000) == for(i <- 1..4, do: %{{:src, i} => {:ok, i}})
+
+    assert PooledFetcher.fetch_all([{:later, fn -> {:ok, :fresh} end}], 1, 2_000) ==
+             %{later: {:ok, :fresh}}
+  end
 end

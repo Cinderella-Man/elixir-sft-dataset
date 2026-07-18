@@ -107,4 +107,36 @@ defmodule MergeSchemaTest do
              "column_3" => :integer
            }
   end
+
+  test "an empty fragment has nil names, zero ncols and no categories" do
+    empty = MergeSchema.partial("")
+    newline_only = MergeSchema.partial("\n")
+
+    assert empty.names == nil
+    assert empty.ncols == 0
+    assert empty.categories == %{}
+
+    assert newline_only.names == nil
+    assert newline_only.ncols == 0
+    assert newline_only.categories == %{}
+  end
+
+  test "an empty fragment is a neutral element for merge in both orders" do
+    empty = MergeSchema.partial("")
+    p = MergeSchema.partial("n,m\n1,2.5\n")
+
+    expected = MergeSchema.finalize(p)
+    assert expected == %{"n" => :integer, "m" => :float}
+
+    assert MergeSchema.finalize(MergeSchema.merge(empty, p)) == expected
+    assert MergeSchema.finalize(MergeSchema.merge(p, empty)) == expected
+  end
+
+  test "ncols is the max of header length and data row widths within one fragment" do
+    wide_header = MergeSchema.partial("a,b,c\n1,2\n")
+    assert wide_header.ncols == 3
+
+    wide_data = MergeSchema.partial("a\n1,2,3\n")
+    assert wide_data.ncols == 3
+  end
 end

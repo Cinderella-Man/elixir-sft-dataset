@@ -38,7 +38,7 @@ There is no `:sample_rows` option — a chunk is expected to already be a bounde
 
 A partial must be a plain map with exactly these keys:
 
-- `:names` — the list of header column-name strings for this fragment, or `nil` when the fragment was parsed with `headers: false`.
+- `:names` — the list of header column-name strings for this fragment, or `nil` when the fragment was parsed with `headers: false`. A fragment with **no records at all** (an empty string, or only a trailing newline) has no header row to consume, so its `:names` is `nil` — never `[]` — its `:ncols` is `0`, and its `:categories` is empty. That makes the empty-fragment partial a **neutral element** for `merge/2`: merging it with any partial `p`, in either order, must finalize exactly like `p` alone (an empty fragment must never mask the header carried by another chunk).
 - `:ncols` — the number of columns observed (the max over the header length and every data row's field count).
 - `:categories` — a map from 0-based column index to a `MapSet` of the **non-null cell categories** seen in that column (nulls are never added).
 
@@ -98,8 +98,10 @@ defmodule MergeSchema do
   Parse a CSV fragment into an opaque partial inference state (a plain map).
 
   With `headers: true` (the default) the first record supplies column names;
-  with `headers: false` every record is data and columns are positional. The
-  returned map has `:names`, `:ncols`, and `:categories` keys.
+  with `headers: false` every record is data and columns are positional. A
+  fragment with no records at all has `:names` of `nil`, making it a neutral
+  element for `merge/2`. The returned map has `:names`, `:ncols`, and
+  `:categories` keys.
   """
   @spec partial(String.t(), keyword()) :: partial()
   def partial(csv, opts \\ []) when is_binary(csv) do
@@ -188,7 +190,7 @@ defmodule MergeSchema do
   # --- Schema helpers -------------------------------------------------------
 
   @spec split_records([row()], boolean()) :: {[String.t()] | nil, [row()]}
-  defp split_records([], true), do: {[], []}
+  defp split_records([], true), do: {nil, []}
 
   defp split_records([header | rest], true) do
     {Enum.map(header, fn {value, _quoted?} -> value end), rest}

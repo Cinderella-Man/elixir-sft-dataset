@@ -1,10 +1,21 @@
-  # Kills every live fetch and marks both running and still-queued sources as
+  # Kills every live fetch, waits for confirmation that it is gone, discards any
+  # late result it may have sent, and marks running plus still-queued sources as
   # timed out.
-  defp finalize_timeout(pending, running, ref_to_task, results) do
-    Enum.each(ref_to_task, fn {_ref, task} -> Task.shutdown(task, :brutal_kill) end)
-
+  defp finalize_timeout(pending, running, results) do
     results =
-      Enum.reduce(running, results, fn {_ref, name}, acc ->
+      Enum.reduce(running, results, fn {pid, {ref, name}}, acc ->
+        Process.exit(pid, :kill)
+
+        receive do
+          {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
+        end
+
+        receive do
+          {:fetch_result, ^pid, _reply} -> :ok
+        after
+          0 -> :ok
+        end
+
         Map.put(acc, name, {:error, :timeout})
       end)
 
