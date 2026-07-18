@@ -26,17 +26,57 @@ ledger `logs/prompt_precision.jsonl`. Post-run work, in order:
       verdict one of: ORIGINAL-FINE (reject was correct) / HAND-FIX
       (real precision gap → rule-7 two-tier item) / RERUN (tool retry
       worth it). Checklist (verdict inline as each closes):
-      - [ ] 007_001_moving_average_calculator_01 — blind RED: SMA different periods on same stream
-      - [ ] 007_002_weightedmovingaverage_01 — blind RED: larger period grows max_period / retains history
-      - [ ] 009_003_retry_aware_request_deduplicator_01 — blind RED: GenServer not blocked during retries
-      - [ ] 012_001_event_sourced_aggregate_01 — blind RED: not green
-      - [ ] 013_003_budget_constrained_retry_worker_with_decorrelated_jitter_01 — vet: dropped Process.send_after
-      - [ ] 014_001_priority_queue_processor_01 — vet: dropped spawn_monitor/1
-      - [ ] 024_002_replay_protected_timestamped_webhook_receiver_01 — blind RED: in-window signature stores event
-      - [ ] 025_001_long_polling_endpoint_01 — blind RED: notification published mid-poll
-      - [ ] 025_003_coalescing_batch_long_poll_with_linger_window_01 — blind RED: burst → one batched response
+      - [x] 007_001_moving_average_calculator_01 — VERDICT: reject CORRECT, candidate's
+            trim-timing promise is factually wrong (claims an earlier small `get` discards
+            history; gold trims ONLY on a non-growing `get` — a growing `get` reads the
+            untrimmed buffer, pinned by "SMA with different periods": get(2) then get(5)
+            → 6.0). Keep-class root (latest screen red 20/23 at this same test). REAL
+            precision gap remains → HAND-FIX QUEUE: state the gold's actual rule.
+      - [x] 007_002_weightedmovingaverage_01 — VERDICT: reject GATE-STRUCTURAL. Keep-class
+            root (latest screen red 18/19 at the hma-bootstrap test); the blind red hit the
+            retention test whose wording the candidate never touched. Candidate only added
+            two guard promises that ARE harness-pinned (assert_raise FunctionClauseError).
+            No wrong promise introduced; optional low-priority hand-apply via strengthen path.
+      - [x] 009_003_retry_aware_request_deduplicator_01 — VERDICT: reject CORRECT (empirically).
+            Original screens GREEN 22/22 and already says "executed asynchronously". Candidate's
+            additions are factually right (call must not use the default 5s timeout; exception
+            struct on exhaustion) but the amplified "caller blocks no matter how long" emphasis
+            plausibly tipped the solver into a blocking handle_call loop → red on the pinned
+            non-blocking test. Original stands. Optional retry with balanced wording (add "the
+            server loop stays responsive during retry delays"), low priority.
+      - [x] 012_001_event_sourced_aggregate_01 — VERDICT: FALSE REJECT (likely solver flake;
+            detail was just "not green", no failing test captured). All three candidate
+            additions are harness-pinned: events/2 → [] (line 135), ":name or :account_name"
+            matches the harness's literal either-key assert (line 211), exact-balance
+            withdrawal. Original screens GREEN 20/20 → RERUN QUEUE: apply candidate,
+            blind-verify, land if green / revert if red (hand-pilot flow).
+      - [x] 013_003_budget_constrained_retry_worker_with_decorrelated_jitter_01 — VERDICT:
+            vet WORKED AS DESIGNED (proposal dropped `Process.send_after`, which the original
+            names once). Keep-class root anyway (screen red 13/16 standing) — no candidate
+            could land without the strengthen path. Original untouched, healthy. No action.
+      - [x] 014_001_priority_queue_processor_01 — VERDICT: vet WORKED AS DESIGNED (proposal
+            dropped `spawn_monitor/1`, named in the original's non-blocking paragraph).
+            Original GREEN 16/16. Editor-retry eligible in a future round; low priority.
+      - [x] 024_002_replay_protected_timestamped_webhook_receiver_01 — VERDICT: FALSE REJECT.
+            Blind red hit the HAPPY-PATH test (untouched by the edit); the candidate only
+            refined the 401 taxonomy and both refinements are pinned verbatim (no-v1 →
+            invalid_signature line 119, non-integer t → invalid_signature line 125).
+            Original GREEN 24/24 → RERUN QUEUE.
+      - [x] 025_001_long_polling_endpoint_01 — VERDICT: FALSE REJECT. Red hit the untouched
+            timing-sensitive core test (mid-poll publish, 100ms subscribe window); candidate
+            adds only pinned facts (start_supervised!/child_spec IS harness line 12, {:ok,pid},
+            no-subscriber :ok, first-notification-only, "" 204 body). Original GREEN 11/11
+            → RERUN QUEUE.
+      - [x] 025_003_coalescing_batch_long_poll_with_linger_window_01 — VERDICT: FALSE REJECT.
+            Same family, same pattern: red at the untouched burst-coalescing timing test;
+            candidate restates the linger semantics the original already implies ("window
+            resets per message") + pinned details. Original GREEN 16/16 → RERUN QUEUE.
       - [ ] 041_003_sharded_lru_cache_with_consistent_key_routing_01 — blind RED: missing required option fails loudly
-      - [ ] 044_001_ets_based_metrics_collector_01 — vet: dropped Metrics.increment/2
+      - [x] 044_001_ets_based_metrics_collector_01 — VERDICT: vet WORKED AS DESIGNED (proposal
+            lost the `Metrics.increment/2` token; the original pins it twice, incl. "returns
+            :ok, not the new value"). Original GREEN 30/30. Editor-retry eligible; low
+            priority. TOOL GAP (Task B if another precision round runs): structural-vet
+            failures discard the proposal WITHOUT saving to candidates/ — unreviewable.
       - [ ] 045_001_ets_based_feature_flag_store_01 — blind RED: enable sets flag on for everyone
       - [ ] 061_001_parallel_map_with_concurrency_limit_01 — blind RED: never exceeds max_concurrency=3
       - [ ] 064_004_instrumented_work_stealing_queue_with_steal_metrics_01 — blind RED: default steal batch = half of victim's queue
