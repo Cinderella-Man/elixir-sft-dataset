@@ -9,6 +9,19 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-19 — TD.3 COMPLETE AT FINAL CENSUS 325/332: the dialyzer
+  re-pass unlocked and minted the 4 stragglers.** Deps PLT rebuilt
+  (the T1.6 PLT was swept with _build), then the scoped
+  dialyzer_golds pass verdicted all 4 fresh-sha golds CLEAN (004_001,
+  063_004, 080_002, 134_003 — today's gold repairs are spec-honest);
+  the remaining 2 decode as designed exclusions (100_002 = bundle,
+  kit-tier v2 scope; 102_001 = deliberately spec-less family, fails
+  the doc-trio gate). Backfill minted the 4, all ACCEPTED; resync
+  gate 325/325 unchanged; spot-checks byte-identical, eval 1.0.
+  Final: 325 dedoc units; excluded by design: 6 bundles + 102_001.
+  Rider: `logs/attempts` snapshotted to `attempts_archive_20260719`
+  (§3.2 — the day's backfills consumed attempt chains).
+
 - **2026-07-19 (early) — TD.3 DEDOC SHIPPED END-TO-END: 321 units on
   disk (317 full-run + 4 pilot), 100% accept rate, zero LLM.** The
   build (committed 9bf3d1d7 + 3df56271): `GenTask.Dedoc` as a
