@@ -95,7 +95,11 @@ defmodule GenTask.Config do
             # OFF (dark) until piloted; see GenTask.PromiseAudit.
             promise_audit: false,
             audit_max_tests: 6,
-            tfim_max_per_task: 10,
+            # Lifted 10→30 (TD.5 cap lift, Kamil's go 2026-07-19): ~1,900
+            # carvable tests sat above the old cap; per-unit gates still apply
+            # and the docs/16 §4 weight (0.25) is the near-duplication
+            # counterweight. Phase-3 seeds mint at the same bound (Task B).
+            tfim_max_per_task: 30,
             max_turns: 2,
             limit: nil,
             from: nil,
@@ -157,7 +161,7 @@ defmodule GenTask.Config do
       semantic_floor: env_floor(env_fun, "GEN_SEMANTIC_FLOOR", 0.6),
       promise_audit: env_bool_default(env_fun, "GEN_PROMISE_AUDIT", true),
       audit_max_tests: env_int(env_fun, "GEN_AUDIT_MAX_TESTS", 6),
-      tfim_max_per_task: env_int(env_fun, "GEN_TFIM_MAX_PER_TASK", 10),
+      tfim_max_per_task: env_int(env_fun, "GEN_TFIM_MAX_PER_TASK", 30),
       max_turns: env_int(env_fun, "GEN_MAX_TURNS", 2),
       limit: env_int(env_fun, "GEN_LIMIT", nil),
       from: env_int(env_fun, "GEN_FROM", nil),

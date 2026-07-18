@@ -102,6 +102,23 @@ approving 110_002, re-run
 four-times-staging-green growth (incl. the proven gold-defect repair)
 gets its landing chance against the improved prompt.
 
+### ▶️ RUNNING RIGHT NOW (2026-07-19 night; Kamil's blanket quality go)
+
+**TD.5 tfim cap lift 10→30** — backfill minting the ~1,900 newly
+in-cap test-FIM units (deterministic, per-unit reconstruction +
+isolation-kill gates). Detached pid 1469048, log
+`logs/tfim_cap_lift.log`; idempotent relaunch:
+`GEN_ONLY=backfill mix run scripts/generate.exs` (existing dirs skip).
+AFTER: validate sample + export refresh + batch commits.
+
+**Rubric-judge sampled pass #2 — QUEUED behind the backfill** (the
+tool's own guard refused --go while generate.exs is alive — correct
+one-writer enforcement). Launch when the cap-lift exits:
+`scripts/run_detached.sh logs/rubric_judge_pass2.log mix run scripts/rubric_judge.exs -- --go`
+37 re-opened/unjudged strata roots, ~74 judge calls, resumable ledger
+`logs/rubric_judge.jsonl`. AFTER: `--report`, triage any both-judge
+lows against the artifacts (rule: an LLM verdict is a hypothesis).
+
 ### ⏭️ QUEUE ORDER
 
 1. Next up: DATA EXTENSION below (TD.3 first — unblocked).
