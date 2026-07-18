@@ -38,17 +38,39 @@ defmodule Scripts.ExportDatasetTest do
 
   describe "the contract maps cover every shape Discovery can emit" do
     # A new shape added to Discovery without an exporter mapping must fail HERE,
-    # in the suite — not at export time in CI.
-    @discovery_shapes [:single, :multifile, :fim, :write_test, :test_fim, :bugfix, :adapt]
+    # in the suite — not at export time in CI. The hardcoded floor alone could
+    # not catch that (the :dedoc shape shipped 2026-07-19 and the export step
+    # crashed in CI while this suite stayed green), so the observed shapes of
+    # the REAL corpus are unioned in: any shape that actually occurs in tasks/
+    # must be mapped, whether or not someone remembered to extend this list.
+    @discovery_shapes [
+      :single,
+      :multifile,
+      :fim,
+      :write_test,
+      :test_fim,
+      :bugfix,
+      :adapt,
+      :dedoc
+    ]
+
+    defp shapes_to_cover do
+      observed =
+        EvalTask.Discovery.all()
+        |> Enum.map(& &1.shape)
+        |> Enum.uniq()
+
+      Enum.uniq(@discovery_shapes ++ observed)
+    end
 
     test "gold_file_map is total over shapes" do
-      for shape <- @discovery_shapes do
+      for shape <- shapes_to_cover() do
         assert Map.has_key?(ExportDataset.gold_file_map(), shape), "no gold rule for #{shape}"
       end
     end
 
     test "weights_map is total over shapes" do
-      for shape <- @discovery_shapes do
+      for shape <- shapes_to_cover() do
         assert Map.has_key?(ExportDataset.weights_map(), shape), "no weight for #{shape}"
       end
     end

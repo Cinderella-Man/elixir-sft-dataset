@@ -37,6 +37,7 @@ defmodule ExportDataset do
     test_fim: "solution.ex",
     bugfix: "solution.ex",
     adapt: "solution.ex",
+    dedoc: "solution.ex",
     write_test: "test_harness.exs"
   }
 
@@ -47,6 +48,7 @@ defmodule ExportDataset do
     fim: 0.5,
     bugfix: 0.5,
     adapt: 0.5,
+    dedoc: 0.5,
     test_fim: 0.25
   }
 
@@ -133,7 +135,7 @@ defmodule ExportDataset do
   # spec, and both live in the same family `a` — atomicity contains the leak.
   @doc false
   def family_of(name) do
-    case Regex.run(~r/^(?:repair_|bugfix_|tfim_|wt_|adapt_)?(\d{3})_/, name) do
+    case Regex.run(~r/^(?:repair_|bugfix_|tfim_|wt_|adapt_|dedoc_)?(\d{3})_/, name) do
       [_, a] -> a
       _ -> raise "cannot derive family from #{inspect(name)} — naming convention broken"
     end
