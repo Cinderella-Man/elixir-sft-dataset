@@ -126,11 +126,27 @@ format written into docs/16 (proposal: standard chat turns, gold = the
 accepted final attempt, earlier turns loss-masked by the training-run
 convention — documented, not enforced by us).
 
-**Phase C — deterministic sfim (~2,737 code-FIM units).** The last big
-volume lever. Templated-prompt register already precedented by
-tfim/adapt/dedoc/style. Build mirrors tfim (build_skeleton exists);
-per-unit gates: skeleton integrity, reconstruction green + 0 warnings,
-gutted-candidate mutant kill — the fim manifest, deterministically.
+**Phase C — deterministic sfim (~2,737 code-FIM units) — DESIGN
+CAPTURED 2026-07-20, build queued for a fresh session.** The last big
+volume lever; templated register precedented by tfim/adapt/dedoc/style.
+Reuse points verified in code: `GenTask.Fim.fn_targets/1` (AST-based
+target enumeration incl. multi-clause `{name, arity}`),
+`covered_targets`/`excluded_targets` + the fim-reject ledger,
+`EvalTask.Fim.build_skeleton/2` (the resync-gate-proven skeleton
+builder), and `GenTask.Fim`'s three mint gates (skeleton integrity,
+reconstruction green + 0 warnings, gutted-candidate mutant kill). The
+deterministic variant = Fim with the LLM's two roles replaced:
+target selection → ALL uncovered public/private carvable targets
+beyond the LLM-fim children (fim_max_per_task=3 stays the LLM bound);
+prompt prose → a template modeled on tfim's (name the function, its
+callers/callees context is already in the embedded skeleton). Units
+keep the existing `_0N`/`:fim` shape — NO new shape integration
+needed (exporter/freshness/resync already handle :fim; module-FIM
+resync covers regenerability). Standalone miner
+`scripts/mint_sfim.exs` (mint_style pattern: census → pilot →
+detached full mint, sha-keyed reject ledger, canonical writes via mix
+format semantics — remember the two-canons and zero-warnings lessons
+from TD.4/TD.2). Expected yield ~2,000-2,700 after gates.
 
 **Phase D — training-readiness hygiene:** decontam RE-RUN over the
 grown corpus (first pass was clean 0/786 but predates ~1,100 new units
