@@ -9,7 +9,8 @@ defmodule EvalTask.Discovery do
   @type task :: %{
           name: String.t(),
           dir: String.t(),
-          shape: :single | :fim | :multifile | :write_test | :test_fim | :bugfix | :adapt,
+          shape:
+            :single | :fim | :multifile | :write_test | :test_fim | :bugfix | :adapt | :dedoc,
           solution: String.t(),
           found: boolean()
         }
@@ -50,6 +51,11 @@ defmodule EvalTask.Discovery do
       # harness (a copy of the variation's) and grades like single/multifile.
       String.starts_with?(base, "adapt_") ->
         task(dir, :adapt, sol, found)
+
+      # De-documentation pairs: stripped module → documented gold; the dir
+      # carries a copy of the parent harness and grades like single/multifile.
+      String.starts_with?(base, "dedoc_") ->
+        task(dir, :dedoc, sol, found)
 
       # No harness of its own → a FIM subtask (parent _01 has the harness).
       not has_harness ->

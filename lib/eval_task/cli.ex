@@ -47,6 +47,7 @@ defmodule EvalTask.CLI do
                 :test_fim -> Runner.run_test_fim(task_dir, solution_file)
                 :bugfix -> Runner.run_bugfix(task_dir, solution_file)
                 :adapt -> Runner.run_adapt(task_dir, solution_file)
+                :dedoc -> Runner.run_dedoc(task_dir, solution_file)
               end
 
             emit(result, %{
@@ -63,7 +64,7 @@ defmodule EvalTask.CLI do
 
   @doc "Detect a task's shape from its directory + chosen solution file."
   @spec detect(String.t(), String.t()) ::
-          :single | :multifile | :fim | :write_test | :test_fim | :bugfix | :adapt
+          :single | :multifile | :fim | :write_test | :test_fim | :bugfix | :adapt | :dedoc
   def detect(task_dir, solution_file) do
     base = Path.basename(task_dir)
 
@@ -74,6 +75,7 @@ defmodule EvalTask.CLI do
       String.starts_with?(base, "tfim_") -> :test_fim
       String.starts_with?(base, "bugfix_") -> :bugfix
       String.starts_with?(base, "adapt_") -> :adapt
+      String.starts_with?(base, "dedoc_") -> :dedoc
       not File.regular?(Path.join(task_dir, "test_harness.exs")) -> :fim
       Bundle.bundle?(File.read!(solution_file)) -> :multifile
       true -> :single
