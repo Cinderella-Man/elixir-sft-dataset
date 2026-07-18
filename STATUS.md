@@ -22,34 +22,33 @@ responsive" counterweight), 007_002 guard sentences via strengthen path,
 014_001/044_001 fresh editor retries (token-vet fired; needs a
 ledger-row removal or tool change to re-run).
 
-**Two stray repair dirs** minted in the audit's pre-restart first hour
-(untracked, full triplets, no ledger row):
-`tasks/repair_001_002_fixed_window_counter_01_audit_00/` and
-`tasks/repair_001_003_hierarchical_limiter_01_audit_00/`. Evidence
-07-17: mint_repairs counts both among its `exists` skips — same standing
-flow, first two mints. Call: verify + commit like the other 68, or
-delete + let the flow re-mint.
+**Four stray repair dirs** (untracked, full triplets, no ledger row) —
+the original two from the audit's pre-restart first hour
+(`repair_001_002_..._audit_00`, `repair_001_003_..._audit_00`) plus two
+new ones minted 07-18 by the backfill's mint_repairs phase from the
+063_004/134_003 gold-repair attempt chains
+(`repair_063_004_..._audit_00`, `repair_134_003_..._audit_00`). Same
+call for all four: verify + commit like the other 68, or delete + let
+the flow re-mint.
 
 ### 🔎 OPEN FINDINGS
 
-**3 prompt-gap roots — RE-AUDIT RUNNING (Kamil's go 2026-07-18
-evening).** Deep look revised the triage: only 134_003's blind red hit
-a GROWN test (real gap — the prompt never said an empty fragment's
-`:names` is nil/neutral for merge; the grown DEFECT test proved the
-CURRENT gold has this bug: `partial("")` yields `names: []` which
-clobbers real headers via `a.names || b.names`). 063_004/110_002 reds
-hit ORIGINAL tests (task-die / :noproc — single-sample solver
-variance); their discarded growths include machine-proven GOLD-DEFECT
-repairs (063_004 killed-fetch caller crash; 110_002 ring-slot reuse +
-percentile-1.0 edge). Executed: 134_003 prompt hand-fixed (empty
-fragment = neutral element, names nil never []); 063_004/110_002 rows
-removed (backup `logs/retro_audit.jsonl.bak_20260718_promptgap3`) —
-all three re-open. retro_audit --only over the 3 detached, log
-`logs/retro_audit_promptgap3.log`. AFTER: landed roots → cascade;
-solution-changed families → audit_bugfix (3 bugfix children each —
-REAL gold repairs will invalidate pairs → delete+remint per footer);
-any root left unchanged with a changed prompt needs a fresh screen row
-(freshness). Idempotent relaunch: same command.
+**110_002 is KEEP-CLASS at the rolling-window-expiry hard spot —
+strengthen-path queue (2026-07-18).** Four independent solver samples
+failed "slices outside the window are excluded" in one day (grown
+harness r4+r5, current harness fallback, plus the 07-17 standing red).
+Three surgical prompt improvements were written and each demonstrably
+fixed a distinct solver failure mode (series-vs-server addressing
+killed the :noproc class; caller-side validation raise killed the
+ArgumentError-EXIT class; the slot-expiry mechanism sentence) — but the
+expiry test still reds, so per the gate nothing landed: prompt reverted,
+improved version SAVED at
+`logs/retro_audit_backup/110_002_precision_candidate_20260718.md`.
+Blocked on the same strengthen path as the other keep-class roots. Also
+blocked behind it: the audit's repeatedly-proven growth (8→13/14 tests
+incl. a proven-defect gold repair, all gates green in staging four
+times). When the strengthen path exists: land the saved prompt via
+Kamil-reviewed keep, then re-run retro_audit on the root.
 
 **prompt_precision.exs tool gaps, measured by the full run (Task B — apply
 before any future precision round):** (a) structural-vet failures discard

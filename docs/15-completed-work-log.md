@@ -9,6 +9,37 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-18 (late night) — PROMPT-GAP 3 CLOSED: 2 of 3 roots landed
+  gold-defect repairs + growth; 110_002 verdicted keep-class with its
+  improved prompt saved for the strengthen path.** Deep-look revision
+  of the earlier triage: only 134_003's red had hit a GROWN test;
+  063_004/110_002 reds hit ORIGINAL tests. Outcomes: 063_004 LANDED
+  (defect: an externally-killed fetch took a non-trapping caller down —
+  fetches were linked Task.asyncs; repaired to unlinked spawn_monitor
+  with a rewritten pool loop; 5 grown tests) and 134_003 LANDED
+  (defect: `partial("")` yielded `names: []`, clobbering real headers
+  via `a.names || b.names`; the hand-written empty-fragment
+  neutral-element prompt promise enabled both defect-proving tests;
+  3 grown tests) — both blind-verified. Cascade included 2
+  fix_child_gold hand-refreshes (the 063_004 repair redesigned exactly
+  the two functions its FIM children blank — finalize_timeout/3 and
+  fill/3 golds rebuilt from the new parent). The 6 stale bugfix pairs
+  were deleted and REMINTED deterministically from the new golds
+  (audit_bugfix 6/6, was 0/6); the backfill also topped up 2 missing
+  tfim units for 063_002 and minted 2 new repair_*_audit_00 strays
+  (left untracked — joined the Kamil-decision item, now four dirs).
+  110_002 ran FIVE rounds: the blind reds decoded successively as
+  series-vs-server addressing (:noproc — fixed), caller-side
+  ArgumentError validation seam (fixed), then the rolling-window-expiry
+  hard spot, which held through two grown-harness rounds AND a
+  current-harness fallback (4 independent red samples incl. the 07-17
+  standing red) → keep-class verdict, prompt reverted per the gate, the
+  three-fix improved prompt saved to
+  logs/retro_audit_backup/110_002_precision_candidate_20260718.md, and
+  the audit's four-times-staged-green growth (incl. a proven-defect
+  gold repair) queued behind the strengthen path in STATUS. Embeds
+  1,322 clean / 0 drift throughout.
+
 - **2026-07-18 (night) — 104_004 TWO-TIER INVESTIGATION CLOSED: no gold
   race; the REAL flaker was a different, pre-existing racy test — fixed;
   waiter promise re-pinned wide-margin; all blind-green.** Bounded
