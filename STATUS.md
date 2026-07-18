@@ -16,35 +16,11 @@ the generator; pilots before full runs; one solved item = one commit)
 
 ### 🧑‍⚖️ WAITING ON KAMIL
 
-**T2.6 post-triage follow-ups (2026-07-18; the 17-root triage record is in
-docs/15).** Two small prompt-writing LLM batches — same write gate as the
-full run (land only on blind green, revert on red; never concurrent with
-the nightly sweep or another prompt-writing tool), so Kamil's go first:
-
-- **Follow-up A — RERUN the 8 false rejects (~8 blind solves).** Per root:
-  apply the saved candidate from `logs/prompt_precision_candidates/<id>.md`,
-  run ONE blind solve (hand-pilot flow); green → keep + S6 row + cascade;
-  red → revert (the reverted sha's needs_triage ledger row still stands).
-  Roots: 012_001, 024_002, 025_001, 025_003, 045_001, 064_004, 073_001,
-  624_002. Triage evidence: every candidate addition verified
-  harness-pinned; every red hit a test the edit never touched (5 of the 8
-  are timing/choreography-sensitive tests).
-- **Follow-up B — HAND-FIX the 3 real precision gaps (~3 edits + blind
-  solves).** 007_001: state the gold's ACTUAL trim rule (trim only on a
-  non-growing `get`; a growing `get` reads the untrimmed buffer — the
-  rejected candidate stated it backward). 041_003: state the
-  raise-vs-error-tuple split (missing `:name` → KeyError raises in the
-  caller; missing `:num_shards`/`:max_size` → `{:error, {%KeyError{}, _}}`
-  from start_link, fetch in init). 072_004 (HIGH VALUE): apply its saved
-  candidate (names the pinned start-validation error tuples — the exact
-  cause of this root's STANDING screen red) + one sentence pinning the
-  CALLER-side RuntimeError re-raise in `now/1`. 007_001/072_004 are
-  keep-class → strengthen path if still red after the fix.
-- Optional low-priority C: 009_003 balanced rewording (candidate's
-  caller-blocks emphasis needs a "server loop stays responsive"
-  counterweight), 007_002 guard sentences via strengthen path,
-  014_001/044_001 fresh editor retries (token-vet fired; needs a
-  ledger-row removal or tool change to re-run).
+**Optional follow-up C (low priority):** 009_003 balanced rewording
+(candidate's caller-blocks emphasis needs a "server loop stays
+responsive" counterweight), 007_002 guard sentences via strengthen path,
+014_001/044_001 fresh editor retries (token-vet fired; needs a
+ledger-row removal or tool change to re-run).
 
 **Two stray repair dirs** minted in the audit's pre-restart first hour
 (untracked, full triplets, no ledger row):
@@ -97,7 +73,7 @@ metadata (ledger-side, tiny — fold into the export work).
 
 ### ⏭️ QUEUE ORDER
 
-1. **T2.6 post-triage follow-ups A + B** — WAITING ON KAMIL (see above).
+1. Next up: DATA EXTENSION below (TD.3 first — unblocked).
 
 ### 📦 DATA EXTENSION (docs/13 §2; after the above)
 

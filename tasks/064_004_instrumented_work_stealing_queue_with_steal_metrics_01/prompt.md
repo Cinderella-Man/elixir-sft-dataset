@@ -18,13 +18,13 @@ I need one primary public function:
   Every worker id `0..worker_count - 1` must appear as a key in each metrics sub-map (with `0` where nothing happened). The `results` list has exactly one entry per input item.
 
 **Options:**
-- `:steal_batch` — either `:half` (default: steal half of the victim's remaining queue) or a positive integer `n` (steal up to `n` items per steal operation).
+- `:steal_batch` — either `:half` (default: steal half of the victim's remaining queue, rounded down but always at least one item so a non-empty queue is never left un-stealable) or a positive integer `n` (steal up to `n` items per steal operation).
 
 **How it should work internally:**
 
 1. Partition the input list as evenly as possible across `worker_count` workers; each worker owns a local queue.
 2. Spawn all workers as `Task`s. Each worker processes its local queue sequentially with `process_fn`, tagging each result with its `worker_id`.
-3. When a worker empties its local queue it *steals* from the busiest worker (most items remaining), taking items from the back of the victim's queue according to `:steal_batch`. If no other worker has work, the stealing worker exits.
+3. When a worker empties its local queue it *steals* from the busiest worker (most items remaining), taking a contiguous batch off the *back* of the victim's queue sized according to `:steal_batch` (but never more than the victim actually holds). The stolen items keep their relative order, and the thief then processes them in that order. If no other worker has work, the stealing worker exits.
 4. Each worker counts its own successful steal operations, the number of items it stole, and the number it processed; these roll up into the returned `metrics` map.
 
 **Coordination requirements:**

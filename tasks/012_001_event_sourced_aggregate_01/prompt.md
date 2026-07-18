@@ -8,14 +8,14 @@ I need these functions in the public API:
 
 - `Aggregate.state(server, id)` which returns the current state of the aggregate. If the aggregate has never received a command, return `nil`. Otherwise return a map with at least `:name`, `:balance`, and `:status` keys (`:status` is `:open` after opening).
 
-- `Aggregate.events(server, id)` which returns the full ordered list of events for that aggregate, oldest first.
+- `Aggregate.events(server, id)` which returns the full ordered list of events for that aggregate, oldest first. If the aggregate has never received a command, return an empty list.
 
-The event sourcing logic should work as follows: each command is first validated against the current state, then zero or more event structs/maps are produced, then those events are applied one by one to the state, then they are appended to the event history. Events should be maps with at least a `:type` key. Use types like `:account_opened`, `:amount_deposited`, `:amount_withdrawn`.
+The event sourcing logic should work as follows: each command is first validated against the current state, then zero or more event structs/maps are produced, then those events are applied one by one to the state, then they are appended to the event history. Events should be maps with at least a `:type` key. Use types like `:account_opened`, `:amount_deposited`, `:amount_withdrawn`. Events should also carry their relevant data: the `:account_opened` event must include the account name under a `:name` (or `:account_name`) key, and the `:amount_deposited` and `:amount_withdrawn` events must include the amount under an `:amount` key.
 
 Validation rules:
 - `:open` must fail with `{:error, :already_open}` if the account is already open.
 - `:deposit` must fail with `{:error, :account_not_open}` if the account hasn't been opened yet. Amount must be positive or fail with `{:error, :invalid_amount}`.
-- `:withdraw` must fail with `{:error, :account_not_open}` if the account hasn't been opened. Amount must be positive or fail with `{:error, :invalid_amount}`. Must fail with `{:error, :insufficient_balance}` if the balance is less than the withdrawal amount.
+- `:withdraw` must fail with `{:error, :account_not_open}` if the account hasn't been opened. Amount must be positive or fail with `{:error, :invalid_amount}`. Must fail with `{:error, :insufficient_balance}` if the balance is less than the withdrawal amount. Withdrawing exactly the current balance succeeds and leaves the balance at zero.
 
 Each aggregate `id` must be tracked independently — commands on `"acct:1"` should have no effect on `"acct:2"`.
 

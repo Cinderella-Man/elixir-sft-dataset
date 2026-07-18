@@ -13,13 +13,13 @@ Write me a set of Elixir modules that implement a **coalescing (batching) long-p
 
 This module manages pub/sub for user notifications. It should provide:
 
-- `Notifications.start_link(opts)` — starts whatever backing process is needed. Accept a `:name` option for registration (default `Notifications`).
+- `Notifications.start_link(opts)` — starts whatever backing process is needed. Accept a `:name` option for registration (default `Notifications`). The module must also be startable under a supervisor as `{Notifications, opts}` (e.g. via `start_supervised!({Notifications, name: server})` and `start_supervised!({Notifications, []})`), so provide a `child_spec/1` if your backing process does not already supply one.
 
 - `Notifications.subscribe(server \\ Notifications, user_id)` — subscribes the calling process to notifications for the given `user_id`. When a notification is published for that user, the subscribing process should receive a message `{:notification, payload}`.
 
-- `Notifications.publish(server \\ Notifications, user_id, payload)` — publishes `payload` to all processes currently subscribed to `user_id`. Returns `:ok`.
+- `Notifications.publish(server \\ Notifications, user_id, payload)` — publishes `payload` to all processes currently subscribed to `user_id`. Returns `:ok`, including when there are no subscribers.
 
-Use only OTP primitives (e.g., `Registry`, `GenServer`, `Process`). Do not pull in Phoenix.PubSub or any external dependencies. A `Registry` in `:duplicate` mode is a fine backing store.
+Use only OTP primitives (e.g., `Registry`, `GenServer`, `Process`). Do not pull in Phoenix.PubSub or any external dependencies. A `Registry` in `:duplicate` mode is a fine backing store, and it lets multiple processes subscribe to the same `user_id` and each receive the full burst.
 
 ## 2. `NotificationPoller` Plug
 
@@ -27,15 +27,15 @@ Build a Plug module `NotificationPoller` that implements `GET /api/notifications
 
 - Accept a `:notifications_server` option, a `:timeout_ms` option (max time to wait for the FIRST notification, default `30_000`), and a `:linger_ms` option (how long to keep draining additional notifications after the first arrives, default `50`).
 
-- Extract the user ID from the connection assigns at `conn.assigns.user_id`. If `user_id` is missing, return 401 with body `"unauthorized"`.
+- Extract the user ID from the connection assigns at `conn.assigns.user_id`. If `user_id` is missing, return 401 with body exactly `"unauthorized"`.
 
 - Subscribe to `Notifications` for that user, then block (using a `receive` with `after`) waiting for the first `{:notification, payload}` message.
 
-- Once the first notification arrives, open a linger window: keep draining `{:notification, payload}` messages with a `receive` whose `after` is `:linger_ms`, accumulating payloads until a full `:linger_ms` elapses with no further message. Preserve arrival order.
+- Once the first notification arrives, open a linger window: keep draining `{:notification, payload}` messages with a `receive` whose `after` is `:linger_ms`, accumulating payloads until a full `:linger_ms` elapses with no further message. Each new message resets the window, so a burst whose gaps are each shorter than `:linger_ms` is collected in full even if its total span runs past the original `:timeout_ms`. Preserve arrival order.
 
-- Return 200 with `content-type: application/json` and a JSON body of the shape `{"notifications": [payload, ...], "count": n}` containing **every** payload collected during the burst.
+- Return 200 with `content-type: application/json` and a JSON body of the shape `{"notifications": [payload, ...], "count": n}`, where the array contains **every** payload collected during the burst in arrival order and `count` is the number of payloads.
 
-- If the `:timeout_ms` expires before any notification arrives, return 204 No Content with an empty body.
+- If the `:timeout_ms` expires before any notification arrives, return 204 No Content with an empty body (`""`).
 
 Use `Jason` for JSON encoding (the only external dependency allowed).
 

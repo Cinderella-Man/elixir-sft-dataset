@@ -204,8 +204,8 @@ I need these modules:
 
 Router behaviour:
 - Read the raw body once and the `stripe-signature` header.
-- If the header is missing/empty, unparseable, or the signature does not match, return **401** with `{"error": "invalid_signature"}`.
-- If the header's timestamp is outside the tolerance window (`abs(now - t) > tolerance`), return **401** with `{"error": "timestamp_expired"}` (check this before rejecting on signature mismatch).
+- If the header is missing/empty, cannot be parsed into both a `t` and a `v1` field, has a non-integer `t`, or produces a signature that does not match, return **401** with `{"error": "invalid_signature"}`.
+- If the header's timestamp is a valid integer but outside the tolerance window (`abs(now - t) > tolerance`), return **401** with `{"error": "timestamp_expired"}` (check this before rejecting on signature mismatch).
 - On a valid, in-window signature, decode the JSON, extract the `"id"` field:
   - already stored → **200** `{"status": "duplicate"}`
   - new → store and **200** `{"status": "received"}`

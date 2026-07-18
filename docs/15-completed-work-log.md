@@ -9,6 +9,32 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-18 (later) — T2.6 FOLLOW-UPS A+B EXECUTED (Kamil's go): 9 of
+  11 precision edits LANDED blind-green, incl. two chronically-red roots
+  flipped green.** Flow per the queued runbook: the 8 saved false-reject
+  candidates applied verbatim + 3 hand-fixes written (007_001 the gold's
+  real trim rule — only a non-growing `get` trims, a growing `get` reads
+  the untrimmed buffer; 041_003 the raise-vs-error-tuple split for
+  missing options — :name raises in the caller, :num_shards/:max_size
+  come back as {:error, {%KeyError{}, _}} from start_link; 072_004 the
+  candidate's pinned validation tuples + the caller-side RuntimeError
+  re-raise seam in now/1), all 11 in the working tree only, then ONE
+  blind solve each via screen_blind_solve --only (detached; ledger
+  sha-keyed). Result 9 GREEN / 2 RED / 0 transport: GREENS landed —
+  007_001, 012_001, 024_002, 025_003, 041_003, 045_001, 064_004,
+  072_004, 073_001 — notably 007_001 AND 072_004 were keep-class
+  (standing screen reds) and now hold fresh green S6 rows: the T2.6
+  thesis (precision debt, not gold defects) confirmed by flip. REDS
+  reverted to their originals and the candidates closed as DISCARDED:
+  025_001 and 624_002 each failed the SAME test as in the full run
+  (mid-poll EXIT; log-head hash mismatch) — 2/2 independent red samples
+  per candidate kills the flake hypothesis for them; originals screen
+  green and stand. Cascade after landing: 27 bugfix/module-FIM + 5
+  adapt + wt children resynced; check_embeds 1,322 clean / 0 reflow /
+  0 drift / 0 skipped. Optional follow-up C (009_003 balanced wording,
+  007_002 guards, 014_001/044_001 editor retries) stays queued in
+  STATUS, waiting on Kamil.
+
 - **2026-07-18 — T2.6 PRECISION FULL RUN CLOSED OUT: 151 roots landed,
   cascade green, all 17 needs_triage rejects triaged.** The corpus-wide
   run finished `%{unchanged: 156, improved: 151, needs_triage: 17}`
