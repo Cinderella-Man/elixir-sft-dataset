@@ -39,6 +39,7 @@ defmodule ExportDataset do
     adapt: "solution.ex",
     dedoc: "solution.ex",
     style: "solution.ex",
+    dialogue: "solution.ex",
     write_test: "test_harness.exs"
   }
 
@@ -51,6 +52,7 @@ defmodule ExportDataset do
     adapt: 0.5,
     dedoc: 0.5,
     style: 0.5,
+    dialogue: 1.0,
     test_fim: 0.25
   }
 
@@ -106,10 +108,7 @@ defmodule ExportDataset do
     diff = Map.get(difficulty, ab_of(task.name), %{tier: "unscreened", attempts: 0, greens: 0})
 
     %{
-      "messages" => [
-        %{"role" => "user", "content" => prompt},
-        %{"role" => "assistant", "content" => fence(gold)}
-      ],
+      "messages" => messages(task, prompt, gold),
       "metadata" => %{
         "task" => task.name,
         "shape" => to_string(task.shape),
@@ -165,10 +164,42 @@ defmodule ExportDataset do
   # to its owner root's pair.
   @doc false
   def ab_of(name) do
-    case Regex.run(~r/^(?:repair_|bugfix_|tfim_|wt_|adapt_|dedoc_|style_)?(\d{3}_\d{3})/, name) do
+    case Regex.run(
+           ~r/^(?:repair_|bugfix_|tfim_|wt_|adapt_|dedoc_|style_|dialog_)?(\d{3}_\d{3})/,
+           name
+         ) do
       [_, ab] -> ab
       _ -> raise "cannot derive a_b from #{inspect(name)} — naming convention broken"
     end
+  end
+
+  # Single-turn shapes: [user prompt, assistant gold]. The :dialogue shape
+  # (docs/16 §5b) replays its dir's frozen chain: spec, each rejected attempt
+  # (assistant) with its captured failure report (user), then the accepted
+  # gold — deterministic from the dir's files, so round-trip covers it.
+  defp messages(%{shape: :dialogue} = task, prompt, gold) do
+    turns =
+      Path.wildcard(Path.join(task.dir, "attempt_*.code"))
+      |> Enum.sort()
+      |> Enum.flat_map(fn attempt_file ->
+        n = attempt_file |> Path.basename(".code") |> String.trim_leading("attempt_")
+        report = File.read!(Path.join(task.dir, "report_#{n}.txt"))
+
+        [
+          %{"role" => "assistant", "content" => fence(File.read!(attempt_file))},
+          %{"role" => "user", "content" => report}
+        ]
+      end)
+
+    [%{"role" => "user", "content" => prompt}] ++
+      turns ++ [%{"role" => "assistant", "content" => fence(gold)}]
+  end
+
+  defp messages(_task, prompt, gold) do
+    [
+      %{"role" => "user", "content" => prompt},
+      %{"role" => "assistant", "content" => fence(gold)}
+    ]
   end
 
   defp gold_file!(shape) do
@@ -187,7 +218,7 @@ defmodule ExportDataset do
   # spec, and both live in the same family `a` — atomicity contains the leak.
   @doc false
   def family_of(name) do
-    case Regex.run(~r/^(?:repair_|bugfix_|tfim_|wt_|adapt_|dedoc_|style_)?(\d{3})_/, name) do
+    case Regex.run(~r/^(?:repair_|bugfix_|tfim_|wt_|adapt_|dedoc_|style_|dialog_)?(\d{3})_/, name) do
       [_, a] -> a
       _ -> raise "cannot derive family from #{inspect(name)} — naming convention broken"
     end
@@ -303,7 +334,11 @@ defmodule ExportDataset do
   defp row_violations(row, on_disk, fam_sizes) do
     meta = row["metadata"]
     name = meta["task"]
-    [user, assistant] = row["messages"]
+    # Dialogues carry 2N+2 messages (docs/16 §5b); every shape starts with the
+    # user prompt and ends with the assistant gold.
+    msgs = row["messages"]
+    user = List.first(msgs)
+    assistant = List.last(msgs)
 
     cond do
       String.starts_with?(name, "repair_") ->
@@ -332,6 +367,11 @@ defmodule ExportDataset do
           assistant["content"] != fence(gold),
           "ROUND-TRIP: #{name} assistant content != #{gold_file!(task.shape)} on disk " <>
             "(the #{shape} gold rule, docs/16 §2.1)"
+        )
+        |> add_if(
+          msgs != messages(task, prompt, gold),
+          "ROUND-TRIP: #{name} messages differ from re-derivation " <>
+            "(multi-turn/frozen-evidence drift, docs/16 §5b)"
         )
         |> add_if(
           meta["family"] != family_of(name),

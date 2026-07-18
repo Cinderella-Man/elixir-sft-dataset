@@ -18,7 +18,8 @@ defmodule EvalTask.Discovery do
             | :bugfix
             | :adapt
             | :dedoc
-            | :style,
+            | :style
+            | :dialogue,
           solution: String.t(),
           found: boolean()
         }
@@ -69,6 +70,11 @@ defmodule EvalTask.Discovery do
       # frozen captured evidence with its own harness copy (docs/13 §2.4).
       String.starts_with?(base, "style_") ->
         task(dir, :style, sol, found)
+
+      # Multi-turn repair dialogues: frozen attempt chain + accepted gold;
+      # grades the gold like :single (docs/16 §5b).
+      String.starts_with?(base, "dialog_") ->
+        task(dir, :dialogue, sol, found)
 
       # No harness of its own → a FIM subtask (parent _01 has the harness).
       not has_harness ->

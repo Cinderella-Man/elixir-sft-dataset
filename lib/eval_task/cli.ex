@@ -49,6 +49,7 @@ defmodule EvalTask.CLI do
                 :adapt -> Runner.run_adapt(task_dir, solution_file)
                 :dedoc -> Runner.run_dedoc(task_dir, solution_file)
                 :style -> Runner.run_style(task_dir, solution_file)
+                :dialogue -> Runner.run_dialogue(task_dir, solution_file)
               end
 
             emit(result, %{
@@ -74,6 +75,7 @@ defmodule EvalTask.CLI do
           | :adapt
           | :dedoc
           | :style
+          | :dialogue
   def detect(task_dir, solution_file) do
     base = Path.basename(task_dir)
 
@@ -86,6 +88,7 @@ defmodule EvalTask.CLI do
       String.starts_with?(base, "adapt_") -> :adapt
       String.starts_with?(base, "dedoc_") -> :dedoc
       String.starts_with?(base, "style_") -> :style
+      String.starts_with?(base, "dialog_") -> :dialogue
       not File.regular?(Path.join(task_dir, "test_harness.exs")) -> :fim
       Bundle.bundle?(File.read!(solution_file)) -> :multifile
       true -> :single

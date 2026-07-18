@@ -1,0 +1,7 @@
+Tests failed (1 failed, 0 errors):
+  - test cancel from pending succeeds since only cancelled state blocks cancel (SubscriptionAggregateTest): 
+
+match (=) failed
+code:  assert {:ok, [event]} = SubscriptionAggregate.execute(agg, "sub:1", {:cancel})
+left:  {:ok, [event]}
+right: {:error, :not_active}

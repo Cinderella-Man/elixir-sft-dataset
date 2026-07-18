@@ -198,6 +198,57 @@ CI runs `--selfcheck` then `--check` on every push (cheap: no LLM, no eval).
 
 ---
 
+## 5b. Multi-turn repair dialogues (TD.2, docs/13 §2.2 — added 2026-07-19)
+
+The one register single-turn examples cannot teach: **iterative repair** —
+receive a spec, produce an attempt, receive a real failure report, fix it.
+The generation loop captured exactly this trajectory for every accepted root
+that needed repairs; the dialogue export replays it verbatim.
+
+**Source and shape.** The raw chains live in git-ignored `logs/attempts*` —
+so the export could never be CI-reproducible from them directly. The minter
+(`scripts/mint_dialogues.exs`) therefore promotes each qualifying chain (last
+attempt `accepted`, ≥1 earlier `rejected` with a captured `repair_report`)
+into a TRACKED `tasks/dialog_<id>/` dir: `prompt.md` (the original spec),
+`attempt_NN.code` + `report_NN.txt` per rejected attempt (VERBATIM frozen
+evidence — the non-`.ex` extension keeps every formatter and lint off them),
+and `solution.ex` + `test_harness.exs` (the accepted pair, canonical — the
+dir grades like `:single`, so `validate` re-proves the gold forever). The
+exporter derives ONE example per dir into the SAME `train/val.jsonl`:
+
+```
+messages: [
+  {user:      <the original prompt.md>},
+  {assistant: <attempt 0's module, one ```elixir fence>},
+  {user:      <attempt 0's captured repair_report, verbatim>},
+  …(one assistant/user pair per further rejected attempt)…,
+  {assistant: <the ACCEPTED module, one ```elixir fence>}
+]
+metadata.shape: "repair_dialogue"
+```
+
+**Verification at export.** The final (gold) attempt is re-graded green
+against the chain's accepted harness before the dialogue is emitted — same
+discipline as `mint_repairs`. Earlier attempts and their reports are FROZEN
+CAPTURED EVIDENCE (never re-graded, never edited): the report text is the
+loop's real feedback, which is the point.
+
+**Loss convention (documented, not enforced here):** the training run should
+apply loss to ASSISTANT turns only, and may choose final-turn-only loss; both
+are standard. The intermediate assistant turns are real-but-rejected code —
+training on them WITH loss teaches the mistake, so final-turn-only is the
+recommended default.
+
+**Split and weights.** Dialogues carry the same `family` key as their chain's
+root and obey the family-atomic split (a dialogue's text contains its family's
+prompt + modules — atomicity contains the leak, as with `adapt`). Advisory
+`sample_weight` 1.0: the shape is unique in the corpus and shares text only
+within its own family.
+
+**Round-trip.** `dialog_` dirs are frozen, so `--check` re-derives every
+dialogue from its dir's files and byte-compares — the same determinism gate
+as the single-turn shapes, fully CI-reproducible from the corpus.
+
 ## 6. Runbook
 
 ```
