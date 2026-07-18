@@ -102,22 +102,15 @@ approving 110_002, re-run
 four-times-staging-green growth (incl. the proven gold-defect repair)
 gets its landing chance against the improved prompt.
 
-### ▶️ RUNNING RIGHT NOW (2026-07-19 night; Kamil's blanket quality go)
+### ▶️ RUNNING RIGHT NOW
 
-**TD.5 tfim cap lift 10→30** — backfill minting the ~1,900 newly
-in-cap test-FIM units (deterministic, per-unit reconstruction +
-isolation-kill gates). Detached pid 1469048, log
-`logs/tfim_cap_lift.log`; idempotent relaunch:
-`GEN_ONLY=backfill mix run scripts/generate.exs` (existing dirs skip).
-AFTER: validate sample + export refresh + batch commits.
-
-**Rubric-judge sampled pass #2 — QUEUED behind the backfill** (the
-tool's own guard refused --go while generate.exs is alive — correct
-one-writer enforcement). Launch when the cap-lift exits:
-`scripts/run_detached.sh logs/rubric_judge_pass2.log mix run scripts/rubric_judge.exs -- --go`
-37 re-opened/unjudged strata roots, ~74 judge calls, resumable ledger
-`logs/rubric_judge.jsonl`. AFTER: `--report`, triage any both-judge
-lows against the artifacts (rule: an LLM verdict is a hypothesis).
+**Rubric-judge sampled pass #2** — detached pid 2544848, log
+`logs/rubric_judge_pass2.log`; 37 re-opened strata roots, two-model
+panel, resumable ledger `logs/rubric_judge.jsonl`. Idempotent
+relaunch: `scripts/run_detached.sh logs/rubric_judge_pass2.log mix run
+scripts/rubric_judge.exs -- --go`. AFTER: `--report`, triage any
+both-judge lows against the artifacts (rule: an LLM verdict is a
+hypothesis) — that triage is the LAST open item of the 07-19 arc.
 
 ### ⏭️ ROADMAP (established 2026-07-19 night; Kamil's frame: improve +
 ### derive from existing, no new-task generation)

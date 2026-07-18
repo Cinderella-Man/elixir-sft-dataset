@@ -9,6 +9,27 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-19/20 (overnight) — TD.5 + TD.2 SHIPPED; corpus at 9,924
+  exported examples across TEN shapes; README stats refreshed.**
+  TD.5: tfim cap 10→30 as the config DEFAULT (Phase-3 parity) minted
+  3,207 new test-FIM units — over the ~1,900 estimate because the
+  month's promise-audit growth created more carvable targets; spot
+  checks 1.0; tfim census 3,294→6,501. TD.2: 182 unique multi-turn
+  repair dialogues landed as tracked `dialog_<id>/` dirs (tenth shape;
+  prompt + verbatim frozen attempt/report turns + canonical accepted
+  gold/harness; exporter builds the 2N+2-message replay; docs/16 §5b
+  holds the format + loss convention; round-trip validator learned
+  variable-length messages + full re-derivation compare). The landing
+  itself demonstrated the bar: 9 chains dead-ledgered — 4 at census, 3
+  old-era golds with compile warnings (miner now demands 0 warnings),
+  2 harnesses predating the temp-path rule — each caught by a
+  different standing gate. Phase-D hygiene: decontamination RE-RUN
+  over the grown corpus (still ZERO overlaps vs 786 benchmark rows),
+  export refreshed and round-trip-validated at 9,540 train / 384 val,
+  README at-a-glance rewritten with the conservative framing first
+  (3,423 excluding test-FIM carvings). Remaining from the arc: the
+  rubric pass #2 report + triage (running).
+
 - **2026-07-19 (night) — TD.4 SHIPPED: 50 verified style-repair pairs
   (`style_<id>_<NN>`), the ninth corpus shape.** The miner
   (`scripts/mint_style_repairs.exs`) targets exactly the class
