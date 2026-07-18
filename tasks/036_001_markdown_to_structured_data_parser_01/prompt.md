@@ -23,8 +23,10 @@ Specific behaviours to implement:
 - A `##` heading with no valid bullet items beneath it (before the next heading) should still appear in the output with `items: []`
 - Items with no tag parentheses should have `tags: []`
 - Tags should be trimmed of whitespace individually
-- Only `##` (H2) headings define categories — `#`, `###`, and deeper headings should be ignored entirely (treated as unrecognised lines)
+- Category names should be trimmed of surrounding whitespace
+- Only `##` (H2) headings define categories — `#`, `###`, and deeper headings should be ignored entirely (treated as unrecognised lines). Because such headings are just unrecognised lines, any valid bullet items following them continue to belong to the most recent `##` category
 - If the document has bullet items before any `##` heading appears, discard them
+- The parser must tolerate both `\n` and `\r\n` (CRLF) line endings
 - The function must handle an empty string input, returning `[]`
 
 Give me the complete module in a single file. Use only the Elixir standard library — no external dependencies.

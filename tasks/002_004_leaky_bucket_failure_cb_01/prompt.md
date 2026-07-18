@@ -15,13 +15,13 @@ API:
   - `:half_open_max_probes` — probes allowed in half-open (default 1)
   - `:clock` — zero-arity function returning current time in milliseconds (default `fn -> System.monotonic_time(:millisecond) end`)
 
-- `LeakyBucketCircuitBreaker.call(name, func)` — standard circuit breaker semantics. In `:closed`:
+- `LeakyBucketCircuitBreaker.call(name, func)` — standard circuit breaker semantics. Whenever `func` is actually executed, `call` returns `func`'s own return value unchanged — `{:ok, value}` on a success, `{:error, reason}` on a failing tuple — except on a raised exception, where it catches and returns `{:error, exception_struct}` (the raised exception struct itself, e.g. `{:error, %RuntimeError{message: "boom"}}`). In `:closed`:
   1. First apply the leak since the last update: `leak = elapsed_ms * leak_rate_per_sec / 1000`, then `bucket_level = max(0.0, bucket_level - leak)`, and advance `last_update_at` to now.
   2. Execute `func`.
   3. On failure, add `failure_weight` drops to the bucket. On success, do nothing to the bucket.
-  4. If the bucket level has reached `bucket_capacity`, transition to `:open` (reset the bucket to 0 on trip so the probe-cycle starts fresh).
+  4. If the bucket level has reached `bucket_capacity` (i.e. `>=`), transition to `:open` (reset the bucket to 0 on trip so the probe-cycle starts fresh).
 
-  In `:open`, return `{:error, :circuit_open}` immediately. Transition to `:half_open` once `reset_timeout_ms` has elapsed. In `:half_open`, allow up to `half_open_max_probes` calls through — a successful probe returns to `:closed` with an empty bucket; a failed probe returns to `:open`.
+  In `:open`, return `{:error, :circuit_open}` immediately without executing `func`. Transition to `:half_open` once `reset_timeout_ms` has elapsed (`>=`); this transition is lazy — a call to `state/1` after the timeout must itself report `:half_open` with no intervening `call`. In `:half_open`, allow up to `half_open_max_probes` calls through — a successful probe returns to `:closed` with an empty bucket; a failed probe returns to `:open` and restarts the reset timeout.
 
 - `LeakyBucketCircuitBreaker.state(name)` returns `:closed | :open | :half_open`.
 

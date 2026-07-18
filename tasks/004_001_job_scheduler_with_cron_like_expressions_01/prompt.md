@@ -17,7 +17,7 @@ The cron expression parser must support the following syntax in each of the 5 fi
 - A specific integer (e.g. `5`)
 - Comma-separated lists (e.g. `1,15,30`)
 - Ranges with a dash (e.g. `1-5`)
-- Step values with a slash (e.g. `*/5` or `10-30/5`)
+- Step values with a slash (e.g. `*/5` or `10-30/5`). The step must be a positive integer; a step of `0` (as in `*/0`) is invalid. Stepping starts from the lower bound of the base range — the field's minimum for `*`, or the range's start otherwise — and selects every Nth matching value. For example, `*/15` in the minute field matches 0, 15, 30, 45; `10-30/10` matches 10, 20, 30; and `5-25/7` matches 5, 12, 19 (offsets 0, 7, 14 from the start value 5).
 
 When calculating the next run time from a given `NaiveDateTime`, the scheduler should find the earliest future datetime that matches all five cron fields simultaneously. It must advance at least one minute from the given time (truncating seconds to zero) and scan forward. Be careful with day-of-week: if the cron specifies a day-of-week, only datetimes falling on matching weekdays should be considered.
 

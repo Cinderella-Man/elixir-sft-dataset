@@ -22,9 +22,10 @@ NdjsonStreamer.decode_line(line)   # => {:ok, value} | {:error, {:invalid_json, 
   - `{:ok, value}` for a line that decodes as a single JSON value, or
   - `{:error, {:invalid_json, raw_line}}` for a malformed line, where `raw_line`
     is the trimmed line text.
-- `decode_line/1` decodes a single trimmed line and returns the same
-  `{:ok, value}` / `{:error, {:invalid_json, raw}}` shape. It must never raise
-  on malformed input.
+- `decode_line/1` trims surrounding whitespace from its argument, decodes the
+  result, and returns the same `{:ok, value}` / `{:error, {:invalid_json, raw}}`
+  shape, where `raw` is the trimmed text. It must never raise on malformed
+  input.
 
 ## Input file format
 
@@ -47,6 +48,8 @@ For each line:
 
 Use the standard library `JSON` module (Elixir 1.18+) for decoding, so JSON
 objects become maps with **string keys** (e.g. `%{"id" => 1, "value" => "a"}`).
+Any JSON value shape is valid on a line — objects, arrays, strings, numbers,
+booleans, and `null` (decoded as `nil`) all yield `{:ok, value}`.
 
 ## Error handling (malformed lines)
 

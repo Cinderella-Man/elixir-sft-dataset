@@ -6,7 +6,9 @@ I need these functions in the public API:
   - `:removed` — a list of records present in `old_list` but not in `new_list`
   - `:changed` — a list of maps, one per modified record, each containing: the key field's value (e.g. `id: 1`), a `:changes` map where each key is a changed field name and the value is a two-element tuple `{old_value, new_value}`
 
-Only compare fields that exist in both versions of a record. If a field is added or removed between old and new versions of the same record, treat it as a change (old value is `:missing` if the field didn't exist before, new value is `:missing` if it was removed).
+A record counts as modified only if at least one field actually differs; records that are identical in both lists must not appear in `:changed`. Compare fields across both versions of a record. If a field is added or removed between old and new versions of the same record, treat it as a change (old value is `:missing` if the field didn't exist before, new value is `:missing` if it was removed).
+
+When both lists are empty, the diff is `%{added: [], removed: [], changed: []}`.
 
 The function must be pure — no processes, no state, no side effects. Use only the Elixir standard library.
 

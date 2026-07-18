@@ -23,7 +23,7 @@ Functions:
   - `:trimmed_dots` — if leading/trailing dots were trimmed.
   - If the final value is empty → `{:error, [:empty]}`.
 
-- `Sanitizer.text(input, opts \\ [])` — clean free text: strip C0 control characters (except `\t`, `\n`, `\r`), trim surrounding whitespace, then HTML-escape `&`, `<`, `>`, `"`, `'` to `&amp;`, `&lt;`, `&gt;`, `&quot;`, `&#39;`. Violations, in order:
+- `Sanitizer.text(input, opts \\ [])` — clean free text: strip C0 control characters (except `\t`, `\n`, `\r`), trim surrounding whitespace, then HTML-escape `&`, `<`, `>`, `"`, `'` to `&amp;`, `&lt;`, `&gt;`, `&quot;`, `&#39;` (escape `&` first so the entities you introduce are not re-escaped). Violations, in order:
   - `:removed_control_chars` — if control characters were stripped.
   - `:trimmed_whitespace` — if trimming changed the value.
   - `:escaped_html` — if any character was HTML-escaped.

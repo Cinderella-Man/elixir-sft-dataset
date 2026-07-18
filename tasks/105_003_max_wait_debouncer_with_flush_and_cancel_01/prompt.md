@@ -16,7 +16,9 @@ lodash's `maxWait` option.
 
 - `MaxWaitDebouncer.call(key, delay_ms, max_ms, func)` — schedules `func` (a
   zero-arity closure) for `key`. Returns `:ok` promptly and must not block on
-  `func`. Targets the default registered process. Requires `max_ms >= delay_ms`.
+  `func`. Targets the default registered process. `delay_ms` is a non-negative
+  integer (`0` is allowed) and `max_ms >= delay_ms` is required; a call with
+  `max_ms < delay_ms` must raise `FunctionClauseError`.
 
 - `MaxWaitDebouncer.flush(key)` — if a func is pending for `key`, run it
   immediately and clear the key's state. Returns `:ok` (also `:ok` when nothing

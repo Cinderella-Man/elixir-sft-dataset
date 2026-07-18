@@ -10,14 +10,14 @@ Here's the API I need:
   - `:clock` — a zero-arity function returning current time in milliseconds, defaults to `fn -> System.monotonic_time(:millisecond) end`
 
 - `CircuitBreaker.call(name, func)` where func is a zero-arity function representing the protected operation. Behavior depends on state:
-  - **Closed**: Execute the function. If it returns `{:ok, result}`, return `{:ok, result}`. If it returns `{:error, reason}` or raises, count it as a failure. If failures reach the threshold, transition to open. Return whatever the function returned (or `{:error, reason}` if it raised).
-  - **Open**: Don't execute the function at all. Immediately return `{:error, :circuit_open}`. If enough time has passed (reset_timeout_ms since entering open state), transition to half-open instead and let this call through as a probe.
-  - **Half-open**: Allow up to `half_open_max_probes` calls through. If a probe succeeds, transition back to closed and reset failure count. If a probe fails, transition back to open and restart the reset timeout. Additional calls beyond the probe limit get `{:error, :circuit_open}`.
+  - **Closed**: Execute the function. If it returns `{:ok, result}`, return `{:ok, result}`. If it returns `{:error, reason}` or raises, count it as a failure. If failures reach the threshold, transition to open. Return whatever the function returned (or `{:error, reason}` if it raised) — even on the call that trips the breaker, return the function's result, not `{:error, :circuit_open}`.
+  - **Open**: Don't execute the function at all. Immediately return `{:error, :circuit_open}`. If at least `reset_timeout_ms` has elapsed since entering the open state (i.e. elapsed time `>= reset_timeout_ms`, so exactly `reset_timeout_ms` counts), transition to half-open instead and let this call through as a probe.
+  - **Half-open**: Allow up to `half_open_max_probes` calls through. If a probe succeeds, transition back to closed and reset failure count. If a probe fails, transition back to open and restart the reset timeout (measured from the current clock reading, so the next call fails fast until another full `reset_timeout_ms` elapses). Additional calls beyond the probe limit get `{:error, :circuit_open}`.
 
 - `CircuitBreaker.state(name)` returns the current state as an atom: `:closed`, `:open`, or `:half_open`.
 
 - `CircuitBreaker.reset(name)` manually resets the circuit breaker to closed state with zero failure count, regardless of current state.
 
-A success is when `func` returns `{:ok, value}`. A failure is when `func` returns `{:error, reason}` or raises an exception. When the function raises, catch it and return `{:error, %RuntimeError{message: ...}}` or whatever the exception was, but don't let it crash the GenServer.
+A success is when `func` returns `{:ok, value}`. A failure is when `func` returns `{:error, reason}` or raises an exception. A success in closed state resets the failure count to zero, so only consecutive failures accumulate toward the threshold. When the function raises, catch it and return `{:error, %RuntimeError{message: ...}}` or whatever the exception was (returned as the exception struct itself), but don't let it crash the GenServer.
 
 No external dependencies. Single file with the `CircuitBreaker` module.

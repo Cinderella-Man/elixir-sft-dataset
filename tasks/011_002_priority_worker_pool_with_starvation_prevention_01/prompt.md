@@ -8,7 +8,7 @@ I need these functions in the public API:
 
 - `PriorityWorkerPool.await(pool, ref, timeout \\ 5_000)` which blocks the caller until the result for `ref` is available or the timeout expires. Return `{:ok, result}` if the task completed successfully, `{:error, :timeout}` if the timeout fires before the result is ready, or `{:error, {:task_crashed, reason}}` if the worker crashed while executing that task.
 
-- `PriorityWorkerPool.status(pool)` which returns a map with keys `:busy_workers`, `:idle_workers`, `:queue_high`, `:queue_normal`, `:queue_low`, and `:total_queue_length` for introspection.
+- `PriorityWorkerPool.status(pool)` which returns a map for introspection. Every value is a non-negative integer count: `:busy_workers` and `:idle_workers` are how many workers are currently busy or idle (together they equal `:pool_size`); `:queue_high`, `:queue_normal`, and `:queue_low` are the number of tasks pending at each priority level; and `:total_queue_length` is the sum of the three per-priority counts (the total number of pending tasks).
 
 The queue must be ordered by priority: high tasks are always dequeued before normal, and normal before low. Within the same priority level, tasks are FIFO. When a worker finishes a task, it should automatically pull the next highest-priority task from the queue.
 

@@ -27,16 +27,27 @@ I need these functions in the public API:
       default `:replace_all`, and no `:conflict_target` was given, `ingest`
       returns `{:error, :conflict_target_required}` before attempting any
       batch (file and JSON errors are still reported first, and an empty
-      array still returns the zeroed stats)
+      array still returns the zeroed stats). Any other `on_conflict` value
+      (e.g. `:nothing`) needs no `:conflict_target`.
     - `:returning` (boolean, default `true`) — when `true`, use
       `returning: true` in `insert_all` so you can distinguish inserts from
       updates by inspecting the returned rows
 
+Because `insert_all` bypasses Ecto's changeset callbacks and automatic
+`timestamps()`, prepare each record before inserting it: `Jason.decode/1`
+returns maps with **string** keys, so convert each record's keys to the atom
+field names declared on `schema` (silently dropping any key the schema does
+not define), and set both `inserted_at` and `updated_at` to the current time.
+The target table declares these two timestamp columns `NOT NULL`, so records
+inserted without them fail the batch.
+
 To tell inserts from updates: when `returning: true`, compare the row's
 `inserted_at` and `updated_at` timestamps. If they are equal (within 1 second),
-count the row as inserted; otherwise count it as updated. If `returning` is
-false, add all successfully processed rows to `:inserted` and leave `:updated`
-as 0.
+count the row as inserted; otherwise count it as updated. A fresh insert sets
+both timestamps to the same current time, so they are equal and it counts as an
+insert; an upsert that preserves the original (older) `inserted_at` leaves
+`updated_at` newer, so it counts as an update. If `returning` is false, add all
+successfully processed rows to `:inserted` and leave `:updated` as 0.
 
 The module must handle these error conditions gracefully — never raise:
 - File not found → `{:error, :file_not_found}`

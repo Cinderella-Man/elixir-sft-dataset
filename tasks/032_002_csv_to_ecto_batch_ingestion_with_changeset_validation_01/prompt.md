@@ -20,7 +20,7 @@ I need these functions in the public API:
     - `:validation_errors` — a list of `{line_number, errors}` tuples where
       `line_number` is the 1-based line number in the CSV (header is line 1,
       first data row is line 2) and `errors` is the keyword list from
-      `changeset.errors`
+      `changeset.errors`. When every row is valid, this list is empty (`[]`).
 
 - Accepted `opts`:
     - `:batch_size` (integer, default 500) — how many valid records per
@@ -28,7 +28,11 @@ I need these functions in the public API:
     - `:on_conflict` (atom or keyword, default `:nothing`) — passed
       directly to `Repo.insert_all` as the `on_conflict:` option
     - `:conflict_target` (atom or list, default `:nothing`) — passed as
-      `conflict_target:`
+      `conflict_target:`. Exception: when `:on_conflict` is `:raise`, do NOT
+      pass `conflict_target:` at all — Ecto forbids that combination and would
+      raise on every batch. In that case pass only `on_conflict: :raise` and
+      let conflicting rows surface as a normal insert error (caught and counted
+      against that batch's `:failed`).
     - `:field_mapping` (map, default `nil`) — an optional map from CSV
       header names (strings) to schema field names (atoms), e.g.
       `%{"Product ID" => :external_id, "Product Name" => :name}`.

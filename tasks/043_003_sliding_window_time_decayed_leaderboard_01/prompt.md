@@ -6,11 +6,16 @@ I need these functions in the public API:
 - `SlidingWindowLeaderboard.new(board_name, window_ms)` to create a leaderboard. `board_name` is an
   atom naming the underlying ETS table, `window_ms` is a positive integer window size in
   milliseconds. Return `{:ok, board}` where `board` is an identifier you pass to the other functions.
+  Reject invalid arguments by raising a `FunctionClauseError` (enforce with guards): a non-atom
+  `board_name`, or a `window_ms` that is not a positive integer — `0`, negatives, and floats such as
+  `100.0` must all raise.
 - `SlidingWindowLeaderboard.record(board, player_id, points, now)` to record a scoring event of
-  `points` (a number) for `player_id` at timestamp `now`. Return `:ok`.
+  `points` (a number, integer or float) for `player_id` at timestamp `now`. Return `:ok`. A
+  non-number `points` (e.g. a string) must raise a `FunctionClauseError`.
 - `SlidingWindowLeaderboard.score(board, player_id, now)` to compute a player's **active** score as
   of `now`: the sum of points from that player's events whose timestamp is strictly greater than
-  `now - window_ms`. Return `{:ok, active_score}`. If the player has no active events (they never
+  `now - window_ms`. Return `{:ok, active_score}`. A player whose active events sum to `0` is still
+  found — return `{:ok, 0}`. If the player has no active events (they never
   recorded anything, or all their events have expired), return `{:error, :not_found}`.
 - `SlidingWindowLeaderboard.top(board, n, now)` to return the top N players by active score at `now`,
   sorted descending, as `{player_id, active_score}` tuples. Players with no active events must not

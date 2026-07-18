@@ -17,6 +17,7 @@ Behaviour requirements:
 - Field comparison must be value-exact (using `==`).
 - Records in `:matched` must include both the original left and right record in full, even if some fields are excluded from comparison.
 - If a `compare_fields` field is missing from one or both records, treat the missing value as `nil` and diff accordingly.
+- Validate `:key_fields`: if it is missing from `opts`, `nil`, not a list, an empty list, or contains any element that is not an atom, raise an `ArgumentError`.
 - Order of results does not matter.
 - The function must be pure — no processes, no side effects, no external dependencies. Use only the Elixir standard library.
 

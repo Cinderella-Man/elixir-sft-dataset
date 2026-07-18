@@ -7,12 +7,14 @@ we see", not "how many events happened". Adding the same member many times insid
 the window still counts as one.
 
 I need these functions in the public API:
-- `SlidingUniqueCounter.start_link(opts)` to start the process. It should accept:
+- `SlidingUniqueCounter.start_link(opts)` to start the process. Returns
+  `{:ok, pid}` on success, like a standard GenServer start. It should accept:
   - `:clock` — a zero-arity function returning the current time in milliseconds.
     Defaults to `fn -> System.monotonic_time(:millisecond) end`.
   - `:bucket_ms` — the width of each internal sub-bucket in milliseconds.
     Defaults to `1_000` (1 second).
-  - `:name` — optional process registration name.
+  - `:name` — optional process registration name. When given, the whole API must
+    be usable by passing that name in place of the pid.
   - `:cleanup_interval_ms` — how often to run the periodic cleanup.
     Defaults to `60_000`. Pass `:infinity` to disable.
   - `:max_window_ms` — the retention horizon used by cleanup: buckets whose
@@ -23,7 +25,8 @@ I need these functions in the public API:
 - `SlidingUniqueCounter.distinct_count(server, key, window_ms)` — returns the
   number of **distinct** members observed for `key` that fall within the last
   `window_ms` milliseconds relative to the current clock time. Members observed
-  only outside that window must not be counted.
+  only outside that window must not be counted. Returns `0` for a key that has
+  never been added.
 - `SlidingUniqueCounter.tracked_key_count(server)` — returns how many keys
   currently hold any tracked data at all (0 once cleanup has removed
   everything).
@@ -50,9 +53,15 @@ Internal design requirements:
   affect "page:about".
 - Memory must not leak: run a periodic cleanup (via `Process.send_after`) that
   removes all buckets — and whole keys — that have fallen outside the
-  `:max_window_ms` retention horizon. Also handle a `:cleanup` message sent
-  directly to the process so tests can trigger cleanup synchronously. After
-  cleanup, `tracked_key_count/1` must report `0` when all data has expired.
+  `:max_window_ms` retention horizon. A bucket is kept only while its start time
+  satisfies `b * bucket_ms >= now - max_window_ms`; older buckets are dropped, and
+  a key with no remaining buckets is dropped entirely. Cleanup must keep the live
+  buckets of a key even when it drops that key's expired ones. The periodic
+  cleanup must re-schedule itself so data that expires later is still reclaimed
+  (unless `:cleanup_interval_ms` is `:infinity`, in which case no periodic cleanup
+  ever runs). Also handle a `:cleanup` message sent directly to the process so
+  tests can trigger cleanup synchronously. After cleanup, `tracked_key_count/1`
+  must report `0` when all data has expired.
 
 Give me the complete module in a single file. Use only the OTP standard library,
 no external dependencies.

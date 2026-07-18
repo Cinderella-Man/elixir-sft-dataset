@@ -59,7 +59,11 @@ persisted alongside that transition.
 
 - `StateMachine.history(server, entity_id)` — returns `{:ok, list}` where list is every recorded
   transition for that entity in chronological (insertion) order. Each entry is a map with keys
-  `:event`, `:from_state`, `:to_state`, `:version`, and `:inserted_at`.
+  `:event`, `:from_state`, `:to_state`, `:version`, and `:inserted_at`. The `:event`,
+  `:from_state`, and `:to_state` values are returned as **atoms** (converted back from the
+  strings stored in the DB), `:version` is an integer, and `:inserted_at` is the stored
+  timestamp. An entity with no recorded transitions (including one that has never been started
+  in this session) returns `{:ok, []}`.
 
 ## Persistence
 

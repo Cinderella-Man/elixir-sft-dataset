@@ -7,7 +7,7 @@ I need these functions in the public API:
 - `ReplayEventBus.start_link(opts)` accepts:
   - `:name` — optional process registration
   - `:default_history_size` — how many events to retain per topic by default (default `100`)
-  - `:history_ttl_ms` — how long events are retained, in ms (default `3_600_000`, i.e. 1 hour). Events older than this are dropped lazily on publish and during the periodic cleanup sweep.
+  - `:history_ttl_ms` — how long events are retained, in ms (default `3_600_000`, i.e. 1 hour). Only events **strictly** older than this are dropped — an event aged exactly `history_ttl_ms` is still retained. Dropping happens lazily on publish, on read, and during the periodic cleanup sweep.
   - `:clock` — zero-arity function returning monotonic time in ms (default `fn -> System.monotonic_time(:millisecond) end`). Used for TTL math.
   - `:cleanup_interval_ms` — periodic sweep interval in ms (default `60_000`). Setting it to `:infinity` disables auto-cleanup (useful for testing).
 
@@ -16,7 +16,7 @@ I need these functions in the public API:
   - `:all` — replay every retained event for this topic, then live events
   - positive integer `n` — replay the most recent `n` retained events, then live events
 
-  Replayed events are sent **before** `subscribe/4` returns, in oldest-to-newest order, so the subscriber sees history in chronological order. The bus must `Process.monitor` the subscriber. Returns `{:ok, ref}`.
+  Replayed events are sent **before** `subscribe/4` returns, in oldest-to-newest order, so the subscriber sees history in chronological order. The bus must `Process.monitor` the subscriber. Returns `{:ok, ref}`. Each call creates an independent subscription with its own `ref`, so a single pid that subscribes N times to a topic receives N copies of each live event.
 
 - `ReplayEventBus.unsubscribe(server, topic, ref)` removes the subscription. Demonitor the pid when its last subscription is removed. Returns `:ok`.
 
@@ -28,7 +28,7 @@ I need these functions in the public API:
 
 - `ReplayEventBus.history(server, topic)` — returns a list of retained events for the topic in oldest-to-newest order, after applying the TTL (so stale events are not returned). Returns `[]` for unknown topics. Used mostly for debugging / inspection.
 
-- `ReplayEventBus.set_history_size(server, topic, size)` — override the per-topic history size. `size` must be a non-negative integer; `0` disables history for that topic (existing entries are dropped). Returns `:ok`.
+- `ReplayEventBus.set_history_size(server, topic, size)` — override the per-topic history size. `size` must be a non-negative integer; `0` disables history for that topic (existing entries are dropped). Returns `:ok`. Enforce the non-negative requirement with a function guard, so passing a negative `size` raises `FunctionClauseError`.
 
 **Important semantics for replay-then-live**: replay must be atomic with the subscription becoming active. That is, between the last replayed event and the first live event the subscriber sees, no event can be missed or duplicated. Concretely:
 

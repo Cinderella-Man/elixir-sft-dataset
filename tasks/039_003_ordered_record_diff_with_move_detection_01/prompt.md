@@ -4,7 +4,7 @@ I need these functions in the public API:
 - `OrderedRecordDiff.diff(old_list, new_list, opts \\ [])` where both lists are lists of maps. It should accept a `:key` option that is an atom specifying which field to use as the unique identifier (defaults to `:id`). It should return a map with four keys:
   - `:added` — whole records present in `new_list` but not in `old_list`, in `new_list` order
   - `:removed` — whole records present in `old_list` but not in `new_list`, in `old_list` order
-  - `:changed` — one entry per record present in both lists whose fields differ, in `new_list` order. Each entry is `%{key => id, changes: %{field => {old_value, new_value}}}` (fields present in only one version use `:missing` as the absent-side value, exactly as in the base task)
+  - `:changed` — one entry per record present in both lists whose fields differ, in `new_list` order. Each entry is `%{key => id, changes: %{field => {old_value, new_value}}}` (fields present in only one version use `:missing` as the absent-side value, exactly as in the base task). Only fields whose values differ between the two versions appear in `changes`; a record whose fields are all equal is omitted from `:changed` entirely.
   - `:moved` — one entry per record whose relative order changed, in `new_list` order. Each entry is `%{key => id, from: old_index, to: new_index}` where the indices are the record's absolute 0-based positions in `old_list` and `new_list`
 
 Move-detection rules:

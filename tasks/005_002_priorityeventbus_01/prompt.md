@@ -16,7 +16,7 @@ I need these functions in the public API:
   3. If no reply arrives within `delivery_timeout_ms`, treat it as `:ack` (don't cancel downstream) and move on.
   4. Ties within the same priority level are delivered **in subscription order** (oldest subscription first), still respecting ack/cancel semantics.
 
-  Returns `{:ok, delivered_count}` where `delivered_count` is the number of subscribers that actually received the event (those skipped due to a cancellation are not counted).
+  Returns `{:ok, delivered_count}`. `delivered_count` is the number of subscribers the bus reached (sent the event to) before delivery stopped. Every subscriber the bus reaches counts — including one that acks, one that cancels, one that times out without replying, and one that dies mid-delivery. The only subscribers **not** counted are the lower-priority ones the bus never reached because an earlier subscriber cancelled. So a top-priority cancel with two lower subscribers returns `{:ok, 1}`; a mid-priority cancel that follows one acking subscriber returns `{:ok, 2}`.
 
 - `PriorityEventBus.ack(reply_to)` — convenience helper that a subscriber can call from its handler. `reply_to` is the `{bus_pid, unique_ref}` tuple the subscriber received. Sends `{:ack, unique_ref}` to `bus_pid`. Returns `:ok`.
 
@@ -29,8 +29,9 @@ Ordering details to be precise about:
 - Within a publish, subscribers are processed strictly serially (one at a time, awaiting each ack/cancel before starting the next). This is the opposite of standard fan-out pub/sub.
 - Because publish blocks the GenServer on each subscriber's reply, any other call to the bus is queued behind an in-flight publish. This is intentional — it's the price of deterministic priority ordering.
 - A subscriber's handler must run in the subscriber's own process (not inside the bus), so the bus uses `send/2` + a receive inside the publish handler, NOT `GenServer.call` on the subscriber.
+- Each event delivery uses a fresh `unique_ref`, and the bus only accepts a reply whose ref matches the subscriber it is currently waiting on. A reply that arrives after its subscriber's timeout carries a now-stale ref and is ignored — it must not cancel or affect any later subscriber.
 
-When a monitored subscriber process goes down (`:DOWN` message), remove all its subscriptions across all topics. If an in-flight publish is waiting on a now-dead subscriber, treat it as `:ack` (continue, don't cancel) and continue delivery.
+When a monitored subscriber process goes down (`:DOWN` message), remove all its subscriptions across all topics. If an in-flight publish is waiting on a now-dead subscriber, treat it as `:ack` (continue, don't cancel), count that subscriber as reached, and continue delivery.
 
 A single pid may subscribe to the same topic multiple times at different (or the same) priorities and will receive the event once per subscription, each time with its own `reply_to` ref. Each subscription is independently unsubscribable.
 

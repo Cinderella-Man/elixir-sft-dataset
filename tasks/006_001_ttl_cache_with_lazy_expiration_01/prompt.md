@@ -2,7 +2,7 @@ Write me an Elixir GenServer module called `TTLCache` that stores key-value pair
 
 I need these functions in the public API:
 
-- `TTLCache.start_link(opts)` to start the process. It should accept a `:clock` option which is a zero-arity function returning the current time in milliseconds. If not provided, default to `fn -> System.monotonic_time(:millisecond) end`. It should also accept a `:name` option for process registration and a `:sweep_interval_ms` option (default 60_000) controlling how often a periodic sweep runs to remove all expired entries.
+- `TTLCache.start_link(opts)` to start the process. It should accept a `:clock` option which is a zero-arity function returning the current time in milliseconds. If not provided, default to `fn -> System.monotonic_time(:millisecond) end`. It should also accept a `:name` option for process registration and a `:sweep_interval_ms` option (default 60_000) controlling how often a periodic sweep runs to remove all expired entries. On success it returns `{:ok, pid}`.
 
 - `TTLCache.put(server, key, value, ttl_ms)` which stores a key-value pair that expires after `ttl_ms` milliseconds from the time of insertion. The entry is live only while the current time (per `:clock`) is strictly before its expiration instant of insertion-time + `ttl_ms`; at or after that instant the key is expired. If the key already exists, overwrite both its value and its expiration. Returns `:ok`.
 

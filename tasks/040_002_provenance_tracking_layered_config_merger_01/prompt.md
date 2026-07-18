@@ -18,10 +18,15 @@ The merging rules:
 - **Later layers win** for scalars (strings, integers, atoms, booleans): the value
   from the highest-precedence layer that set the leaf wins, and provenance records
   that layer's name.
+- **Subtree replaced by a leaf**: when a higher layer overrides an entire subtree
+  (a map in a lower layer) with a scalar or list, the winning value replaces the
+  whole subtree, provenance records the new leaf path pointing at that layer, and
+  every provenance entry for paths nested beneath the replaced subtree is dropped.
 - **List strategy**: controlled by the `:list_strategy` option, either `:replace`
   (default, higher layer's list wins) or `:append` (higher layer's list is
   concatenated onto the accumulated list). For an appended leaf, its provenance is
-  the **list of layer names** (in precedence order) that contributed elements.
+  the **list of layer names** (in precedence order) that contributed elements —
+  layers that set no list at that path are omitted from the list.
 - **Per-key list strategy**: the `:list_strategies` option accepts a map of
   `key_path => :replace | :append` (key paths as lists or tuples of atoms) that
   overrides the global `:list_strategy` for those specific paths.

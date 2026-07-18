@@ -26,9 +26,14 @@ Merge rules match a standard deep config merge:
 - Scalars from higher-precedence layers replace lower ones.
 - Lists follow the `:list_strategy` / `:list_strategies` options (`:append`
   concatenates onto the accumulated list).
-- Locked key-paths keep the base value and cannot be changed by any layer.
+- Locked key-paths keep the base value and cannot be changed by any layer. Locking
+  applies to the exact full key-path only (siblings under the same parent are still
+  free to change). If the base does not define a locked path, no layer may introduce
+  it — the effective value there stays absent (`get` returns `nil`).
 
 Layers apply in insertion order: the first `put_layer` is lowest precedence; a later
 `put_layer` with the same name updates the existing layer without changing its spot.
+Re-putting a layer replaces its whole config map (stale keys from the previous map
+are dropped), not merged with the old one.
 
 Give me the complete module in a single file. Use only the Elixir standard library.

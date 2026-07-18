@@ -15,15 +15,15 @@ API:
   - `:clock` — zero-arity function returning current time in milliseconds (default `fn -> System.monotonic_time(:millisecond) end`)
 
 - `ProgressiveRecoveryCircuitBreaker.call(name, func)` where `func` is a zero-arity function:
-  - **Closed**: execute `func`; on success reset the consecutive failure count; on failure increment it and trip to `:open` if it reaches `failure_threshold`. Return whatever `func` returned (or `{:error, exception}` if it raised).
-  - **Open**: return `{:error, :circuit_open}` immediately. Transition to `:half_open` once `reset_timeout_ms` has elapsed.
-  - **Half-open**: allow up to `half_open_max_probes` calls through. Probe success → `:recovering` (starting at stage 0). Probe failure → `:open` with a restarted reset timer.
-  - **Recovering**: every call executes normally. Track calls completed and failures within the current stage. If `stage_failures > failures_tolerated`, transition to `:open` with the reset timer restarted. When `stage_calls >= calls_required`, advance to the next stage (with fresh counters) — or transition to `:closed` if already at the final stage.
+  - **Closed**: execute `func`; on success reset the consecutive failure count; on failure increment it and trip to `:open` if it reaches `failure_threshold` (i.e. the count `>=` the threshold). Return whatever `func` returned (or `{:error, exception}` if it raised).
+  - **Open**: return `{:error, :circuit_open}` immediately without executing `func`. Transition to `:half_open` once at least `reset_timeout_ms` has elapsed since the circuit opened (elapsed `>=` `reset_timeout_ms`). This elapsed check is measured against `:clock` and is evaluated on demand, so a bare `state(name)` query — with no intervening `call` — will report `:half_open` once enough time has passed.
+  - **Half-open**: allow up to `half_open_max_probes` calls through as probes. A call that exceeds the probe budget (including the case where `half_open_max_probes` is 0) returns `{:error, :circuit_open}` without executing `func` and leaves the circuit in `:half_open`. Probe success → `:recovering` (starting at stage 0). Probe failure → `:open` with a restarted reset timer (the elapsed clock is measured from this new open transition). A probe returns whatever `func` returned.
+  - **Recovering**: every call executes normally, returning whatever `func` returned (or `{:error, exception}` if it raised), exactly as in the closed state. Track calls completed and failures within the current stage. If `stage_failures > failures_tolerated`, transition to `:open` with the reset timer restarted (checked before the advance condition). When `stage_calls >= calls_required`, advance to the next stage (with fresh counters) — or transition to `:closed` if already at the final stage.
 
 - `ProgressiveRecoveryCircuitBreaker.state(name)` returns `:closed | :open | :half_open | :recovering`.
 
 - `ProgressiveRecoveryCircuitBreaker.reset(name)` manually resets to `:closed` with all counters zeroed (failure count, stage counters, recovery stage index).
 
-Outcome classification is the same as a standard breaker: `{:ok, value}` is a success; `{:error, reason}` or a raised exception is a failure. On raise, catch and return `{:error, exception_struct}` without crashing the GenServer. Any other return shape is also a failure.
+Outcome classification is the same as a standard breaker: `{:ok, value}` is a success; `{:error, reason}` or a raised exception is a failure. On raise, catch and return `{:error, exception_struct}` without crashing the GenServer (e.g. a raised `RuntimeError` yields `{:error, %RuntimeError{message: "boom"}}`). Any other return shape is also a failure.
 
 Single file, no external dependencies.

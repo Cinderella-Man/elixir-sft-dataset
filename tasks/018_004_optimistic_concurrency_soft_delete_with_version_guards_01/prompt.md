@@ -10,14 +10,16 @@ A `GenServer`. `start_link(opts \\ [])` takes no required options. `attrs` may u
 
 A document is a map: `%{id, title, content, deleted_at, lock_version, inserted_at, updated_at}` (`deleted_at` is `nil` when active, a stamp when soft-deleted).
 
+Validation errors are returned as `{:error, errors}`, where `errors` is a map keyed by the offending field name (`:title` and/or `:content`) with a non-empty value (e.g. a list of messages); an absent field means it passed. A `title` or `content` is blank when it is not a binary or trims to `""`.
+
 Functions (server pid/ref first):
 
-- `create_document(server, attrs)` — validates non-empty `title` and `content`. Returns `{:ok, document}` (with `lock_version: 0`) or `{:error, errors}`.
-- `list_documents(server, opts \\ [])` — active only by default; `include_deleted: true` for all. Sorted by id.
+- `create_document(server, attrs)` — validates non-empty `title` and `content`. Returns `{:ok, document}` (with `lock_version: 0`) or `{:error, errors}`. On error nothing is stored.
+- `list_documents(server, opts \\ [])` — active only by default; `include_deleted: true` for all. Sorted by id ascending.
 - `get_document(server, id, opts \\ [])` — `{:ok, document}` or `{:error, :not_found}`; soft-deleted hidden unless `include_deleted: true`.
-- `update_document(server, id, attrs, expected_version)` — updates `title`/`content` (partial allowed) of an active document. Precedence: `{:error, :not_found}` if missing **or** soft-deleted; then `{:error, :stale_version, current}` on version mismatch; then `{:error, errors}` on invalid attrs; else `{:ok, document}` with `lock_version + 1`. Never sets `deleted_at`.
-- `soft_delete_document(server, id, expected_version)` — precedence: `{:error, :not_found}` if missing; then `{:error, :stale_version, current}` on mismatch; then `{:error, :already_deleted}` if already soft-deleted; else soft-deletes → `{:ok, document}` with `lock_version + 1`.
-- `restore_document(server, id, expected_version)` — precedence: `{:error, :not_found}` if missing; then `{:error, :stale_version, current}` on mismatch; then `{:error, :not_deleted}` if already active; else restores → `{:ok, document}` with `lock_version + 1`.
+- `update_document(server, id, attrs, expected_version)` — updates `title`/`content` (partial allowed) of an active document; unrecognized keys (e.g. `deleted_at`) are ignored. Precedence: `{:error, :not_found}` if missing **or** soft-deleted; then `{:error, :stale_version, current}` on version mismatch; then `{:error, errors}` on invalid attrs; else `{:ok, document}` with `lock_version + 1`. Never sets `deleted_at`.
+- `soft_delete_document(server, id, expected_version)` — precedence: `{:error, :not_found}` if missing; then `{:error, :stale_version, current}` on mismatch; then `{:error, :already_deleted}` if already soft-deleted; else soft-deletes → `{:ok, document}` with `lock_version + 1` and a non-nil `deleted_at`.
+- `restore_document(server, id, expected_version)` — precedence: `{:error, :not_found}` if missing; then `{:error, :stale_version, current}` on mismatch; then `{:error, :not_deleted}` if already active; else restores → `{:ok, document}` with `lock_version + 1` and `deleted_at` back to `nil`.
 
 Because the GenServer processes calls one at a time, a burst of concurrent `soft_delete_document(id, 0)` requests must yield exactly one `{:ok, _}` and the rest `{:error, :stale_version, 1}`.
 

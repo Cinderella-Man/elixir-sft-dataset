@@ -33,9 +33,12 @@ Ready tasks beyond the concurrency budget wait for a running slot to free up.
   - On success it returns `{:ok, results}` where `results` maps each `task_id`
     to the value returned by its `:func`.
   - If the dependency graph contains a cycle, it must **not** execute any task
-    and must return `{:error, {:cycle, involved}}`.
+    and must return `{:error, {:cycle, involved}}`, where `involved` is a list
+    of `task_id`s that includes those participating in the cycle.
   - If any task lists a dependency that was never submitted, it must **not**
-    execute any task and must return `{:error, {:unknown_dependencies, missing}}`.
+    execute any task and must return `{:error, {:unknown_dependencies, missing}}`,
+    where `missing` is a list containing the dependency `task_id`s that were
+    never submitted.
   - Calling `run_all/1` with no submitted tasks returns `{:ok, %{}}`.
 
 ## Notes
