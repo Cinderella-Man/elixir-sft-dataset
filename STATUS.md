@@ -79,16 +79,17 @@ park there: 3 chronic compile-artifact roots (071_001, 100_002,
 100_003 — long-solution blind replies truncate 3/3 samples; a
 continuation-aware blind solve would unlock their promise audits).
 
-**PARITY TABLE REVIEWED 2026-07-19 (docs/12 §5.5 updated row by row) —
-ONE hard pre-Phase-3 decision remains, Kamil:** the dialyzer carrier
-(rows 15+23, one decision): wire `dialyzer_golds.exs` as an ACCEPT-PATH
-gate (PLT-warm, ≈seconds per accept) or as a weekly/nightly CADENCE +
-cutover-batch check — and either way it must also cover REPAIRED golds
-at their post-repair sha (F20). Everything else in the table now reads
-ENFORCED with evidence (rows 15's tooling, 18/19 incl. dedoc, new row
-22 export totality) or has its defined post-cutover path (11 diff
-judge if leakage shows; 12 floor number tunable; 16/17 via the 13/14
-instruments + cadence; 21 measured on the first real batch).
+**PARITY TABLE: ZERO hard pre-Phase-3 blockers remain (2026-07-19).**
+Rows 15+23 closed on Kamil's go with the ACCEPT-PATH carrier (the
+stronger option per "quality gates are never optional"): the
+T1.6-calibrated analysis now lives in `GenTask.Dialyzer`, wired as
+Cycle gate 4 (default-ON `GEN_DIALYZER`, warnings reject + feed the
+repair prompt; repair coverage falls out of the suite re-running per
+attempt). Every remaining row reads ENFORCED or has its defined
+post-cutover path (11/12/16/17/21 — see the table). What still gates
+Phase 3 is the PROCESS list in "Current mode" below (loop-parity now
+done; cutover acceptance test on the first batch; the §7.2 line),
+plus Kamil's standing decisions (strays, follow-up C).
 
 ### 🔨 BUILDS
 

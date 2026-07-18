@@ -252,7 +252,7 @@ defmodule GenTask.PromiseAuditTest do
     assert out =~ ~s(promise test "adding zero is an identity" ... KEPT \(coverage\))
     assert out =~ ~s(promise test "unanchored" ... dropped)
     assert out =~ ~s(promise test "adds" ... dropped — duplicates an existing test name)
-    assert out =~ "gate [7/9]"
+    assert out =~ "gate [8/10]"
   end
 
   test "a failing anchored test machine-proves the defect and the re-cycle repairs the module",

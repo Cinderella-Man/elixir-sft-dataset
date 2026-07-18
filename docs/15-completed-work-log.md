@@ -9,6 +9,31 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-19 — PARITY ROWS 15+23 CLOSED (Kamil's go): the spec-truth
+  gate is IN THE ACCEPT PATH.** Carrier decision resolved to the strong
+  option ("quality gates are never optional"): the T1.6-calibrated
+  analysis (staging, the overspecs filter with its documented
+  wrapper-blind-spot, waivers, ledger keys) moved verbatim from
+  `scripts/dialyzer_golds.exs` into `GenTask.Dialyzer` — ONE
+  implementation shared by the new Cycle gate 4 (after quality, before
+  mutation; `GEN_DIALYZER` default-ON via Config.new, struct default
+  false so sandbox tests stay hermetic/PLT-free — the promise_audit
+  pattern) and the slimmed sweep script, whose --self-test remains the
+  bite-proof (re-run green through the lib: lie + overspec flag;
+  narrow helper, call wrapper, clean module silent). Warnings REJECT
+  and the formatted warning text feeds the repair prompt via
+  reason_text; row 23 (F20 — repaired golds) falls out of the gate
+  suite re-running on every attempt's files, ledgered at the
+  post-repair sha. Live accept-gate proof: real golds pass (108_001,
+  134_003); a planted pure-fn spec lie rejects; a planted CALL-WRAPPER
+  lie correctly demonstrates the documented calibration limit (any()
+  success typing — harness/promise-audit/spot-review own that class).
+  Gate-sha basis moved to the module beam + PLT hash (rule-7: editing
+  the filter re-opens verdicts); a fresh full sweep at the new gate
+  sha re-ledgers the corpus. GateLog manifests grew the :dialyzer row
+  (base 10 gates, variation 12); suite 406 green. THE PARITY TABLE NOW
+  HAS ZERO HARD PRE-PHASE-3 BLOCKERS.
+
 - **2026-07-19 — TD.3 COMPLETE AT FINAL CENSUS 325/332: the dialyzer
   re-pass unlocked and minted the 4 stragglers.** Deps PLT rebuilt
   (the T1.6 PLT was swept with _build), then the scoped

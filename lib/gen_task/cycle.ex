@@ -179,6 +179,12 @@ defmodule GenTask.Cycle do
   def reason_text({:warnings, n}), do: "compile warnings: #{n}"
   def reason_text({:flaky, seed}), do: "stability confirmation failed (seed #{seed})"
 
+  def reason_text({:dialyzer, detail}),
+    do:
+      "spec-truth gate (dialyzer): the module's @spec contracts disagree with " <>
+        "what the code can actually return — fix the SPECS to tell the truth " <>
+        "(or the code, if the spec states the intended contract):\n" <> detail
+
   def reason_text({:semantic_floor, rate, survivors}),
     do:
       "semantic floor: kill rate #{Float.round(rate, 2)} with #{length(survivors)} " <>
@@ -240,6 +246,9 @@ defmodule GenTask.Cycle do
       shortfall ->
         {:reject, {:quality, shortfall}}
 
+      (dialyzer = dialyzer_gate(ctx, files, cfg)) != :ok ->
+        {:reject, dialyzer}
+
       true ->
         GateLog.applying(cfg, ctx.id, shape(ctx), :mutation, mutation_note_for(files, cfg))
 
@@ -264,6 +273,46 @@ defmodule GenTask.Cycle do
         end
     end
   end
+
+  # Spec-truth at accept (docs/12 §5.5 rows 15+23): the staged gold is dialyzed
+  # against the deps PLT through the T1.6-calibrated filter — the SAME
+  # `GenTask.Dialyzer` implementation the retro sweep runs. Because the whole
+  # gate suite re-runs on every repair attempt's files, REPAIRED golds are
+  # covered at their post-repair bytes (F20/row 23). Warnings reject, and the
+  # formatted warning text feeds the repair prompt via `reason_text/1`.
+  defp dialyzer_gate(ctx, files, cfg) do
+    case GenTask.Dialyzer.accept_gate(ctx.id, files, cfg) do
+      :skip_disabled ->
+        GateLog.skip(cfg, ctx.id, shape(ctx), :dialyzer, "GEN_DIALYZER=0 — debugging override")
+        :ok
+
+      :skip_bundle ->
+        GateLog.skip(
+          cfg,
+          ctx.id,
+          shape(ctx),
+          :dialyzer,
+          "bundle gold — kit-tier staging is v2 (same scope as the retro sweep)"
+        )
+
+        :ok
+
+      :ok ->
+        GateLog.pass(cfg, ctx.id, shape(ctx), :dialyzer, "spec-truth clean vs the deps PLT")
+        :ok
+
+      {:ok, note} ->
+        GateLog.pass(cfg, ctx.id, shape(ctx), :dialyzer, "spec-truth clean — " <> hd_line(note))
+        :ok
+
+      {:fail, detail} ->
+        GateLog.fail(cfg, ctx.id, shape(ctx), :dialyzer, hd_line(detail))
+        {:dialyzer, detail}
+    end
+  end
+
+  defp hd_line(text),
+    do: text |> String.split("\n", trim: true) |> List.first() |> Kernel.||("")
 
   # The quality gate, verbose: every named check prints its own console line, then
   # the gate verdict. Returns the `; `-joined shortfall (the accept decision input),

@@ -50,7 +50,7 @@ defmodule GenTask.GateLogTest do
           GateLog.pass(cfg(tmp), "015_001_x_01", :base, :green, "compiled, 5/5 tests passed")
         end)
 
-      assert out =~ "gate [2/9]"
+      assert out =~ "gate [2/10]"
       assert out =~ "perfect raw invariants"
       assert out =~ "PASS — compiled, 5/5 tests passed"
     end
@@ -61,7 +61,7 @@ defmodule GenTask.GateLogTest do
           GateLog.skip(cfg(tmp), "id", :base, :semantic_floor, "GEN_SEMANTIC_FLOOR unset")
         end)
 
-      assert out =~ "gate [6/9]"
+      assert out =~ "gate [7/10]"
       assert out =~ "SKIPPED — GEN_SEMANTIC_FLOOR unset"
     end
 

@@ -37,6 +37,9 @@ defmodule GenTask.GateLog do
       {:autoformat, "canonical formatting (graded bytes are exactly the promoted bytes)"},
       {:green, "compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored)"},
       {:quality, "house style + harness standard"},
+      {:dialyzer,
+       "spec truth — staged gold dialyzed vs the deps PLT, T1.6-calibrated overspecs " <>
+         "filter; warnings reject and feed the repair (GEN_DIALYZER)"},
       {:mutation, "raise-mutant coverage (each public function; whole-module for bundles)"},
       {:stability, "stability re-grade at a derived nonzero ExUnit seed (flake filter)"},
       {:semantic_floor, "semantic-mutant kill floor (GEN_SEMANTIC_FLOOR)"},
@@ -52,6 +55,9 @@ defmodule GenTask.GateLog do
       {:autoformat, "canonical formatting (graded bytes are exactly the promoted bytes)"},
       {:green, "compile + green + perfect raw invariants (>=1 passed, 0 failed, 0 errored)"},
       {:quality, "house style + harness standard"},
+      {:dialyzer,
+       "spec truth — staged gold dialyzed vs the deps PLT, T1.6-calibrated overspecs " <>
+         "filter; warnings reject and feed the repair (GEN_DIALYZER)"},
       {:mutation, "raise-mutant coverage (each public function; whole-module for bundles)"},
       {:stability, "stability re-grade at a derived nonzero ExUnit seed (flake filter)"},
       {:semantic_floor, "semantic-mutant kill floor (GEN_SEMANTIC_FLOOR)"},

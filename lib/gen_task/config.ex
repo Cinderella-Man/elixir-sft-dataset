@@ -26,6 +26,7 @@ defmodule GenTask.Config do
           usage_max_wait_ms: non_neg_integer(),
           transient_retries: non_neg_integer(),
           quality_gate: boolean(),
+          dialyzer_gate: boolean(),
           per_fn_mutation: boolean(),
           skip_write_test: boolean(),
           skip_test_fim: boolean(),
@@ -70,6 +71,10 @@ defmodule GenTask.Config do
             usage_max_wait_ms: 0,
             transient_retries: 5,
             quality_gate: true,
+            # Struct default FALSE so sandbox tests (bare %Config{}) stay
+            # hermetic and PLT-free; `Config.new/1` resolves it ON — the
+            # promise_audit pattern.
+            dialyzer_gate: false,
             per_fn_mutation: true,
             skip_write_test: false,
             skip_test_fim: false,
@@ -133,6 +138,9 @@ defmodule GenTask.Config do
       usage_max_wait_ms: env_int(env_fun, "GEN_USAGE_MAX_WAIT_MS", 0),
       transient_retries: env_int(env_fun, "GEN_TRANSIENT_RETRIES", 5),
       quality_gate: not env_bool(env_fun, "GEN_SKIP_QUALITY_GATE"),
+      # Spec-truth at accept (docs/12 §5.5 rows 15+23). Kamil 2026-07-15:
+      # quality gates are never optional — ON by default, opt-out for debugging.
+      dialyzer_gate: env_bool_default(env_fun, "GEN_DIALYZER", true),
       per_fn_mutation: not env_bool(env_fun, "GEN_SKIP_PER_FN_MUTATION"),
       skip_write_test: env_bool(env_fun, "GEN_SKIP_WRITE_TEST"),
       skip_test_fim: env_bool(env_fun, "GEN_SKIP_TEST_FIM"),
