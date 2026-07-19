@@ -46,11 +46,11 @@ rejects).
 
 **STEP 2 — follow-up C landings (Kamil approved 2026-07-19; candidates
 are DRAFTED and verified-by-diff in `logs/followup_c_candidates/`).**
-[IN FLIGHT 02:02: candidate 1 (009_003) running detached —
-logs/keep_land_009_003.log; the three run SEQUENTIALLY (keep_land must
-never run concurrently with another prompt-writing tool), each lands on
-green / packets on red, cascade + one commit per landing; 007_002
---approve last.]
+[PROGRESS 02:07: candidate 1 (009_003) LANDED green + six-gate cascade +
+committed (f1777c18). Candidate 2 (014_001) running detached —
+logs/keep_land_014_001.log; then 044_001, then 007_002 --approve. Each:
+cascade + one commit. keep_land never runs concurrently with another
+prompt-writing tool.]
 For each of the three, run the keep path (1 blind solve each; lands on
 green, judge-packet on red — never lands unverified):
 `mix run scripts/keep_land.exs -- --candidate 009_003_retry_aware_request_deduplicator_01 --prompt logs/followup_c_candidates/cand_009_003.md`

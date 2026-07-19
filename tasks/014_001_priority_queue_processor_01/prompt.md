@@ -8,12 +8,12 @@ I need these functions in the public API:
 
 - `PriorityQueue.status(server)` returning a map of pending task counts per priority level, like `%{high: 0, normal: 2, low: 1}`. This count should only include tasks that have not yet started processing.
 
-- `PriorityQueue.drain(server)` which blocks until all currently enqueued tasks have been processed and the queue is empty. This is essential for testing. Return `:ok`.
+- `PriorityQueue.drain(server)` which blocks until all currently enqueued tasks have been processed and the queue is empty. This is essential for testing. Return `:ok`. On an already-empty, idle queue it returns `:ok` immediately.
 
 The priority ordering is `:high` > `:normal` > `:low`. The GenServer must always pick the highest priority task available next. Within the same priority level, tasks must be processed in FIFO order (the order they were enqueued).
 
 Processing should happen via internal message passing — when a task is enqueued and the processor is idle, the GenServer sends itself a `:process_next` message. When a task finishes processing, if more tasks remain, it sends itself another `:process_next` message. The `handle_info` for `:process_next` dequeues the highest-priority task and runs the processor function in a separate spawned, monitored process (e.g. via `spawn_monitor/1`) — never inline in the GenServer loop — so that `enqueue`, `status`, and `drain` calls remain responsive even while a long-running or blocking task is being processed; when the spawned process finishes, the GenServer records the result and moves on.
 
-Each processed task's result should be stored internally so tests can retrieve the processing history. Provide `PriorityQueue.processed(server)` which returns a list of `{task, result}` tuples in the order tasks were processed.
+Each processed task's result should be stored internally so tests can retrieve the processing history. Provide `PriorityQueue.processed(server)` which returns a list of `{task, result}` tuples in the order tasks were processed, and `[]` before anything has been processed.
 
 Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
