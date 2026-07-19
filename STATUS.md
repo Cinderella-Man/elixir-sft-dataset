@@ -19,21 +19,35 @@ the generator; pilots before full runs; one solved item = one commit)
 ### shape reproducible by one generation run). What remains below is
 ### Kamil's strategic call plus its downstream chain.
 
-**THE FORK (Kamil — the only live decision):** (a) **Phase 3** — resume
-new-base generation (490 queued ideas; base-idea diversity at ~57/1000
-is the binding constraint no derivation fixes), or (b) **a
-training/eval cycle on the export** — converts the parked questions
-(register monotony, shape weights, difficulty curve, whether
-T2.6-proper's big register rewrite is worth its LLM budget) into
-measurements before more data work. Still parked pending the fork:
-T2.6-proper (round #2 per the 07-16 sign-off) and keep-packet approvals
-(Kamil, any time).
+**THE FORK — RESOLVED BOTH-ARMS-IN-PARALLEL (Kamil 2026-07-19 ~13:30:
+"do whatever you've recommended in parallel if possible", endorsing the
+recommendation that the arms are not mutually exclusive). That directive
+also constitutes the LOOP-PARITY WAIVER for rows 11/17/21 (their
+explicit post-cutover instruments stand in for the literal ENFORCED) —
+authorizing Phase 3 implies accepting the table's state; recorded in
+docs/12 §5.5.**
 
-**LOOP-PARITY SIGN-OFF (Kamil, small):** row 16 closed 2026-07-19 (the
-table's last MISSING row). Rows 11/17/21 carry explicit post-cutover
-instruments rather than the literal word ENFORCED — say whether that
-framing counts as your waiver, and the parity exit condition below
-checks off.
+**(a) PHASE 3 PILOT BATCH — IN FLIGHT:** GEN_LIMIT=20 new bases through
+the full loop (each accepted root auto-derives all eleven shapes via
+the Work registry). Detached: logs/phase3_pilot.log; idempotent
+relaunch: `scripts/run_detached.sh logs/phase3_pilot.log env
+GEN_LIMIT=20 mix run scripts/generate.exs`. LLM run — rides token
+windows; expect hours. ON EXIT, BEFORE the throttle opens, the CUTOVER
+ACCEPTANCE TEST (docs/12 §5.5 bottom) is MANDATORY: full
+semantic_review of every new root + a rubric_judge two-family pass +
+perfect/mutant/embed/format sweeps + export round-trip — ZERO
+triage-grade findings, else fix the GENERATOR (never the data),
+regenerate, re-test.
+
+**(b) TRAINING-CYCLE HANDOFF — being prepared in parallel:** the export
+is training-ready (14,645 examples, round-trip-proven reproducible);
+writing docs/18 (training-run handoff: serialization, loss-masking,
+weights/split usage, the measurement questions the run must answer) and
+tagging the export state. The actual training run happens on Kamil's
+training infra — the handoff is the parallelizable half.
+
+Still parked: T2.6-proper (round #2 per the 07-16 sign-off);
+keep-packet approvals (Kamil, any time).
 
 ---
 
