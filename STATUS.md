@@ -49,21 +49,18 @@ first blind solves + the 007_002 directed keep), six-gate cascade + one
 commit each (f1777c18, d80329e9, 8f09a509, 6f4c80d6) — docs/15 entry
 written. Next: Phase D decontam re-run, then STEP 3.**
 
-**STEP 3 — DONE 02:20 except the push: decontam re-run CLEAN (0/25,112
-corpus texts flagged), export refreshed 12,466 examples (11,988/478
-family-atomic, round-trip OK), README at-a-glance updated (fim 3,532,
-~51M tokens, conservative count 5,964). Final push IN FLIGHT:
-logs/push_step3.log — carries STEPs 2-4 commits; the new sfim-spec
-pre-push block executes for the first time in it.**
+**RUNBOOK STEPs 0–4: ALL DONE + PUSHED (b047b676..9a89fdab green; the
+new sfim-spec pre-push block ran live in it, unchanged: 67). Full
+stories in docs/15.**
 
-**STEP 4 — DONE except push-verification: the sixth drift gate
-(scripts/resync_sfim_specs.exs) is BUILT, self-tested (5/5, plants a
-PARENT edit), report-only like its siblings, wired into .githooks/
-pre-push + CI validate.yml, and PROVEN LIVE on its first real drift:
-the 009_003 keep_land landing staled that family's 7 sfim children and
-the gate flagged exactly those 7 (2,534 unchanged). It heals them in
-the 009_003 cascade. Rides the next push; its pre-push block executes
-for the first time then.**
+**FULL-CORPUS SWEEP (the honest tail of Phase D — the sample validated
+only 253 of 3,532 fim dirs, and validate's AST-blank mutant differs
+from the miner's gut()): IN FLIGHT since 02:25, detached —
+logs/full_sweep.log, `validate --fim` (all fim) then plain
+perfect-score validate, sequential. Idempotent relaunch:
+scripts/run_detached.sh logs/full_sweep.log sh -c "elixir
+scripts/validate.exs --fim && elixir scripts/validate.exs". Expect
+hours; any FAIL is a rule-7 finding for the morning.**
 
 **Standing decisions (Kamil, unchanged):** 110_002 keep packet
 (--approve or delete; then retro_audit --only "110_002*" so its staged
