@@ -19,7 +19,10 @@ defmodule ElixirBenchmark.MixProject do
 
   def application do
     [
-      extra_applications: [:logger, :crypto],
+      # :dialyzer — GenTask.Dialyzer calls the OTP app directly; without listing
+      # it the compiler warns "module :dialyzer is not available" on fresh CI
+      # builds (2026-07-19).
+      extra_applications: [:logger, :crypto, :dialyzer],
       mod: {ElixirBenchmark.Application, []}
     ]
   end

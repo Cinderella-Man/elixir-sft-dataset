@@ -139,7 +139,8 @@ defmodule GenTask.ForceTest do
     end
 
     test "dry-run prints the plan and deletes nothing", ctx do
-      cfg = %Config{ctx.cfg | dry_run: true}
+      %Config{} = base_cfg = ctx.cfg
+      cfg = %Config{base_cfg | dry_run: true}
 
       out =
         capture_io(fn ->
@@ -156,10 +157,13 @@ defmodule GenTask.ForceTest do
     end
 
     test "refuses to run without a single positional idea number", ctx do
-      cfg = %Config{ctx.cfg | only_idea: nil}
+      %Config{} = base_cfg = ctx.cfg
+      cfg = %Config{base_cfg | only_idea: nil}
 
       assert_raise ArgumentError, ~r/--force requires a single base idea number/, fn ->
-        capture_io(fn -> Force.wipe!(cfg, git_check: fn _ -> :ok end) end)
+        # apply/3 keeps the deliberately invalid only_idea: nil out of the
+        # type checker's sight — the raise IS the behavior under test.
+        capture_io(fn -> apply(Force, :wipe!, [cfg, [git_check: fn _ -> :ok end]]) end)
       end
     end
 

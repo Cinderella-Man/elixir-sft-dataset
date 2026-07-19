@@ -96,6 +96,9 @@ defmodule GenTask.OpusTest do
       assert {:ok, "recovered", _meta} = Opus.call("sys", "user", cfg)
     end
 
+    # capture_log: the exhaustion path Logger.errors by design; uncaptured it
+    # surfaces as a GitHub Actions error annotation on every CI run.
+    @tag capture_log: true
     test "call/3 gives up once the cumulative usage-wait cap is exceeded" do
       logs = Path.join(System.tmp_dir!(), "opus_test_#{System.unique_integer([:positive])}")
 
