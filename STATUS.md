@@ -18,34 +18,21 @@ the generator; pilots before full runs; one solved item = one commit)
 ### new task generation"; two directed decisions: 110_002 APPROVE, and
 ### UNPARK all three derivation builds — spec-fim, TDD-inverse,
 ### bundle-v2; T2.6-proper stays round #2 per the 07-16 sign-off).
-### Work queue IN ORDER, one solved item = one commit:
-### 1. 110_002 approve + cascade + retro_audit --only "110_002*"
-### 2. Note (a): sfim template harmonization (single-source template
-###    module + full-prompt resync + one deterministic pass)
-### 3. Note (b): validate-side F24 parse-gate self-test + CI wiring
-### 4. Parity row 16 (T1.4 DOC TRUTH checklist item + docs/12 row)
-### 5. bundle-v2 coverage (6 dirs) — investigate docs/13, close
-### 6. spec-fim miner (~1,869 sites) — sfim pattern: pilot → detached
-### 7. TDD-inverse — docs/13 design; new shape integration
+### Work queue (items 1-4 + the CI red DONE — docs/15 morning entry;
+### build order corrected by integration-cost investigation):
+### 5. TDD-inverse (332 units) — :tdd shape: Discovery prefix, exporter
+###    maps+regexes, harness-embed drift gate, low advisory weight
+###    (gold = parent-gold byte-copy); grades like :single
+### 6. spec-fim miner (~1,869 sites) — needs its OWN shape + AST-equality
+###    grader (cannot ride :fim: harnesses cannot kill spec mutants)
+### 7. bundle-FIM (6 bundles) — needs a bundle-reconstruction eval path
 ### Then: export/README/docs-15 refresh + push per item batch.
 
-**Open notes for Kamil (non-blocking, from the F24 landing):**
-(a) template-parenthetical harmonization — the sfim prompt's "including
-the @doc/@spec lines shown above it, if any" is mildly stale for
-doc-carved units (docs live in the GOLD now, absent from the skeleton;
-docless answers still grade 1.0; the gold's shape teaches house-style
-documenting, which is what we want) — harmonize via the new
-resync_sfim_specs gate in one deterministic pass if desired;
-(b) optional --self-test T-gate alignment for the validate-side F24
-check (bite machine-proven: fired on 1,084 real units + 4 honest
-rejects).
-
-**Standing decisions (Kamil, unchanged):** 110_002 keep packet
-(--approve or delete; then retro_audit --only "110_002*" so its staged
-growth lands); the strategic fork — Phase 3 (490 queued bases; ~57/1000
-ideas realized is the binding constraint) vs a training/eval cycle on
-the export (converts the parked questions — register monotony, shape
-weights, difficulty curve, T2.6-proper's worth — into measurements).
+**Standing decision (Kamil):** the strategic fork — Phase 3 (490 queued
+bases; ~57/1000 ideas realized is the binding constraint) vs a
+training/eval cycle on the export (converts the parked questions —
+register monotony, shape weights, difficulty curve, T2.6-proper's worth
+— into measurements).
 
 **Phase E — the honest fork (Kamil; roadmap Phases A–D all done, see
 docs/15):** after C, existing-corpus

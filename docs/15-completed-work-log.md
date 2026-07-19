@@ -9,6 +9,32 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-19 (morning) — DAY-SESSION QUEUE ITEMS 1–4 + CI RED, ALL
+  CLOSED.** (1) 110_002 fully resolved: candidate prompt landed on
+  Kamil's approval; the promise audit re-derived its growth at the new
+  bytes and blind-verified red on the standing keep-class hard spot, so
+  per Kamil's directed keep the grown 21-test harness landed by hand —
+  full battery green, audit ledger carries the kamil_keep_landed
+  resolution at the landed sha (ed56da7d, c540fec0). The audit keying
+  gap suspicion was retracted on evidence: the ledger key DOES include
+  the prompt; the earlier "already audited" row had been computed at
+  the exact staged-candidate bytes. (2) Note (a): sfim template
+  harmonized across all 2,541 children in one deterministic pass;
+  GenTask.SfimTemplate is now the single source feeding both the miner
+  and the resync gate, which re-derives the FULL prompt (7-check
+  self-test incl. planted wording drift; 3ae73108). (3) Note (b):
+  validate --self-test-integrity proves the F24 parse gate's bite,
+  CI-wired (a4f7c959). (4) Parity row 16 — the table's only MISSING
+  row — closed with the DOC TRUTH RULE in T1.4 (64df01b9). Rider: the
+  CI red Kamil reported was two classes inside 104 deviating embeds —
+  67 byte-true parent-fence copies (wt_-policy exemption; zero real
+  drift verified) and 37 genuinely non-canonical carve seams (seam
+  repair inside the hole after the whole-skeleton-formatting
+  alternative broke bundle byte-contracts; check_embeds rule (k);
+  7a0fc5db) — plus pre-push now runs the format gate corpus-wide like
+  CI, and CI's test-log warnings/error-annotation were cleaned
+  (bd0171b0).
+
 - **2026-07-19 (night) — FULL-CORPUS SWEEP ALL GREEN + F25 (tool
   defect) fixed: the night closes with the whole corpus machine-proven.**
   `validate --fim` over ALL 3,532 fim dirs: every target exercised,
