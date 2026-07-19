@@ -19,7 +19,8 @@
 #      is not newer than the screen row's timestamp.
 #
 # Anything else with a screen row is STALE → exit 1 (the gate): re-screen with
-#   mix run scripts/screen_blind_solve.exs --only "<fam>*" --rescreen
+#   mix run scripts/keep_land.exs -- --candidate <root> --prompt <its prompt.md>
+#   (the kept screen path: one blind solve, S6 evidence row either way)
 # Roots with NO row for their current prompt sha are reported as UNSCREENED
 # (that is S6 coverage, a different question — report-only here).
 #
@@ -91,7 +92,7 @@ defmodule CheckScreenFreshness do
           IO.puts("""
 
           #{length(stale)} root(s) carry blind verdicts for an OLDER harness. Re-screen:
-            mix run scripts/screen_blind_solve.exs --only "<name>" --rescreen
+            mix run scripts/keep_land.exs -- --candidate <name> --prompt tasks/<name>/prompt.md
           Never delete the old rows — append-only; within a (prompt, harness)
           pair the latest row wins.
           """)
@@ -102,7 +103,7 @@ defmodule CheckScreenFreshness do
 
           #{length(unscreened)} root(s) have NO verdict for their CURRENT prompt
           (edited prompt → new sha). Screen them (no --rescreen needed):
-            mix run scripts/screen_blind_solve.exs --only "<name>"
+            mix run scripts/keep_land.exs -- --candidate <name> --prompt tasks/<name>/prompt.md
           """)
         end
 

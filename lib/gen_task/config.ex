@@ -14,7 +14,7 @@ defmodule GenTask.Config do
   `claude` calls.
   """
 
-  @type work_scope :: :bases | :backfill | nil
+  @type work_scope :: :bases | :topup | nil
 
   @type t :: %__MODULE__{
           model: String.t(),
@@ -52,7 +52,7 @@ defmodule GenTask.Config do
           retry_failed: boolean(),
           skip_variations: boolean(),
           skip_fim: boolean(),
-          skip_backfill: boolean(),
+          skip_topup: boolean(),
           only: work_scope(),
           reconcile: boolean(),
           dry_run: boolean(),
@@ -118,7 +118,7 @@ defmodule GenTask.Config do
             exclude_seeds: [],
             skip_variations: false,
             skip_fim: false,
-            skip_backfill: false,
+            skip_topup: false,
             only: nil,
             reconcile: true,
             dry_run: false,
@@ -184,7 +184,7 @@ defmodule GenTask.Config do
       exclude_seeds: env_prefixes(env_fun, "GEN_EXCLUDE_SEEDS"),
       skip_variations: env_bool(env_fun, "GEN_SKIP_VARIATIONS"),
       skip_fim: env_bool(env_fun, "GEN_SKIP_FIM"),
-      skip_backfill: env_bool(env_fun, "GEN_SKIP_BACKFILL"),
+      skip_topup: env_bool(env_fun, "GEN_SKIP_TOPUP"),
       only: work_scope(env_fun),
       reconcile: env_bool_default(env_fun, "GEN_RECONCILE", true),
       dry_run: env_bool(env_fun, "GEN_DRY_RUN")
@@ -209,8 +209,8 @@ defmodule GenTask.Config do
 
       v ->
         case String.downcase(String.trim(v)) do
-          "backfill" ->
-            :backfill
+          "topup" ->
+            :topup
 
           b when b in ["bases", "base"] ->
             :bases
@@ -218,7 +218,7 @@ defmodule GenTask.Config do
           other ->
             # A typo like GEN_ONLY=fim used to silently mean :bases — refuse instead.
             raise ArgumentError,
-                  "GEN_ONLY=#{inspect(other)} is not recognized (expected \"bases\" or \"backfill\")"
+                  "GEN_ONLY=#{inspect(other)} is not recognized (expected \"bases\" or \"topup\")"
         end
     end
   end

@@ -582,6 +582,15 @@ The line is drawn when ALL of these are true:
 4. Phase 3 has resumed and its first batch validated clean under the full gate
    suite — proving the ONE command is sufficient with no post-processing.
 
+   > **Reordered by Kamil, 2026-07-19** ("I want catch-up to be finished
+   > BEFORE attempting to do any new task"): condition 4 is no longer a
+   > prerequisite of the line — the line was drawn on conditions 1–3 plus the
+   > full parity table (every row ENFORCED or Kamil-waived). The §5.5 cutover
+   > acceptance test is unchanged and becomes the MANDATORY FIRST ACT of
+   > Phase 3 whenever it starts: the first ~20-base batch runs through
+   > semantic_review + rubric_judge + all sweeps with zero triage-grade
+   > findings before the throttle opens.
+
 At that moment: flip `/STATUS.md` to STEADY STATE and execute §7.2.
 
 ### 7.2 What gets deleted at the line (and what deliberately survives)

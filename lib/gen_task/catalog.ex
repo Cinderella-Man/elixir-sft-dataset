@@ -4,7 +4,7 @@ defmodule GenTask.Catalog do
   drive a generation run (see `docs/04-task-generation-loop.md` §5, §9):
 
     1. **todo base ideas** — base ideas with no `tasks/NNN_001_*_01` directory yet;
-    2. **backfill seeds** — existing accepted `_01` directories (base or variation)
+    2. **topup seeds** — existing accepted `_01` directories (base or variation)
        that still lack variations and/or FIM derivatives.
 
   It also owns the *idempotent, insert-only* `tasks.md` mutation used when an
@@ -39,7 +39,7 @@ defmodule GenTask.Catalog do
 
   defmodule Seed do
     @moduledoc """
-    An existing accepted `_01` directory considered for backfill, plus which
+    An existing accepted `_01` directory considered for topup, plus which
     derivatives it still needs.
     """
     @type t :: %__MODULE__{
@@ -187,7 +187,7 @@ defmodule GenTask.Catalog do
   defp maybe_limit(list, n) when is_integer(n), do: Enum.take(list, n)
 
   # ---------------------------------------------------------------------------
-  # Work-list 2: backfill seeds
+  # Work-list 2: topup seeds
   # ---------------------------------------------------------------------------
 
   @doc """
@@ -197,8 +197,8 @@ defmodule GenTask.Catalog do
   `_01` (base or variation) needs FIM when it has no `_02+` subtask sibling.
   Returned in directory-name order, restricted by the same idea-number scope.
   """
-  @spec backfill_seeds(Config.t()) :: [Seed.t()]
-  def backfill_seeds(%Config{} = cfg) do
+  @spec topup_seeds(Config.t()) :: [Seed.t()]
+  def topup_seeds(%Config{} = cfg) do
     cfg
     |> all_seeds()
     |> Enum.filter(&(GenTask.Work.pending(&1, cfg) != %{}))
@@ -206,7 +206,7 @@ defmodule GenTask.Catalog do
     # GEN_EXCLUDE_SEEDS: known-systematic failers a run must not burn attempts on
     # (e.g. the bundle-parent fim seeds pending their triage decision).
     |> Enum.reject(fn s -> Enum.any?(cfg.exclude_seeds, &String.starts_with?(s.task_id, &1)) end)
-    # GEN_LIMIT bounds each work-list: at most N base ideas AND at most N backfill
+    # GEN_LIMIT bounds each work-list: at most N base ideas AND at most N topup
     # seeds per run (docs/05 #7 — it used to bound only new bases).
     |> maybe_limit(cfg.limit)
   end
@@ -295,7 +295,7 @@ defmodule GenTask.Catalog do
   # RED (the evaluator provisions a throwaway DB and fails loudly if the server is down —
   # see `EvalTask.Runner`), so a gated tfim / wtest minted here would land in
   # `logs/errors/` every run. Excluding it keeps such a seed out of the wtest/tfim
-  # backfill. (To derive from these, run generation with `docker compose up -d db`.)
+  # topup. (To derive from these, run generation with `docker compose up -d db`.)
   @spec gradable_skip?(String.t()) :: boolean()
   defp gradable_skip?(dir) do
     manifest = Path.join(dir, "manifest.exs")

@@ -127,7 +127,7 @@ defmodule GenTask.CatalogTest do
     end
   end
 
-  describe "backfill_seeds/1 enumeration" do
+  describe "topup_seeds/1 enumeration" do
     test "flags partially-derived tasks for top-up and excludes fully-complete ones" do
       # The fixture below is "complete" at 3 fim + 3 tfim per _01 — pin those caps
       # (the default tfim cap is now 10; completeness is relative to the cap).
@@ -182,7 +182,7 @@ defmodule GenTask.CatalogTest do
           do: File.mkdir_p!(Path.join(dir, d))
 
       cfg = %Config{tasks_dir: dir, fim_max_per_task: 3, tfim_max_per_task: 3}
-      seeds = Catalog.backfill_seeds(cfg)
+      seeds = Catalog.topup_seeds(cfg)
 
       by_id = Map.new(seeds, &{&1.task_id, &1})
 
@@ -210,31 +210,31 @@ defmodule GenTask.CatalogTest do
       File.mkdir_p!(Path.join(dir, "020_001_zeta_01"))
 
       cfg = %Config{tasks_dir: dir, from: 15}
-      assert Catalog.backfill_seeds(cfg) |> Enum.map(& &1.num) == [20]
+      assert Catalog.topup_seeds(cfg) |> Enum.map(& &1.num) == [20]
     end
 
-    test "GEN_EXCLUDE_SEEDS drops matching seeds from the backfill list" do
+    test "GEN_EXCLUDE_SEEDS drops matching seeds from the topup list" do
       dir = tmp_dir()
       write_fim_solution(dir, "010_001_gamma_01", 3)
       write_fim_solution(dir, "020_001_zeta_01", 3)
 
       cfg = %Config{tasks_dir: dir, exclude_seeds: ["010_001"]}
-      assert Catalog.backfill_seeds(cfg) |> Enum.map(& &1.num) == [20]
+      assert Catalog.topup_seeds(cfg) |> Enum.map(& &1.num) == [20]
     end
 
-    test "excludes Postgres-tier (gradable-skip) seeds from wtest/tfim backfill" do
+    test "excludes Postgres-tier (gradable-skip) seeds from wtest/tfim topup" do
       dir = tmp_dir()
 
       # A base whose eval is `skipped` (manifest db: :postgres): variations may still
       # apply (a variation is a NEW triplet with no such manifest), but FIM, wtest and
       # tfim all grade against this parent's harness — which can only ever grade
-      # `skipped` — so none can be minted green and none may be flagged for backfill
+      # `skipped` — so none can be minted green and none may be flagged for topup
       # (Finding A: FIM would additionally burn LLM repair calls on every run).
       File.mkdir_p!(Path.join(dir, "017_001_search_01"))
       File.write!(Path.join(dir, "017_001_search_01/manifest.exs"), "%{db: :postgres}\n")
 
       cfg = %Config{tasks_dir: dir}
-      seed = Catalog.backfill_seeds(cfg) |> Enum.find(&(&1.num == 17))
+      seed = Catalog.topup_seeds(cfg) |> Enum.find(&(&1.num == 17))
 
       # Still a seed (kept for variations), but fim/wtest/tfim are all suppressed.
       assert %Seed{needs_fim?: false, needs_write_test?: false, needs_test_fim?: false} = seed

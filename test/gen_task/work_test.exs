@@ -158,7 +158,7 @@ defmodule GenTask.WorkTest do
       {s5, cfg5} = seed(dir, "015_001_iota_01")
       assert Work.missing(:test_fim, s5, cfg5) == 0
 
-      # No harness on disk at all → 0 (a broken dir must not hold the backfill open).
+      # No harness on disk at all → 0 (a broken dir must not hold the topup open).
       {s3, cfg3} = seed(dir, "014_001_theta_01")
       assert Work.missing(:test_fim, s3, cfg3) == 0
     end
@@ -184,7 +184,7 @@ defmodule GenTask.WorkTest do
       dir = tmp_dir()
 
       # 1-function parent, 3 slots → 1 missing (capped by the target pool),
-      # NOT fim_max: the selector cannot fill those slots and the backfill
+      # NOT fim_max: the selector cannot fill those slots and the topup
       # must not stay pending forever (the 2026-07-12 stuck-13 case).
       write_solution(dir, "015_001_iota_01", 1)
       {s, cfg} = seed(dir, "015_001_iota_01")
@@ -216,7 +216,7 @@ defmodule GenTask.WorkTest do
       {s3, cfg3} = seed(dir, "018_001_lambda_01")
       assert Work.missing(:fim, s3, cfg3) == 2
 
-      # No solution.ex on disk → 0 (a broken dir must not hold the backfill open).
+      # No solution.ex on disk → 0 (a broken dir must not hold the topup open).
       {s4, cfg4} = seed(dir, "019_001_mu_01")
       assert Work.missing(:fim, s4, cfg4) == 0
     end

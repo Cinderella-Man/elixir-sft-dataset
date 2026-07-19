@@ -4,12 +4,12 @@ defmodule GenTask.Work do
   set** — the single place that answers "what should exist for each `_01`, does it
   exist yet, and how is it produced?".
 
-  Everything that plans or performs backfill consults this module, so the whole
+  Everything that plans or performs topup consults this module, so the whole
   pipeline stays consistent and *idempotent*: run it as many times as you like and
   only the missing pieces are produced.
 
     * `GenTask.Catalog.seed/2` derives its `needs_*` flags from `missing/3`
-    * `GenTask.CLI.run_backfill_item/4` executes the `:derived`-stage entries
+    * `GenTask.CLI.run_topup_item/4` executes the `:derived`-stage entries
       generically (a new deterministic work type needs NO cli change)
     * `scripts/work_status.exs` prints the live work-type × corpus matrix
 
@@ -210,7 +210,7 @@ defmodule GenTask.Work do
   @doc """
   Seeds whose CURRENT harness content carries a cached VACUOUS self-check verdict
   (`logs/seed_verdicts.jsonl`) **and** still have `wt_`/`tfim_` units missing — i.e.
-  derivation the backfill executor is withholding (docs/10 R3). Read-only; keyed by
+  derivation the topup executor is withholding (docs/10 R3). Read-only; keyed by
   content hash, so a fixed harness drops off this list on the next run.
   """
   @spec vacuous_blocked(Config.t()) :: [

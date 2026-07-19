@@ -9,6 +9,29 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-19 (afternoon) — THE LINE IS DRAWN: STEADY STATE (docs/12
+  §7.2 executed; Kamil's order-inversion directive "catch-up finished
+  BEFORE any new task").** The just-launched Phase-3 pilot was stopped
+  minutes in (killed during its first LLM call, zero bases accepted,
+  tree verified clean) and §7.1's condition 4 formally reordered in
+  docs/12 — the cutover acceptance test is now Phase 3's mandatory
+  first act rather than the line's prerequisite. Executed: (1) eleven
+  catch-up tools + BACKFILL_PROGRESS.md deleted per the §7.2/docs-14
+  disposition (lint_harnesses, screen_blind_solve, triage_screen,
+  strengthen_harnesses, enrich_prompts, rescreen_repaired, close_gaps,
+  survey_adapt_redgate, quality_chain×3) with their 5 orphaned unit
+  tests; semantic_review/keep_land/retro_audit/mint_repairs and ALL
+  drift gates + standing audits kept per the keep-list —
+  check_screen_freshness's remedy messages now point at keep_land (the
+  kept, mechanized screen path) instead of the deleted screener.
+  (2) The backfill VOCABULARY removed from the codebase (backfill →
+  topup across lib/scripts/tests/README + docs-14 runbook lines;
+  GEN_ONLY=topup, GEN_SKIP_TOPUP; Catalog.topup_seeds; mechanism
+  untouched per §7.2 — the Work registry survives as the loop's
+  convergence core). (3) The ../elixir-sft-dataset-t16 worktree
+  removed. (4) STATUS flipped to STEADY STATE. Suite 401 green;
+  work_status matrix fully green.
+
 - **2026-07-19 (midday) — 4h-WINDOW CLOSE-OUT SWEEP ALL GREEN over the
   grown corpus:** perfect-score over every gradable dir (~14.6k at
   1.0), fim mutation over all 3,551 fim units, whole-mutation over

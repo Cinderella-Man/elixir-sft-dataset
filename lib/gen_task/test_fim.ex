@@ -54,7 +54,7 @@ defmodule GenTask.TestFim do
   `GenTask.Work` counts `min(remaining slots, length(this))` as the seed's
   missing tfim units — NOT `tfim_max - existing`: a harness whose tests all sit
   inside `describe` blocks has zero carvable top-level blocks, and counting
-  slots the minter cannot fill leaves the backfill "pending" forever (found
+  slots the minter cannot fill leaves the topup "pending" forever (found
   live 2026-07-12: 326 phantom pending units; describe-grouped harnesses are
   even the §5.3.1 recommendation, so the gap would only have grown).
   """
@@ -71,7 +71,7 @@ defmodule GenTask.TestFim do
     |> Enum.reject(&MapSet.member?(covered, qual(&1)))
     # Negative cache: blocks that already failed the gates against THIS harness
     # content are permanent rejects (deterministic gates) — do not re-gate them
-    # on every backfill pass. Keyed by the QUALIFIED name (top-level quals equal
+    # on every topup pass. Keyed by the QUALIFIED name (top-level quals equal
     # the bare name, so pre-describe ledger entries still match).
     |> Enum.reject(&MapSet.member?(rejected, qual(&1)))
     # Drop any block whose carved source does not parse (heredoc `  end` boundary,
@@ -83,7 +83,7 @@ defmodule GenTask.TestFim do
   The registry's honest missing-unit count for `:test_fim` (see
   `mintable_candidates/2`): remaining `tfim_max_per_task` slots, capped by what
   is actually carvable from the seed's CURRENT harness on disk. An unreadable
-  harness counts 0 — a broken dir must not hold the backfill open.
+  harness counts 0 — a broken dir must not hold the topup open.
   """
   @spec missing_units(
           %{:task_id => String.t(), :dir => String.t(), optional(any()) => any()},
@@ -300,7 +300,7 @@ defmodule GenTask.TestFim do
 
   # Both reject classes are deterministic for fixed content (fixed eval seed,
   # immutable tasks): remember them keyed by the parent-harness hash so later
-  # backfill passes skip the block instead of re-running the gates.
+  # topup passes skip the block instead of re-running the gates.
   defp record_rejected(seed, cand, cfg) do
     sha = CycleLog.content_sha(seed.files["test_harness.exs"])
     CycleLog.record_tfim_rejected(cfg, prefix(seed), qual(cand), sha, gate_sha())

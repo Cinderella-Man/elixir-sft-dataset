@@ -6,8 +6,8 @@ defmodule GenTask.ConfigTest do
   defp env(map), do: fn key -> map[key] end
 
   describe "GEN_ONLY" do
-    test "accepts bases and backfill" do
-      assert %Config{only: :backfill} = Config.new([], env(%{"GEN_ONLY" => "backfill"}))
+    test "accepts bases and topup" do
+      assert %Config{only: :topup} = Config.new([], env(%{"GEN_ONLY" => "topup"}))
       assert %Config{only: :bases} = Config.new([], env(%{"GEN_ONLY" => "bases"}))
       assert %Config{only: nil} = Config.new([], env(%{}))
     end

@@ -7,7 +7,7 @@
 #   mix run scripts/work_status.exs --counts    # one compact line (progress tracking)
 #
 # The rows come from the `GenTask.Work` registry — adding a new work type there
-# makes it appear here (and in the generate.exs backfill executor) automatically.
+# makes it appear here (and in the generate.exs topup executor) automatically.
 
 alias GenTask.{Catalog, Config, Work}
 
@@ -98,7 +98,7 @@ cond do
     IO.puts("""
 
     To perform whatever is missing (idempotent — safe to re-run any time):
-      mix run scripts/generate.exs                      # everything (bases + backfill)
-      GEN_ONLY=backfill mix run scripts/generate.exs    # only top-up existing seeds
+      mix run scripts/generate.exs                      # everything (bases + topup)
+      GEN_ONLY=topup mix run scripts/generate.exs    # only top-up existing seeds
     """)
 end

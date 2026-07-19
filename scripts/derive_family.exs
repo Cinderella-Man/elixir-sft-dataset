@@ -10,7 +10,7 @@
 # (wt/tfim/bugfix/adapt/dedoc/sfim/tdd/specfim — anything registered
 # `:derived`), each runner applies its own gates and reject ledgers, and the
 # whole thing is idempotent (a re-run only produces what is missing). The
-# loop path is `GEN_ONLY=backfill scripts/run_detached.sh logs/topup.log mix
+# loop path is `GEN_ONLY=topup scripts/run_detached.sh logs/topup.log mix
 # run scripts/generate.exs`; a brand-new accepted root owes ALL of these
 # automatically through the same registry.
 
@@ -31,7 +31,7 @@ defmodule DeriveFamily do
     cfg = Config.new([])
 
     seeds =
-      Catalog.backfill_seeds(cfg)
+      Catalog.topup_seeds(cfg)
       |> Enum.filter(fn seed -> Enum.any?(globs, &match_glob?(seed.task_id, &1)) end)
 
     IO.puts("derive_family: #{length(seeds)} seed(s) match #{inspect(globs)}")

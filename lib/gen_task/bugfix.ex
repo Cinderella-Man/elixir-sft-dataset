@@ -29,11 +29,11 @@ defmodule GenTask.Bugfix do
   Unmintable candidates (mutant survives / does not compile) are ledgered in
   `logs/bugfix_rejected.jsonl` keyed by the solution's content sha — the
   registry count subtracts them, so `missing(:bugfix)` stays honest and a
-  backfill pass never re-evaluates a known-dead candidate (the docs/12 §5.1.10
+  topup pass never re-evaluates a known-dead candidate (the docs/12 §5.1.10
   and §5.1.12 rules).
 
   Fresh-generation parity: registered as a `:derived` work type in
-  `GenTask.Work`, so `work_status` counts it and the `generate.exs` backfill
+  `GenTask.Work`, so `work_status` counts it and the `generate.exs` topup
   executor mints it for every NEW seed automatically.
   """
 

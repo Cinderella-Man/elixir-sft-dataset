@@ -179,13 +179,13 @@ Everything below is safe to kill mid-run: state lives in `logs/*.jsonl`, keyed b
 content sha, so a re-run resumes and never redoes finished work.
 
 ### Generation
-- **`generate.exs`** — the loop. `GEN_ONLY=backfill` tops up derivatives for
+- **`generate.exs`** — the loop. `GEN_ONLY=topup` tops up derivatives for
   existing seeds; without it, it also creates new base tasks from `tasks/tasks.md`.
   **Always launch detached:** `scripts/run_detached.sh logs/<name>.log mix run scripts/generate.exs`.
   (`nohup … &` inside a tool call does **not** reliably survive. Use `run_detached.sh`,
   which `setsid`s.) It rides out token-limit windows by sleeping 15 min and retrying,
   forever, by design.
-  Useful env: `GEN_ONLY=backfill|bases`, `GEN_EXCLUDE_SEEDS=016_001,…` (skip known
+  Useful env: `GEN_ONLY=topup|bases`, `GEN_EXCLUDE_SEEDS=016_001,…` (skip known
   failers), `GEN_SKIP_BUGFIX=1`, `GEN_LIMIT=N`.
 - **`work_status.exs`** — what each work type still owes. `--counts` for one line.
 
@@ -303,7 +303,7 @@ evening; the 8-unit top-up AND the 9 units below were minted and committed).
 When strengthening adds tests or a reject-ledger purge re-opens candidates,
 pending units reappear here automatically; the mint command is:
 
-    GEN_ONLY=backfill scripts/run_detached.sh logs/topup.log mix run scripts/generate.exs
+    GEN_ONLY=topup scripts/run_detached.sh logs/topup.log mix run scripts/generate.exs
 
 Cost: CPU only. Then batch-commit the new dirs and push.
 
@@ -599,7 +599,7 @@ spec, family-keyed splits, a round-trip validator, and dedup/sampling weights.
 **Top up derivatives (free, CPU only)**
 
     mix run scripts/work_status.exs                 # what is owed
-    GEN_ONLY=backfill scripts/run_detached.sh logs/topup.log mix run scripts/generate.exs
+    GEN_ONLY=topup scripts/run_detached.sh logs/topup.log mix run scripts/generate.exs
     # when it exits:
     elixir scripts/validate.exs --only "<touched globs>"
     elixir scripts/validate.exs --mutants --only "<touched globs>"

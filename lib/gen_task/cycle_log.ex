@@ -166,7 +166,7 @@ defmodule GenTask.CycleLog do
   Record a permanently-rejected tfim target (`prefix` = parent `_01` id without the
   suffix; `name` = the test-block name; `sha` = SHA-256 of the parent harness the
   verdict was computed against). Gate verdicts are deterministic for fixed content
-  (fixed eval seed, immutable tasks), so re-gating the same block on every backfill
+  (fixed eval seed, immutable tasks), so re-gating the same block on every topup
   pass is pure waste — but keying on the harness hash means a hand-edited parent
   harness automatically invalidates its old rejections.
   """
@@ -243,7 +243,7 @@ defmodule GenTask.CycleLog do
     |> content_sha()
   end
 
-  @doc "Record a backfill seed's vacuous-harness self-check verdict, keyed by content hash."
+  @doc "Record a topup seed's vacuous-harness self-check verdict, keyed by content hash."
   @spec record_seed_verdict(Config.t(), String.t(), String.t(), map()) :: :ok
   def record_seed_verdict(%Config{logs_dir: logs_dir}, task_id, sha, verdict) do
     append_jsonl(Path.join(logs_dir, "seed_verdicts.jsonl"), %{

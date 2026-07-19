@@ -41,7 +41,7 @@ defmodule GenTask.Fim do
   @spec run(seed(), Config.t()) :: [map()]
   def run(seed, %Config{} = cfg) do
     # Top-up cap: only generate up to `fim_max_per_task` FIM subtasks per `_01` in
-    # TOTAL, so a partially-derived `_01` (backfill) requests only the missing count
+    # TOTAL, so a partially-derived `_01` (topup) requests only the missing count
     # rather than another full `fim_max` batch.
     limit = max(0, cfg.fim_max_per_task - existing_fim_count(seed, cfg))
     excluded = excluded_targets(seed, cfg)
@@ -77,13 +77,13 @@ defmodule GenTask.Fim do
   by the parent's viable target pool — functions not already covered by an
   existing `_0d` child and not permanently rejected on a prior run. A
   single-function parent can never fill 3 slots; counting those units keeps the
-  Phase 2 exit criterion (0 pending) unreachable and sends every backfill pass
+  Phase 2 exit criterion (0 pending) unreachable and sends every topup pass
   into guaranteed-reject selection calls.
 
   Bundle parents are pool-capped through the same marker-stripped view the
   prompt embeds use (`module_view/1`) — since the 2026-07-12 bundle-fim fix
   they are ordinary producible fim work. An unreadable solution counts 0 — a
-  broken dir must not hold the backfill open.
+  broken dir must not hold the topup open.
   """
   @spec missing_units(
           %{:task_id => String.t(), :dir => String.t(), optional(any()) => any()},
