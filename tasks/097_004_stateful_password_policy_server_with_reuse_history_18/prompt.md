@@ -240,6 +240,6 @@ defmodule PasswordPolicy do
 end
 ```
 
-Give me only the complete implementation of `levenshtein` (including the
-`@doc`/`@spec`/`@impl` lines shown above it in the module, if any) — the
+Give me only the complete implementation of `levenshtein` (including any
+`@doc`/`@spec`/`@impl` lines that belong directly above it) — the
 function alone, not the whole module.

@@ -178,6 +178,6 @@ defmodule Cart do
 end
 ```
 
-Give me only the complete implementation of `build_summary` (including the
-`@doc`/`@spec`/`@impl` lines shown above it in the module, if any) — the
+Give me only the complete implementation of `build_summary` (including any
+`@doc`/`@spec`/`@impl` lines that belong directly above it) — the
 function alone, not the whole module.

@@ -470,33 +470,12 @@ defmodule MintSfim do
 
   # ── prompt, numbering, grading, ledger ──────────────────────────────────────
 
+  # Single source: GenTask.SfimTemplate — the resync gate re-derives prompts
+  # through the same function, so template wording and spec embeds share one
+  # drift check.
   defp prompt_md(cand, skeleton) do
     spec = File.read!(Path.join(cand.root, "prompt.md"))
-
-    """
-    # Implement the missing function
-
-    Below is the complete specification of a task, followed by a working,
-    fully tested module that solves it — except that `#{cand.name}` has been
-    removed: every clause body is blanked to `# TODO`. Implement exactly that
-    function so the whole module passes the task's full test suite again.
-    Change nothing else — every other function, attribute, and clause must
-    stay exactly as shown.
-
-    ## The task
-
-    #{String.trim(spec)}
-
-    ## The module with `#{cand.name}` missing
-
-    ```elixir
-    #{String.trim_trailing(skeleton, "\n")}
-    ```
-
-    Give me only the complete implementation of `#{cand.name}` (including the
-    `@doc`/`@spec`/`@impl` lines shown above it in the module, if any) — the
-    function alone, not the whole module.
-    """
+    GenTask.SfimTemplate.prompt(cand.name, spec, skeleton)
   end
 
   defp next_index(prefix) do

@@ -371,6 +371,6 @@ defmodule StackablePromoCodes do
 end
 ```
 
-Give me only the complete implementation of `fetch_code` (including the
-`@doc`/`@spec`/`@impl` lines shown above it in the module, if any) — the
+Give me only the complete implementation of `fetch_code` (including any
+`@doc`/`@spec`/`@impl` lines that belong directly above it) — the
 function alone, not the whole module.

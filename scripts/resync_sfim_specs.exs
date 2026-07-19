@@ -87,6 +87,11 @@ defmodule ResyncSfimSpecs do
     end
   end
 
+  # FULL-prompt re-derivation (harmonization upgrade, 2026-07-19): the whole
+  # child prompt is rebuilt through GenTask.SfimTemplate — the single source
+  # the miner also uses — from (target name, current parent spec, the child's
+  # own embedded skeleton). Spec drift and template-wording drift are the same
+  # failure to this gate.
   defp resync(dir, apply?) do
     base = Path.basename(dir)
     parent = (base |> String.split("_") |> Enum.drop(-1) |> Enum.join("_")) <> "_01"
@@ -94,15 +99,16 @@ defmodule ResyncSfimSpecs do
 
     with {:parent, {:ok, spec}} <- {:parent, File.read(parent_prompt)},
          {:ok, prompt} <- File.read(Path.join(dir, "prompt.md")),
-         {:split, {:ok, head, embedded, tail}} <- {:split, split_prompt(prompt)} do
-      expected = String.trim(spec)
+         {:parts, {:ok, name}} <- {:parts, target_name(prompt)},
+         {:skel, {:ok, skeleton}} <- {:skel, try_extract_skeleton(prompt)} do
+      expected = GenTask.SfimTemplate.prompt(name, spec, skeleton)
 
       cond do
-        embedded == expected ->
+        prompt == expected ->
           {:unchanged, dir, nil}
 
         apply? ->
-          File.write!(Path.join(dir, "prompt.md"), head <> expected <> tail)
+          File.write!(Path.join(dir, "prompt.md"), expected)
           {:resynced, dir, nil}
 
         true ->
@@ -110,26 +116,28 @@ defmodule ResyncSfimSpecs do
       end
     else
       {:parent, _} -> {:error, dir, "parent prompt missing: #{parent_prompt}"}
-      {:split, {:error, msg}} -> {:error, dir, msg}
+      {:parts, {:error, msg}} -> {:error, dir, msg}
+      {:skel, {:error, msg}} -> {:error, dir, msg}
       _ -> {:error, dir, "prompt.md unreadable"}
     end
   end
 
-  # head | spec | tail, split on the template's own markers. The module marker
-  # is matched as a full line (`## The module with `…` missing`) and the LAST
-  # occurrence wins — the embedded spec may contain `## ` headers of its own,
-  # but the template's module fence always sits below the spec.
-  defp split_prompt(prompt) do
-    with [pre, rest] <- String.split(prompt, @task_marker, parts: 2),
-         [_ | _] = matches <-
-           Regex.scan(~r/\n\n## The module with `[^`\n]+` missing\n/, rest, return: :index) do
-      {mod_off, _len} = matches |> List.last() |> hd()
-      spec = binary_part(rest, 0, mod_off)
-      tail = binary_part(rest, mod_off, byte_size(rest) - mod_off)
-      {:ok, pre <> @task_marker, spec, tail}
-    else
-      _ -> {:error, "sfim template markers not found (task/module sections)"}
+  # The target name from the template's own marker line; the LAST occurrence
+  # wins — the embedded spec may contain `## ` headers of its own, but the
+  # template's module marker always sits below the spec.
+  defp target_name(prompt) do
+    case Regex.scan(~r/\n## The module with `([^`\n]+)` missing\n/, prompt) do
+      [] -> {:error, "sfim template markers not found (module marker)"}
+      matches -> {:ok, matches |> List.last() |> Enum.at(1)}
     end
+  end
+
+  # The evaluator's own fence selection (LAST TODO-bearing ```elixir fence) —
+  # the gate re-derives with exactly what grading would read.
+  defp try_extract_skeleton(prompt) do
+    {:ok, EvalTask.Fim.extract_skeleton(prompt)}
+  rescue
+    e -> {:error, "skeleton extraction failed: #{Exception.message(e) |> String.slice(0, 120)}"}
   end
 
   defp match_glob?(name, glob) do
@@ -177,17 +185,31 @@ defmodule ResyncSfimSpecs do
         healed = match?({:resynced, _, _}, resync(sb_child, true))
         again = match?({:unchanged, _, _}, resync(sb_child, false))
 
-        embedded_now =
-          sb_child |> Path.join("prompt.md") |> File.read!() |> split_prompt() |> elem(2)
+        child_prompt = Path.join(sb_child, "prompt.md")
 
-        byte_equal = embedded_now == String.trim(File.read!(sb_parent_prompt))
+        File.write!(
+          child_prompt,
+          String.replace(File.read!(child_prompt), "Give me only", "Provide only")
+        )
+
+        tdrift = match?({:would_resync, _, _}, resync(sb_child, false))
+        theal = match?({:resynced, _, _}, resync(sb_child, true))
+
+        prompt_now = File.read!(child_prompt)
+        {:ok, name} = target_name(prompt_now)
+        {:ok, skel} = try_extract_skeleton(prompt_now)
+
+        byte_equal =
+          prompt_now == GenTask.SfimTemplate.prompt(name, File.read!(sb_parent_prompt), skel)
 
         [
           {"a clean copied family passes", clean},
           {"a planted PARENT spec edit is detected", drift},
           {"--apply heals the child", healed},
           {"the healed child passes again", again},
-          {"healed embed equals the new parent spec byte-for-byte", byte_equal}
+          {"a planted TEMPLATE-wording edit is detected", tdrift},
+          {"--apply heals the template drift", theal},
+          {"healed prompt equals the single-source template byte-for-byte", byte_equal}
         ]
       after
         if prev,

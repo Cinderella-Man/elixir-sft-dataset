@@ -254,6 +254,6 @@ defmodule MaskingServer do
 end
 ```
 
-Give me only the complete implementation of `digit?` (including the
-`@doc`/`@spec`/`@impl` lines shown above it in the module, if any) — the
+Give me only the complete implementation of `digit?` (including any
+`@doc`/`@spec`/`@impl` lines that belong directly above it) — the
 function alone, not the whole module.

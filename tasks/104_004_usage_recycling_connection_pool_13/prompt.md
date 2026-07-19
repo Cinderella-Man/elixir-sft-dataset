@@ -279,6 +279,6 @@ defmodule RecyclingPool do
 end
 ```
 
-Give me only the complete implementation of `remove_waiter_by_mon` (including the
-`@doc`/`@spec`/`@impl` lines shown above it in the module, if any) — the
+Give me only the complete implementation of `remove_waiter_by_mon` (including any
+`@doc`/`@spec`/`@impl` lines that belong directly above it) — the
 function alone, not the whole module.
