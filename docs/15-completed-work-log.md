@@ -9,6 +9,21 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-19 (night) — FULL-CORPUS SWEEP ALL GREEN + F25 (tool
+  defect) fixed: the night closes with the whole corpus machine-proven.**
+  `validate --fim` over ALL 3,532 fim dirs: every target exercised,
+  every mutant killed. Plain perfect-score validate over ALL 12,556
+  gradable tasks: ALL PERFECT (10 flake suspects re-checked, all
+  recovered). The first fim pass had exactly ONE red — F25:
+  EvalTask.Fim.mutate reprint-mangled @doc heredocs carrying escaped
+  doctest quotes/interpolation (Macro.to_string emits an invalid
+  literal), a false "mutant did not COMPILE" on the sound
+  096_001_input_sanitizer_module_12. Fixed by replacing doc-family attr
+  nodes with a harmless :ok literal before reprint (a mutant needs no
+  attrs; data attrs stay for whole-module candidates); 406 tests green;
+  the class is structural, so the fix covers every current and future
+  doctest-bearing gold. Commit db5e9d44.
+
 - **2026-07-19 (night) — STEP 3 + PHASE D CLOSED: decontam re-run over
   the grown corpus CLEAN (0 of 25,112 corpus texts flagged against the
   786 public-benchmark rows), export refreshed to 12,466 examples

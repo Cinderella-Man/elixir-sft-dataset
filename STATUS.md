@@ -49,18 +49,14 @@ first blind solves + the 007_002 directed keep), six-gate cascade + one
 commit each (f1777c18, d80329e9, 8f09a509, 6f4c80d6) — docs/15 entry
 written. Next: Phase D decontam re-run, then STEP 3.**
 
-**RUNBOOK STEPs 0–4: ALL DONE + PUSHED (b047b676..9a89fdab green; the
-new sfim-spec pre-push block ran live in it, unchanged: 67). Full
-stories in docs/15.**
-
-**FULL-CORPUS SWEEP (the honest tail of Phase D — the sample validated
-only 253 of 3,532 fim dirs, and validate's AST-blank mutant differs
-from the miner's gut()): IN FLIGHT since 02:25, detached —
-logs/full_sweep.log, `validate --fim` (all fim) then plain
-perfect-score validate, sequential. Idempotent relaunch:
-scripts/run_detached.sh logs/full_sweep.log sh -c "elixir
-scripts/validate.exs --fim && elixir scripts/validate.exs". Expect
-hours; any FAIL is a rule-7 finding for the morning.**
+**NIGHT COMPLETE (03:05): runbook STEPs 0–4 all done + pushed, roadmap
+Phases A–D all done, and the FULL-CORPUS SWEEP is ALL GREEN — fim
+mutation over all 3,532 fim dirs (every target exercised) AND
+perfect-score over all 12,556 gradable tasks (ALL PERFECT). One tool
+defect found+fixed en route (F25, mutate's heredoc reprint — docs/15).
+Everything actionable without Kamil is finished; what remains below is
+Kamil's: the Phase E fork, the 110_002 packet, the two non-blocking
+notes, and the mode exit conditions.**
 
 **Standing decisions (Kamil, unchanged):** 110_002 keep packet
 (--approve or delete; then retro_audit --only "110_002*" so its staged
