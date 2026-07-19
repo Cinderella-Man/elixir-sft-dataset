@@ -95,6 +95,13 @@ defmodule GenTask.Prompts do
     on_change, hooks), prompt.md MUST state what happens when a callback raises
     (does the server crash, or is the callback isolated?), and the harness must
     include one test pinning that stated behavior.
+  - DOC TRUTH RULE: every behavioral claim in a `@doc` string is a promise with
+    the same standing as prompt.md prose — never write one the module does not
+    implement AND the harness does not exercise (the F12 class: a @doc saying
+    "cancels any pending check" over code that cancels nothing). If a @doc
+    sentence states behavior, either the prompt states it too (so the promise
+    audit anchors a test to it) or the sentence is cut. Docs describe the
+    contract; they never decorate it.
   - Where the contract has a crisp input → output example, put it in the
     solution's `@doc` as an `iex>` doctest AND add `doctest <Module>` to the
     harness so the examples actually execute. Where an algebraic invariant exists
