@@ -41,6 +41,7 @@ defmodule ExportDataset do
     style: "solution.ex",
     dialogue: "solution.ex",
     tdd: "solution.ex",
+    spec_fim: "solution.ex",
     write_test: "test_harness.exs"
   }
 
@@ -58,6 +59,9 @@ defmodule ExportDataset do
     # inverts the framing, not the completion) — same near-duplication
     # discount as tfim; the family-atomic split contains the leak.
     tdd: 0.25,
+    # spec_fim completions are one attribute against a whole shared module of
+    # context — the tfim near-duplication profile, same discount.
+    spec_fim: 0.25,
     test_fim: 0.25
   }
 
@@ -170,7 +174,7 @@ defmodule ExportDataset do
   @doc false
   def ab_of(name) do
     case Regex.run(
-           ~r/^(?:repair_|bugfix_|tfim_|wt_|adapt_|dedoc_|style_|dialog_|tdd_)?(\d{3}_\d{3})/,
+           ~r/^(?:repair_|bugfix_|tfim_|wt_|adapt_|dedoc_|style_|dialog_|tdd_|specfim_)?(\d{3}_\d{3})/,
            name
          ) do
       [_, ab] -> ab
@@ -224,7 +228,7 @@ defmodule ExportDataset do
   @doc false
   def family_of(name) do
     case Regex.run(
-           ~r/^(?:repair_|bugfix_|tfim_|wt_|adapt_|dedoc_|style_|dialog_|tdd_)?(\d{3})_/,
+           ~r/^(?:repair_|bugfix_|tfim_|wt_|adapt_|dedoc_|style_|dialog_|tdd_|specfim_)?(\d{3})_/,
            name
          ) do
       [_, a] -> a

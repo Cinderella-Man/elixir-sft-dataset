@@ -82,6 +82,12 @@ defmodule EvalTask.Discovery do
       String.starts_with?(base, "tdd_") ->
         task(dir, :tdd, sol, found)
 
+      # Spec-FIM: one `@spec` attribute carved out of a working module; the
+      # gold is that attribute, graded by normalized AST equality
+      # (docs/13 §2.8, unparked 2026-07-19).
+      String.starts_with?(base, "specfim_") ->
+        task(dir, :spec_fim, sol, found)
+
       # No harness of its own → a FIM subtask (parent _01 has the harness).
       not has_harness ->
         if EvalTask.Fim.fim_dir?(dir), do: task(dir, :fim, sol, found), else: nil

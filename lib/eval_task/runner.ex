@@ -260,6 +260,113 @@ defmodule EvalTask.Runner do
     end
   end
 
+  @doc """
+  Grade a spec-FIM dir (docs/13 §2.8, 2026-07-19): the candidate must be
+  exactly ONE `@spec` attribute whose normalized AST equals the dir's gold
+  (solution.ex). That single equality check IS the harness — reported as one
+  test so every perfect-score invariant applies unchanged. `compiled` means
+  the skeleton parses with the candidate spliced at the `# TODO: @spec`
+  marker; spec TRUTH for the gold is the parent dialyzer gate's verdict over
+  the identical bytes. Normalization: metadata stripped, `arg :: type`
+  annotations reduced to `type` — spelling-insensitive, structure-exact.
+  """
+  def run_spec_fim(task_dir, sol_file) do
+    prompt = File.read!(Path.join(task_dir, "prompt.md"))
+    raw = File.read!(sol_file)
+    candidate = Fim.extract_candidate(raw)
+    gold = File.read!(Path.join(task_dir, "solution.ex"))
+    analysis = Analysis.analyze(candidate, :fim)
+    skeleton = Fim.extract_skeleton(prompt)
+    marker_re = ~r/^[ \t]*# TODO: @spec[ \t]*$/m
+
+    compile =
+      cond do
+        not Regex.match?(marker_re, skeleton) ->
+          %{
+            compiled: false,
+            compile_warnings: 0,
+            compile_errors: [%{type: "SpecFimSkeleton", message: "no `# TODO: @spec` marker"}]
+          }
+
+        match?(
+          {:error, _},
+          Code.string_to_quoted(
+            Regex.replace(marker_re, skeleton, String.trim_trailing(candidate, "\n"),
+              global: false
+            )
+          )
+        ) ->
+          %{
+            compiled: false,
+            compile_warnings: 0,
+            compile_errors: [
+              %{type: "SpecFimReconstruct", message: "spliced module does not parse"}
+            ]
+          }
+
+        true ->
+          %{compiled: true, compile_warnings: 0, compile_errors: []}
+      end
+
+    equal? =
+      case {normalize_spec(candidate), normalize_spec(gold)} do
+        {{:ok, c}, {:ok, g}} -> c == g
+        _ -> false
+      end
+
+    tests = %{
+      tests_ran: true,
+      tests_total: 1,
+      tests_passed: if(equal?, do: 1, else: 0),
+      tests_failed: if(equal?, do: 0, else: 1),
+      tests_errors: 0
+    }
+
+    finish(compile, analysis, tests, %{})
+  end
+
+  # {:ok, normalized AST} for a source holding exactly one `@spec` attribute.
+  defp normalize_spec(src) do
+    case Code.string_to_quoted(String.trim(src)) do
+      {:ok, {:@, m, [{:spec, m2, [expr]}]}} ->
+        # A no-paren zero-arity head (`@spec foo :: t`) parses as a bare var —
+        # call-normalize it first so the annotation rule below cannot eat it,
+        # and `foo :: t` ≡ `foo() :: t`.
+        quoted = {:@, m, [{:spec, m2, [normalize_head(expr)]}]}
+
+        normalized =
+          Macro.prewalk(quoted, fn
+            # `arg :: type` annotation → `type` (names are documentation, not
+            # structure). The spec's own top-level `head :: return` keeps: its
+            # lhs is a call node, never a bare var.
+            {:"::", _, [{name, _, ctx}, type]} when is_atom(name) and is_atom(ctx) ->
+              type
+
+            {a, _meta, b} ->
+              {a, [], b}
+
+            other ->
+              other
+          end)
+
+        {:ok, normalized}
+
+      _ ->
+        :error
+    end
+  end
+
+  defp normalize_head({:"::", m, [head, ret]}),
+    do: {:"::", m, [call_normalize(head), ret]}
+
+  defp normalize_head({:when, m, [inner, constraints]}),
+    do: {:when, m, [normalize_head(inner), constraints]}
+
+  defp normalize_head(other), do: other
+
+  defp call_normalize({f, m, nil}) when is_atom(f), do: {f, m, []}
+  defp call_normalize(other), do: other
+
   defp run_fim_bundle(task_dir, sol_file, parent, parent_sol) do
     harness = Path.join(parent, "test_harness.exs")
     prompt = File.read!(Path.join(task_dir, "prompt.md"))

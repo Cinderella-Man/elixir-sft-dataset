@@ -50,6 +50,8 @@ defmodule EvalTask.CLI do
                 :dedoc -> Runner.run_dedoc(task_dir, solution_file)
                 :style -> Runner.run_style(task_dir, solution_file)
                 :dialogue -> Runner.run_dialogue(task_dir, solution_file)
+                :tdd -> Runner.run_single(task_dir, solution_file)
+                :spec_fim -> Runner.run_spec_fim(task_dir, solution_file)
               end
 
             emit(result, %{
@@ -76,6 +78,8 @@ defmodule EvalTask.CLI do
           | :dedoc
           | :style
           | :dialogue
+          | :tdd
+          | :spec_fim
   def detect(task_dir, solution_file) do
     base = Path.basename(task_dir)
 
@@ -89,6 +93,12 @@ defmodule EvalTask.CLI do
       String.starts_with?(base, "dedoc_") -> :dedoc
       String.starts_with?(base, "style_") -> :style
       String.starts_with?(base, "dialog_") -> :dialogue
+      # tdd_ grades exactly like :single (own harness copy); the explicit entry
+      # keeps the emitted shape metadata truthful (it used to fall through).
+      String.starts_with?(base, "tdd_") -> :tdd
+      # specfim_ is harness-less like :fim but grades by spec AST-equality —
+      # the fall-through would take the WRONG path, never remove this entry.
+      String.starts_with?(base, "specfim_") -> :spec_fim
       not File.regular?(Path.join(task_dir, "test_harness.exs")) -> :fim
       Bundle.bundle?(File.read!(solution_file)) -> :multifile
       true -> :single

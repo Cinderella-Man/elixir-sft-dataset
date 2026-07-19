@@ -179,7 +179,7 @@ defmodule Validate do
     # boundary, on every validate invocation.
     unparseable =
       for t <- found,
-          t.shape in [:fim, :test_fim],
+          t.shape in [:fim, :test_fim, :spec_fim],
           match?({:error, _}, Code.string_to_quoted(File.read!(t.solution))),
           do: {:fail, t.name, "gold snippet is not standalone-parseable (F24 truncation class)"}
 

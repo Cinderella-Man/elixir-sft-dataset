@@ -127,6 +127,13 @@ jobs:
           out=$(mix run scripts/resync_tdd_embeds.exs)
           echo "$out"
           echo "$out" | grep -q "would_resync\|ERROR" && exit 1 || true
+      # specfim_ dirs are FULLY derived (skeleton + gold from one parent @spec
+      # site) — a parent gold edit stales both files (shape added 2026-07-19).
+      - run: mix run scripts/resync_specfim_embeds.exs -- --self-test
+      - run: |
+          out=$(mix run scripts/resync_specfim_embeds.exs)
+          echo "$out"
+          echo "$out" | grep -q "would_resync\|ERROR" && exit 1 || true
       # wt_ dirs are byte-copies of their parent (module + harness) plus a prompt
       # that embeds the parent SPEC. check_embeds only sees the module fence, so
       # until 2026-07-13 a parent-prompt or harness edit rotted wt_ silently (it
