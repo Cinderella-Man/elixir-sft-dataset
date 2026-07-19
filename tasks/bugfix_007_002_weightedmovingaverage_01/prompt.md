@@ -15,9 +15,9 @@ I need these functions in the public API:
 
 - `WeightedMovingAverage.start_link(opts)` to start the process. It should accept a `:name` option for process registration.
 
-- `WeightedMovingAverage.push(server, name, value)` which appends a numeric value to the named stream. Returns `:ok`.
+- `WeightedMovingAverage.push(server, name, value)` which appends a numeric value to the named stream. Returns `:ok`. The `value` must be a number — guard the function with `is_number/1` so that a non-numeric `value` (e.g. an atom) raises `FunctionClauseError`.
 
-- `WeightedMovingAverage.get(server, name, type, period)` which computes an average over the named stream. `type` is either `:wma` or `:hma`, and `period` is a positive integer. Returns `{:ok, float}` or `{:error, :no_data}` if no values have been pushed, or `{:error, :insufficient_data}` if the stream has fewer values than needed to produce a meaningful HMA (specifically, when `:hma` is requested and the stream has fewer than `period` values; `:wma` with fewer values falls back to cold-start over whatever is available).
+- `WeightedMovingAverage.get(server, name, type, period)` which computes an average over the named stream. `type` is either `:wma` or `:hma`, and `period` is a positive integer. Guard the function so that any `type` other than `:wma` or `:hma` raises `FunctionClauseError`. Returns `{:ok, float}` or `{:error, :no_data}` if no values have been pushed, or `{:error, :insufficient_data}` if the stream has fewer values than needed to produce a meaningful HMA (specifically, when `:hma` is requested and the stream has fewer than `period` values; `:wma` with fewer values falls back to cold-start over whatever is available).
 
 **WMA math.** For a window of N values `[v_newest, v2, ..., v_oldest]`, WMA = `(N*v_newest + (N-1)*v2 + ... + 1*v_oldest) / (N + (N-1) + ... + 1)`. The denominator is `N*(N+1)/2`. Cold-start (fewer than `period` values available): compute the WMA over all available values, with weights adjusted — e.g. with 3 of 5 values available, weights are `[3, 2, 1]` and denominator is `6`.
 
