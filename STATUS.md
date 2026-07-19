@@ -22,33 +22,27 @@ the generator; pilots before full runs; one solved item = one commit)
 job exit OR every 15 min, re-armed on every wake; if the 5h token window
 exhausts, the queued heartbeat re-invokes the session the moment it
 refreshes (detached scripts ride outages on their own). Successor
-sessions: keep this cadence all night. Order tonight: STEP 1 land (in
-flight) → STEP 2 keep_land → STEP 3 refresh → STEP 4 file + IMPLEMENT
-the spec-embed gate → Phase B prep (docs/16 multi-turn format) if night
-remains. STEP 0 (sfim reclaim) is DONE; Phase C + the F24 carver finding
-it surfaced are fixed, verified and logged — full story in docs/15
-(2026-07-19 night entry).
+sessions: keep this cadence all night. Order tonight: STEP 2 keep_land
+(in flight) → Phase D decontam re-run → STEP 3 refresh (will include the
+182 dialog_ units — Phase B turned out FULLY BUILT: miner + dirs +
+exporter :dialogue arm + round-trip all exist; roadmap section below is
+stale on this) → STEP 4 wire the spec-embed gate
+(scripts/resync_sfim_specs.exs is WRITTEN + parse-checked; self-test +
+corpus dry-run + pre-push/CI wiring + commit remain). STEPs 0-1 are
+DONE + PUSHED (0844ab13..b047b676, all pre-push gates green): Phase C
+shipped at 2,530 units through the F24 carver finding — full story in
+docs/15 (2026-07-19 night entry).
 
-**STEP 1 — land the sfim yield. STATE 02:05: verified end-to-end (F24
-fixed + gated at miner AND validate/CI; parse-scan 0 bad; dry-run census
-0 uncovered; sample validate 253 fim dirs ALL PASS incl. every former
-red) — commit + push IN FLIGHT.**
-Landing commit stages: tasks/ via `git add -A tasks/` (2,530 new `_0N`
-dirs + 4 tracked pilot-dir deletions; corpus QUIET so -A is safe),
-scripts/mint_sfim.exs + scripts/validate.exs (F24 fix + gates),
-STATUS.md + docs/15, `git add -f` logs/sfim_rejected.jsonl (rebuilt
-fresh, 118 rows) + logs/sfim_rejected_pre_f24.jsonl (forensic archive) +
-logs/tfim_rejected.jsonl (prior-phase residue). Two LOCAL commits ride
-along. Push runs DETACHED (pre-push hook is long): logs/push_step1.log —
-if a gate fails, read that log FULLY. Open notes for Kamil (non-
-blocking): (a) template-parenthetical harmonization — "including the
-@doc/@spec lines shown above it, if any" is mildly stale for doc-carved
-units (docs live in the GOLD now, absent from the skeleton; docless
-answers still grade 1.0; the gold's shape teaches house-style
-documenting, which is what we want) — harmonize via the STEP-4 resync
-gate in one deterministic pass if desired; (b) optional --self-test
-T-gate alignment for the validate-side F24 check (bite machine-proven
-tonight: fired on 1,084 real units + 4 fresh honest rejects).
+**Open notes for Kamil (non-blocking, from the F24 landing):**
+(a) template-parenthetical harmonization — the sfim prompt's "including
+the @doc/@spec lines shown above it, if any" is mildly stale for
+doc-carved units (docs live in the GOLD now, absent from the skeleton;
+docless answers still grade 1.0; the gold's shape teaches house-style
+documenting, which is what we want) — harmonize via the new
+resync_sfim_specs gate in one deterministic pass if desired;
+(b) optional --self-test T-gate alignment for the validate-side F24
+check (bite machine-proven: fired on 1,084 real units + 4 honest
+rejects).
 
 **STEP 2 — follow-up C landings (Kamil approved 2026-07-19; candidates
 are DRAFTED and verified-by-diff in `logs/followup_c_candidates/`).**
