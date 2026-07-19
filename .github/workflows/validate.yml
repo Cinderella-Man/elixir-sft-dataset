@@ -108,6 +108,9 @@ jobs:
       - run: |
           mix run scripts/export_dataset.exs
           mix run scripts/export_dataset.exs -- --check
+      # F24 corpus-integrity parse gate non-vacuity: a planted fim gold opening
+      # with a dangling heredoc closer must be flagged (2026-07-19).
+      - run: elixir scripts/validate.exs --self-test-integrity
       # sfim children embed the parent SPEC verbatim ("## The task" section);
       # module-FIM resync only re-derives the skeleton fence, so a parent-prompt
       # edit silently staled them (gap filed + closed 2026-07-19, F24 night).

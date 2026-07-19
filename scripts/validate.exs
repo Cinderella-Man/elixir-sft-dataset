@@ -70,11 +70,18 @@ defmodule Validate do
           semantic_mutants: :boolean,
           decontam: :boolean,
           self_test: :boolean,
+          self_test_integrity: :boolean,
           sm_limit: :integer,
           stability: :integer,
           only: :string
         ]
       )
+
+    if opts[:self_test_integrity] do
+      if integrity_self_test(),
+        do: finish(true, "INTEGRITY SELF-TEST PASSED — planted unparseable fim gold flagged ✓"),
+        else: finish(false, "INTEGRITY SELF-TEST FAILED — planted unparseable fim gold NOT flagged")
+    end
 
     discovered = EvalTask.Discovery.all()
     {tasks, corpus_failures} = split_corpus(discovered, opts[:only])
@@ -183,6 +190,60 @@ defmodule Validate do
         ) ++ unparseable
 
     {found, failures}
+  end
+
+  # Proves the F24 corpus-integrity gate bites (docs/12 §5.5 non-vacuity
+  # convention): a REAL fim child is cloned to a fresh sibling index, its gold
+  # corrupted with the dangling-heredoc-closer signature, and split_corpus must
+  # flag exactly that dir. The plant lives only inside the try/after.
+  defp integrity_self_test do
+    src =
+      Path.wildcard("tasks/[0-9]*")
+      |> Enum.filter(&File.dir?/1)
+      |> Enum.find(fn d ->
+        base = Path.basename(d)
+
+        child? =
+          case base |> String.split("_") |> List.last() |> Integer.parse() do
+            {n, ""} -> n >= 2
+            _ -> false
+          end
+
+        child? and File.regular?(Path.join(d, "prompt.md")) and
+          File.regular?(Path.join(d, "solution.ex")) and
+          not File.regular?(Path.join(d, "test_harness.exs"))
+      end) || raise "integrity self-test needs at least one fim child in tasks/"
+
+    fam = src |> Path.basename() |> String.split("_") |> Enum.drop(-1) |> Enum.join("_")
+
+    next =
+      Path.wildcard("tasks/#{fam}_*")
+      |> Enum.map(fn d ->
+        case d |> Path.basename() |> String.split("_") |> List.last() |> Integer.parse() do
+          {n, ""} -> n
+          _ -> 0
+        end
+      end)
+      |> Enum.max()
+      |> Kernel.+(1)
+
+    plant = "tasks/#{fam}_#{String.pad_leading(to_string(next), 2, "0")}"
+    File.cp_r!(src, plant)
+    File.write!(Path.join(plant, "solution.ex"), "\"\"\"\n" <> File.read!(Path.join(plant, "solution.ex")))
+
+    try do
+      {_found, failures} = split_corpus(EvalTask.Discovery.all(), Path.basename(plant))
+
+      caught? =
+        Enum.any?(failures, fn {:fail, name, msg} ->
+          name == Path.basename(plant) and msg =~ "standalone-parseable"
+        end)
+
+      IO.puts("  #{if caught?, do: "caught ✓", else: "MISSED ✗"}  planted corrupt gold at #{plant}")
+      caught?
+    after
+      File.rm_rf!(plant)
+    end
   end
 
   defp finish(true, msg) do
