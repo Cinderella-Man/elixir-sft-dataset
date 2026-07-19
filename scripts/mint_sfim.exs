@@ -563,4 +563,6 @@ defmodule MintSfim do
   end
 end
 
-MintSfim.main(System.argv())
+# Loadable from lib (GenTask.DeriveMiners) with SCRIPTS_NO_AUTORUN=1 — the
+# script stays the single implementation of this miner.
+unless System.get_env("SCRIPTS_NO_AUTORUN"), do: MintSfim.main(System.argv())

@@ -94,7 +94,14 @@ defmodule GenTask.WorkTest do
                fim: 3,
                write_test: 1,
                test_fim: 3,
-               bugfix: 3
+               bugfix: 3,
+               # 2026-07-19 (Kamil: one generation must produce the whole
+               # family): the deterministic miners are registry work types —
+               # a bare base owes its function carves and its tests-as-spec
+               # inversion too (no @spec sites and no bundle files in this
+               # sandbox module, so specfim/bundlefim correctly owe 0).
+               sfim: 3,
+               tdd: 1
              }
     end
 

@@ -174,4 +174,6 @@ defmodule MintTdd do
   end
 end
 
-MintTdd.main(System.argv())
+# Loadable from lib (GenTask.DeriveMiners) with SCRIPTS_NO_AUTORUN=1 — the
+# script stays the single implementation of this miner.
+unless System.get_env("SCRIPTS_NO_AUTORUN"), do: MintTdd.main(System.argv())

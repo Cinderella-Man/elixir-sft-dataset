@@ -94,6 +94,13 @@ or re-weight by tier without re-deriving anything.
 | `adapt` | `solution.ex` | the variation's module, produced by modifying the embedded base gold |
 | `dedoc` | `solution.ex` | the parent's documented module (the prompt embeds it stripped of all doc/spec attributes) |
 | `style` | `solution.ex` | the accepted attempt's module (the prompt embeds the working-but-style-rejected attempt + the style review) |
+| `dialogue` | `solution.ex` | the accepted final module of a frozen repair chain (§5b — multi-turn) |
+| `tdd` | `solution.ex` | the module that passes the embedded test suite (tests-as-spec; gold is a parent byte-copy, weight 0.25) |
+| `spec_fim` | `solution.ex` | the ONE `@spec` attribute the prompt blanked (`# TODO: @spec` marker; graded by normalized AST equality) |
+
+Bundle-FIM units (2026-07-19, "write the missing file") are `fim`-shaped
+`_0N` children of the six multi-file roots — the prompt blanks one whole
+file of the bundle; the existing `fim` row covers them.
 
 `write_test` is the one shape whose gold is NOT `solution.ex` (its
 `solution.ex` is the *input* module, embedded in the prompt). Getting this

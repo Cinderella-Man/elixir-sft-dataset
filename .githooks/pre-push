@@ -119,6 +119,15 @@ if [ -n "$families" ]; then
       "run: mix run scripts/resync_specfim_embeds.exs -- --only \"$globs\" --apply"
     exit 1
   fi
+
+  echo "[pre-push] bundle-FIM staleness check on touched families"
+  bfim_out=$(mix run scripts/resync_bundlefim_embeds.exs -- --only "$globs")
+  echo "$bfim_out" | tail -1
+  if echo "$bfim_out" | grep -q "would_resync\|ERROR"; then
+    echo "[pre-push] FAIL: bundle-FIM dirs drifted from their parents —" \
+      "run: mix run scripts/resync_bundlefim_embeds.exs -- --only \"$globs\" --apply"
+    exit 1
+  fi
 else
   echo "[pre-push] no task families touched — skipping corpus gates"
 fi

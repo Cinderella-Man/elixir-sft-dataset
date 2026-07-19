@@ -114,6 +114,42 @@ defmodule GenTask.Work do
         skip?: & &1.skip_dedoc,
         missing: &missing_dedoc/2,
         runner: {GenTask.Dedoc, :run}
+      },
+      %{
+        key: :sfim,
+        desc: "deterministic code-FIM carve of every uncovered function per _01 (…_0N)",
+        llm?: false,
+        stage: :derived,
+        skip?: & &1.skip_sfim,
+        missing: &missing_sfim/2,
+        runner: {GenTask.DeriveMiners, :sfim_run}
+      },
+      %{
+        key: :tdd,
+        desc: "one tests-as-spec inversion per _01 (tdd_…)",
+        llm?: false,
+        stage: :derived,
+        skip?: & &1.skip_tdd,
+        missing: &missing_tdd/2,
+        runner: {GenTask.DeriveMiners, :tdd_run}
+      },
+      %{
+        key: :specfim,
+        desc: "one @spec-writing unit per typespec site per _01 (specfim_…_NN)",
+        llm?: false,
+        stage: :derived,
+        skip?: & &1.skip_specfim,
+        missing: &missing_specfim/2,
+        runner: {GenTask.DeriveMiners, :specfim_run}
+      },
+      %{
+        key: :bundlefim,
+        desc: "one write-this-file unit per bundle file of multi-file _01s (…_0N)",
+        llm?: false,
+        stage: :derived,
+        skip?: & &1.skip_bundlefim,
+        missing: &missing_bundlefim/2,
+        runner: {GenTask.DeriveMiners, :bundlefim_run}
       }
     ]
   end
@@ -276,6 +312,206 @@ defmodule GenTask.Work do
 
   defp missing_dedoc(%Catalog.Seed{} = seed, cfg) do
     GenTask.Dedoc.missing_units(seed, cfg)
+  end
+
+  # ── deterministic miner counts (sfim / tdd / specfim, 2026-07-19) ───────────
+  # Cheap disk-only planning proxies; the RUNNER's own census (the miner
+  # script's, with its full gate + reject-ledger context) stays authoritative.
+
+  defp missing_sfim(%Catalog.Seed{skip?: true}, _cfg), do: 0
+
+  defp missing_sfim(%Catalog.Seed{} = seed, cfg) do
+    root = Path.join(cfg.tasks_dir, seed.task_id)
+    family = String.replace_suffix(seed.task_id, "_01", "")
+    sol = Path.join(root, "solution.ex")
+
+    with true <- File.regular?(sol),
+         true <- File.regular?(Path.join(root, "test_harness.exs")),
+         src = File.read!(sol),
+         false <- EvalTask.Bundle.bundle?(src) do
+      covered =
+        Path.wildcard("#{cfg.tasks_dir}/#{family}_*")
+        |> Enum.filter(fn d ->
+          File.dir?(d) and
+            match?(
+              {n, ""} when n >= 2,
+              d |> Path.basename() |> String.split("_") |> List.last() |> Integer.parse()
+            )
+        end)
+        |> Enum.flat_map(fn d ->
+          case File.read(Path.join(d, "solution.ex")) do
+            {:ok, body} -> fn_names(body)
+            _ -> []
+          end
+        end)
+        |> MapSet.new()
+
+      sha = GenTask.CycleLog.content_sha(src)
+      dead = ledger_keys(cfg, "sfim_rejected.jsonl")
+
+      src
+      |> fn_names()
+      |> Enum.reject(&MapSet.member?(covered, &1))
+      |> Enum.reject(&MapSet.member?(dead, "#{sha}:#{&1}"))
+      |> length()
+    else
+      _ -> 0
+    end
+  end
+
+  defp missing_tdd(%Catalog.Seed{skip?: true}, _cfg), do: 0
+
+  defp missing_tdd(%Catalog.Seed{} = seed, cfg) do
+    root = Path.join(cfg.tasks_dir, seed.task_id)
+    family = String.replace_suffix(seed.task_id, "_01", "")
+    sol = Path.join(root, "solution.ex")
+    harness = Path.join(root, "test_harness.exs")
+    manifest = Path.join(root, "manifest.exs")
+
+    with true <- File.regular?(sol),
+         true <- File.regular?(harness),
+         false <- File.dir?("#{cfg.tasks_dir}/tdd_#{family}"),
+         src = File.read!(sol),
+         false <- EvalTask.Bundle.bundle?(src),
+         false <- File.regular?(manifest) and File.read!(manifest) =~ ~r/db:\s*:postgres/,
+         sha = GenTask.CycleLog.content_sha(src <> File.read!(harness)),
+         false <- MapSet.member?(ledger_keys(cfg, "tdd_rejected.jsonl"), sha) do
+      1
+    else
+      _ -> 0
+    end
+  end
+
+  defp missing_specfim(%Catalog.Seed{skip?: true}, _cfg), do: 0
+
+  defp missing_specfim(%Catalog.Seed{} = seed, cfg) do
+    root = Path.join(cfg.tasks_dir, seed.task_id)
+    family = String.replace_suffix(seed.task_id, "_01", "")
+    sol = Path.join(root, "solution.ex")
+    manifest = Path.join(root, "manifest.exs")
+
+    with true <- File.regular?(sol),
+         true <- File.regular?(Path.join(root, "test_harness.exs")),
+         src = File.read!(sol),
+         false <- EvalTask.Bundle.bundle?(src),
+         false <- File.regular?(manifest) and File.read!(manifest) =~ ~r/db:\s*:postgres/ do
+      covered =
+        Path.wildcard("#{cfg.tasks_dir}/specfim_#{family}_*")
+        |> Enum.flat_map(fn d ->
+          case File.read(Path.join(d, "prompt.md")) do
+            {:ok, p} ->
+              case Regex.run(~r/the `@spec` for\n?`([a-z_0-9?!]+\/\d+)` has been removed/, p) do
+                [_, id] -> [id]
+                _ -> []
+              end
+
+            _ ->
+              []
+          end
+        end)
+        |> MapSet.new()
+
+      sha = GenTask.CycleLog.content_sha(src)
+      dead = ledger_keys(cfg, "specfim_rejected.jsonl")
+
+      GenTask.SpecFim.spec_sites(src)
+      |> Enum.reject(&match?({:invalid, _}, &1.id))
+      |> Enum.reject(&MapSet.member?(covered, &1.id))
+      |> Enum.reject(&MapSet.member?(dead, "#{sha}:#{&1.id}"))
+      |> length()
+    else
+      _ -> 0
+    end
+  end
+
+  defp missing_bundlefim(%Catalog.Seed{skip?: true}, _cfg), do: 0
+
+  defp missing_bundlefim(%Catalog.Seed{} = seed, cfg) do
+    root = Path.join(cfg.tasks_dir, seed.task_id)
+    family = String.replace_suffix(seed.task_id, "_01", "")
+    sol = Path.join(root, "solution.ex")
+
+    with true <- File.regular?(sol),
+         true <- File.regular?(Path.join(root, "test_harness.exs")),
+         src = File.read!(sol),
+         true <- EvalTask.Bundle.bundle?(src) do
+      covered =
+        Path.wildcard("#{cfg.tasks_dir}/#{family}_*")
+        |> Enum.filter(fn d ->
+          File.dir?(d) and
+            match?(
+              {n, ""} when n >= 2,
+              d |> Path.basename() |> String.split("_") |> List.last() |> Integer.parse()
+            )
+        end)
+        |> Enum.flat_map(fn d ->
+          case File.read(Path.join(d, "prompt.md")) do
+            {:ok, p} ->
+              case Regex.run(~r/## The bundle with `([^`\n]+)` missing/, p) do
+                [_, path] -> [path]
+                _ -> []
+              end
+
+            _ ->
+              []
+          end
+        end)
+        |> MapSet.new()
+
+      sha = GenTask.CycleLog.content_sha(src)
+      dead = ledger_keys(cfg, "bundlefim_rejected.jsonl")
+
+      EvalTask.Bundle.parse(src)
+      |> Enum.reject(fn {path, _} -> MapSet.member?(covered, path) end)
+      |> Enum.reject(fn {path, _} -> MapSet.member?(dead, "#{sha}:#{path}") end)
+      |> length()
+    else
+      _ -> 0
+    end
+  end
+
+  defp fn_names(src) do
+    case Code.string_to_quoted(src) do
+      {:ok, ast} ->
+        {_ast, acc} =
+          Macro.prewalk(ast, [], fn
+            {op, _m, [head | _]} = node, acc when op in [:def, :defp] ->
+              case head_name(head) do
+                nil -> {node, acc}
+                n -> {node, [n | acc]}
+              end
+
+            node, acc ->
+              {node, acc}
+          end)
+
+        acc |> Enum.reverse() |> Enum.uniq()
+
+      _ ->
+        []
+    end
+  end
+
+  defp head_name({:when, _, [inner | _]}), do: head_name(inner)
+  defp head_name({name, _, _}) when is_atom(name), do: to_string(name)
+  defp head_name(_), do: nil
+
+  defp ledger_keys(cfg, file) do
+    case File.read(Path.join(cfg.logs_dir, file)) do
+      {:ok, body} ->
+        body
+        |> String.split("\n", trim: true)
+        |> Enum.flat_map(fn line ->
+          case Jason.decode(line) do
+            {:ok, %{"key" => k}} -> [k]
+            _ -> []
+          end
+        end)
+        |> MapSet.new()
+
+      _ ->
+        MapSet.new()
+    end
   end
 
   defp a(%Catalog.Seed{num: num}), do: Catalog.pad3(num)

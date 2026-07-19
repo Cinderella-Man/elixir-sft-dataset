@@ -134,6 +134,13 @@ jobs:
           out=$(mix run scripts/resync_specfim_embeds.exs)
           echo "$out"
           echo "$out" | grep -q "would_resync\|ERROR" && exit 1 || true
+      # bundle-FIM dirs are FULLY derived (holed bundle + one file's verbatim
+      # content) — a parent prompt or bundle edit stales them (2026-07-19).
+      - run: mix run scripts/resync_bundlefim_embeds.exs -- --self-test
+      - run: |
+          out=$(mix run scripts/resync_bundlefim_embeds.exs)
+          echo "$out"
+          echo "$out" | grep -q "would_resync\|ERROR" && exit 1 || true
       # wt_ dirs are byte-copies of their parent (module + harness) plus a prompt
       # that embeds the parent SPEC. check_embeds only sees the module fence, so
       # until 2026-07-13 a parent-prompt or harness edit rotted wt_ silently (it

@@ -239,21 +239,27 @@ defmodule FormatCorpus do
     {:ok, out}
   end
 
-  # Split an sfim-templated prompt at its LAST `## The module with …` marker
-  # line; nil for every other prompt (LLM-era fim/tfim keep full-fence gating).
-  defp sfim_split(orig) do
-    if String.starts_with?(orig, "# Implement the missing function") do
-      case Regex.scan(~r/\n## The module with `[^`\n]+` missing\n/, orig, return: :index) do
-        [] ->
-          nil
+  # Split a spec-embedding templated prompt (sfim or bundle-fim) at its LAST
+  # section-marker line; nil for every other prompt (LLM-era fim/tfim keep
+  # full-fence gating).
+  @spec_embed_templates [
+    {"# Implement the missing function", ~r/\n## The module with `[^`\n]+` missing\n/},
+    {"# Implement the missing file", ~r/\n## The bundle with `[^`\n]+` missing\n/}
+  ]
 
-        ms ->
-          {off, _} = ms |> List.last() |> hd()
-          {binary_part(orig, 0, off), binary_part(orig, off, byte_size(orig) - off)}
+  defp sfim_split(orig) do
+    Enum.find_value(@spec_embed_templates, fn {header, marker_re} ->
+      if String.starts_with?(orig, header) do
+        case Regex.scan(marker_re, orig, return: :index) do
+          [] ->
+            nil
+
+          ms ->
+            {off, _} = ms |> List.last() |> hd()
+            {binary_part(orig, 0, off), binary_part(orig, off, byte_size(orig) - off)}
+        end
       end
-    else
-      nil
-    end
+    end)
   end
 
   defp formattable_part?(open) do
