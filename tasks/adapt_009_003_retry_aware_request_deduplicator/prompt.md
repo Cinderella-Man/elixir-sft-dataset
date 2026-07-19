@@ -160,9 +160,15 @@ I need these functions in the public API:
 
   Retry behaviour: if `func` raises or returns `{:error, reason}`, the GenServer schedules a retry after an exponentially increasing delay: `min(base_delay_ms * 2^attempt, max_delay_ms)`. On retry, `func` is called again in a new spawned Task. If `func` eventually succeeds within the retry budget, all waiting callers receive the success result. If all retries are exhausted, all waiting callers receive the last error.
 
+  The caller blocks until the final result is available — no matter how long the whole retry sequence takes — so `execute` must not impose its own call timeout (the retry sequence can easily exceed the default 5-second `GenServer.call` timeout).
+  The GenServer itself must NEVER block during retry delays: retries are
+  scheduled asynchronously (the server stays responsive), so an `execute` for a
+  DIFFERENT key completes immediately even while another key's retry sequence
+  is mid-backoff.
+
   Callers that arrive during retries (between attempts) also join the wait list and get the eventual result — they do NOT restart the retry sequence.
 
-  Return value normalisation: if `func` returns `{:ok, value}`, callers get `{:ok, value}`. If `func` returns `{:error, reason}`, callers get `{:error, reason}`. If `func` returns any other term `v`, callers get `{:ok, v}`. If `func` raises, it's treated as `{:error, {:exception, exception}}` for retry purposes.
+  Return value normalisation: if `func` returns `{:ok, value}`, callers get `{:ok, value}`. If `func` returns `{:error, reason}`, callers get `{:error, reason}`. If `func` returns any other term `v`, callers get `{:ok, v}`. If `func` raises, it's treated as `{:error, {:exception, exception}}` for retry purposes — so if all retries are exhausted after a raise, callers get `{:error, {:exception, exception}}` where `exception` is the raised exception struct.
 
 - `RetryDedup.status(server, key)` which returns `:idle` if no execution is in progress for the key, or `{:retrying, attempt, max_retries}` if retries are in progress (attempt is 1-based, counting from the first retry).
 
