@@ -242,6 +242,7 @@ defmodule BloomFilter do
   defp word_index(bit_index) do
     # TODO
   end
+
   defp bit_offset(bit_index), do: rem(bit_index, 64)
 
   defp set_bit(bits, bit_index) do

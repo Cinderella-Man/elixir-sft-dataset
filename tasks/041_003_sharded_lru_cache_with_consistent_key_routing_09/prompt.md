@@ -173,6 +173,7 @@ defmodule LRUCacheSharded do
   defp shard_name_for_index(name, idx) do
     # TODO
   end
+
   defp routing_table_name(name), do: :"#{name}_routing"
 
   # ---- owner callbacks ----

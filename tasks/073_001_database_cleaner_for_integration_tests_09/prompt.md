@@ -249,6 +249,7 @@ defmodule DBCleaner do
 
   defp put_state(state), do: Process.put(@state_key, state)
   defp get_state, do: Process.get(@state_key)
+
   defp clear_state do
     # TODO
   end

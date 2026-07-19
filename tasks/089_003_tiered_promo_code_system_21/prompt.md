@@ -308,6 +308,7 @@ defmodule TieredPromoCodes do
   # --- usage accounting ---
 
   defp total_uses(state, cs), do: Map.get(state.total_uses, cs, 0)
+
   defp user_uses(state, cs, uid) do
     # TODO
   end

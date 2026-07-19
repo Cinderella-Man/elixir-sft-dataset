@@ -419,6 +419,7 @@ defmodule ObjectStorage do
   defp bucket_dir(state, bucket) do
     # TODO
   end
+
   defp objects_dir(state, bucket), do: Path.join(bucket_dir(state, bucket), "objects")
 
   defp encode_key(key) do

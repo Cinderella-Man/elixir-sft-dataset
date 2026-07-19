@@ -155,6 +155,7 @@ defmodule FeatureFlags do
   # ---------------------------------------------------------------------------
 
   defp server, do: :persistent_term.get(@pt_server)
+
   defp table do
     # TODO
   end

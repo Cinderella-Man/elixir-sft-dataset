@@ -157,6 +157,7 @@ defmodule FeatureFlags do
   defp server do
     # TODO
   end
+
   defp table, do: :persistent_term.get(@pt_table, @default_table)
 
   defp record(flag) do

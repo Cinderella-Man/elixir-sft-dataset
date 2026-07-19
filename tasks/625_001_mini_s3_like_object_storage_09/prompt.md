@@ -417,6 +417,7 @@ defmodule ObjectStorage do
   # ── path helpers ───────────────────────────────────────────
 
   defp bucket_dir(state, bucket), do: Path.join(state.buckets_dir, bucket)
+
   defp objects_dir(state, bucket) do
     # TODO
   end

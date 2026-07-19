@@ -229,6 +229,7 @@ defmodule WeightedLRUCache do
   end
 
   defp data_table_name(name), do: :"#{name}_data"
+
   defp order_table_name(name) do
     # TODO
   end

@@ -171,6 +171,7 @@ defmodule LRUCacheSharded do
   end
 
   defp shard_name_for_index(name, idx), do: :"#{name}_shard_#{idx}"
+
   defp routing_table_name(name) do
     # TODO
   end

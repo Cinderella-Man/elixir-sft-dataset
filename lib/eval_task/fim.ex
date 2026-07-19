@@ -275,6 +275,28 @@ defmodule EvalTask.Fim do
     # replaced by a bare `def SIG do # TODO end`.
     stub = signature_stub(pl, def_i, indent)
 
+    # Seam repair, INSIDE the replaced region only (divergence walkers —
+    # bundle reconstruction, check_embeds — treat s..e as the hole, so lines
+    # added here never break their byte-alignment with the parent). Two glue
+    # classes tripped the corpus format gate (37 sfim fences, CI red
+    # 2026-07-19): a carved @doc span gluing the stub's `end` onto the next
+    # definition, and a one-liner target whose BLOCK-form stub lands glued
+    # under a one-liner sibling (the formatter mandates a blank before block
+    # defs). A single blank line between definitions is always
+    # formatter-stable, so both insertions are safe never-over-correcting.
+    stub =
+      case Enum.at(pl, e + 1) do
+        nil -> stub
+        next -> if String.trim(next) in ["", "end"], do: stub, else: stub ++ [""]
+      end
+
+    stub =
+      if s > 0 and String.trim(Enum.at(pl, s - 1)) != "" do
+        ["" | stub]
+      else
+        stub
+      end
+
     (Enum.slice(pl, 0, s) ++ stub ++ Enum.slice(pl, (e + 1)..-1//1))
     |> Enum.join("\n")
   end

@@ -36,8 +36,12 @@ if [ -n "$families" ]; then
   echo "[pre-push] validate touched families: $globs"
   elixir scripts/validate.exs --only "$globs" | tail -1
   elixir scripts/validate.exs --mutants --only "$globs" | tail -1
-  echo "[pre-push] format check on touched families"
-  elixir scripts/format_corpus.exs --check --only "$globs" | tail -1
+  # Corpus-wide, not family-scoped: CI runs this gate unscoped, and the
+  # family cap above (head -20) let 104 deviating embeds reach a green local
+  # push and a red CI on 2026-07-19. The gate is cheap CPU — no reason to
+  # check less than CI does.
+  echo "[pre-push] format check (corpus-wide, matching CI)"
+  elixir scripts/format_corpus.exs --check | tail -1
   echo "[pre-push] bugfix embed staleness check on touched families"
   bugfix_out=$(mix run scripts/resync_bugfix_embeds.exs -- --only "$globs")
   echo "$bugfix_out" | tail -1

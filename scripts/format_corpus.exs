@@ -207,6 +207,27 @@ defmodule FormatCorpus do
   end
 
   defp canonical(:embeds, orig) do
+    # Deterministic-sfim prompts embed the parent prompt.md VERBATIM as their
+    # spec section — the same wt_ policy as above: the parent prompt is
+    # deliberately unformatted (its sha keys the blind-screen ledger) and the
+    # spec bytes are guarded by resync_sfim_specs, so formatting spec fences
+    # here would make the two gates rewrite each other forever (the 104-embed
+    # CI red of 2026-07-19: long example literals, canonical in no gate's
+    # class in the parent, tripped the embeds class via verbatim embedding —
+    # zero real drift, verified byte-true against every parent). Only the
+    # template's own skeleton fence, below the module marker, is derived code
+    # and stays gated.
+    case sfim_split(orig) do
+      {spec_part, skel_part} ->
+        {:ok, formatted} = canonical_fences(skel_part)
+        {:ok, spec_part <> formatted}
+
+      nil ->
+        canonical_fences(orig)
+    end
+  end
+
+  defp canonical_fences(orig) do
     out =
       Regex.replace(@fence, orig, fn whole, body ->
         case Code.string_to_quoted(body) do
@@ -216,6 +237,23 @@ defmodule FormatCorpus do
       end)
 
     {:ok, out}
+  end
+
+  # Split an sfim-templated prompt at its LAST `## The module with …` marker
+  # line; nil for every other prompt (LLM-era fim/tfim keep full-fence gating).
+  defp sfim_split(orig) do
+    if String.starts_with?(orig, "# Implement the missing function") do
+      case Regex.scan(~r/\n## The module with `[^`\n]+` missing\n/, orig, return: :index) do
+        [] ->
+          nil
+
+        ms ->
+          {off, _} = ms |> List.last() |> hd()
+          {binary_part(orig, 0, off), binary_part(orig, off, byte_size(orig) - off)}
+      end
+    else
+      nil
+    end
   end
 
   defp formattable_part?(open) do

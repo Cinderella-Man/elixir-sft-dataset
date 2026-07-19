@@ -363,6 +363,7 @@ defmodule StackablePromoCodes do
   defp total_uses(state, cs) do
     # TODO
   end
+
   defp user_uses(state, cs, uid), do: Map.get(state.user_uses, {cs, uid}, 0)
 
   defp record_use(state, cs, user_id) do

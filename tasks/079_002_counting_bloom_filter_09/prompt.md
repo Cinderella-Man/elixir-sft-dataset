@@ -157,6 +157,7 @@ defmodule CountingBloomFilter do
   # ---------------------------------------------------------------------------
 
   defp optimal_m(n, p), do: max(1, ceil(-n * :math.log(p) / (@ln2 * @ln2)))
+
   defp optimal_k(m, n) do
     # TODO
   end

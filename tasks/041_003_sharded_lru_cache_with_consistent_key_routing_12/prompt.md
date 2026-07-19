@@ -319,6 +319,7 @@ defmodule LRUCacheSharded.Shard do
   defp data_table_name(name) do
     # TODO
   end
+
   defp order_table_name(name), do: :"#{name}_order"
 end
 ```

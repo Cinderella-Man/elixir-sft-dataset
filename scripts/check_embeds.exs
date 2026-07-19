@@ -678,12 +678,33 @@ defmodule CheckEmbeds do
       ctx.kind != :fim -> false
       String.match?(t, @todo) -> true
       t == "end" -> true
+      t == "" -> seam_blank?(j, ctx)
       String.starts_with?(t, "#") -> stub_scaffold_comment?(j, ctx)
       oneliner_stub_head?(t, ctx.gold_trimmed) -> true
       cont_stub_line?(t, ctx.gold_trimmed) -> true
       stub_head_variant?(t, ctx.gold_fn_names) -> true
       true -> false
     end
+  end
+
+  # Rule (k): EvalTask.Fim.build_skeleton's seam repair (2026-07-19) inserts
+  # ONE blank line inside the hole when the carve glued the stub against a
+  # neighboring definition (the corpus format gate mandates the separation).
+  # A blank insert is stub material exactly when it sits directly above the
+  # stub's head or directly below the stub's `end`, with the `# TODO` marker
+  # in reach — anywhere else a blank insert stays a violation.
+  defp seam_blank?(j, ctx) do
+    lines = ctx.elines_trimmed
+    at = &Enum.at(lines, &1, "")
+    todo_near? = fn range -> Enum.any?(range, &String.match?(at.(&1), @todo)) end
+
+    head_like? =
+      stub_head_variant?(at.(j + 1), ctx.gold_fn_names) or
+        oneliner_stub_head?(at.(j + 1), ctx.gold_trimmed) or
+        cont_stub_line?(at.(j + 1), ctx.gold_trimmed)
+
+    (head_like? and todo_near?.((j + 2)..(j + 4))) or
+      (at.(j - 1) == "end" and todo_near?.((j - 4)..(j - 2)))
   end
 
   # Rule b, continuation-one-liner spelling: EvalTask.Fim.signature_stub converts a

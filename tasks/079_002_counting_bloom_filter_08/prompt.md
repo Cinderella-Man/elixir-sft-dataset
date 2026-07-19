@@ -159,6 +159,7 @@ defmodule CountingBloomFilter do
   defp optimal_m(n, p) do
     # TODO
   end
+
   defp optimal_k(m, n), do: max(1, round(m / n * @ln2))
 
   defp hash(item, seed, m), do: :erlang.phash2({seed, item}, m)

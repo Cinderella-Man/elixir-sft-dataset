@@ -173,9 +173,11 @@ defmodule FeatureFlags do
   # ---------------------------------------------------------------------------
 
   defp server, do: :persistent_term.get(@pt_server)
+
   defp state_table do
     # TODO
   end
+
   defp hist_table, do: :persistent_term.get(@pt_hist)
 
   defp current_state(flag) do

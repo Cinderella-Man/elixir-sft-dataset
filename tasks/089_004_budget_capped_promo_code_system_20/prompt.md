@@ -301,6 +301,7 @@ defmodule BudgetPromoCodes do
   # --- accounting ---
 
   defp total_uses(state, cs), do: Map.get(state.total_uses, cs, 0)
+
   defp dispensed_of(state, cs) do
     # TODO
   end

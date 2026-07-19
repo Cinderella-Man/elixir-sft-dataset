@@ -303,6 +303,7 @@ defmodule BudgetPromoCodes do
   defp total_uses(state, cs) do
     # TODO
   end
+
   defp dispensed_of(state, cs), do: Map.get(state.dispensed, cs, 0)
 
   defp add_dispensed(state, cs, amount) do
