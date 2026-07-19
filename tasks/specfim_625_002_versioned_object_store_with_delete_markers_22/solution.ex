@@ -1,0 +1,1 @@
+  @spec current_objects(map()) :: [map()]

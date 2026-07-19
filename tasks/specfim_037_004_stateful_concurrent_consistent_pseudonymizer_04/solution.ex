@@ -1,0 +1,1 @@
+  @spec mapping(pid(), atom()) :: map()

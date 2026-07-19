@@ -1,0 +1,1 @@
+  @spec insert(atom(), keyword() | [atom()]) :: struct()

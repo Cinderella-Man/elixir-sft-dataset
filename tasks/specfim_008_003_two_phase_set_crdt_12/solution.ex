@@ -1,0 +1,1 @@
+  @spec merge_states(tp_state(), tp_state()) :: tp_state()

@@ -1,0 +1,1 @@
+  @spec rank(term, number) :: {:ok, float} | {:error, :empty}

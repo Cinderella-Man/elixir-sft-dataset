@@ -1,0 +1,1 @@
+  @spec complete_multipart(GenServer.server(), String.t()) :: :ok | {:error, atom()}

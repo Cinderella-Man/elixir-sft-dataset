@@ -1,0 +1,1 @@
+  @spec fields_to_compare(state(), stream_record(), stream_record()) :: [atom()]

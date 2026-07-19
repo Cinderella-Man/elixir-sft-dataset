@@ -1,0 +1,1 @@
+  @spec sum_of(t()) :: integer()

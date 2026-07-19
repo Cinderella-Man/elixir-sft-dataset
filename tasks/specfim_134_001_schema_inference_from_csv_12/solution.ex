@@ -1,0 +1,1 @@
+  @spec integer?(String.t()) :: boolean()

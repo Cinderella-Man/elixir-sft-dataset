@@ -1,0 +1,1 @@
+  @spec commit_refs(binary()) :: [hash]

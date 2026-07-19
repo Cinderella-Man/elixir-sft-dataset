@@ -1,0 +1,1 @@
+  @spec strip_trailing_comma(String.t()) :: String.t()

@@ -1,0 +1,1 @@
+  @spec pmap(Enumerable.t(), (term() -> term()), pos_integer()) :: [term()]

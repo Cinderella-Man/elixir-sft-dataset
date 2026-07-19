@@ -1,0 +1,1 @@
+  @spec verify(term(), term(), term(), term()) :: :ok | :error

@@ -1,0 +1,1 @@
+  @spec resample([datapoint()], pos_integer(), keyword()) :: [bucket()]

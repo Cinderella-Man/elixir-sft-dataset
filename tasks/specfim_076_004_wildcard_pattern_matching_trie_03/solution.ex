@@ -1,0 +1,1 @@
+  @spec insert(t, String.t()) :: t

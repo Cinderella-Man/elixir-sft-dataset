@@ -1,0 +1,1 @@
+  @spec create(GenServer.server(), map()) :: {:ok, map()}

@@ -1,0 +1,1 @@
+  @spec busiest_point(t()) :: integer() | nil

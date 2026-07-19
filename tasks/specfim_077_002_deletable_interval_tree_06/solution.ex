@@ -1,0 +1,1 @@
+  @spec overlapping(t(), interval()) :: [interval()]

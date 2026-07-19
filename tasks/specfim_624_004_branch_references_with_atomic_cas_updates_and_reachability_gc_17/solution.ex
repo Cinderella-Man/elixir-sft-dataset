@@ -1,0 +1,1 @@
+  @spec walk([hash], %{optional(hash) => binary()}, MapSet.t(hash)) :: MapSet.t(hash)

@@ -1,0 +1,1 @@
+  @spec increment(term(), non_neg_integer()) :: :ok

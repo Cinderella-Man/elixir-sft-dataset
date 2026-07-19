@@ -1,0 +1,1 @@
+  @spec can?(t(), map(), atom()) :: boolean()

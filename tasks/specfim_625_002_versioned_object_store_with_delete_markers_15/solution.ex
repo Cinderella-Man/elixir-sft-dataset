@@ -1,0 +1,1 @@
+  @spec prepend_version(map(), String.t(), map()) :: map()

@@ -1,0 +1,1 @@
+  @spec count(:ets.tid()) :: non_neg_integer()

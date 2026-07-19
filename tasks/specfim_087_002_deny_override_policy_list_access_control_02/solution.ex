@@ -1,0 +1,1 @@
+  @spec evaluate(atom(), atom(), atom(), [statement()]) :: effect()

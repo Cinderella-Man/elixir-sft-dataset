@@ -1,0 +1,1 @@
+  @spec steal_half(non_neg_integer(), pid()) :: list()

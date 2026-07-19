@@ -1,0 +1,1 @@
+  @spec validate(map()) :: {:ok, %{name: String.t(), price: integer()}} | {:error, map()}

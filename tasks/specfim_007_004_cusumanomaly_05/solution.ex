@@ -1,0 +1,1 @@
+  @spec reset(GenServer.server(), term()) :: :ok

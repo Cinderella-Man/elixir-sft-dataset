@@ -1,0 +1,1 @@
+  @spec valid?(String.t(), String.t() | integer(), keyword()) :: boolean()

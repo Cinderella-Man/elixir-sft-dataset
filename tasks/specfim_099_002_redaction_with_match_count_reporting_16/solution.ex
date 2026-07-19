@@ -1,0 +1,1 @@
+  @spec sensitive?(t(), term()) :: boolean()

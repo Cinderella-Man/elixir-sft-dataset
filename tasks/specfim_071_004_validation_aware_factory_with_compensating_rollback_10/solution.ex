@@ -1,0 +1,1 @@
+  @spec valid?(factory_name()) :: boolean()

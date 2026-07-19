@@ -1,0 +1,1 @@
+  @spec merge_states(lww_state(), lww_state()) :: lww_state()

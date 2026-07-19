@@ -1,0 +1,1 @@
+  @spec merge_overrides(struct(), overrides()) :: struct()

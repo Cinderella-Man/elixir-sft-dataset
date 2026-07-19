@@ -1,0 +1,1 @@
+  @spec generate_code(String.t(), non_neg_integer()) :: String.t()

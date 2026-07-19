@@ -1,0 +1,1 @@
+  @spec add_pattern(server(), Regex.t(), String.t()) :: :ok

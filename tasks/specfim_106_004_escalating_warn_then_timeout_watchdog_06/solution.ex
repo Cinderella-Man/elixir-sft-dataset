@@ -1,0 +1,1 @@
+  @spec phase(term()) :: {:ok, :healthy | :warned} | {:error, :not_registered}

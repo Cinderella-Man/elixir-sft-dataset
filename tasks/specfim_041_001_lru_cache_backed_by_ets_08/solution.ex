@@ -1,0 +1,1 @@
+  @spec order_table_name(name()) :: atom()

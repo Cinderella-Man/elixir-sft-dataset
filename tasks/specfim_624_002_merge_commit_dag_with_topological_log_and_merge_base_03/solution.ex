@@ -1,0 +1,1 @@
+  @spec store(server(), binary()) :: {:ok, hash()}

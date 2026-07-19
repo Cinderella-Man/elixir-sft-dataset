@@ -1,0 +1,1 @@
+  @spec active_count(server()) :: non_neg_integer()

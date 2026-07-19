@@ -1,0 +1,1 @@
+  @spec compensate_all([step()], context()) :: compensation_results()

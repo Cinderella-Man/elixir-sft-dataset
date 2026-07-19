@@ -1,0 +1,1 @@
+  @spec build_attrs([String.t()], [atom()], MapSet.t()) :: map()

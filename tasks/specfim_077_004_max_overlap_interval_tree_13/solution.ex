@@ -1,0 +1,1 @@
+  @spec bump(t(), integer(), integer()) :: node_t()

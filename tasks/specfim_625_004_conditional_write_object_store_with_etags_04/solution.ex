@@ -1,0 +1,1 @@
+  @spec list_buckets(GenServer.server()) :: {:ok, [bucket()]}

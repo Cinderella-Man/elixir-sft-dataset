@@ -1,0 +1,1 @@
+  @spec split_line(binary()) :: {binary(), binary()}

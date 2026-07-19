@@ -1,0 +1,1 @@
+  @spec score(map(), keyword()) :: float()

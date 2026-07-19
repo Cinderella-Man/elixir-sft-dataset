@@ -1,0 +1,1 @@
+  @spec check_caveats([caveat()], context()) :: :ok | {:error, {:caveat_failed, caveat()}}

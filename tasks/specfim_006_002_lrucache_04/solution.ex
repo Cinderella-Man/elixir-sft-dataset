@@ -1,0 +1,1 @@
+  @spec get(GenServer.server(), term()) :: {:ok, term()} | :miss

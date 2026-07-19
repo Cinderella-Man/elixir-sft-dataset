@@ -1,0 +1,1 @@
+  @spec process(map(), non_neg_integer()) :: result()

@@ -1,0 +1,1 @@
+  @spec to_status_info(service()) :: status_info()

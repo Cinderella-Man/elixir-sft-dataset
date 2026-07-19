@@ -1,0 +1,1 @@
+  @spec history(map()) :: [atom()]

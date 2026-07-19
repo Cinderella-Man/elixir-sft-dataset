@@ -1,0 +1,1 @@
+  @spec all() :: [record_t]

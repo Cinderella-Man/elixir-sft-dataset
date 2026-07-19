@@ -1,0 +1,1 @@
+  @spec seal(term(), binary(), pos_integer(), keyword()) :: token()

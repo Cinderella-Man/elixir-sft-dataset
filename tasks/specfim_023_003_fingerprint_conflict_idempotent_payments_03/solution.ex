@@ -1,0 +1,1 @@
+  @spec process_payment(GenServer.server(), params(), String.t() | nil) :: process_result()

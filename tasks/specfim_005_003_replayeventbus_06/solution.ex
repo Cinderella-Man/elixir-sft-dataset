@@ -1,0 +1,1 @@
+  @spec history(GenServer.server(), String.t()) :: [term()]

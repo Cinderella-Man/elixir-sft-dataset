@@ -1,0 +1,1 @@
+  @spec remove_item(%Cart{}, term()) :: %Cart{}

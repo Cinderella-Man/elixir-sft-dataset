@@ -1,0 +1,1 @@
+  @spec safe_action((context() -> term()), context()) :: {:ok, term()} | {:error, term()}

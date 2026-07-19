@@ -1,0 +1,1 @@
+  @spec reset_metrics(GenServer.server()) :: :ok

@@ -1,0 +1,1 @@
+  @spec schedule_cleanup(non_neg_integer() | :infinity) :: :ok

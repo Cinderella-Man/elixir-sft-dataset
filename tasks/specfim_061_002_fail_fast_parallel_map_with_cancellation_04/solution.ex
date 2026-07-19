@@ -1,0 +1,1 @@
+  @spec decrement(GenServer.server()) :: integer()

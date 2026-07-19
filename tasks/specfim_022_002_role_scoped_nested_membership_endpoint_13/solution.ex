@@ -1,0 +1,1 @@
+  @spec init(Plug.opts()) :: Plug.opts()

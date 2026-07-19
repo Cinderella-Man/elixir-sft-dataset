@@ -1,0 +1,1 @@
+  @spec touch(server(), session_id()) :: :ok | {:error, :not_found}

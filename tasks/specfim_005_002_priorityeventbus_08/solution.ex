@@ -1,0 +1,1 @@
+  @spec cancel({pid(), reference()}) :: :ok

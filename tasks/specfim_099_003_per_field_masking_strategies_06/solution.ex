@@ -1,0 +1,1 @@
+  @spec mask_pair(t(), term(), term()) :: {term(), term()}

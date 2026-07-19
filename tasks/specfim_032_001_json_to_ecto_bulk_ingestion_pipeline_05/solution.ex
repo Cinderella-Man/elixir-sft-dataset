@@ -1,0 +1,1 @@
+  @spec validate_list(term()) :: {:ok, list()} | {:error, :not_a_list}

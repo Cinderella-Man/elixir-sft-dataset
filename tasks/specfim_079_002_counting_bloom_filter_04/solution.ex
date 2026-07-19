@@ -1,0 +1,1 @@
+  @spec remove(t(), term()) :: t()

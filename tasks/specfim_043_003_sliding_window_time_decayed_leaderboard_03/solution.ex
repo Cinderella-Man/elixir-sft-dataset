@@ -1,0 +1,1 @@
+  @spec record(board(), player_id(), number(), integer()) :: :ok

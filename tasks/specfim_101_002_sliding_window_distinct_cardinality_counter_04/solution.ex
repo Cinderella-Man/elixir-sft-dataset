@@ -1,0 +1,1 @@
+  @spec distinct_count(server(), key(), non_neg_integer()) :: non_neg_integer()

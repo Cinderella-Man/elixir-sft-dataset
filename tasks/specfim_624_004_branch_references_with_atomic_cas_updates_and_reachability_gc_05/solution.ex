@@ -1,0 +1,1 @@
+  @spec commit(GenServer.server(), hash, hash | nil, String.t(), String.t()) :: {:ok, hash}

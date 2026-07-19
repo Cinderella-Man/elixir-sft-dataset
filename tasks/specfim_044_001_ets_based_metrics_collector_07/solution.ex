@@ -1,0 +1,1 @@
+  @spec snapshot() :: %{term() => number()}

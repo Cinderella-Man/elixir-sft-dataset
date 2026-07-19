@@ -1,0 +1,1 @@
+  @spec parse_version(String.t()) :: integer()

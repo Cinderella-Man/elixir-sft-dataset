@@ -1,0 +1,1 @@
+  @spec validate_json(Path.t()) :: :ok | {:error, String.t()}

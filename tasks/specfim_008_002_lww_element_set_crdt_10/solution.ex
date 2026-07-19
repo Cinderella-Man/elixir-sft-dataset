@@ -1,0 +1,1 @@
+  @spec element_present?(lww_state(), element()) :: boolean()

@@ -1,0 +1,1 @@
+  @spec version(atom()) :: non_neg_integer()

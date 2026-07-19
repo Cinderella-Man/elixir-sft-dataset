@@ -1,0 +1,1 @@
+  @spec successors(t(), vertex()) :: [vertex()]

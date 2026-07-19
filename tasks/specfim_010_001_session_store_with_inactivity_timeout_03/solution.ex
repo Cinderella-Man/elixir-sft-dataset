@@ -1,0 +1,1 @@
+  @spec create(server(), session_data()) :: {:ok, session_id()}

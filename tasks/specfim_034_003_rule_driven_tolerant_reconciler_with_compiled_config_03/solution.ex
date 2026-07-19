@@ -1,0 +1,1 @@
+  @spec run(config(), [record_map()], [record_map()]) :: report()

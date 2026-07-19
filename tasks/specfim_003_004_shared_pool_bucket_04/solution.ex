@@ -1,0 +1,1 @@
+  @spec global_level(GenServer.server()) :: {:ok, non_neg_integer()}

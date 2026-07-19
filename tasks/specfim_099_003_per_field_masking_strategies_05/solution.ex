@@ -1,0 +1,1 @@
+  @spec do_mask(t(), term()) :: term()

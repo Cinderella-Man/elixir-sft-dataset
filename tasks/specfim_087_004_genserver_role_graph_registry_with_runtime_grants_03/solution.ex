@@ -1,0 +1,1 @@
+  @spec add_role(GenServer.server(), atom()) :: :ok

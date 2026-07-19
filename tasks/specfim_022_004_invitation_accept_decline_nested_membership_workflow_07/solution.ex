@@ -1,0 +1,1 @@
+  @spec team_exists?(server(), String.t()) :: boolean()

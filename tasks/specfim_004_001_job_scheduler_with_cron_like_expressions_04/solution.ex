@@ -1,0 +1,1 @@
+  @spec unregister(server(), job_name()) :: :ok | {:error, :not_found}

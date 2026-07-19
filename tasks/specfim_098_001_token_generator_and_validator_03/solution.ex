@@ -1,0 +1,1 @@
+  @spec verify(token(), binary(), opts()) :: {:ok, term()} | {:error, reason()}

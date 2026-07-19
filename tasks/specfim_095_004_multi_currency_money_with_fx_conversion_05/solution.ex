@@ -1,0 +1,1 @@
+  @spec multiply(t(), number()) :: t()

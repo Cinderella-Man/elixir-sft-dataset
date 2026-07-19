@@ -1,0 +1,1 @@
+  @spec add(server(), element()) :: :ok

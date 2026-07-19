@@ -1,0 +1,1 @@
+  @spec add_vertex(t(), vertex()) :: t()

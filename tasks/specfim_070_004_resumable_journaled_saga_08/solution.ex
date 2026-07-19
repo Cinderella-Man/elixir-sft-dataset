@@ -1,0 +1,1 @@
+  @spec compensate_all([step_entry()], context(), journal()) :: {keyword(), journal()}

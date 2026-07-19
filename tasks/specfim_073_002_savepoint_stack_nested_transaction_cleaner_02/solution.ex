@@ -1,0 +1,1 @@
+  @spec start(:savepoint, keyword()) :: {:ok, :savepoint} | {:error, term()}

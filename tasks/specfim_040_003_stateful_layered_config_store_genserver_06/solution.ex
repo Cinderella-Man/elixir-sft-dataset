@@ -1,0 +1,1 @@
+  @spec get_config(GenServer.server()) :: map()

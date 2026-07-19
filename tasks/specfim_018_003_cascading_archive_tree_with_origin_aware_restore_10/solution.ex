@@ -1,0 +1,1 @@
+  @spec list_archived(GenServer.server()) :: {:ok, [node_map()]}

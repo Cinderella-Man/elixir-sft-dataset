@@ -1,0 +1,1 @@
+  @spec enqueue(server(), term(), priority(), keyword()) :: :ok

@@ -1,0 +1,1 @@
+  @spec base32?(String.t()) :: boolean()

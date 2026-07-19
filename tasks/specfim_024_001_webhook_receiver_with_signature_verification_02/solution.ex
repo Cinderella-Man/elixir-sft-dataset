@@ -1,0 +1,1 @@
+  @spec verify(binary(), binary(), binary()) :: :ok | :error

@@ -1,0 +1,1 @@
+  @spec seconds_remaining(t(), integer()) :: number()

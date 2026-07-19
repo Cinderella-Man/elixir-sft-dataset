@@ -1,0 +1,1 @@
+  @spec shard_of(server(), term(), labels()) :: non_neg_integer()

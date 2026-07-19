@@ -1,0 +1,1 @@
+  @spec insert(GenServer.server(), interval()) :: {:ok, pos_integer()}

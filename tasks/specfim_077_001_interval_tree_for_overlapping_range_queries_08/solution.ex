@@ -1,0 +1,1 @@
+  @spec max_with_child(integer(), t()) :: integer()

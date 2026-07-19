@@ -1,0 +1,1 @@
+  @spec compute(function_kind(), [point()]) :: :omit | {:ok, number()}

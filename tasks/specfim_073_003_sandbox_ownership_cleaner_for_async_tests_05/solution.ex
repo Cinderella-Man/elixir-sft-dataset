@@ -1,0 +1,1 @@
+  @spec lookup(pid()) :: {:ok, reference()} | :error

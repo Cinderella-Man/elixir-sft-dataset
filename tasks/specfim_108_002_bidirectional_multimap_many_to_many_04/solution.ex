@@ -1,0 +1,1 @@
+  @spec member?(GenServer.server(), term(), term()) :: boolean()

@@ -1,0 +1,1 @@
+  @spec push_left(GenServer.server(), stream_record()) :: {:matched, entry()} | :pending

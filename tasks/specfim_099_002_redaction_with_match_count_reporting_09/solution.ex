@@ -1,0 +1,1 @@
+  @spec walk_list(t(), list()) :: {list(), report()}

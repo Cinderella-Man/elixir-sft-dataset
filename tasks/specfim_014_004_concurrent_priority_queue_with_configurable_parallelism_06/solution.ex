@@ -1,0 +1,1 @@
+  @spec drain(server()) :: :ok

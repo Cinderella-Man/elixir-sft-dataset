@@ -1,0 +1,1 @@
+  @spec infer_file(Path.t(), keyword()) :: schema()

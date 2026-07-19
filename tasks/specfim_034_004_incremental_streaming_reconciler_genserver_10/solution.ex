@@ -1,0 +1,1 @@
+  @spec record_key(stream_record(), [atom(), ...]) :: key()

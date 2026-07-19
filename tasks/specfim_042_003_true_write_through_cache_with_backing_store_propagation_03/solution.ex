@@ -1,0 +1,1 @@
+  @spec fetch(GenServer.server(), atom(), term(), (-> term())) :: {:ok, term()}

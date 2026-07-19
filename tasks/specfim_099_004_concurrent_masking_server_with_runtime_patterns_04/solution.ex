@@ -1,0 +1,1 @@
+  @spec mask_string(server(), String.t()) :: String.t()

@@ -1,0 +1,1 @@
+  @spec set_password(GenServer.server(), String.t(), String.t()) :: :ok | {:error, [atom()]}

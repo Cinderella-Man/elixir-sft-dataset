@@ -1,0 +1,1 @@
+  @spec overlapping(GenServer.server(), interval()) :: [interval()]

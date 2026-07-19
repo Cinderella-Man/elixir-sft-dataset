@@ -1,0 +1,1 @@
+  @spec has_object?(server(), hash()) :: boolean()

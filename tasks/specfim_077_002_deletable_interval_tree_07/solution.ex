@@ -1,0 +1,1 @@
+  @spec enclosing(t(), integer()) :: [interval()]

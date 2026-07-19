@@ -1,0 +1,1 @@
+  @spec index_by([record_t()], [atom()]) :: %{tuple() => record_t()}

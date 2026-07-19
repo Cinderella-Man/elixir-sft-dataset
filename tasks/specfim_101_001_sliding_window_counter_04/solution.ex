@@ -1,0 +1,1 @@
+  @spec count(GenServer.server(), term(), pos_integer()) :: non_neg_integer()

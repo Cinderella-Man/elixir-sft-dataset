@@ -1,0 +1,1 @@
+  @spec value(server()) :: integer()

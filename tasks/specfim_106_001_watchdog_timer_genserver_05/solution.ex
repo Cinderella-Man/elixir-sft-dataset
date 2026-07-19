@@ -1,0 +1,1 @@
+  @spec unregister(term()) :: :ok

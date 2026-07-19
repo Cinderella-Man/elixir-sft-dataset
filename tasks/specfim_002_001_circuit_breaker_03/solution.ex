@@ -1,0 +1,1 @@
+  @spec call(name(), (-> any())) :: {:ok, any()} | {:error, any()}

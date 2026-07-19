@@ -1,0 +1,1 @@
+  @spec rollback_to(String.t()) :: {:ok, String.t()} | {:error, term()}

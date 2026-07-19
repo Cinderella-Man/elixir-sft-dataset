@@ -1,0 +1,1 @@
+  @spec drop_layer(GenServer.server(), term()) :: :ok

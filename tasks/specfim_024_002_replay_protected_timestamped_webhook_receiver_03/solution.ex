@@ -1,0 +1,1 @@
+  @spec parse(term()) :: %{optional(String.t()) => String.t()}

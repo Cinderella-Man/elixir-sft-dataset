@@ -1,0 +1,1 @@
+  @spec categorize(cell()) :: atom()

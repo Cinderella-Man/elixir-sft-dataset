@@ -1,0 +1,1 @@
+  @spec handle_call(term(), GenServer.from(), map()) :: {:reply, term(), map()}

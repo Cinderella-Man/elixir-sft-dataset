@@ -1,0 +1,1 @@
+  @spec search(GenServer.server(), query()) :: [String.t()]

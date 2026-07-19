@@ -1,0 +1,1 @@
+  @spec get_payments(GenServer.server()) :: [map()]

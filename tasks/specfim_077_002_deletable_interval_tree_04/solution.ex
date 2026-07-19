@@ -1,0 +1,1 @@
+  @spec member?(t(), interval()) :: boolean()

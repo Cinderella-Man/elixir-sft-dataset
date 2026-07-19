@@ -1,0 +1,1 @@
+  @spec resolve_conflict_target(atom() | [atom()] | map(), schema()) :: atom() | [atom()]

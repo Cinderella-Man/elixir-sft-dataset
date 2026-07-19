@@ -1,0 +1,1 @@
+  @spec query(term, float) :: {:ok, float} | {:error, :empty}

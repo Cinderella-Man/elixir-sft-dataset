@@ -1,0 +1,1 @@
+  @spec build_object(binary()) :: object()

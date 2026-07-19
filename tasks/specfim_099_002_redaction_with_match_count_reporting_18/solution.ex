@@ -1,0 +1,1 @@
+  @spec key_string(term()) :: String.t() | nil

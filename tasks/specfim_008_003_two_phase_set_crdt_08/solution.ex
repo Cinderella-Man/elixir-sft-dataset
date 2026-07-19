@@ -1,0 +1,1 @@
+  @spec state(server()) :: tp_state()

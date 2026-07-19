@@ -1,0 +1,1 @@
+  @spec submit(GenServer.server(), (-> any())) :: {:ok, reference()} | {:error, :queue_full}

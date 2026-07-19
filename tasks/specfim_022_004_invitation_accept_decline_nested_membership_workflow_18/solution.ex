@@ -1,0 +1,1 @@
+  @spec store(Plug.Conn.t()) :: TeamStore.server()

@@ -1,0 +1,1 @@
+  @spec parse_integer(binary()) :: {:ok, integer()} | :error

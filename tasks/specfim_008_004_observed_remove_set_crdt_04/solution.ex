@@ -1,0 +1,1 @@
+  @spec remove(server(), element()) :: :ok

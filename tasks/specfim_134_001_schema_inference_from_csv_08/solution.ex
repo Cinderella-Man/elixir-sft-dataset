@@ -1,0 +1,1 @@
+  @spec numeric_only?([atom()]) :: boolean()

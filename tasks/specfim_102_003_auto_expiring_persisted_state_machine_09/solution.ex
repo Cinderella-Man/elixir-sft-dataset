@@ -1,0 +1,1 @@
+  @spec load_state(module(), String.t()) :: state()

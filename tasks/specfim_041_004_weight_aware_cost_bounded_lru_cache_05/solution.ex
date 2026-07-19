@@ -1,0 +1,1 @@
+  @spec weight(name()) :: non_neg_integer()

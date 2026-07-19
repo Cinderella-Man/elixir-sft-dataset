@@ -1,0 +1,1 @@
+  @spec from_major(number(), atom()) :: t()

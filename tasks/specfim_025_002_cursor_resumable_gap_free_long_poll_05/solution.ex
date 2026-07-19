@@ -1,0 +1,1 @@
+  @spec publish(server(), user_id(), payload()) :: {:ok, seq()}

@@ -1,0 +1,1 @@
+  @spec serialize_commit(hash, hash | nil, String.t(), String.t()) :: binary()

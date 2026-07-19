@@ -1,0 +1,1 @@
+  @spec date?(String.t()) :: boolean()

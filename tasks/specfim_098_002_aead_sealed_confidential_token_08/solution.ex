@@ -1,0 +1,1 @@
+  @spec deserialize(binary()) :: {:ok, term()} | {:error, :malformed}

@@ -1,0 +1,1 @@
+  @spec mint(binary(), binary()) :: token()

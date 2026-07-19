@@ -1,0 +1,1 @@
+  @spec query(server(), String.t(), labels(), range()) :: [{labels(), [point()]}]

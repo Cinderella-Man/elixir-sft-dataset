@@ -1,0 +1,1 @@
+  @spec set_variants(atom(), [{atom(), non_neg_integer()}]) :: :ok

@@ -1,0 +1,1 @@
+  @spec deregister(GenServer.server(), service_name()) :: :ok

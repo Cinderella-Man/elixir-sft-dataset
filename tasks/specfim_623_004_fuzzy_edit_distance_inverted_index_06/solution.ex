@@ -1,0 +1,1 @@
+  @spec terms_like(GenServer.server(), String.t(), non_neg_integer()) :: [String.t()]

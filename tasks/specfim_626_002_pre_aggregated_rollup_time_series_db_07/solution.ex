@@ -1,0 +1,1 @@
+  @spec fold(acc() | nil, integer(), number()) :: acc()

@@ -1,0 +1,1 @@
+  @spec member?(t, String.t()) :: boolean

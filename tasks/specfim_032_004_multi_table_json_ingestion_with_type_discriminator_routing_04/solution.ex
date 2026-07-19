@@ -1,0 +1,1 @@
+  @spec insert_schema_group(repo(), schema(), [map()], map()) :: per_schema_stats()

@@ -1,0 +1,1 @@
+  @spec state(GenServer.server(), id()) :: state_map()

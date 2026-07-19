@@ -1,0 +1,1 @@
+  @spec cancel(GenServer.server(), non_neg_integer()) :: :ok | :error

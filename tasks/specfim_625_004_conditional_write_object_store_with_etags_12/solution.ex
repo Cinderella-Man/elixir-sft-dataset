@@ -1,0 +1,1 @@
+  @spec put_precondition_met?(%{optional(key()) => object()}, key(), keyword()) :: boolean()

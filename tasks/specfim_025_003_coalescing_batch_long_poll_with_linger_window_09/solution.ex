@@ -1,0 +1,1 @@
+  @spec drain([term()], non_neg_integer()) :: [term()]

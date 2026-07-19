@@ -1,0 +1,1 @@
+  @spec build_categories([row()]) :: %{optional(non_neg_integer()) => MapSet.t(category())}

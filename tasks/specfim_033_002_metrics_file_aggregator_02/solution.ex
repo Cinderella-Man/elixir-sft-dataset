@@ -1,0 +1,1 @@
+  @spec summarize(String.t()) :: {:ok, map()} | {:error, term()}

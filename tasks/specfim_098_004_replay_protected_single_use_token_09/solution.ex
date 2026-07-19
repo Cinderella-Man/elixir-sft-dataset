@@ -1,0 +1,1 @@
+  @spec parse(binary()) :: {:ok, binary(), integer(), binary()} | {:error, :malformed}

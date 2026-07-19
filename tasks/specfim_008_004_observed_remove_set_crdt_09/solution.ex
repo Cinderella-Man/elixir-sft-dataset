@@ -1,0 +1,1 @@
+  @spec empty_state() :: or_state()

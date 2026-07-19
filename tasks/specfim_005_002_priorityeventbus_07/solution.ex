@@ -1,0 +1,1 @@
+  @spec ack({pid(), reference()}) :: :ok

@@ -1,0 +1,1 @@
+  @spec jobs(GenServer.server()) :: [{term(), tuple(), NaiveDateTime.t()}]

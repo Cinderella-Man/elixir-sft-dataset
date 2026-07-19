@@ -1,0 +1,1 @@
+  @spec stack_program(non_neg_integer()) :: StreamData.t([term()])

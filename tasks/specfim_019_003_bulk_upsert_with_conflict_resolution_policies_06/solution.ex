@@ -1,0 +1,1 @@
+  @spec bulk_upsert([map], keyword) :: {:ok, [result]} | {:error, [result]}

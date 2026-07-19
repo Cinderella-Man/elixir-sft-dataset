@@ -1,0 +1,1 @@
+  @spec measure(module() | GenServer.server(), (-> any())) :: {any(), non_neg_integer()}

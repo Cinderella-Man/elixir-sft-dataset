@@ -1,0 +1,1 @@
+  @spec is_member?(server(), String.t(), String.t()) :: boolean()

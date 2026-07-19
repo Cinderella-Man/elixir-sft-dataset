@@ -1,0 +1,1 @@
+  @spec weighted_length(document(), map()) :: float()

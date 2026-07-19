@@ -1,0 +1,1 @@
+  @spec remove_doc(%__MODULE__{}, String.t()) :: %__MODULE__{}

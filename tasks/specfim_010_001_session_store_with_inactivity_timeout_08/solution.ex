@@ -1,0 +1,1 @@
+  @spec generate_session_id() :: session_id()

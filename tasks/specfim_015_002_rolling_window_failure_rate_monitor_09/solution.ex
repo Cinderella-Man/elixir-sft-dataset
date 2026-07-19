@@ -1,0 +1,1 @@
+  @spec schedule_check(service_name(), pos_integer()) :: reference()

@@ -1,0 +1,1 @@
+  @spec count() :: non_neg_integer

@@ -1,0 +1,1 @@
+  @spec series_key(metric_name(), labels()) :: {metric_name(), [{String.t(), String.t()}]}

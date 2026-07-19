@@ -1,0 +1,1 @@
+  @spec generate_token_id() :: token_id()

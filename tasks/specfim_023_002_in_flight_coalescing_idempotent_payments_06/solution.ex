@@ -1,0 +1,1 @@
+  @spec in_flight_count(GenServer.server()) :: non_neg_integer()

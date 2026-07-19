@@ -1,0 +1,1 @@
+  @spec assert_monotonic(Macro.t(), Macro.t()) :: Macro.t()

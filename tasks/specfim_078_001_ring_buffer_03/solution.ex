@@ -1,0 +1,1 @@
+  @spec push(t(), any()) :: t()

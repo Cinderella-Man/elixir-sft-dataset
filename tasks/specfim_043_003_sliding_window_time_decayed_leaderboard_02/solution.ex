@@ -1,0 +1,1 @@
+  @spec new(atom(), pos_integer()) :: {:ok, board()}

@@ -1,0 +1,1 @@
+  @spec start(:deletion, keyword()) :: {:ok, :deletion} | {:error, term()}

@@ -1,0 +1,1 @@
+  @spec evict_expired([usage_entry()], integer(), non_neg_integer()) :: [usage_entry()]

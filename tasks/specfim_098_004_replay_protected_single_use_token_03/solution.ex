@@ -1,0 +1,1 @@
+  @spec issue(GenServer.server(), term(), pos_integer()) :: token()

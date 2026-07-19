@@ -1,0 +1,1 @@
+  @spec decode(binary()) :: {:ok, binary(), [caveat()], binary()} | {:error, :malformed}

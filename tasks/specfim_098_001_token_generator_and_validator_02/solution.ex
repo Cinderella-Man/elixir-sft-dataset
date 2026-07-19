@@ -1,0 +1,1 @@
+  @spec generate(term(), binary(), pos_integer(), opts()) :: token()

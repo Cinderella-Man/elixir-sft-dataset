@@ -1,0 +1,1 @@
+  @spec remove_edge(t(), vertex(), vertex()) :: t()

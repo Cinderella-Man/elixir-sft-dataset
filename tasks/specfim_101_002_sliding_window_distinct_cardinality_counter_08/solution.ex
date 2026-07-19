@@ -1,0 +1,1 @@
+  @spec purge_expired(state()) :: state()

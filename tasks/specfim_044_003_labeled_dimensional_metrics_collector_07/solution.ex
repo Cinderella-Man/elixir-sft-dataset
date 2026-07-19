@@ -1,0 +1,1 @@
+  @spec gauge(term(), map(), number()) :: :ok

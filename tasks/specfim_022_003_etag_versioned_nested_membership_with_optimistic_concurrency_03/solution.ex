@@ -1,0 +1,1 @@
+  @spec create_user(server(), String.t(), String.t()) :: :ok

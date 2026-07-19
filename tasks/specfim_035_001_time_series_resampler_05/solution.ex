@@ -1,0 +1,1 @@
+  @spec fetch_opt!(keyword(), atom(), term(), [term()]) :: term()

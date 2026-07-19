@@ -1,0 +1,1 @@
+  @spec start_link(map()) :: GenServer.on_start()

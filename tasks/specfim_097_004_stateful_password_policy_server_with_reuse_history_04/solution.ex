@@ -1,0 +1,1 @@
+  @spec history_count(GenServer.server(), String.t()) :: non_neg_integer()

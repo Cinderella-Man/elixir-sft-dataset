@@ -1,0 +1,1 @@
+  @spec parse_json(binary()) :: {:ok, term()} | {:error, :invalid_json}

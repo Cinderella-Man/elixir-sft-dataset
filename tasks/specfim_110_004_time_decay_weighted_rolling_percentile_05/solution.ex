@@ -1,0 +1,1 @@
+  @spec total_weight(term) :: {:ok, float} | {:error, :empty}

@@ -1,0 +1,1 @@
+  @spec take_matches(GenServer.server()) :: [entry()]

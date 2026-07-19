@@ -1,0 +1,1 @@
+  @spec history(atom()) :: [{pos_integer(), tuple()}]

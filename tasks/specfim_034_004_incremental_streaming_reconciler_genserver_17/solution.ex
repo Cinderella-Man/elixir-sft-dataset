@@ -1,0 +1,1 @@
+  @spec key_map([atom(), ...], key()) :: map()

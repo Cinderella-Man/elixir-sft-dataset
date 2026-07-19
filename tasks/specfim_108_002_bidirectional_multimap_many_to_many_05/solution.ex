@@ -1,0 +1,1 @@
+  @spec get_by_key(GenServer.server(), term()) :: MapSet.t()

@@ -1,0 +1,1 @@
+  @spec map_stage(t(), atom(), stage_fun(), keyword()) :: t()

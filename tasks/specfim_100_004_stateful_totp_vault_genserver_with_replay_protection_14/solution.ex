@@ -1,0 +1,1 @@
+  @spec decode_char(byte()) :: non_neg_integer()

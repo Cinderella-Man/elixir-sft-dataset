@@ -1,0 +1,1 @@
+  @spec default_names([row()]) :: [String.t()]

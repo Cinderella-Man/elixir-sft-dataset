@@ -1,0 +1,1 @@
+  @spec steal(non_neg_integer(), pid(), :half | pos_integer()) :: list()

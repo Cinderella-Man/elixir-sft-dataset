@@ -1,0 +1,1 @@
+  @spec format_stats(stats()) :: String.t()

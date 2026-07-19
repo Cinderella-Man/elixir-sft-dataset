@@ -1,0 +1,1 @@
+  @spec usage(GenServer.server(), String.t()) :: non_neg_integer()

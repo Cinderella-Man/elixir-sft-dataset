@@ -1,0 +1,1 @@
+  @spec clean() :: :ok | {:error, term()}

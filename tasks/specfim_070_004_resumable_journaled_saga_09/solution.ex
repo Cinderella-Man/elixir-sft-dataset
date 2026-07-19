@@ -1,0 +1,1 @@
+  @spec safe_compensate((context() -> term()), context()) :: term()

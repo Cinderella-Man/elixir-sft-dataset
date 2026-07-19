@@ -1,0 +1,1 @@
+  @spec build_document(map(), MapSet.t()) :: {map(), map()}

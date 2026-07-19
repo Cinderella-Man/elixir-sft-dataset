@@ -1,0 +1,1 @@
+  @spec sum(GenServer.server(), key(), non_neg_integer()) :: number()

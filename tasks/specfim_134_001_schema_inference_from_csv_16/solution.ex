@@ -1,0 +1,1 @@
+  @spec valid_date?(integer(), integer(), integer()) :: boolean()

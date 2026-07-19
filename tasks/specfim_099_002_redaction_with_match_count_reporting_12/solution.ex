@@ -1,0 +1,1 @@
+  @spec mask_credit_cards(String.t()) :: {String.t(), non_neg_integer()}

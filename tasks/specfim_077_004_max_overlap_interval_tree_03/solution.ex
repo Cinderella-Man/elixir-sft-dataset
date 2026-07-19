@@ -1,0 +1,1 @@
+  @spec insert(t(), interval()) :: t()

@@ -1,0 +1,1 @@
+  @spec scan_objects(String.t()) :: [hash()]

@@ -1,0 +1,1 @@
+  @spec handle_invite(Plug.Conn.t(), TeamStore.server(), String.t()) :: Plug.Conn.t()

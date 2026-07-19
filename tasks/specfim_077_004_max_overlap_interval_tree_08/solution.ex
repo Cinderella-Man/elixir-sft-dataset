@@ -1,0 +1,1 @@
+  @spec best_of(t()) :: integer()

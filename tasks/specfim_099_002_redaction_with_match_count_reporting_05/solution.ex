@@ -1,0 +1,1 @@
+  @spec walk(t(), term()) :: {term(), report()}

@@ -1,0 +1,1 @@
+  @spec maybe_evict(state()) :: state()

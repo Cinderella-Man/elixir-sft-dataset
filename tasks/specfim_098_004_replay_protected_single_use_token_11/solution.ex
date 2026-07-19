@@ -1,0 +1,1 @@
+  @spec check_replay(MapSet.t(binary()), binary()) :: :ok | {:error, :replayed}

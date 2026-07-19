@@ -1,0 +1,1 @@
+  @spec counts(report()) :: %{optional(atom()) => non_neg_integer()}

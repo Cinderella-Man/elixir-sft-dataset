@@ -1,0 +1,1 @@
+  @spec paginate([map()], map()) :: %{data: [map()], meta: map()}

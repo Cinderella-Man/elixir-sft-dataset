@@ -1,0 +1,1 @@
+  @spec build_version(binary(), map(), boolean()) :: map()

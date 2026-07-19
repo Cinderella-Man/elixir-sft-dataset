@@ -1,0 +1,1 @@
+  @spec strip_leading_space(String.t()) :: String.t()

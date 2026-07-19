@@ -1,0 +1,1 @@
+  @spec do_log(map(), hash()) :: {:ok, [entry()]} | {:error, :not_found}

@@ -1,0 +1,1 @@
+  @spec hash_hex(binary()) :: hash()

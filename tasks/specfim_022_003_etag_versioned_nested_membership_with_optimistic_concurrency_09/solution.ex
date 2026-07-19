@@ -1,0 +1,1 @@
+  @spec get_version(server(), String.t()) :: {:ok, non_neg_integer()} | {:error, :not_found}

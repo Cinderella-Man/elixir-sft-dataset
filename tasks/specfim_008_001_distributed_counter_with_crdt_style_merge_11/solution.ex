@@ -1,0 +1,1 @@
+  @spec merge_states(pn_state(), pn_state()) :: pn_state()

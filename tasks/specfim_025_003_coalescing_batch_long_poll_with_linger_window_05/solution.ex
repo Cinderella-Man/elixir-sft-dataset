@@ -1,0 +1,1 @@
+  @spec publish(server(), term(), term()) :: :ok

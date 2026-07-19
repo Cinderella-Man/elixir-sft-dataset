@@ -1,0 +1,1 @@
+  @spec do_insert(t(), interval()) :: node_t()

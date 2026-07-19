@@ -1,0 +1,1 @@
+  @spec __using__(keyword()) :: Macro.t()

@@ -1,0 +1,1 @@
+  @spec split_mac(binary()) :: {:ok, binary(), binary()} | {:error, :malformed}

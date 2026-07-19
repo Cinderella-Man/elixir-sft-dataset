@@ -1,0 +1,1 @@
+  @spec element_present?(tp_state(), element()) :: boolean()

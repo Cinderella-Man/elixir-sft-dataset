@@ -1,0 +1,2 @@
+  @spec retrieve(server(), hash()) ::
+          {:ok, binary()} | {:error, :not_found} | {:error, :corrupt}

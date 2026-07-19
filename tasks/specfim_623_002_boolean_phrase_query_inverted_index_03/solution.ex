@@ -1,0 +1,1 @@
+  @spec index(GenServer.server(), String.t(), map()) :: :ok

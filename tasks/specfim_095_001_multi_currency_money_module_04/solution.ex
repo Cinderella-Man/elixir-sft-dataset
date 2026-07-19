@@ -1,0 +1,1 @@
+  @spec subtract(t(), t()) :: t()

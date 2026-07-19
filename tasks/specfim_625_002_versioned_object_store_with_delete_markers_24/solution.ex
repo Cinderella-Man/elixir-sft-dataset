@@ -1,0 +1,1 @@
+  @spec load_bucket_file(String.t(), String.t(), map()) :: map()

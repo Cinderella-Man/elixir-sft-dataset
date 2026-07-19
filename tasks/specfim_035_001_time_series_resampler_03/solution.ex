@@ -1,0 +1,1 @@
+  @spec floor_bucket(integer(), pos_integer()) :: integer()

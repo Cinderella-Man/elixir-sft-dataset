@@ -1,0 +1,1 @@
+  @spec validate_compare_fields!(term()) :: [atom()] | nil

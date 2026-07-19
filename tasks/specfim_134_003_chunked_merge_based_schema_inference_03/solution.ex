@@ -1,0 +1,1 @@
+  @spec merge(partial(), partial()) :: partial()

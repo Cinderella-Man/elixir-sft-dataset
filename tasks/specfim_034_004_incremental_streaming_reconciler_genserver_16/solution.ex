@@ -1,0 +1,1 @@
+  @spec build_entry(state(), key(), stream_record(), stream_record()) :: entry()

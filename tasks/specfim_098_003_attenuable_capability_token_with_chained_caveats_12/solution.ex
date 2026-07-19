@@ -1,0 +1,1 @@
+  @spec satisfied?(caveat(), context()) :: boolean()

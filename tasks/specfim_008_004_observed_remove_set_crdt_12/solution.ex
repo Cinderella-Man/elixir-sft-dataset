@@ -1,0 +1,1 @@
+  @spec merge_states(or_state(), or_state()) :: or_state()

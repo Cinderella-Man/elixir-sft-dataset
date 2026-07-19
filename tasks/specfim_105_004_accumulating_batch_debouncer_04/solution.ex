@@ -1,0 +1,1 @@
+  @spec pending(term()) :: non_neg_integer()

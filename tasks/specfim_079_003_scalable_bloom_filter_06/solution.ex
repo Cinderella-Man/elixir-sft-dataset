@@ -1,0 +1,1 @@
+  @spec num_slices(t()) :: pos_integer()

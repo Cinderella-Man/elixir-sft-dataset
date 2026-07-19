@@ -1,0 +1,1 @@
+  @spec insert(GenServer.server(), metric_name(), labels(), integer(), number()) :: :ok

@@ -1,0 +1,1 @@
+  @spec resolve_thunks(struct()) :: struct()

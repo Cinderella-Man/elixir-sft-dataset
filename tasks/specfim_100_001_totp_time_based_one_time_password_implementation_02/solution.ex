@@ -1,0 +1,1 @@
+  @spec generate_secret() :: String.t()

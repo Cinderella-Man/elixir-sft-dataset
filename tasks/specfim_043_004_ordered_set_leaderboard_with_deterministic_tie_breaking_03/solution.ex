@@ -1,0 +1,1 @@
+  @spec submit_score(board(), player_id(), number()) :: :ok

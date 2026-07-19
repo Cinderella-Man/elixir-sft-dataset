@@ -1,0 +1,1 @@
+  @spec size(GenServer.server()) :: non_neg_integer()

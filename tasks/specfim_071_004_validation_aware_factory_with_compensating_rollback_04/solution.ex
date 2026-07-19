@@ -1,0 +1,1 @@
+  @spec build(factory_name()) :: struct()

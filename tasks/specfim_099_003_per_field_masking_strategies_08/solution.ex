@@ -1,0 +1,1 @@
+  @spec last4(term()) :: String.t()

@@ -1,0 +1,1 @@
+  @spec encode(binary(), [caveat()], binary()) :: token()

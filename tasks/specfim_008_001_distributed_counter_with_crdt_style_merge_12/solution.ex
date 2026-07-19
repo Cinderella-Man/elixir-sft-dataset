@@ -1,0 +1,1 @@
+  @spec merge_g_counters(g_counter(), g_counter()) :: g_counter()

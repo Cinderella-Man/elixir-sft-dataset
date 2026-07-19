@@ -1,0 +1,1 @@
+  @spec index_by([record_t()], atom()) :: %{term() => record_t()}

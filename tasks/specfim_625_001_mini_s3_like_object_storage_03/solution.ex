@@ -1,0 +1,1 @@
+  @spec create_bucket(GenServer.server(), String.t()) :: :ok | {:error, atom()}

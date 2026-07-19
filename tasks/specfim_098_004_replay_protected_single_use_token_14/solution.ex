@@ -1,0 +1,1 @@
+  @spec mac(binary(), binary()) :: binary()

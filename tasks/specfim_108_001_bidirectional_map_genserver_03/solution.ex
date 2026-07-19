@@ -1,0 +1,1 @@
+  @spec put(GenServer.server(), term(), term()) :: :ok

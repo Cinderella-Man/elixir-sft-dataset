@@ -1,0 +1,1 @@
+  @spec user() :: StreamData.t(map())

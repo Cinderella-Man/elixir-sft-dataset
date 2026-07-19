@@ -1,0 +1,1 @@
+  @spec process(Path.t(), (term() -> term()), keyword()) :: {:ok, stats()}

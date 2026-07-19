@@ -1,0 +1,1 @@
+  @spec one_of_weighted([{pos_integer(), StreamData.t(a)}]) :: StreamData.t(a) when a: term()

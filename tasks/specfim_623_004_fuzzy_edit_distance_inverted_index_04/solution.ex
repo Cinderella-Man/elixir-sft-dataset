@@ -1,0 +1,1 @@
+  @spec remove(GenServer.server(), String.t()) :: :ok

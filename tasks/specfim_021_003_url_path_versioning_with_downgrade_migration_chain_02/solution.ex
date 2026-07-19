@@ -1,0 +1,1 @@
+  @spec supported() :: [String.t()]

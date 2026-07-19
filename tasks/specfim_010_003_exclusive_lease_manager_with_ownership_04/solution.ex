@@ -1,0 +1,1 @@
+  @spec release(server(), resource(), owner()) :: :ok | {:error, :not_held}

@@ -1,0 +1,1 @@
+  @spec expired?(session(), integer(), non_neg_integer()) :: boolean()

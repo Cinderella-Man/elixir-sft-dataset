@@ -1,0 +1,1 @@
+  @spec validate_timestamp!(term(), atom()) :: :ok

@@ -1,0 +1,1 @@
+  @spec delete(t(), interval()) :: {:ok, t()} | {:error, :not_found}

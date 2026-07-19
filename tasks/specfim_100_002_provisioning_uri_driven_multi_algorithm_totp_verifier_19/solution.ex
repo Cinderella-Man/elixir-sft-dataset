@@ -1,0 +1,1 @@
+  @spec whole_bytes(bitstring(), binary()) :: binary()

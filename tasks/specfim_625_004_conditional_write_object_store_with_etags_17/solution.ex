@@ -1,0 +1,1 @@
+  @spec valid_bucket_name?(term()) :: boolean()

@@ -1,0 +1,1 @@
+  @spec size(name()) :: non_neg_integer()

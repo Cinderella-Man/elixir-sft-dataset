@@ -1,0 +1,1 @@
+  @spec parse_channels(String.t() | nil) :: [String.t()]

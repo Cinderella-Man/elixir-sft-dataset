@@ -1,0 +1,1 @@
+  @spec rank(board(), player_id()) :: {:ok, pos_integer(), score()} | {:error, :not_found}

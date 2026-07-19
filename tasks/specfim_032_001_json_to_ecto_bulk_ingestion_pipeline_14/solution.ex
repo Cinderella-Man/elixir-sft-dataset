@@ -1,0 +1,1 @@
+  @spec get_ts(map() | struct(), atom()) :: NaiveDateTime.t() | DateTime.t() | nil

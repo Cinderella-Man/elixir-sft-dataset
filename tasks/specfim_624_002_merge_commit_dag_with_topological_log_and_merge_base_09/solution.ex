@@ -1,0 +1,1 @@
+  @spec build_commit_object(hash(), [hash()], String.t(), String.t()) :: binary()

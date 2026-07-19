@@ -1,0 +1,1 @@
+  @spec pending_field(:left | :right) :: :pending_left | :pending_right

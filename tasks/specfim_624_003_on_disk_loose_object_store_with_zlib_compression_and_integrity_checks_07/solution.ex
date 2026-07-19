@@ -1,0 +1,1 @@
+  @spec init(String.t()) :: {:ok, %{dir: String.t()}} | {:stop, term()}

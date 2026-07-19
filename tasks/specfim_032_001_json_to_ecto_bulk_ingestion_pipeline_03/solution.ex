@@ -1,0 +1,1 @@
+  @spec read_file(file_path()) :: {:ok, binary()} | {:error, :file_not_found}

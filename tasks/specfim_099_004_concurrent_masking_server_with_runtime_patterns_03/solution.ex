@@ -1,0 +1,1 @@
+  @spec mask(server(), term()) :: term()

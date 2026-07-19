@@ -1,0 +1,1 @@
+  @spec publish(GenServer.server(), String.t(), term()) :: {:ok, non_neg_integer()}

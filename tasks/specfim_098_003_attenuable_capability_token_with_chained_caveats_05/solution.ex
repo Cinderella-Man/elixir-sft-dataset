@@ -1,0 +1,1 @@
+  @spec authorize(token(), binary(), context()) :: :ok | {:error, reason()}

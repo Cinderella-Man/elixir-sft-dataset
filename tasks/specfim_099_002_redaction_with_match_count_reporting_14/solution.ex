@@ -1,0 +1,1 @@
+  @spec mask_ssns(String.t()) :: {String.t(), non_neg_integer()}

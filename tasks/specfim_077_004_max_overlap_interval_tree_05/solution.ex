@@ -1,0 +1,1 @@
+  @spec max_overlap(t()) :: non_neg_integer()

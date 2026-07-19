@@ -1,0 +1,1 @@
+  @spec status_for(map(), integer(), map()) :: status()

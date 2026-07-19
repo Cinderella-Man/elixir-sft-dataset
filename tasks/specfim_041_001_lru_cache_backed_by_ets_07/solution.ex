@@ -1,0 +1,1 @@
+  @spec data_table_name(name()) :: atom()

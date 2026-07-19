@@ -1,0 +1,1 @@
+  @spec html_escape(String.t()) :: String.t()

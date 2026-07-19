@@ -1,0 +1,1 @@
+  @spec get(term()) :: number() | nil

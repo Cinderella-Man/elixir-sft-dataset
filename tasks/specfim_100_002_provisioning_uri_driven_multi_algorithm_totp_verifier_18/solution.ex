@@ -1,0 +1,1 @@
+  @spec base32_value(char()) :: 0..31

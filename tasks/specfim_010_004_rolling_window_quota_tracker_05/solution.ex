@@ -1,0 +1,1 @@
+  @spec usage(server(), key(), non_neg_integer()) :: {:ok, non_neg_integer()}

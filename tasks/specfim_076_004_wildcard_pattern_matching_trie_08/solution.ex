@@ -1,0 +1,1 @@
+  @spec size(t) :: non_neg_integer

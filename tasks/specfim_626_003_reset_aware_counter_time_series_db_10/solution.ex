@@ -1,0 +1,1 @@
+  @spec series_points(map()) :: [point()]

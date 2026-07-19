@@ -1,0 +1,1 @@
+  @spec resolve(MapSet.t(category())) :: atom()

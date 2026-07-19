@@ -1,0 +1,1 @@
+  @spec assert_process_exits(Macro.t(), Macro.t()) :: Macro.t()

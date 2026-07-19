@@ -1,0 +1,1 @@
+  @spec insert_sequential(repo(), schema(), [[map()]], map(), stats()) :: stats()

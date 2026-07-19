@@ -1,0 +1,1 @@
+  @spec merge([{term(), map()}], keyword()) :: %{config: map(), provenance: map()}

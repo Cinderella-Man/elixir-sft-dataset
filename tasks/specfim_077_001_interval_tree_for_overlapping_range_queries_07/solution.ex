@@ -1,0 +1,1 @@
+  @spec make_node(interval(), t(), t()) :: node_t()

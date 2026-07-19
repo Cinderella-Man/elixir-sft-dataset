@@ -1,0 +1,1 @@
+  @spec call(GenServer.server(), (-> any())) :: any()

@@ -1,0 +1,1 @@
+  @spec parse_digits(map()) :: {:ok, 6 | 7 | 8} | {:error, :invalid_digits}

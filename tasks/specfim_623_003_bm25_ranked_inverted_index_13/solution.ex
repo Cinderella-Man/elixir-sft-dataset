@@ -1,0 +1,1 @@
+  @spec do_remove(map(), String.t()) :: map()

@@ -1,0 +1,1 @@
+  @spec suggest(GenServer.server(), String.t(), pos_integer()) :: [String.t()]

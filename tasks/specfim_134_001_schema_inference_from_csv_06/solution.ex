@@ -1,0 +1,1 @@
+  @spec column_cells([row()], non_neg_integer()) :: [cell()]

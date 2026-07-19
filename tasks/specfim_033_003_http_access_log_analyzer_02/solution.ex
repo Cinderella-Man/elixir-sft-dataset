@@ -1,0 +1,1 @@
+  @spec analyze(String.t()) :: {:ok, map()} | {:error, term()}

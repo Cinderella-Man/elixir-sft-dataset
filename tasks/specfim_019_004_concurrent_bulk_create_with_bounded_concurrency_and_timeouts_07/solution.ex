@@ -1,0 +1,1 @@
+  @spec bulk_create([map()], keyword()) :: [result()]

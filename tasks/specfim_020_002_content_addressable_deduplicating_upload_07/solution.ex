@@ -1,0 +1,1 @@
+  @spec init(keyword()) :: {:ok, %{files: map()}}

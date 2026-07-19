@@ -1,0 +1,1 @@
+  @spec maybe([atom()], boolean(), atom()) :: [atom()]

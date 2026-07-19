@@ -1,0 +1,1 @@
+  @spec insert(String.t(), integer()) :: item()

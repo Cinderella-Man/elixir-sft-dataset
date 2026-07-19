@@ -1,0 +1,1 @@
+  @spec history(server(), String.t()) :: {:ok, [map()]}

@@ -1,0 +1,1 @@
+  @spec stats(GenServer.server()) :: %{document_count: integer(), term_count: integer()}

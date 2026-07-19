@@ -1,0 +1,1 @@
+  @spec sha1_hex(binary()) :: hash()

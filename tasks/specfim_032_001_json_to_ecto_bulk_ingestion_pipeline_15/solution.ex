@@ -1,0 +1,1 @@
+  @spec timestamps_equal?(term(), term()) :: boolean()

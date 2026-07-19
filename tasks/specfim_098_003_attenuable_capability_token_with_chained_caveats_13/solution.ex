@@ -1,0 +1,1 @@
+  @spec satisfied?(binary(), binary(), context()) :: boolean()

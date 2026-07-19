@@ -1,0 +1,1 @@
+  @spec increment(server(), node_id(), amount()) :: :ok

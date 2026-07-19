@@ -1,0 +1,1 @@
+  @spec series(term()) :: [%{labels: map(), value: number()}]

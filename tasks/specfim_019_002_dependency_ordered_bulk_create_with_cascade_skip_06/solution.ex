@@ -1,0 +1,1 @@
+  @spec bulk_create([attrs()], keyword()) :: {:ok, [result()]} | {:error, [result()]}

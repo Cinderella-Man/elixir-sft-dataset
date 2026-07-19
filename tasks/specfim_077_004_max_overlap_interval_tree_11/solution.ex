@@ -1,0 +1,1 @@
+  @spec balance_factor(t()) :: integer()

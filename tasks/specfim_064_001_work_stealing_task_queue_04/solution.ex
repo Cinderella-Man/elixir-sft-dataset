@@ -1,0 +1,1 @@
+  @spec find_victim(non_neg_integer(), pid()) :: non_neg_integer() | nil

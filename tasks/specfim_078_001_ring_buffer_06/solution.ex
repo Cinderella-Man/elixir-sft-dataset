@@ -1,0 +1,1 @@
+  @spec peek_oldest(t()) :: {:ok, any()} | :error

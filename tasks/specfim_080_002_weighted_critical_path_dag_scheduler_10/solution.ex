@@ -1,0 +1,1 @@
+  @spec makespan(t()) :: {:ok, number()}

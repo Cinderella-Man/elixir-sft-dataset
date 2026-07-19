@@ -1,0 +1,1 @@
+  @spec check_expiry(integer(), integer()) :: :ok | {:error, :expired}

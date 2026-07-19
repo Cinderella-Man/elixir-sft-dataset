@@ -1,0 +1,1 @@
+  @spec predecessors(t(), vertex()) :: [vertex()]

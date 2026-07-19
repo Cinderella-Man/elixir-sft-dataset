@@ -1,0 +1,1 @@
+  @spec test_filter(list(), term()) :: boolean() | {:error, :invalid_filter}

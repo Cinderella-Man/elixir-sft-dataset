@@ -1,0 +1,1 @@
+  @spec rollback(atom()) :: :ok | {:error, :no_previous_version | :unknown_flag}

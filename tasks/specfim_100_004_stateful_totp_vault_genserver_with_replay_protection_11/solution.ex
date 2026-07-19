@@ -1,0 +1,1 @@
+  @spec hotp(secret(), non_neg_integer()) :: String.t()

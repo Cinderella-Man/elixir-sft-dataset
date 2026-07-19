@@ -1,0 +1,1 @@
+  @spec state(GenServer.server()) :: :closed | :open | :half_open | :recovering

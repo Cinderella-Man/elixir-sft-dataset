@@ -1,0 +1,1 @@
+  @spec encode_cursor(integer()) :: binary()

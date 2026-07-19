@@ -1,0 +1,1 @@
+  @spec count_above(term, number) :: {:ok, non_neg_integer}

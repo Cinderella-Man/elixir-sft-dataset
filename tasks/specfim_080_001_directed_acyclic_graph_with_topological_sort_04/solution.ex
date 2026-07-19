@@ -1,0 +1,1 @@
+  @spec add_edge(t(), vertex(), vertex()) :: {:ok, t()} | {:error, :cycle}

@@ -1,0 +1,1 @@
+  @spec parse(term()) :: {:ok, t()} | {:error, atom()}

@@ -1,0 +1,1 @@
+  @spec status(GenServer.server()) :: map()

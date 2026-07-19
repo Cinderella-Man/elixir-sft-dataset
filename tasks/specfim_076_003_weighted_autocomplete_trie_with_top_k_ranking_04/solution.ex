@@ -1,0 +1,1 @@
+  @spec weight(t, String.t()) :: non_neg_integer

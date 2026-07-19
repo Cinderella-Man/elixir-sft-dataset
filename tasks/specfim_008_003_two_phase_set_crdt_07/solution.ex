@@ -1,0 +1,1 @@
+  @spec merge(server(), tp_state()) :: :ok

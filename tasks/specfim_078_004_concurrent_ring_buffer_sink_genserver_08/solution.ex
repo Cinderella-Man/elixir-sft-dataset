@@ -1,0 +1,1 @@
+  @spec flush(GenServer.server()) :: list()

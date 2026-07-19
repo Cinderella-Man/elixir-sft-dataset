@@ -1,0 +1,1 @@
+  @spec events(GenServer.server(), id()) :: [event()]

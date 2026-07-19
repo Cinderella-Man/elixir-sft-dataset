@@ -1,0 +1,1 @@
+  @spec priority(GenServer.server(), term()) :: {:ok, integer()} | :error

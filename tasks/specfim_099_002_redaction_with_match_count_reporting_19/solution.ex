@@ -1,0 +1,1 @@
+  @spec merge(report(), report()) :: report()

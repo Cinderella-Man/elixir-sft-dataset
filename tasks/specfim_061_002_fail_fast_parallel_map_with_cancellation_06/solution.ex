@@ -1,0 +1,1 @@
+  @spec started(GenServer.server()) :: non_neg_integer()

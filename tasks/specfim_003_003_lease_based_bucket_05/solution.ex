@@ -1,0 +1,1 @@
+  @spec active_leases(GenServer.server(), term()) :: {:ok, non_neg_integer()}

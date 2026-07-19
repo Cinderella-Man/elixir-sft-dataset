@@ -1,0 +1,1 @@
+  @spec cancel_maintenance_timer(service(), service_name()) :: service()

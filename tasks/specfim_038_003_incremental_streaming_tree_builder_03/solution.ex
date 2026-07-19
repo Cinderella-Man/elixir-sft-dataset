@@ -1,0 +1,1 @@
+  @spec add(GenServer.server(), node_map()) :: :ok | {:error, {:duplicate_id, id()}}

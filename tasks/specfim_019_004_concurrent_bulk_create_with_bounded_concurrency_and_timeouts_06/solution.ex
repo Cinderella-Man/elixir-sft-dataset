@@ -1,0 +1,1 @@
+  @spec peak() :: non_neg_integer()

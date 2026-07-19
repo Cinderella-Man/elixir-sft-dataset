@@ -1,0 +1,1 @@
+  @spec increment(term()) :: :ok

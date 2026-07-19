@@ -1,0 +1,1 @@
+  @spec pause(GenServer.server(), service_name()) :: :ok | {:error, :not_found}

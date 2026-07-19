@@ -1,0 +1,1 @@
+  @spec state(name()) :: :closed | :open | :half_open

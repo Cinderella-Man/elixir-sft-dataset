@@ -1,0 +1,1 @@
+  @spec put_bucket(map(), String.t(), map()) :: map()

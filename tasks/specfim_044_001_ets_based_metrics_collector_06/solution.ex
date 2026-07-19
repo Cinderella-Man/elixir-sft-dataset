@@ -1,0 +1,1 @@
+  @spec all() :: %{term() => number()}

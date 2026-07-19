@@ -1,0 +1,1 @@
+  @spec push_front(t(), any()) :: t()

@@ -1,0 +1,1 @@
+  @spec filename(String.t()) :: {:ok, String.t()} | {:error, :empty}

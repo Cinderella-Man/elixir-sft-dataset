@@ -1,0 +1,1 @@
+  @spec revoke(GenServer.server(), atom(), atom(), atom()) :: :ok

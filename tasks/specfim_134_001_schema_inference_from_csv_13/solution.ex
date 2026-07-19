@@ -1,0 +1,1 @@
+  @spec float?(String.t()) :: boolean()

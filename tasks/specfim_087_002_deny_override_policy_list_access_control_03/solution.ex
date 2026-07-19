@@ -1,0 +1,1 @@
+  @spec authorized?(atom(), atom(), atom(), [statement()]) :: boolean()

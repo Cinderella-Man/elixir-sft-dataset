@@ -1,0 +1,1 @@
+  @spec stage(t(), atom(), stage_fun()) :: t()

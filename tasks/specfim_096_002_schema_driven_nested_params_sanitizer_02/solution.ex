@@ -1,0 +1,1 @@
+  @spec sanitize(map(), map()) :: {:ok, map()} | {:error, map()}

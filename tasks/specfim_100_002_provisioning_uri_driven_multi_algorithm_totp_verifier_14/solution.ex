@@ -1,0 +1,1 @@
+  @spec parse_algorithm(map()) :: {:ok, algorithm()} | {:error, :unsupported_algorithm}

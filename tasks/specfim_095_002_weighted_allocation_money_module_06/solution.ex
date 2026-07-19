@@ -1,0 +1,1 @@
+  @spec allocate(t(), [non_neg_integer()]) :: [t()]

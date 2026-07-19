@@ -1,0 +1,1 @@
+  @spec remove_vertex(t(), vertex()) :: t()

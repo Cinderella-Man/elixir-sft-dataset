@@ -1,0 +1,1 @@
+  @spec new([atom() | String.t()]) :: t()

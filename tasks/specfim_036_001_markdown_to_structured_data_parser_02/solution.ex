@@ -1,0 +1,1 @@
+  @spec parse(binary()) :: [%{category: String.t(), items: list(map())}]

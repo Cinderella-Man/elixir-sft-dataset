@@ -1,0 +1,1 @@
+  @spec infer_string(String.t(), keyword()) :: schema()

@@ -1,0 +1,1 @@
+  @spec state(server()) :: lww_state()

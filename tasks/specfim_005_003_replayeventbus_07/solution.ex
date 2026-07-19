@@ -1,0 +1,1 @@
+  @spec set_history_size(GenServer.server(), String.t(), non_neg_integer()) :: :ok

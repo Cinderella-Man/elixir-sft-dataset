@@ -1,0 +1,1 @@
+  @spec merge(t(), t()) :: t()

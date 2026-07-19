@@ -1,0 +1,1 @@
+  @spec apply_strategy(strategy(), term()) :: term()

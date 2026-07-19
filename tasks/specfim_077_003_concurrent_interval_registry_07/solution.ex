@@ -1,0 +1,1 @@
+  @spec enclosing(GenServer.server(), integer()) :: [interval()]

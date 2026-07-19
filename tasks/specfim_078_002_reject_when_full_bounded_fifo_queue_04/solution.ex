@@ -1,0 +1,1 @@
+  @spec pop(t()) :: {:ok, any(), t()} | :empty

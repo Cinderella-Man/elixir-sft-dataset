@@ -1,0 +1,1 @@
+  @spec diff(record_t(), record_t(), [atom()]) :: diff_map()

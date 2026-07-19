@@ -1,0 +1,1 @@
+  @spec redeem(server(), token_id()) :: {:ok, payload()} | {:error, :not_found}

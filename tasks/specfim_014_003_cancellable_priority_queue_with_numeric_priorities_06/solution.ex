@@ -1,0 +1,1 @@
+  @spec peek(server()) :: {:ok, term(), non_neg_integer()} | :empty

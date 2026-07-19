@@ -1,0 +1,1 @@
+  @spec write_object(String.t(), binary(), hash()) :: {:ok, hash()} | {:error, term()}

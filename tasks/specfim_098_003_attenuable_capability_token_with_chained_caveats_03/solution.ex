@@ -1,0 +1,1 @@
+  @spec attenuate(token(), caveat()) :: {:ok, token()} | {:error, :malformed}

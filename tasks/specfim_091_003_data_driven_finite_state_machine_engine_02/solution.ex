@@ -1,0 +1,1 @@
+  @spec define(atom(), list()) :: t()

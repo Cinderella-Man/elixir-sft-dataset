@@ -1,0 +1,1 @@
+  @spec get(String.t()) :: record_t | nil

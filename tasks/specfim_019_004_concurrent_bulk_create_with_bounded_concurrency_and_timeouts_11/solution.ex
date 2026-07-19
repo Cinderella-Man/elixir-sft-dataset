@@ -1,0 +1,1 @@
+  @spec put_price_error(map(), map()) :: map()

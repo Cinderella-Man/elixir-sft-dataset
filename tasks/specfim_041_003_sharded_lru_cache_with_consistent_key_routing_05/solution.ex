@@ -1,0 +1,1 @@
+  @spec num_shards(name()) :: pos_integer()

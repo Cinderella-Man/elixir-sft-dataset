@@ -1,0 +1,1 @@
+  @spec ensure_agent_started() :: :ok

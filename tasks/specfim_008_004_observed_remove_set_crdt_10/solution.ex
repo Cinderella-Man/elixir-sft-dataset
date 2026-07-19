@@ -1,0 +1,1 @@
+  @spec element_present?(or_state(), element()) :: boolean()

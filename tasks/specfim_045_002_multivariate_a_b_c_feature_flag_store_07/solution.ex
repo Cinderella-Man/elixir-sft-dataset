@@ -1,0 +1,1 @@
+  @spec variant_for(atom(), term()) :: atom()

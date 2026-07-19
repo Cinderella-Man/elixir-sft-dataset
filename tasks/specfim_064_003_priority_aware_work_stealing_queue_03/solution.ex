@@ -1,0 +1,1 @@
+  @spec pop_item(non_neg_integer(), pid()) :: {:ok, item()} | :empty

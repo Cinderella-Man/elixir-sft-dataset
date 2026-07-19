@@ -1,0 +1,1 @@
+  @spec to_int(String.t()) :: integer()

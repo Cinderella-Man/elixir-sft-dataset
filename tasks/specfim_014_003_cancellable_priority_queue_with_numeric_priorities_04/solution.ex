@@ -1,0 +1,1 @@
+  @spec cancel(server(), reference()) :: :ok | {:error, :not_found}

@@ -1,0 +1,1 @@
+  @spec classify(String.t()) :: atom()

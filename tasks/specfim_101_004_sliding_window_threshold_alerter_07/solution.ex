@@ -1,0 +1,1 @@
+  @spec count_for(map(), integer(), map()) :: non_neg_integer()

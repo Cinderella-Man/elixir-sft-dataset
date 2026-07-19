@@ -1,0 +1,1 @@
+  @spec init(:ok) :: {:ok, t()}

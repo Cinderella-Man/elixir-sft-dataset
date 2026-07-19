@@ -1,0 +1,1 @@
+  @spec sign(integer() | binary(), binary(), binary()) :: String.t()

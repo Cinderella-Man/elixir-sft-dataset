@@ -1,0 +1,1 @@
+  @spec scrub_string(String.t()) :: {String.t(), report()}

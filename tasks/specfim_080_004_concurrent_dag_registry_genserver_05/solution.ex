@@ -1,0 +1,1 @@
+  @spec topological_sort(GenServer.server()) :: {:ok, [term()]}

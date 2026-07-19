@@ -1,0 +1,1 @@
+  @spec build_token(State.t(), term(), pos_integer()) :: token()

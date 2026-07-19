@@ -1,0 +1,1 @@
+  @spec finalized(GenServer.server()) :: [{integer(), number() | nil}]

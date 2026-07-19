@@ -1,0 +1,1 @@
+  @spec get_payment(GenServer.server(), String.t()) :: {:ok, payment()} | {:error, :not_found}

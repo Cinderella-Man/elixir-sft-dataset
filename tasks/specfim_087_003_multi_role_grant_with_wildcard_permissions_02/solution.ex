@@ -1,0 +1,1 @@
+  @spec effective_permissions(principal(), role_defs()) :: MapSet.t()

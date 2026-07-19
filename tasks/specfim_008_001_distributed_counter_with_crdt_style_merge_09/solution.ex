@@ -1,0 +1,1 @@
+  @spec compute_value(pn_state()) :: integer()

@@ -1,0 +1,1 @@
+  @spec lookup(t(), term()) :: {:ok, strategy()} | :error

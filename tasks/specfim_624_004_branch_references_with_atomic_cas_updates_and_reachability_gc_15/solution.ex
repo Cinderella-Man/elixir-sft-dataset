@@ -1,0 +1,1 @@
+  @spec parse_commit(binary()) :: {:ok, %{tree: hash, parent: hash | nil}} | :error

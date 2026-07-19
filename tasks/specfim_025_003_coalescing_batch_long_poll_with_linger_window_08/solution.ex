@@ -1,0 +1,1 @@
+  @spec wait_for_batch(Plug.Conn.t(), non_neg_integer(), non_neg_integer()) :: Plug.Conn.t()

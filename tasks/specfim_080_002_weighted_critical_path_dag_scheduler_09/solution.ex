@@ -1,0 +1,1 @@
+  @spec earliest_finish(t()) :: {:ok, %{id() => number()}}

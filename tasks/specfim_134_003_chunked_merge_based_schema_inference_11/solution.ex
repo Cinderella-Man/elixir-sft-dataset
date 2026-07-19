@@ -1,0 +1,1 @@
+  @spec parse_csv(String.t()) :: [row()]

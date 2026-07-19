@@ -1,0 +1,1 @@
+  @spec remove(GenServer.server(), integer()) :: :ok | {:error, :not_found}

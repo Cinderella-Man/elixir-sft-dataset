@@ -1,0 +1,1 @@
+  @spec successors(t(), id()) :: [id()]

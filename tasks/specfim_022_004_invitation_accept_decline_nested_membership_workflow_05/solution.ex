@@ -1,0 +1,1 @@
+  @spec add_member(server(), String.t(), String.t()) :: :ok

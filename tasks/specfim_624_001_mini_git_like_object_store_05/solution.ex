@@ -1,0 +1,1 @@
+  @spec tree(GenServer.server(), [map()]) :: {:ok, String.t()}

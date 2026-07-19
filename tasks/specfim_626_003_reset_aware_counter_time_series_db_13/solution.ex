@@ -1,0 +1,1 @@
+  @spec reset_aware_increase([point()]) :: number()

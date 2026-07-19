@@ -1,0 +1,1 @@
+  @spec node_count(t) :: pos_integer

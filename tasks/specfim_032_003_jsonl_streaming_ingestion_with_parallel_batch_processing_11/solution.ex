@@ -1,0 +1,1 @@
+  @spec do_insert_batch(repo(), schema(), [map()], map(), stats()) :: stats()

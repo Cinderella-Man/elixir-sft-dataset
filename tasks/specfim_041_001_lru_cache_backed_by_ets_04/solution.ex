@@ -1,0 +1,1 @@
+  @spec put(name(), key(), value()) :: :ok

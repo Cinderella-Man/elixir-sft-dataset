@@ -1,0 +1,1 @@
+  @spec norm_key(term()) :: {:ok, String.t()} | :error

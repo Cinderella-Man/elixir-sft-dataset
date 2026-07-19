@@ -1,0 +1,1 @@
+  @spec series_key(String.t(), labels()) :: {String.t(), [{term(), term()}]}

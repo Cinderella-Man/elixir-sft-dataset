@@ -1,0 +1,1 @@
+  @spec savepoint(String.t()) :: {:ok, String.t()} | {:error, term()}

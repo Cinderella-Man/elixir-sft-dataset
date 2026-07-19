@@ -1,0 +1,1 @@
+  @spec stage(t(), [{term(), function(), function()}]) :: t()

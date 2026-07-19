@@ -1,0 +1,1 @@
+  @spec date_range() :: StreamData.t(map())

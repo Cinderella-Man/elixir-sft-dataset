@@ -1,0 +1,1 @@
+  @spec finalize(:lenient | :strict, String.t(), [atom()]) :: result()

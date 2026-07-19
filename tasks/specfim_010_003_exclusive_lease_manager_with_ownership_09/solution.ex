@@ -1,0 +1,1 @@
+  @spec expired?(lease(), integer()) :: boolean()

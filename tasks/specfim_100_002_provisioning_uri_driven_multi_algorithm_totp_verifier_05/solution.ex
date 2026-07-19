@@ -1,0 +1,1 @@
+  @spec verify(t(), String.t() | integer(), integer()) :: boolean()

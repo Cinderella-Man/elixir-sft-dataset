@@ -1,0 +1,1 @@
+  @spec insert(server(), String.t(), labels(), integer(), number()) :: :ok

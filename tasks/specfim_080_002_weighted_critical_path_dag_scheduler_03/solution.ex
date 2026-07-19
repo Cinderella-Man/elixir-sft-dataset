@@ -1,0 +1,1 @@
+  @spec add_task(t(), id(), number()) :: t()

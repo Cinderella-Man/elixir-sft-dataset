@@ -1,0 +1,1 @@
+  @spec search([product()], map()) :: {:ok, result()} | {:error, :invalid_sort_field}

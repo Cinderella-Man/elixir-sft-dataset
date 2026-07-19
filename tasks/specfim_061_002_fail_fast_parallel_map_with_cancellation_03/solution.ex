@@ -1,0 +1,1 @@
+  @spec increment(GenServer.server()) :: integer()

@@ -1,0 +1,1 @@
+  @spec misses(term()) :: {:ok, non_neg_integer()} | {:error, :not_registered}

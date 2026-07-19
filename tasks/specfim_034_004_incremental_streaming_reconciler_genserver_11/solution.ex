@@ -1,0 +1,1 @@
+  @spec opposite(:left | :right) :: :left | :right

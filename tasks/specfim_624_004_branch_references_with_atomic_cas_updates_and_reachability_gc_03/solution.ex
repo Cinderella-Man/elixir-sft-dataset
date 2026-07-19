@@ -1,0 +1,1 @@
+  @spec store(GenServer.server(), binary()) :: {:ok, hash}

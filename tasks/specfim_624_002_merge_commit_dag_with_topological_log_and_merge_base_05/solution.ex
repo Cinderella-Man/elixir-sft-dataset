@@ -1,0 +1,1 @@
+  @spec commit(server(), hash(), [hash()], String.t(), String.t()) :: {:ok, hash()}

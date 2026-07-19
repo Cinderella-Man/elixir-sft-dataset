@@ -1,0 +1,1 @@
+  @spec prefix_sum(t(), integer()) :: number()

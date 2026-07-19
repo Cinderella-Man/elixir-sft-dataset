@@ -1,0 +1,1 @@
+  @spec insert!(factory_name(), overrides()) :: struct()

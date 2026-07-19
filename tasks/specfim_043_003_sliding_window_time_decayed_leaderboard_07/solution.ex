@@ -1,0 +1,1 @@
+  @spec prune(board(), integer()) :: non_neg_integer()

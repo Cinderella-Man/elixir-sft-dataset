@@ -1,0 +1,1 @@
+  @spec new(pos_integer(), float()) :: t()

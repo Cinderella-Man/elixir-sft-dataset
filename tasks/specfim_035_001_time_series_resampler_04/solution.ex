@@ -1,0 +1,1 @@
+  @spec aggregate([datapoint()], agg_mode()) :: value()

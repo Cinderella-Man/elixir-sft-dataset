@@ -1,0 +1,1 @@
+  @spec get(server(), session_id()) :: {:ok, session_data()} | {:error, :not_found}

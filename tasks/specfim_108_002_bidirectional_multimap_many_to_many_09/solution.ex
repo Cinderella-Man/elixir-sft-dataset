@@ -1,0 +1,1 @@
+  @spec delete_value(GenServer.server(), term()) :: :ok

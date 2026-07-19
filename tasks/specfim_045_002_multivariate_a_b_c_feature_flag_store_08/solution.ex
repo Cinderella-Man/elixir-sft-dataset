@@ -1,0 +1,1 @@
+  @spec enabled_for?(atom(), term()) :: boolean()

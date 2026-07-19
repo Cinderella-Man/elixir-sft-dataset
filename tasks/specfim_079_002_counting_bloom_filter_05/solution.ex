@@ -1,0 +1,1 @@
+  @spec member?(t(), term()) :: boolean()

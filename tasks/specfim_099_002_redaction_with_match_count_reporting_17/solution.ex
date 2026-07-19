@@ -1,0 +1,1 @@
+  @spec normalize_key(atom() | String.t()) :: String.t()

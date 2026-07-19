@@ -1,0 +1,1 @@
+  @spec prepare_row(map(), MapSet.t(String.t()), NaiveDateTime.t()) :: map()

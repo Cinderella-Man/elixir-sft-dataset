@@ -1,0 +1,1 @@
+  @spec base32_decode(String.t()) :: binary()

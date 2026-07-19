@@ -1,0 +1,1 @@
+  @spec create_document(GenServer.server(), map()) :: {:ok, t()} | {:error, errors()}

@@ -1,0 +1,1 @@
+  @spec add_many(GenServer.server(), [node_map()]) :: :ok

@@ -1,0 +1,1 @@
+  @spec mask_string(t(), String.t()) :: String.t()

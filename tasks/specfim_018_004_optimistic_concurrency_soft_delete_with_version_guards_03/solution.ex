@@ -1,0 +1,1 @@
+  @spec create_document(server(), attrs()) :: {:ok, document()} | {:error, errors()}

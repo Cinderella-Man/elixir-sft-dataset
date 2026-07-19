@@ -1,0 +1,1 @@
+  @spec push(GenServer.server(), term(), term(), term(), map()) :: {:ok, term()}

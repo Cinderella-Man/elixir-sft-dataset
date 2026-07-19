@@ -1,0 +1,1 @@
+  @spec can?(GenServer.server(), atom(), atom(), atom()) :: boolean()

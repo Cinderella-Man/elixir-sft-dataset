@@ -1,0 +1,1 @@
+  @spec delete(t, String.t()) :: t

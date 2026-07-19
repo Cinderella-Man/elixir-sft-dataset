@@ -1,0 +1,1 @@
+  @spec valid_name?(term()) :: boolean()

@@ -1,0 +1,1 @@
+  @spec compute_failure_rate(list(:ok | :error)) :: float()

@@ -1,0 +1,1 @@
+  @spec sequence(atom() | String.t(), (pos_integer() -> any())) :: any()

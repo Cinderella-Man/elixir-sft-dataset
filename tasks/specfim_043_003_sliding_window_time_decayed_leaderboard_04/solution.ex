@@ -1,0 +1,1 @@
+  @spec score(board(), player_id(), integer()) :: {:ok, number()} | {:error, :not_found}

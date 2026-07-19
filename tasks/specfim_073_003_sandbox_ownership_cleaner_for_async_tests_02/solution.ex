@@ -1,0 +1,1 @@
+  @spec ensure_registry() :: {:ok, pid()} | {:error, term()}

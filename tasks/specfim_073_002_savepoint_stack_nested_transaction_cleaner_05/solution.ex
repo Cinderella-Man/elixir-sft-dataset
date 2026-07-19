@@ -1,0 +1,1 @@
+  @spec release(String.t()) :: {:ok, String.t()} | {:error, term()}

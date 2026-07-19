@@ -1,0 +1,1 @@
+  @spec wait_for_notification(Plug.Conn.t(), non_neg_integer()) :: Plug.Conn.t()

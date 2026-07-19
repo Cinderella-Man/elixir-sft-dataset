@@ -1,0 +1,1 @@
+  @spec push(GenServer.server(), term(), number(), pos_integer()) :: :ok

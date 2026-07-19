@@ -1,0 +1,1 @@
+  @spec subtree([map()], id()) :: {:ok, [map()]} | {:error, :not_found}

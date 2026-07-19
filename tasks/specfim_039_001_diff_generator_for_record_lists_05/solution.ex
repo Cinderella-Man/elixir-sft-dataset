@@ -1,0 +1,1 @@
+  @spec changed_entries(MapSet.t(), map(), map(), atom()) :: [change_entry()]

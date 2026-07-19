@@ -1,0 +1,1 @@
+  @spec predecessors(GenServer.server(), term()) :: [term()]

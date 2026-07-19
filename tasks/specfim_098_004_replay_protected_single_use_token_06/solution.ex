@@ -1,0 +1,1 @@
+  @spec verify(State.t(), term()) :: {:ok, binary(), binary()} | {:error, error()}

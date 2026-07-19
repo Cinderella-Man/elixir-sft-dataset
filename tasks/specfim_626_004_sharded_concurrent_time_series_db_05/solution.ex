@@ -1,0 +1,1 @@
+  @spec shard_count(server()) :: non_neg_integer()

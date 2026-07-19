@@ -1,0 +1,1 @@
+  @spec build(atom()) :: struct()

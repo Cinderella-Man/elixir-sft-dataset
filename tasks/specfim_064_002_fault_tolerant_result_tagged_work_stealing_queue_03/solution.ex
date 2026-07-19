@@ -1,0 +1,1 @@
+  @spec safe_apply((any() -> any()), any()) :: tagged_result()

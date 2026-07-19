@@ -1,0 +1,1 @@
+  @spec redact_pair(t(), term(), term()) :: {term(), report()}

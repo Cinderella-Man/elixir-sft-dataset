@@ -1,0 +1,1 @@
+  @spec preview(String.t(), non_neg_integer()) :: {:ok, map()} | {:error, atom()}

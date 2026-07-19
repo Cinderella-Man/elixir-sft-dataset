@@ -1,0 +1,1 @@
+  @spec count(term()) :: number()

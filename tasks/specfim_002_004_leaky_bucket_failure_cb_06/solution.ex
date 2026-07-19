@@ -1,0 +1,1 @@
+  @spec bucket_level(GenServer.server()) :: float()

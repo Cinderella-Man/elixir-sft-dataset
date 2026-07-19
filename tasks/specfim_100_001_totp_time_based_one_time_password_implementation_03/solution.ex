@@ -1,0 +1,1 @@
+  @spec generate_code(String.t(), integer()) :: String.t()

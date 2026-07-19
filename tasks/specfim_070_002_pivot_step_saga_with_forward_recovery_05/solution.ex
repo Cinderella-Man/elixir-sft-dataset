@@ -1,0 +1,1 @@
+  @spec execute(t(), map()) :: {:ok, map()} | {:error, atom(), term(), keyword()}

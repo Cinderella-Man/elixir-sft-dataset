@@ -1,0 +1,1 @@
+  @spec save(GenServer.server(), String.t(), map()) :: {:ok, :created | :exists, map()}

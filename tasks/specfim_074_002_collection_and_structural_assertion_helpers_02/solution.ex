@@ -1,0 +1,1 @@
+  @spec __using__(Macro.t()) :: Macro.t()

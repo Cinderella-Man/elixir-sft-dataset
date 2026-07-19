@@ -1,0 +1,1 @@
+  @spec load_latest(module(), String.t()) :: {state_name(), non_neg_integer()}

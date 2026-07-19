@@ -1,0 +1,1 @@
+  @spec provisioning_uri(String.t(), String.t(), String.t(), integer()) :: String.t()

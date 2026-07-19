@@ -1,0 +1,1 @@
+  @spec insert_by_ts([point()], integer(), point()) :: [point()]

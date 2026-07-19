@@ -1,0 +1,1 @@
+  @spec anonymize(pid(), [map()]) :: [map()]

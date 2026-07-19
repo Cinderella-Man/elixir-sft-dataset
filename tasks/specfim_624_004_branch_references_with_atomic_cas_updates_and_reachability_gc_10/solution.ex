@@ -1,0 +1,1 @@
+  @spec list_branches(GenServer.server()) :: %{optional(String.t()) => hash}

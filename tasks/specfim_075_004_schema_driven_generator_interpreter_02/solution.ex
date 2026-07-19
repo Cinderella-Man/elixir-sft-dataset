@@ -1,0 +1,1 @@
+  @spec from_schema(term()) :: StreamData.t(term())

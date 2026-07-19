@@ -1,0 +1,1 @@
+  @spec peek_newest(t()) :: {:ok, any()} | :error

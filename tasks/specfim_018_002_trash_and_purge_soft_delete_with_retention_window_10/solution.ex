@@ -1,0 +1,1 @@
+  @spec purge_expired(GenServer.server()) :: {:ok, non_neg_integer()}

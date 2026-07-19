@@ -1,0 +1,1 @@
+  @spec array(StreamData.t(a), non_neg_integer()) :: StreamData.t([a]) when a: term()

@@ -1,0 +1,1 @@
+  @spec sql_identifier(String.t()) :: {:ok, String.t()} | {:error, :empty}

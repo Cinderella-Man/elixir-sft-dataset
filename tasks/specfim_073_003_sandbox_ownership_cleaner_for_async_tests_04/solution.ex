@@ -1,0 +1,1 @@
+  @spec allow(pid(), pid()) :: {:ok, pid()} | {:error, :no_owner}

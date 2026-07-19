@@ -1,0 +1,1 @@
+  @spec chain(binary(), binary(), [caveat()]) :: binary()

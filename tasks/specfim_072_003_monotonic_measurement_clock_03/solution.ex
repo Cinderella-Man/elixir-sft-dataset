@@ -1,0 +1,1 @@
+  @spec monotonic(System.time_unit()) :: integer()

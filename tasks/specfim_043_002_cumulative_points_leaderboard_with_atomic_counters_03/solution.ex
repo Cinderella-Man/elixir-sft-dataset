@@ -1,0 +1,1 @@
+  @spec add_points(board(), player_id(), integer()) :: {:ok, integer()}

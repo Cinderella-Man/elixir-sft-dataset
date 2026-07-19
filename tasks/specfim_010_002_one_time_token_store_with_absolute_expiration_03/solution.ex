@@ -1,0 +1,1 @@
+  @spec mint(server(), payload(), keyword()) :: {:ok, token_id()}

@@ -1,0 +1,1 @@
+  @spec retrieve(GenServer.server(), String.t()) :: {:ok, binary()} | {:error, :not_found}

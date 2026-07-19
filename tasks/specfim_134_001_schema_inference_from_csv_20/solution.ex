@@ -1,0 +1,1 @@
+  @spec strip_one_newline(String.t()) :: String.t()

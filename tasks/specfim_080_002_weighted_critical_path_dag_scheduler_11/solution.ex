@@ -1,0 +1,1 @@
+  @spec critical_path(t()) :: {:ok, [id()]}

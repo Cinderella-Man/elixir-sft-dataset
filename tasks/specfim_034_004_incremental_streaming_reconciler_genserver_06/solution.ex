@@ -1,0 +1,1 @@
+  @spec pending(GenServer.server()) :: %{left: [stream_record()], right: [stream_record()]}

@@ -1,0 +1,1 @@
+  @spec start(GenServer.server(), String.t()) :: {:ok, state()}

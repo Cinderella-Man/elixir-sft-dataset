@@ -1,0 +1,1 @@
+  @spec merge(server(), pn_state()) :: :ok

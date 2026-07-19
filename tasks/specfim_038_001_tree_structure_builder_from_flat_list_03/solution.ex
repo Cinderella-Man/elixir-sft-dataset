@@ -1,0 +1,1 @@
+  @spec index_items([node_map()]) :: {%{id() => node_map()}, [id()]}

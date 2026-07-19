@@ -1,0 +1,1 @@
+  @spec undo(map()) :: {:ok, map()} | {:error, :nothing_to_undo}

@@ -1,0 +1,1 @@
+  @spec search(GenServer.server(), String.t(), keyword()) :: [%{id: term(), score: float()}]

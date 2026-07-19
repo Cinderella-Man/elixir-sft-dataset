@@ -1,0 +1,1 @@
+  @spec get(name(), key()) :: {:ok, value()} | :miss

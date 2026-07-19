@@ -1,0 +1,1 @@
+  @spec mask_emails(String.t()) :: {String.t(), non_neg_integer()}

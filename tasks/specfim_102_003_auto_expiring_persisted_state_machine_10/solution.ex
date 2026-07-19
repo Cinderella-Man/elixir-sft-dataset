@@ -1,0 +1,1 @@
+  @spec maybe_schedule(state(), String.t(), non_neg_integer() | nil) :: :ok

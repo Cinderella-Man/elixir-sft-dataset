@@ -1,0 +1,1 @@
+  @spec secret(server(), account_id()) :: {:ok, secret()} | {:error, :not_found}

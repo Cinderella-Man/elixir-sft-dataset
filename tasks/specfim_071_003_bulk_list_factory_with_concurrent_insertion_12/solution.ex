@@ -1,0 +1,1 @@
+  @spec params_for(factory_name()) :: map()

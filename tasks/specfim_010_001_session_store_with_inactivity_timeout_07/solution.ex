@@ -1,0 +1,1 @@
+  @spec destroy(server(), session_id()) :: :ok

@@ -1,0 +1,1 @@
+  @spec sum_usage([usage_entry()]) :: non_neg_integer()

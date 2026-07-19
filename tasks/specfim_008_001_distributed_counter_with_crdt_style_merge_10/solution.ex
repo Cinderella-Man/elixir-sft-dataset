@@ -1,0 +1,1 @@
+  @spec sum_map(g_counter()) :: non_neg_integer()

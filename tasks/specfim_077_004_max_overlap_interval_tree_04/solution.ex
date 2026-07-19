@@ -1,0 +1,1 @@
+  @spec depth_at(t(), integer()) :: number()

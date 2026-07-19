@@ -1,0 +1,1 @@
+  @spec store_auth(Plug.Conn.t(), any()) :: Plug.Conn.t()

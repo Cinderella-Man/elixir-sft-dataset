@@ -1,0 +1,1 @@
+  @spec index(GenServer.server(), term(), map(), keyword()) :: :ok

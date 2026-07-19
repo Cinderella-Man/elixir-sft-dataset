@@ -1,0 +1,1 @@
+  @spec statuses(GenServer.server()) :: %{service_name() => status_info()}

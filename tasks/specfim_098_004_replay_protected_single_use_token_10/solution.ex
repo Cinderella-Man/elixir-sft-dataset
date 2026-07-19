@@ -1,0 +1,1 @@
+  @spec check_mac(binary(), binary(), binary()) :: :ok | {:error, :invalid_signature}

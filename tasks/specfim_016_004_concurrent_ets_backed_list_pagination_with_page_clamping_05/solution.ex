@@ -1,0 +1,1 @@
+  @spec list(:ets.tid(), map()) :: %{data: [map()], meta: map()}

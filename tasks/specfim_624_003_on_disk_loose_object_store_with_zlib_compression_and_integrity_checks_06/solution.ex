@@ -1,0 +1,1 @@
+  @spec list_objects(server()) :: [hash()]

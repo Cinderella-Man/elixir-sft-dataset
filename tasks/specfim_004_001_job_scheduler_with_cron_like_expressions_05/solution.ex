@@ -1,0 +1,1 @@
+  @spec jobs(server()) :: [job_entry()]

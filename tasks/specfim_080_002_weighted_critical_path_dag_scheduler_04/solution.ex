@@ -1,0 +1,1 @@
+  @spec add_dependency(t(), id(), id()) :: {:ok, t()} | {:error, :cycle | :task_not_found}

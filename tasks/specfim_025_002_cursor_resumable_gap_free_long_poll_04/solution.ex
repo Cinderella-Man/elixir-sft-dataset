@@ -1,0 +1,1 @@
+  @spec subscribe(server(), user_id()) :: :ok

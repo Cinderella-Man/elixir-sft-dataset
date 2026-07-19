@@ -1,0 +1,1 @@
+  @spec validate_scheme(String.t() | nil) :: :ok | {:error, :invalid_scheme}

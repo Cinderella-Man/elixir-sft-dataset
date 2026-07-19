@@ -1,0 +1,1 @@
+  @spec exponent(atom()) :: non_neg_integer()

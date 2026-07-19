@@ -1,0 +1,1 @@
+  @spec revoke(server(), token_id()) :: :ok

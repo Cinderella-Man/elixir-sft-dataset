@@ -1,0 +1,1 @@
+  @spec list_documents(GenServer.server(), keyword()) :: [t()]

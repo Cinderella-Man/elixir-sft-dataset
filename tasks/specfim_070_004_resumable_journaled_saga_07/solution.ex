@@ -1,0 +1,1 @@
+  @spec safe((context() -> term()), context()) :: action_result()

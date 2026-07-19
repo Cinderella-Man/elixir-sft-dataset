@@ -1,0 +1,1 @@
+  @spec suggest(GenServer.server(), String.t(), non_neg_integer()) :: [String.t()]

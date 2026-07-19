@@ -1,0 +1,1 @@
+  @spec stop(GenServer.server()) :: :ok

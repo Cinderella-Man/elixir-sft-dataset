@@ -1,0 +1,1 @@
+  @spec insert_parallel(repo(), schema(), [[map()]], map(), stats()) :: stats()

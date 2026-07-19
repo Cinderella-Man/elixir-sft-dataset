@@ -1,0 +1,1 @@
+  @spec extract_cycle(id(), [id()]) :: [id()]

@@ -1,0 +1,1 @@
+  @spec average_length(map(), non_neg_integer(), map()) :: float()

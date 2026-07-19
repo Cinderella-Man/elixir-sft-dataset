@@ -1,0 +1,1 @@
+  @spec reset(name()) :: :ok

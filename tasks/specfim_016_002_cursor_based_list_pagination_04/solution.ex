@@ -1,0 +1,1 @@
+  @spec decode_cursor(term()) :: {:ok, integer()} | :error

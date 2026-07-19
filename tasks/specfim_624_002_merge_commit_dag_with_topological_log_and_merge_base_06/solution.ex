@@ -1,0 +1,1 @@
+  @spec log(server(), hash()) :: {:ok, [entry()]} | {:error, :not_found}

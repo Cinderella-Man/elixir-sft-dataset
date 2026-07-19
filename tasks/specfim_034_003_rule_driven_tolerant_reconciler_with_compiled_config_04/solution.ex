@@ -1,0 +1,1 @@
+  @spec field_summary(report()) :: %{optional(field()) => pos_integer()}

@@ -1,0 +1,1 @@
+  @spec tracked_key_count(server()) :: non_neg_integer()

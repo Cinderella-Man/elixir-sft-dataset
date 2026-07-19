@@ -1,0 +1,1 @@
+  @spec term_frequency(document(), String.t(), map()) :: float()

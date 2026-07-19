@@ -1,0 +1,1 @@
+  @spec list_buckets(server()) :: {:ok, [String.t()]}

@@ -1,0 +1,1 @@
+  @spec validate_amount!(term(), atom()) :: :ok

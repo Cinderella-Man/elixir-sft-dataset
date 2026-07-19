@@ -1,0 +1,1 @@
+  @spec top(board(), non_neg_integer()) :: [{player_id(), integer()}]

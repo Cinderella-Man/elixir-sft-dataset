@@ -1,0 +1,1 @@
+  @spec stats(server()) :: stats()

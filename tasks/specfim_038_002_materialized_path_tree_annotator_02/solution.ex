@@ -1,0 +1,1 @@
+  @spec build([map()], keyword()) :: {:ok, [map()]} | {:error, term()}

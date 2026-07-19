@@ -1,0 +1,1 @@
+  @spec total([t()], atom(), rates()) :: t()

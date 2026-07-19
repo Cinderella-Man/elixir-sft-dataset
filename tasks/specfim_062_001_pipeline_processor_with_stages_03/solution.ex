@@ -1,0 +1,1 @@
+  @spec stage(t(), atom(), (any() -> {:ok, any()} | {:error, any()})) :: t()

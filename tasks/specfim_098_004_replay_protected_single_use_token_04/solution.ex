@@ -1,0 +1,1 @@
+  @spec redeem(GenServer.server(), term()) :: {:ok, term()} | {:error, error()}

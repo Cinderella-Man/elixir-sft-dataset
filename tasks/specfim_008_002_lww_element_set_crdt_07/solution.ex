@@ -1,0 +1,1 @@
+  @spec merge(server(), lww_state()) :: :ok

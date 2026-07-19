@@ -1,0 +1,1 @@
+  @spec decode_line(String.t()) :: result()

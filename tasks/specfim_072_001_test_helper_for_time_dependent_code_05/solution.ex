@@ -1,0 +1,1 @@
+  @spec advance(GenServer.server(), keyword()) :: :ok

@@ -1,0 +1,1 @@
+  @spec start_link([option()]) :: GenServer.on_start()

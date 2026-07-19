@@ -1,0 +1,1 @@
+  @spec insert(:ets.tid(), map()) :: :ok

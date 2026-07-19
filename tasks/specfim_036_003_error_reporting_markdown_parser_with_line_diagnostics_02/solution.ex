@@ -1,0 +1,1 @@
+  @spec parse(binary()) :: %{categories: [map()], errors: [map()]}

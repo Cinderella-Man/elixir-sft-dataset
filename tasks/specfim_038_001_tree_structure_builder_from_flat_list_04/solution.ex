@@ -1,0 +1,1 @@
+  @spec detect_duplicate_ids([node_map()]) :: :ok | {:error, {:duplicate_ids, [id()]}}

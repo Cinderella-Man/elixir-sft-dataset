@@ -1,0 +1,1 @@
+  @spec process_exits(pid(), non_neg_integer()) :: :ok

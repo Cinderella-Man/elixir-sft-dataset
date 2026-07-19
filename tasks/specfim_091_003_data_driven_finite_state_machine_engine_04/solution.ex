@@ -1,0 +1,1 @@
+  @spec new(t(), map()) :: map()

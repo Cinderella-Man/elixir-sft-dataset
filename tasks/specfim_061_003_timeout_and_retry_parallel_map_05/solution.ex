@@ -1,0 +1,1 @@
+  @spec peak(GenServer.server()) :: integer()

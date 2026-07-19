@@ -1,0 +1,1 @@
+  @spec validate_key_fields!(term()) :: [atom(), ...]

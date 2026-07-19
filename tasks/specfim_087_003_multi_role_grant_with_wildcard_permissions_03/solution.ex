@@ -1,0 +1,1 @@
+  @spec permitted?(principal(), atom(), atom(), role_defs()) :: boolean()

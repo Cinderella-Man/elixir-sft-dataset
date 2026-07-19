@@ -1,0 +1,1 @@
+  @spec search(t, String.t()) :: [String.t()]

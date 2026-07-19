@@ -1,0 +1,1 @@
+  @spec peek_front(t()) :: {:ok, any()} | :error

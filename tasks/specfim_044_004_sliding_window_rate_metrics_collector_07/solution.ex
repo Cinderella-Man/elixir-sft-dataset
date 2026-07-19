@@ -1,0 +1,1 @@
+  @spec prune(non_neg_integer()) :: non_neg_integer()

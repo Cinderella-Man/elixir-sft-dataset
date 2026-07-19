@@ -1,0 +1,1 @@
+  @spec compute_expires_at(ttl(), integer()) :: number() | :infinity

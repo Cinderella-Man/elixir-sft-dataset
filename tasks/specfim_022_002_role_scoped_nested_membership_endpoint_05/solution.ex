@@ -1,0 +1,1 @@
+  @spec add_member(server(), term(), term(), role()) :: :ok

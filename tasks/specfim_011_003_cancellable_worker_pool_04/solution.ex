@@ -1,0 +1,1 @@
+  @spec cancel(GenServer.server(), reference()) :: :ok | {:error, :not_found}

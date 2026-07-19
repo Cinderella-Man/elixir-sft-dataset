@@ -1,0 +1,1 @@
+  @spec step(t(), atom(), action_fn(), compensate_fn()) :: t()

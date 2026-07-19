@@ -1,0 +1,1 @@
+  @spec record(term, number) :: :ok

@@ -1,0 +1,1 @@
+  @spec unauthorized(Plug.Conn.t()) :: Plug.Conn.t()

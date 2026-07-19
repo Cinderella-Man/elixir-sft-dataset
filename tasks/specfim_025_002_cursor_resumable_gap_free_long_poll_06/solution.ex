@@ -1,0 +1,1 @@
+  @spec events_since(server(), user_id(), non_neg_integer()) :: [event()]

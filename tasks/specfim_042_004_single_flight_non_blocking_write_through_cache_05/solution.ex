@@ -1,0 +1,1 @@
+  @spec invalidate_all(GenServer.server(), atom()) :: :ok

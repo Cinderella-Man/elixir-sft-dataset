@@ -1,0 +1,1 @@
+  @spec fire_notify((service_name(), float() -> any()) | nil, service_name(), float()) :: any()

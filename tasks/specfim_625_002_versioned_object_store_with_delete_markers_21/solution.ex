@@ -1,0 +1,1 @@
+  @spec summarize(map()) :: version_summary()

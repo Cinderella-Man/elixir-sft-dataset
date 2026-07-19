@@ -1,0 +1,1 @@
+  @spec factory(atom()) :: struct()

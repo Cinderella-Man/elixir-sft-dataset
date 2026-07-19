@@ -1,0 +1,1 @@
+  @spec object_path(String.t(), hash()) :: String.t()

@@ -1,0 +1,1 @@
+  @spec process_batches(repo(), schema(), list(), map()) :: stats()

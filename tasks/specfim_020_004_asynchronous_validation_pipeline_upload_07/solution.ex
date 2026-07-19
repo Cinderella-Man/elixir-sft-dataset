@@ -1,0 +1,1 @@
+  @spec list(GenServer.server()) :: [map()]

@@ -1,0 +1,1 @@
+  @spec get_user_by_token(server(), String.t()) :: {:ok, term()} | :error

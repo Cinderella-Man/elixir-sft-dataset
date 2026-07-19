@@ -1,0 +1,1 @@
+  @spec composite_key(record_t(), [atom()]) :: tuple()

@@ -1,0 +1,1 @@
+  @spec validate_csv(Path.t()) :: :ok | {:error, String.t()}

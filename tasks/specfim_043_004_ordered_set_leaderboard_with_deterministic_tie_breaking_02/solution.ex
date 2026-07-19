@@ -1,0 +1,1 @@
+  @spec new(atom()) :: {:ok, board()}

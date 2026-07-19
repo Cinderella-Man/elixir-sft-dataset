@@ -1,0 +1,1 @@
+  @spec sequence(atom(), (pos_integer() -> value)) :: value when value: term()

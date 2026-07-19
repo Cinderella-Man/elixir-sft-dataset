@@ -1,0 +1,1 @@
+  @spec stab_count(GenServer.server(), integer()) :: non_neg_integer()

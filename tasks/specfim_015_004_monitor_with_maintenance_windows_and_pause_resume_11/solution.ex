@@ -1,0 +1,1 @@
+  @spec apply_maintenance_check(service(), :ok | {:error, term()}, integer()) :: service()

@@ -1,0 +1,1 @@
+  @spec stream_and_process(repo(), schema(), String.t(), map()) :: stats()

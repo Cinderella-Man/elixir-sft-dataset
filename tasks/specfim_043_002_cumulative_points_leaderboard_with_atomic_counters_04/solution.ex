@@ -1,0 +1,1 @@
+  @spec total(board(), player_id()) :: {:ok, integer()} | {:error, :not_found}

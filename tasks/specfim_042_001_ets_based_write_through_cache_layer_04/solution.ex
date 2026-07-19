@@ -1,0 +1,1 @@
+  @spec invalidate(GenServer.server(), atom(), term()) :: :ok

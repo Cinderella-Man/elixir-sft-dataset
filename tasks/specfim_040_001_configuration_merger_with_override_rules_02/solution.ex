@@ -1,0 +1,1 @@
+  @spec merge(config_map(), config_map(), opts()) :: config_map()

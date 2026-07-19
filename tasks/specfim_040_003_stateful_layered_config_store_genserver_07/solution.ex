@@ -1,0 +1,1 @@
+  @spec get(GenServer.server(), [atom()]) :: term()

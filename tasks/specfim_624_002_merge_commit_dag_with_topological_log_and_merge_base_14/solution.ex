@@ -1,0 +1,1 @@
+  @spec dfs_post(hash(), map(), [hash()], MapSet.t()) :: {[hash()], MapSet.t()}

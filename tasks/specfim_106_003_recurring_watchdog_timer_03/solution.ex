@@ -1,0 +1,1 @@
+  @spec register(term(), pid(), non_neg_integer(), (term() -> any())) :: :ok

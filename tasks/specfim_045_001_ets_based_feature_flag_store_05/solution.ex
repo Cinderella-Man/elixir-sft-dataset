@@ -1,0 +1,1 @@
+  @spec enable_for_percentage(atom(), 0..100) :: :ok

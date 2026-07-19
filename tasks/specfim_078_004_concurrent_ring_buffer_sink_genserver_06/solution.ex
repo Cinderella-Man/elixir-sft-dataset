@@ -1,0 +1,1 @@
+  @spec peek_oldest(GenServer.server()) :: {:ok, any()} | :error

@@ -1,0 +1,1 @@
+  @spec reported_status(service()) :: status()

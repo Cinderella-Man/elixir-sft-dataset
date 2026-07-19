@@ -1,0 +1,1 @@
+  @spec parse_line(String.t()) :: {:ok, map()} | :skip

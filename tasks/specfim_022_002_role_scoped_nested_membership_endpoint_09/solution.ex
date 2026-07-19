@@ -1,0 +1,1 @@
+  @spec role_of(server(), term(), term()) :: {:ok, role()} | :error

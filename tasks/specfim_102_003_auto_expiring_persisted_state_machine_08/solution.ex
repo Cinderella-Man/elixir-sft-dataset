@@ -1,0 +1,1 @@
+  @spec decode_history_row(map()) :: map()

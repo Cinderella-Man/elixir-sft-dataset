@@ -1,0 +1,1 @@
+  @spec validate_type(String.t() | nil) :: :ok | {:error, :unsupported_type}

@@ -1,0 +1,1 @@
+  @spec status(term()) :: {:ok, :healthy | :alerting} | {:error, :not_registered}

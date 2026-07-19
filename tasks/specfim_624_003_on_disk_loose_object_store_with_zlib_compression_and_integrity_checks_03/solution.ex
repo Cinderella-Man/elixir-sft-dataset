@@ -1,0 +1,1 @@
+  @spec store(server(), iodata()) :: {:ok, hash()} | {:error, term()}

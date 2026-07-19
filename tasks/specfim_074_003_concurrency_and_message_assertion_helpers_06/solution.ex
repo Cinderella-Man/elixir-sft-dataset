@@ -1,0 +1,1 @@
+  @spec no_message(non_neg_integer()) :: :ok

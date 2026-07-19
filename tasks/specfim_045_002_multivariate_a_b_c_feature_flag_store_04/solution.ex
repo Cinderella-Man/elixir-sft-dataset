@@ -1,0 +1,1 @@
+  @spec disable(atom()) :: :ok

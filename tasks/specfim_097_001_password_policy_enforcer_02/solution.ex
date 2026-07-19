@@ -1,0 +1,1 @@
+  @spec validate(String.t(), map()) :: :ok | {:error, [atom()]}

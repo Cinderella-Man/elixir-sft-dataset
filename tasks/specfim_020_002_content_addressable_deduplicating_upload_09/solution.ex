@@ -1,0 +1,1 @@
+  @spec validate(Plug.Upload.t()) :: :ok | {:error, String.t()}

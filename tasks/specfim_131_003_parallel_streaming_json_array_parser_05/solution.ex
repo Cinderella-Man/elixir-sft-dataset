@@ -1,0 +1,1 @@
+  @spec throughput(non_neg_integer(), number()) :: float()

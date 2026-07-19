@@ -1,0 +1,1 @@
+  @spec put_name_error(map(), map()) :: map()

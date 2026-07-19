@@ -1,0 +1,1 @@
+  @spec resume(t(), context(), journal()) :: run_result()

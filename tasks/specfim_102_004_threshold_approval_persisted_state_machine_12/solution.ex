@@ -1,0 +1,1 @@
+  @spec fetch_history(module(), String.t()) :: [map()]

@@ -1,0 +1,1 @@
+  @spec redact_string(t(), String.t()) :: {String.t(), report()}

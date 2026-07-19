@@ -1,0 +1,1 @@
+  @spec parse_secret(map()) :: {:ok, String.t()} | {:error, :missing_secret | :invalid_secret}

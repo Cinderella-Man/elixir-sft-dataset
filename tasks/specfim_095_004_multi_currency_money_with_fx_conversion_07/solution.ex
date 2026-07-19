@@ -1,0 +1,1 @@
+  @spec convert(t(), atom(), rates()) :: t()

@@ -1,0 +1,1 @@
+  @spec resolve([atom()]) :: atom()

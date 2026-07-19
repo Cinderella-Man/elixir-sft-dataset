@@ -1,0 +1,1 @@
+  @spec execute(GenServer.server(), id(), command()) :: {:ok, [event()]} | {:error, atom()}

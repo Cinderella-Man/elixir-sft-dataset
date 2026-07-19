@@ -1,0 +1,1 @@
+  @spec ready(GenServer.server(), term(), non_neg_integer()) :: [map()]

@@ -1,0 +1,1 @@
+  @spec delete_branch(GenServer.server(), String.t()) :: :ok | {:error, :no_branch}

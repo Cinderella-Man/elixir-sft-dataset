@@ -1,0 +1,1 @@
+  @spec money() :: StreamData.t(map())

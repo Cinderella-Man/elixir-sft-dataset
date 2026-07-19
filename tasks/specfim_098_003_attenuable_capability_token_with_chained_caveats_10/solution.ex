@@ -1,0 +1,1 @@
+  @spec secure_compare(binary(), binary()) :: boolean()

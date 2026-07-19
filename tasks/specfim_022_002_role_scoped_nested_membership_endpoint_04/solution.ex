@@ -1,0 +1,1 @@
+  @spec create_team(server(), term()) :: :ok

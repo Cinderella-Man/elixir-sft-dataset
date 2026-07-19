@@ -1,0 +1,1 @@
+  @spec rate(term(), pos_integer()) :: number()

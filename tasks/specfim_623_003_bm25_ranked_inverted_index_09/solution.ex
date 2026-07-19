@@ -1,0 +1,1 @@
+  @spec count_tokens([String.t()]) :: %{optional(String.t()) => pos_integer()}

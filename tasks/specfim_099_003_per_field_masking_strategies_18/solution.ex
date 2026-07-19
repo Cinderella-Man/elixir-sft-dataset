@@ -1,0 +1,1 @@
+  @spec validate_strategy(term()) :: strategy()

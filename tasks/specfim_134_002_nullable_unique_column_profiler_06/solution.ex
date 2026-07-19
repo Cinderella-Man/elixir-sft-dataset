@@ -1,0 +1,1 @@
+  @spec split_records([row()], boolean()) :: {[String.t()] | nil, [row()]}

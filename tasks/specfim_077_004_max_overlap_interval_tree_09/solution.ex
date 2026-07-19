@@ -1,0 +1,1 @@
+  @spec height(t()) :: non_neg_integer()

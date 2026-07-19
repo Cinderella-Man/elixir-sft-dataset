@@ -1,0 +1,1 @@
+  @spec encode_component(String.t()) :: String.t()

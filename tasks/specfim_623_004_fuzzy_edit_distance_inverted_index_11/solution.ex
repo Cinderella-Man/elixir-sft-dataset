@@ -1,0 +1,1 @@
+  @spec apply_limit([map()], non_neg_integer() | nil) :: [map()]

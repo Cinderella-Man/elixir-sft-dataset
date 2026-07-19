@@ -1,0 +1,1 @@
+  @spec map_headers([String.t()], map() | nil) :: [atom()]

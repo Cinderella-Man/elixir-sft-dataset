@@ -1,0 +1,1 @@
+  @spec value(integer()) :: StreamData.t(term())

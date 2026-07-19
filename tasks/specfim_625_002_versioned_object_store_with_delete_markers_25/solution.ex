@@ -1,0 +1,1 @@
+  @spec persist_bucket(String.t(), String.t(), map()) :: :ok

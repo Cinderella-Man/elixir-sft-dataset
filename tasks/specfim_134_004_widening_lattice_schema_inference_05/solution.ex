@@ -1,0 +1,1 @@
+  @spec join(atom(), atom()) :: atom()

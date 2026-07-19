@@ -1,0 +1,1 @@
+  @spec mask_cc(String.t()) :: String.t()

@@ -1,0 +1,1 @@
+  @spec anonymize([map()], %{atom() => rule()}) :: [map()]

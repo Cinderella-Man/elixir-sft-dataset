@@ -1,0 +1,1 @@
+  @spec stream(Path.t()) :: Enumerable.t()

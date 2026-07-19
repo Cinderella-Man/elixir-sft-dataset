@@ -1,0 +1,1 @@
+  @spec next_counter(state()) :: {timestamp(), state()}

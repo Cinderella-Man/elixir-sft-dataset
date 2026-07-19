@@ -1,0 +1,1 @@
+  @spec assert_raises_message(Macro.t(), Macro.t(), Macro.t()) :: Macro.t()

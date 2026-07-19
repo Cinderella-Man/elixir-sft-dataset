@@ -1,0 +1,1 @@
+  @spec maybe_put_new(map(), atom(), term(), MapSet.t(String.t())) :: map()

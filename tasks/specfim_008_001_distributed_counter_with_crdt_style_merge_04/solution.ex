@@ -1,0 +1,1 @@
+  @spec decrement(server(), node_id(), amount()) :: :ok

@@ -1,0 +1,1 @@
+  @spec set_prerequisites(atom(), [atom()]) :: :ok | {:error, :cycle}

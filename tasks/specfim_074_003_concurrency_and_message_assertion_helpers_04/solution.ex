@@ -1,0 +1,1 @@
+  @spec next_message(term(), non_neg_integer()) :: :ok

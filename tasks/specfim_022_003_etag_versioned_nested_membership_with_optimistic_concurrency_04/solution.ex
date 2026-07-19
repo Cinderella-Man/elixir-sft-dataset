@@ -1,0 +1,1 @@
+  @spec create_team(server(), String.t()) :: :ok

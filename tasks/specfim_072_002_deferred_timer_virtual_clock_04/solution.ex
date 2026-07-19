@@ -1,0 +1,1 @@
+  @spec schedule(GenServer.server(), keyword(), (-> any())) :: non_neg_integer()

@@ -1,0 +1,1 @@
+  @spec parse_period(map()) :: {:ok, pos_integer()} | {:error, :invalid_period}

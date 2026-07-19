@@ -1,0 +1,1 @@
+  @spec check_file(String.t()) :: :ok | {:error, :file_not_found | :empty_file}

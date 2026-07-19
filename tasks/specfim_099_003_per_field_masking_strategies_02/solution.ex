@@ -1,0 +1,1 @@
+  @spec new(map() | keyword()) :: t()

@@ -1,0 +1,1 @@
+  @spec is_invited?(server(), String.t(), String.t()) :: boolean()

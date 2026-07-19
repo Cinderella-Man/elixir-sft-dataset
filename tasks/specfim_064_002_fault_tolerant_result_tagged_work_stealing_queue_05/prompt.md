@@ -1,0 +1,199 @@
+# Write the missing @spec
+
+Below is a complete, working module — except that the `@spec` for
+`find_victim/2` has been removed; its place is marked `# TODO: @spec`.
+Write exactly that typespec: one `@spec` attribute for `find_victim/2`,
+consistent with the function's arguments, guards, and every return shape
+the implementation can produce. Change nothing else.
+
+## The module with the `@spec` for `find_victim/2` missing
+
+```elixir
+defmodule WorkStealQueue do
+  @moduledoc """
+  Fault-tolerant, result-tagged work-stealing task queue.
+
+  Distributes work across N worker `Task`s using a work-stealing algorithm.
+  Each worker owns a local queue; when it empties it steals the back-half of
+  the busiest peer's queue. Coordination goes through an `Agent` whose state is
+  a plain map `%{worker_id => [remaining_items]}`, giving each steal attempt an
+  atomic snapshot of all queues.
+
+  Unlike a plain work-stealing queue, every `process_fn` invocation is wrapped
+  so that raises, throws, and exits are *captured* and turned into a tagged
+  `{:error, %{kind: ..., reason: ...}}` result. A misbehaving item can never
+  kill its worker or lose sibling items.
+
+  ## Example
+
+      WorkStealQueue.run([1, 2, 3], 2, fn
+        2 -> raise "boom"
+        n -> n * 10
+      end)
+      # => [%{item: 1, result: {:ok, 10}, worker_id: 0},
+      #     %{item: 2, result: {:error, %{kind: :error, reason: "boom"}}, worker_id: 0},
+      #     %{item: 3, result: {:ok, 30}, worker_id: 1}]   (order varies)
+  """
+
+  @type tagged_result :: {:ok, any()} | {:error, %{kind: :error | :throw | :exit, reason: any()}}
+
+  # ---------------------------------------------------------------------------
+  # Public API
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Process every item by applying `process_fn` across `worker_count` parallel,
+  fault-tolerant workers. Returns one result map per item (any order). Blocks
+  until all items have been processed.
+  """
+  @spec run(list(), pos_integer(), (any() -> any())) :: [
+          %{item: any(), result: tagged_result(), worker_id: non_neg_integer()}
+        ]
+  def run(items, worker_count, process_fn)
+      when is_list(items) and is_integer(worker_count) and worker_count > 0 and
+             is_function(process_fn, 1) do
+    partitions = partition(items, worker_count)
+
+    {:ok, coordinator} =
+      Agent.start_link(fn ->
+        partitions
+        |> Enum.with_index()
+        |> Map.new(fn {queue, id} -> {id, queue} end)
+      end)
+
+    results =
+      0..(worker_count - 1)
+      |> Enum.map(fn id ->
+        Task.async(fn -> run_worker(id, coordinator, process_fn) end)
+      end)
+      |> Task.await_many(:infinity)
+      |> List.flatten()
+
+    Agent.stop(coordinator)
+    results
+  end
+
+  # ---------------------------------------------------------------------------
+  # Worker logic
+  # ---------------------------------------------------------------------------
+
+  defp run_worker(id, coordinator, process_fn) do
+    process_local_queue(id, coordinator, process_fn, [])
+  end
+
+  defp process_local_queue(id, coordinator, process_fn, acc) do
+    case pop_item(id, coordinator) do
+      {:ok, item} ->
+        result = safe_apply(process_fn, item)
+        entry = %{item: item, result: result, worker_id: id}
+        process_local_queue(id, coordinator, process_fn, [entry | acc])
+
+      :empty ->
+        try_steal(id, coordinator, process_fn, acc)
+    end
+  end
+
+  # Wrap a single item's processing so raise/throw/exit become tagged results.
+  @spec safe_apply((any() -> any()), any()) :: tagged_result()
+  defp safe_apply(process_fn, item) do
+    try do
+      {:ok, process_fn.(item)}
+    rescue
+      e -> {:error, %{kind: :error, reason: Exception.message(e)}}
+    catch
+      :throw, value -> {:error, %{kind: :throw, reason: value}}
+      :exit, reason -> {:error, %{kind: :exit, reason: reason}}
+    end
+  end
+
+  defp try_steal(id, coordinator, process_fn, acc) do
+    case find_victim(id, coordinator) do
+      nil ->
+        acc
+
+      victim_id ->
+        case steal_half(victim_id, coordinator) do
+          [] ->
+            try_steal(id, coordinator, process_fn, acc)
+
+          stolen ->
+            Agent.update(coordinator, fn state ->
+              Map.update(state, id, stolen, fn existing -> stolen ++ existing end)
+            end)
+
+            process_local_queue(id, coordinator, process_fn, acc)
+        end
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Coordinator operations
+  # ---------------------------------------------------------------------------
+
+  @spec pop_item(non_neg_integer(), pid()) :: {:ok, any()} | :empty
+  defp pop_item(id, coordinator) do
+    Agent.get_and_update(coordinator, fn state ->
+      case Map.fetch!(state, id) do
+        [] -> {:empty, state}
+        [head | tail] -> {{:ok, head}, Map.put(state, id, tail)}
+      end
+    end)
+  end
+
+  # TODO: @spec
+  defp find_victim(thief_id, coordinator) do
+    Agent.get(coordinator, fn state ->
+      state
+      |> Enum.reject(fn {id, queue} -> id == thief_id or queue == [] end)
+      |> case do
+        [] ->
+          nil
+
+        candidates ->
+          {victim_id, _queue} = Enum.max_by(candidates, fn {_id, q} -> length(q) end)
+          victim_id
+      end
+    end)
+  end
+
+  @spec steal_half(non_neg_integer(), pid()) :: list()
+  defp steal_half(victim_id, coordinator) do
+    Agent.get_and_update(coordinator, fn state ->
+      queue = Map.fetch!(state, victim_id)
+      len = length(queue)
+
+      if len < 2 do
+        {[], state}
+      else
+        steal_count = div(len, 2)
+        keep_count = len - steal_count
+        {keep, stolen} = Enum.split(queue, keep_count)
+        {stolen, Map.put(state, victim_id, keep)}
+      end
+    end)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Partitioning
+  # ---------------------------------------------------------------------------
+
+  @spec partition(list(), pos_integer()) :: [list()]
+  defp partition(items, n) do
+    total = length(items)
+    base_size = div(total, n)
+    extras = rem(total, n)
+
+    {chunks, _remaining} =
+      Enum.reduce(0..(n - 1), {[], items}, fn i, {acc, rest} ->
+        chunk_size = if i < extras, do: base_size + 1, else: base_size
+        {chunk, tail} = Enum.split(rest, chunk_size)
+        {[chunk | acc], tail}
+      end)
+
+    Enum.reverse(chunks)
+  end
+end
+```
+
+Give me only the `@spec` attribute — the attribute alone (however many
+lines it spans), not the whole module.

@@ -1,0 +1,1 @@
+  @spec shard_index(name(), key()) :: non_neg_integer()

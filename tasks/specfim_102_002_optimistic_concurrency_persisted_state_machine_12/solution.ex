@@ -1,0 +1,1 @@
+  @spec load_history(module(), String.t()) :: [map()]

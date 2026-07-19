@@ -1,0 +1,1 @@
+  @spec new_team() :: %{members: MapSet.t(String.t()), invitations: MapSet.t(String.t())}

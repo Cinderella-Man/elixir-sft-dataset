@@ -1,0 +1,1 @@
+  @spec full?(t()) :: boolean()

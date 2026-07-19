@@ -1,0 +1,1 @@
+  @spec decode_and_verify(binary(), hash()) :: {:ok, binary()} | {:error, :corrupt}

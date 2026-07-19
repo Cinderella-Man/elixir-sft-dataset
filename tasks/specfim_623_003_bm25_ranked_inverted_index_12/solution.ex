@@ -1,0 +1,1 @@
+  @spec add_postings(map(), String.t(), map()) :: map()

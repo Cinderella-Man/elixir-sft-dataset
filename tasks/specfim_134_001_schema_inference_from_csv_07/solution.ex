@@ -1,0 +1,1 @@
+  @spec resolve_column([cell()]) :: atom()

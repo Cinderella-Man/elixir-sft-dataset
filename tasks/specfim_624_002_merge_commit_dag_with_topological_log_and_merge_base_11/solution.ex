@@ -1,0 +1,1 @@
+  @spec parse_parents(binary(), [hash()]) :: {[hash()], binary()}

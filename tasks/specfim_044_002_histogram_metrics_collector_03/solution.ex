@@ -1,0 +1,1 @@
+  @spec observe(term(), non_neg_integer()) :: :ok

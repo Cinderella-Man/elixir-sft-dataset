@@ -1,0 +1,1 @@
+  @spec anonymize([map()], %{optional(String.t()) => term()}) :: [map()]

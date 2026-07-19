@@ -1,0 +1,1 @@
+  @spec boost(any(), map()) :: number()

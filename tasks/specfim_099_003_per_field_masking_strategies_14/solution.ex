@@ -1,0 +1,1 @@
+  @spec digit?(String.t()) :: boolean()

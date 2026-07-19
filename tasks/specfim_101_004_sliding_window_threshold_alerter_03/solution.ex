@@ -1,0 +1,1 @@
+  @spec record(GenServer.server(), key()) :: status()

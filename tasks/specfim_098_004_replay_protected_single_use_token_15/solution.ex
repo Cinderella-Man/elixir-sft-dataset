@@ -1,0 +1,1 @@
+  @spec constant_time_equal?(binary(), binary()) :: boolean()

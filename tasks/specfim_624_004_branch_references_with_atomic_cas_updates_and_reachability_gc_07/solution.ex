@@ -1,0 +1,1 @@
+  @spec branch_head(GenServer.server(), String.t()) :: {:ok, hash} | {:error, :no_branch}

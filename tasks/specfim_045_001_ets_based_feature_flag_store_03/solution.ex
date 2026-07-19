@@ -1,0 +1,1 @@
+  @spec enable(atom()) :: :ok

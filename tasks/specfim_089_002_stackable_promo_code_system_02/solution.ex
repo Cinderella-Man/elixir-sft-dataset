@@ -1,0 +1,1 @@
+  @spec create(map()) :: {:ok, map()} | {:error, atom()}

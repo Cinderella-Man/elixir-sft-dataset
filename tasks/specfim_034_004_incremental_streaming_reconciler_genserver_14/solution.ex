@@ -1,0 +1,1 @@
+  @spec put_pending(state(), :left | :right, key(), stream_record()) :: state()

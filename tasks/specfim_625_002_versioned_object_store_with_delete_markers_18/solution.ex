@@ -1,0 +1,1 @@
+  @spec generate_version_id() :: String.t()

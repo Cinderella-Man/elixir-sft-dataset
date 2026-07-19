@@ -1,0 +1,1 @@
+  @spec entry(hash(), map()) :: entry()

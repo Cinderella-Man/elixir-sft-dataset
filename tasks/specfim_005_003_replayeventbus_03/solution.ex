@@ -1,0 +1,1 @@
+  @spec subscribe(GenServer.server(), String.t(), pid(), keyword()) :: {:ok, reference()}

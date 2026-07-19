@@ -1,0 +1,1 @@
+  @spec hash_for(algorithm()) :: :sha | :sha256 | :sha512

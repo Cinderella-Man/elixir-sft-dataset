@@ -1,0 +1,1 @@
+  @spec do_search(map(), [String.t()], map()) :: [%{id: String.t(), score: float()}]

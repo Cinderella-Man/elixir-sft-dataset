@@ -1,0 +1,1 @@
+  @spec matches?(t, String.t()) :: boolean
