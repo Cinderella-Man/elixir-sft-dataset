@@ -108,6 +108,14 @@ jobs:
       - run: |
           mix run scripts/export_dataset.exs
           mix run scripts/export_dataset.exs -- --check
+      # sfim children embed the parent SPEC verbatim ("## The task" section);
+      # module-FIM resync only re-derives the skeleton fence, so a parent-prompt
+      # edit silently staled them (gap filed + closed 2026-07-19, F24 night).
+      - run: mix run scripts/resync_sfim_specs.exs -- --self-test
+      - run: |
+          out=$(mix run scripts/resync_sfim_specs.exs)
+          echo "$out"
+          echo "$out" | grep -q "would_resync\|ERROR" && exit 1 || true
       # wt_ dirs are byte-copies of their parent (module + harness) plus a prompt
       # that embeds the parent SPEC. check_embeds only sees the module fence, so
       # until 2026-07-13 a parent-prompt or harness edit rotted wt_ silently (it

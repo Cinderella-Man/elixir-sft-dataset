@@ -46,6 +46,11 @@ rejects).
 
 **STEP 2 — follow-up C landings (Kamil approved 2026-07-19; candidates
 are DRAFTED and verified-by-diff in `logs/followup_c_candidates/`).**
+[IN FLIGHT 02:02: candidate 1 (009_003) running detached —
+logs/keep_land_009_003.log; the three run SEQUENTIALLY (keep_land must
+never run concurrently with another prompt-writing tool), each lands on
+green / packets on red, cascade + one commit per landing; 007_002
+--approve last.]
 For each of the three, run the keep path (1 blind solve each; lands on
 green, judge-packet on red — never lands unverified):
 `mix run scripts/keep_land.exs -- --candidate 009_003_retry_aware_request_deduplicator_01 --prompt logs/followup_c_candidates/cand_009_003.md`
@@ -66,16 +71,14 @@ export report's shape table; keep the conservative framing sentence);
 docs/15 entry for: sfim shipped (tally from both logs), carver-bug
 story, follow-up C closed. Push.
 
-**STEP 4 — new Task-B finding to file (discovered during the sfim build,
-not yet in any ledger): sfim children embed the PARENT SPEC verbatim in
-their prompts ("## The task" section), but NO drift gate covers that
-embed** (module-FIM resync only re-derives the skeleton fence; bugfix/
-dedoc-style spec-embed checking does not scan fim dirs). A parent-prompt
-edit now silently stales sfim children. Fix design: extend
-check_embeds/resync_embeds (or a small resync_sfim_specs.exs) to
-re-derive the "## The task" section for fim dirs whose prompt contains
-that marker, byte-compare, --apply heals. File it under rule 7 and wire
-into pre-push/CI like the other five drift gates.
+**STEP 4 — DONE except push-verification: the sixth drift gate
+(scripts/resync_sfim_specs.exs) is BUILT, self-tested (5/5, plants a
+PARENT edit), report-only like its siblings, wired into .githooks/
+pre-push + CI validate.yml, and PROVEN LIVE on its first real drift:
+the 009_003 keep_land landing staled that family's 7 sfim children and
+the gate flagged exactly those 7 (2,534 unchanged). It heals them in
+the 009_003 cascade. Rides the next push; its pre-push block executes
+for the first time then.**
 
 **Standing decisions (Kamil, unchanged):** 110_002 keep packet
 (--approve or delete; then retro_audit --only "110_002*" so its staged

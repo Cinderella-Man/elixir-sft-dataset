@@ -88,6 +88,15 @@ if [ -n "$families" ]; then
       "run: mix run scripts/resync_dedoc_embeds.exs -- --only \"$globs\" --apply"
     exit 1
   fi
+
+  echo "[pre-push] sfim spec-embed staleness check on touched families"
+  sfim_out=$(mix run scripts/resync_sfim_specs.exs -- --only "$globs")
+  echo "$sfim_out" | tail -1
+  if echo "$sfim_out" | grep -q "would_resync\|ERROR"; then
+    echo "[pre-push] FAIL: sfim children embed a stale parent spec —" \
+      "run: mix run scripts/resync_sfim_specs.exs -- --only \"$globs\" --apply"
+    exit 1
+  fi
 else
   echo "[pre-push] no task families touched — skipping corpus gates"
 fi
