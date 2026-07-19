@@ -1,0 +1,324 @@
+# Make this test suite pass
+
+Below is a complete, self-contained ExUnit test suite. Treat it as the
+full specification: write the module (or modules) under test so that
+every test passes. Use only what the tests themselves require — the
+standard library and OTP unless the suite references anything else.
+Follow idiomatic Elixir house style (`@moduledoc`, `@doc` + `@spec` on
+the public API, no compiler warnings).
+
+## The test suite
+
+```elixir
+defmodule DebouncerTest do
+  use ExUnit.Case, async: false
+
+  setup do
+    # Starts Debouncer.start_link([]) which registers under the default name.
+    start_supervised!(Debouncer)
+    :ok
+  end
+
+  # Build a zero-arity func that notifies the test process when invoked.
+  defp notify(tag) do
+    test = self()
+    fn -> send(test, tag) end
+  end
+
+  # -------------------------------------------------------
+  # Coalescing: only the last func runs, exactly once
+  # -------------------------------------------------------
+
+  test "coalesces rapid calls on the same key — only the last func runs" do
+    Debouncer.call("k", 150, notify({:ran, 1}))
+    Debouncer.call("k", 150, notify({:ran, 2}))
+    Debouncer.call("k", 150, notify({:ran, 3}))
+
+    # Only the most recently supplied func should ever fire.
+    assert_receive {:ran, 3}, 600
+
+    # The earlier funcs from the burst must never have run.
+    refute_received {:ran, 1}
+    refute_received {:ran, 2}
+
+    # And nothing else fires afterwards.
+    refute_receive {:ran, _}, 250
+  end
+
+  test "executes the surviving func exactly once" do
+    Debouncer.call("k", 100, notify(:once))
+
+    assert_receive :once, 400
+    refute_receive :once, 300
+  end
+
+  # -------------------------------------------------------
+  # The delay is respected
+  # -------------------------------------------------------
+
+  test "does not execute before the delay elapses" do
+    Debouncer.call("k", 200, notify(:done))
+
+    # Well before the 200ms delay, nothing should have fired.
+    refute_receive :done, 120
+
+    # But it does fire once the delay has passed.
+    assert_receive :done, 400
+  end
+
+  test "each call resets the timer" do
+    # t=0: schedule v1 (would fire at t=200 if never reset)
+    Debouncer.call("k", 200, notify(:v1))
+
+    Process.sleep(100)
+
+    # t=100: reset the timer with v2 (should now fire near t=300)
+    Debouncer.call("k", 200, notify(:v2))
+
+    # From t=100..t=250: v1 would have fired at t=200 if the timer
+    # had NOT been reset. It must not.
+    refute_receive :v1, 150
+
+    # v2 fires after its own full delay.
+    assert_receive :v2, 500
+
+    # v1 never runs.
+    refute_received :v1
+  end
+
+  test "a stale timer message cannot run the replacement func early" do
+    # Arm f1, then SUSPEND the server so we control the message order: the
+    # re-debounce cast is queued first, and the old timer's fire message lands
+    # behind it while the server is suspended. On resume the server processes
+    # the re-debounce, then the old timer's message — which must be recognized
+    # as stale and dropped, not run the freshly armed func ~150ms early.
+    Debouncer.call("k", 80, notify(:old_func))
+    pid = Process.whereis(Debouncer)
+    :sys.suspend(pid)
+    Debouncer.call("k", 300, notify(:new_func))
+    Process.sleep(150)
+    :sys.resume(pid)
+
+    # The replacement waits out its own full delay...
+    refute_receive :new_func, 200
+    # ...then fires exactly once.
+    assert_receive :new_func, 500
+    # The func it replaced never runs.
+    refute_received :old_func
+  end
+
+  # -------------------------------------------------------
+  # Keys are independent
+  # -------------------------------------------------------
+
+  test "different keys are independent" do
+    Debouncer.call("a", 100, notify({:key, "a"}))
+    Debouncer.call("b", 100, notify({:key, "b"}))
+
+    assert_receive {:key, "a"}, 400
+    assert_receive {:key, "b"}, 400
+  end
+
+  test "coalescing one key leaves other keys untouched" do
+    # Burst on "a" — only the last should survive.
+    Debouncer.call("a", 150, notify({:a, 1}))
+    Debouncer.call("a", 150, notify({:a, 2}))
+
+    # A single, independent call on "b".
+    Debouncer.call("b", 150, notify(:b_ran))
+
+    assert_receive {:a, 2}, 500
+    assert_receive :b_ran, 500
+
+    refute_received {:a, 1}
+  end
+
+  # -------------------------------------------------------
+  # A fresh call after firing triggers a second execution
+  # -------------------------------------------------------
+
+  test "a call after the previous one fired triggers a fresh execution" do
+    Debouncer.call("k", 100, notify(:first))
+    assert_receive :first, 400
+
+    Debouncer.call("k", 100, notify(:second))
+    assert_receive :second, 400
+  end
+
+  # -------------------------------------------------------
+  # Return value + non-blocking contract
+  # -------------------------------------------------------
+
+  test "call/3 returns :ok" do
+    assert :ok = Debouncer.call("k", 100, notify(:x))
+    assert_receive :x, 400
+  end
+
+  test "call/3 returns promptly even when the eventual func would block" do
+    slow = fn ->
+      Process.sleep(300)
+      send(self(), :never_matters)
+    end
+
+    # Scheduling must not block on the func's future runtime.
+    {micros, :ok} = :timer.tc(fn -> Debouncer.call("slow", 50, slow) end)
+    assert micros < 100_000
+  end
+
+  # -------------------------------------------------------
+  # Arbitrary key terms
+  # -------------------------------------------------------
+
+  test "keys can be arbitrary terms" do
+    Debouncer.call({:user, 1}, 100, notify(:tuple_key))
+    Debouncer.call(:atom_key, 100, notify(:atom_key_ran))
+
+    assert_receive :tuple_key, 400
+    assert_receive :atom_key_ran, 400
+  end
+
+  # -------------------------------------------------------
+  # delay_ms = 0 is legal, and the func is never run inline
+  # -------------------------------------------------------
+
+  test "delay_ms of 0 is accepted and runs the func asynchronously, not in the caller" do
+    test = self()
+
+    # 0 is a legal, non-negative delay: "fire on the next scheduler pass".
+    assert :ok = Debouncer.call("zero", 0, fn -> send(test, {:zero_ran, self()}) end)
+
+    assert_receive {:zero_ran, runner}, 400
+
+    # The func must never run inline in the calling process.
+    refute runner == test
+  end
+
+  # -------------------------------------------------------
+  # Argument validation (exception TYPE only)
+  # -------------------------------------------------------
+
+  test "call/3 raises FunctionClauseError for a bad delay or a non-zero-arity func" do
+    # Negative delay: below the non-negative-integer contract.
+    assert_raise FunctionClauseError, fn -> Debouncer.call("k", -1, fn -> :noop end) end
+
+    # Non-integer delay.
+    assert_raise FunctionClauseError, fn -> Debouncer.call("k", 100.0, fn -> :noop end) end
+
+    # Func of the wrong arity.
+    assert_raise FunctionClauseError, fn -> Debouncer.call("k", 100, fn _x -> :noop end) end
+
+    # None of the rejected calls may have been sent to the server: a valid call
+    # on the same key still starts a brand-new debounce cycle and fires once.
+    Debouncer.call("k", 50, notify(:valid))
+    assert_receive :valid, 400
+    refute_receive :valid, 200
+  end
+
+  # -------------------------------------------------------
+  # Independent schedules: a later, shorter delay fires first
+  # -------------------------------------------------------
+
+  test "a short-delay key fires before a long-delay key that was scheduled earlier" do
+    Debouncer.call("long", 250, notify(:long))
+    Debouncer.call("short", 50, notify(:short))
+
+    # The short key fires on its own schedule, well before the long one...
+    assert_receive :short, 200
+    refute_received :long
+
+    # ...and the pending long key is unaffected, firing after its own delay.
+    assert_receive :long, 500
+  end
+
+  test "start_link/1 registers under the module name by default and rejects a duplicate" do
+    default = Process.whereis(Debouncer)
+    assert is_pid(default)
+
+    # The setup instance was started with no :name, so it must own the default
+    # registration; a second start under the same name is rejected.
+    assert {:error, {:already_started, ^default}} = Debouncer.start_link([])
+  end
+
+  test "a raising func leaves the server alive and later calls still honored" do
+    server = Process.whereis(Debouncer)
+    test = self()
+
+    Debouncer.call("boom", 20, fn ->
+      send(test, :boom_ran)
+      raise "boom"
+    end)
+
+    assert_receive :boom_ran, 400
+
+    Debouncer.call("after_boom", 20, notify(:after_ran))
+    assert_receive :after_ran, 400
+
+    assert Process.alive?(server)
+    assert Process.whereis(Debouncer) == server
+  end
+
+  test "a replacement call with a shorter delay fires on the new shorter delay" do
+    Debouncer.call(:shrink, 500, notify(:slow_v1))
+    Debouncer.call(:shrink, 20, notify(:fast_v2))
+
+    # The delay in force is the newest call's 20ms, not the earlier 500ms.
+    assert_receive :fast_v2, 250
+    refute_received :slow_v1
+
+    # And the replaced func never runs, not even at the old 500ms deadline.
+    refute_receive :slow_v1, 700
+  end
+
+  test "a still-running slow func does not hold back another key's func" do
+    test = self()
+
+    Debouncer.call(:slow_a, 20, fn ->
+      send(test, {:a_started, self()})
+
+      receive do
+        :release -> send(test, :a_done)
+      after
+        2_000 -> :a_timeout
+      end
+    end)
+
+    Debouncer.call(:quick_b, 40, notify(:b_ran))
+
+    assert_receive {:a_started, runner}, 400
+    # :a is still parked inside its receive here — :b must fire anyway.
+    assert_receive :b_ran, 400
+
+    send(runner, :release)
+    assert_receive :a_done, 400
+  end
+
+  test "atom, binary and tuple keys of the same shape debounce independently" do
+    Debouncer.call(:a, 30, notify(:atom_key_a))
+    Debouncer.call("a", 30, notify(:string_key_a))
+    Debouncer.call({:a, 1}, 30, notify(:tuple_key_a))
+
+    # No key coalesces any other: all three funcs survive and run.
+    assert_receive :atom_key_a, 400
+    assert_receive :string_key_a, 400
+    assert_receive :tuple_key_a, 400
+  end
+
+  test "call/3 returns promptly even while the server is not processing messages" do
+    pid = Process.whereis(Debouncer)
+
+    # With the server unable to process anything, a blocking request would hang.
+    :sys.suspend(pid)
+    {micros, result} = :timer.tc(fn -> Debouncer.call("busy", 20, notify(:busy_ran)) end)
+    :sys.resume(pid)
+
+    assert result == :ok
+    assert micros < 100_000
+
+    # The fire-and-forget request is still honored once the server runs again.
+    assert_receive :busy_ran, 400
+  end
+end
+```
+
+Give me the complete implementation in a single file — the module(s)
+alone, not the tests.

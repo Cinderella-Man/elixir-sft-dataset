@@ -26,12 +26,13 @@ quality standard.
 
 ## The dataset at a glance (2026-07-19)
 
-**12,466 exported training examples (~51M tokens, estimated at ~4 chars/token)
-across 10 task shapes and 83 task families — or, counted conservatively,
-5,964 examples excluding the test-FIM carvings** (the 6,502 `tfim_` units
+**12,792 exported training examples (~52M tokens, estimated at ~4 chars/token)
+across 11 task shapes and 83 task families — or, counted conservatively,
+6,290 examples excluding the test-FIM carvings** (the 6,502 `tfim_` units
 each blank one test out of a shared parent suite, so they intentionally share
-family text; the advisory `sample_weight` 0.25 in the export reflects that).
-Split 11,988 train / 478 val, family-atomic (no family straddles the split).
+family text; the advisory `sample_weight` 0.25 in the export reflects that,
+as it does for the 326 `tdd_` inversions whose golds are parent byte-copies).
+Split 12,298 train / 494 val, family-atomic (no family straddles the split).
 Zero overlaps against the public Elixir benchmarks (MultiPL-E
 humaneval/mbpp-elixir, McEval; 786 benchmark rows, 8/10-gram + exact match —
 re-checked 2026-07-19 over all 25,112 corpus texts after the sfim landing).
@@ -55,7 +56,8 @@ blind-solve screen. Export contract + round-trip validator: `docs/16`.
 | de-documentation (`dedoc_*`) | 326 | doc-stripped module → the fully documented module |
 | style repair (`style_*`) | 50 | working-but-style-rejected code + the review → house-style fix |
 | multi-turn repair dialogues (`dialog_*`) | 182 | spec → failing attempt → real failure report → … → accepted fix |
-| **total** | **12,466** | ~51M tokens |
+| TDD-inverse (`tdd_*`) | 326 | a complete test suite as the spec → the module that passes it |
+| **total** | **12,792** | ~52M tokens |
 
 ## Task naming and families
 

@@ -20,15 +20,8 @@ the generator; pilots before full runs; one solved item = one commit)
 ### bundle-v2; T2.6-proper stays round #2 per the 07-16 sign-off).
 ### Work queue (items 1-4 + the CI red DONE — docs/15 morning entry;
 ### build order corrected by integration-cost investigation):
-### 5. TDD-inverse (332 units) — IN PROGRESS 10:15: :tdd shape
-###    (Discovery prefix; grades like :single so validate/mutants ride
-###    existing paths), GenTask.TddTemplate single-source (today's
-###    lesson), exporter maps+regexes (totality test enforces), validate
-###    whole_mutation includes :tdd, miner scripts/mint_tdd.exs
-###    (deterministic: byte-copies + one eval gate per root, ledger
-###    logs/tdd_rejected.jsonl), drift gate resync_tdd_embeds.exs w/
-###    self-test + hook/CI wiring. Pilot --limit 3 + detailed read
-###    BEFORE the detached full run (~332 evals).
+### 5. TDD-inverse — DONE 10:30 (326 units, 100% yield, all validated;
+###    docs/15). Export refreshed to 12,792.
 ### 6. spec-fim miner (~1,869 sites) — needs its OWN shape + AST-equality
 ###    grader (cannot ride :fim: harnesses cannot kill spec mutants)
 ### 7. bundle-FIM (6 bundles) — needs a bundle-reconstruction eval path

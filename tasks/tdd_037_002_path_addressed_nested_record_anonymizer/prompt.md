@@ -1,0 +1,134 @@
+# Make this test suite pass
+
+Below is a complete, self-contained ExUnit test suite. Treat it as the
+full specification: write the module (or modules) under test so that
+every test passes. Use only what the tests themselves require — the
+standard library and OTP unless the suite references anything else.
+Follow idiomatic Elixir house style (`@moduledoc`, `@doc` + `@spec` on
+the public API, no compiler warnings).
+
+## The test suite
+
+```elixir
+defmodule AnonymizerTest do
+  use ExUnit.Case, async: false
+
+  defp sha256(v), do: :crypto.hash(:sha256, to_string(v)) |> Base.encode16(case: :lower)
+
+  describe "nested path targeting" do
+    test "hashes a value at a nested path and leaves siblings alone" do
+      records = [%{id: 1, user: %{email: "a@x.com", name: "Al"}}]
+      [r] = Anonymizer.anonymize(records, %{"user.email" => :hash})
+      assert r.user.email == sha256("a@x.com")
+      assert r.user.name == "Al"
+      assert r.id == 1
+    end
+
+    test "redacts and masks at different nested paths" do
+      records = [%{profile: %{ssn: "123-45-6789", first: "Jonathan"}}]
+      [r] = Anonymizer.anonymize(records, %{"profile.ssn" => :redact, "profile.first" => :mask})
+      assert r.profile.ssn == "[REDACTED]"
+      assert r.profile.first == "J******n"
+    end
+  end
+
+  describe "list descent with []" do
+    test "applies a rule to a field of each element in a list" do
+      records = [%{orders: [%{card: "1111"}, %{card: "2222"}]}]
+      [r] = Anonymizer.anonymize(records, %{"orders[].card" => :redact})
+      assert Enum.map(r.orders, & &1.card) == ["[REDACTED]", "[REDACTED]"]
+    end
+
+    test "hashes each scalar in a list of scalars (referential integrity within list)" do
+      records = [%{tags: ["x", "y", "x"]}]
+      [r] = Anonymizer.anonymize(records, %{"tags[]" => :hash})
+      assert r.tags == [sha256("x"), sha256("y"), sha256("x")]
+    end
+  end
+
+  describe "referential integrity" do
+    test "same value at different paths and records yields identical output" do
+      records = [
+        %{user: %{email: "shared@x.com"}, backup: %{email: "shared@x.com"}},
+        %{user: %{email: "shared@x.com"}, backup: %{email: "other@x.com"}}
+      ]
+
+      [r1, r2] = Anonymizer.anonymize(records, %{"user.email" => :hash, "backup.email" => :hash})
+      assert r1.user.email == r1.backup.email
+      assert r1.user.email == r2.user.email
+      refute r2.user.email == r2.backup.email
+    end
+
+    test "deterministic fake preserves referential integrity across nesting" do
+      records = [%{a: %{name: "Bob"}, b: %{name: "Bob"}}]
+      [r] = Anonymizer.anonymize(records, %{"a.name" => {:fake, "s"}, "b.name" => {:fake, "s"}})
+      assert r.a.name == r.b.name
+      assert r.a.name != "Bob"
+      assert is_binary(r.a.name)
+    end
+  end
+
+  describe "edge cases" do
+    test "missing path is ignored gracefully" do
+      records = [%{user: %{name: "Alan"}}]
+      [r] = Anonymizer.anonymize(records, %{"user.email" => :redact, "user.name" => :mask})
+      assert r.user.name == "A**n"
+      refute Map.has_key?(r.user, :email)
+    end
+
+    test "type mismatch along a path is skipped" do
+      records = [%{user: "not-a-map"}]
+      [r] = Anonymizer.anonymize(records, %{"user.email" => :redact})
+      assert r.user == "not-a-map"
+    end
+
+    test "supports string-keyed maps" do
+      records = [%{"user" => %{"email" => "a@x.com"}}]
+      [r] = Anonymizer.anonymize(records, %{"user.email" => :hash})
+      assert r["user"]["email"] == sha256("a@x.com")
+    end
+
+    test "empty record list returns empty list" do
+      assert [] == Anonymizer.anonymize([], %{"a.b" => :hash})
+    end
+  end
+
+  test "mask fully masks a 1-character string as *" do
+    records = [%{user: %{initial: "Q"}}]
+    [r] = Anonymizer.anonymize(records, %{"user.initial" => :mask})
+    assert r.user.initial == "*"
+  end
+
+  test "mask shows a 2-character string with no masking" do
+    records = [%{user: %{code: "ab"}}]
+    [r] = Anonymizer.anonymize(records, %{"user.code" => :mask})
+    assert r.user.code == "ab"
+  end
+
+  test "mask keeps first and last characters of a 3-character string" do
+    records = [%{user: %{tag: "abc"}}]
+    [r] = Anonymizer.anonymize(records, %{"user.tag" => :mask})
+    assert r.user.tag == "a*c"
+  end
+
+  test "fake yields a deterministic fabricated string for every value" do
+    values = ["Dave", "Carol", "Alice", "Bob"]
+    records = [%{names: values}]
+
+    [r1] = Anonymizer.anonymize(records, %{"names[]" => {:fake, "s"}})
+    [r2] = Anonymizer.anonymize(records, %{"names[]" => {:fake, "s"}})
+
+    assert r1.names == r2.names
+    assert length(r1.names) == length(values)
+
+    for {original, fake} <- Enum.zip(values, r1.names) do
+      assert is_binary(fake)
+      assert fake != ""
+      assert fake != original
+    end
+  end
+end
+```
+
+Give me the complete implementation in a single file — the module(s)
+alone, not the tests.

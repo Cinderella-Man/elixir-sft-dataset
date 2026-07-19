@@ -9,6 +9,18 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-19 (morning) — TDD-INVERSE SHIPPED: 326 units, 100% yield,
+  the 11th shape.** :tdd rides :single's grading end-to-end (validate
+  perfect + whole-mutants green over all 326; format/embeds untouched by
+  construction). Tests-as-spec framing, deliberately spec-free prompts
+  (the prose channel belongs to :single); golds are parent byte-copies →
+  advisory weight 0.25 like tfim. GenTask.TddTemplate single-source;
+  deterministic miner (zero rejects — parents' own proven files);
+  full-derivation drift gate resync_tdd_embeds (5/5 self-test, plants a
+  parent-harness edit) wired into pre-push + CI. Export refreshed:
+  12,792 examples (12,298/494), round-trip OK, ~52M tokens. 162c27bf +
+  the mint commit.
+
 - **2026-07-19 (morning) — DAY-SESSION QUEUE ITEMS 1–4 + CI RED, ALL
   CLOSED.** (1) 110_002 fully resolved: candidate prompt landed on
   Kamil's approval; the promise audit re-derived its growth at the new
