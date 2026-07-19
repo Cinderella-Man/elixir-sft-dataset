@@ -14,36 +14,26 @@ Reference docs: `docs/14` (handover: gates, tools, ledgers, runbooks),
 ## 📋 TODO (rules 7–10 apply: every finding = Task A fix data + Task B gate
 the generator; pilots before full runs; one solved item = one commit)
 
-### ▶️ DAY SESSION 2026-07-19 (Kamil, ~09:30: "finish everything besides
-### new task generation"; two directed decisions: 110_002 APPROVE, and
-### UNPARK all three derivation builds — spec-fim, TDD-inverse,
-### bundle-v2; T2.6-proper stays round #2 per the 07-16 sign-off).
-### Work queue (items 1-4 + the CI red DONE — docs/15 morning entry;
-### build order corrected by integration-cost investigation):
-### 4h WINDOW CLOSED (docs/15): items 5-9 all done — tdd + spec-fim +
-### bundle-fim shipped, loop derivation completeness proven by the
-### loop's own backfill (work matrix fully green), F26 caught by the
-### push gate and buried two-tier, and the FULL close-out sweep is
-### green: ALL PERFECT (~14.6k dirs) + ALL FIM TARGETS + ALL MUTANTS
-### KILLED + decontam 0 flagged. Export: 14,645 examples (~56M tokens),
-### round-trip OK.
+### Everything derivable from the existing corpus is DONE (2026-07-19,
+### docs/15: 14,645 examples / 12 shapes / all sweeps green / every
+### shape reproducible by one generation run). What remains below is
+### Kamil's strategic call plus its downstream chain.
 
-**Standing decision (Kamil):** the strategic fork — Phase 3 (490 queued
-bases; ~57/1000 ideas realized is the binding constraint) vs a
-training/eval cycle on the export (converts the parked questions —
-register monotony, shape weights, difficulty curve, T2.6-proper's worth
-— into measurements).
+**THE FORK (Kamil — the only live decision):** (a) **Phase 3** — resume
+new-base generation (490 queued ideas; base-idea diversity at ~57/1000
+is the binding constraint no derivation fixes), or (b) **a
+training/eval cycle on the export** — converts the parked questions
+(register monotony, shape weights, difficulty curve, whether
+T2.6-proper's big register rewrite is worth its LLM budget) into
+measurements before more data work. Still parked pending the fork:
+T2.6-proper (round #2 per the 07-16 sign-off) and keep-packet approvals
+(Kamil, any time).
 
-**Phase E — the honest fork (Kamil; roadmap Phases A–D all done, see
-docs/15):** after C, existing-corpus
-derivation is ESSENTIALLY EXHAUSTED. Remaining upside: (a) Phase 3 —
-base-idea diversity (57 of ~1000 ideas realized) is the binding
-constraint no derivation fixes; or (b) run a training/eval cycle on the
-export and let its results (register monotony? shape mix? difficulty
-curve?) decide the next data work — incl. whether T2.6-proper's big
-register rewrite is worth its LLM budget. PARKED until then:
-T2.6-proper, spec-fim (1,869 sites), TDD-inverse, bundle-v2 coverage
-(6 dirs), keep-packet approvals (Kamil, any time).
+**LOOP-PARITY SIGN-OFF (Kamil, small):** row 16 closed 2026-07-19 (the
+table's last MISSING row). Rows 11/17/21 carry explicit post-cutover
+instruments rather than the literal word ENFORCED — say whether that
+framing counts as your waiver, and the parity exit condition below
+checks off.
 
 ---
 
