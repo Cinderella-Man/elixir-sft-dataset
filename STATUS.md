@@ -20,11 +20,13 @@ the generator; pilots before full runs; one solved item = one commit)
 ### bundle-v2; T2.6-proper stays round #2 per the 07-16 sign-off).
 ### Work queue (items 1-4 + the CI red DONE — docs/15 morning entry;
 ### build order corrected by integration-cost investigation):
-### Items 5-8 ALL DONE (docs/15 midday entry): tdd + spec-fim +
-### bundle-fim shipped; loop derivation completeness landed and proven
-### by the loop's own backfill (work matrix fully green; export 14,641).
-### 9. IN FLIGHT: final push (all gates) + full-corpus close-out sweep
-###    (perfect + fim + mutants + decontam) — logs/final_sweep.log.
+### 4h WINDOW CLOSED (docs/15): items 5-9 all done — tdd + spec-fim +
+### bundle-fim shipped, loop derivation completeness proven by the
+### loop's own backfill (work matrix fully green), F26 caught by the
+### push gate and buried two-tier, and the FULL close-out sweep is
+### green: ALL PERFECT (~14.6k dirs) + ALL FIM TARGETS + ALL MUTANTS
+### KILLED + decontam 0 flagged. Export: 14,645 examples (~56M tokens),
+### round-trip OK.
 
 **Standing decision (Kamil):** the strategic fork — Phase 3 (490 queued
 bases; ~57/1000 ideas realized is the binding constraint) vs a

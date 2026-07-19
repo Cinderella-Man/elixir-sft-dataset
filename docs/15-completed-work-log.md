@@ -9,6 +9,14 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-19 (midday) — 4h-WINDOW CLOSE-OUT SWEEP ALL GREEN over the
+  grown corpus:** perfect-score over every gradable dir (~14.6k at
+  1.0), fim mutation over all 3,551 fim units, whole-mutation over
+  every mutable shape, decontam 0/all flagged. The corpus stands at
+  14,645 exported examples (~56M tokens) across 12 shapes, every one
+  machine-verified, every derived shape reproducible by ONE generation
+  run through the Work registry.
+
 - **2026-07-19 (midday) — F26 FOUND BY THE PUSH GATE AND CLOSED
   TWO-TIER: spec-span premature-parse truncation.** The corpus-wide
   format gate (in the pre-push hook since the morning hardening)
