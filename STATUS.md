@@ -14,9 +14,20 @@ Reference docs: `docs/14` (handover: gates, tools, ledgers, runbooks),
 ## 📋 TODO (rules 7–10 apply: every finding = Task A fix data + Task B gate
 the generator; pilots before full runs; one solved item = one commit)
 
-### ▶️ ALL REMAINING ITEMS ARE KAMIL'S CALLS
-### (the 2026-07-19 overnight runbook + roadmap Phases A–D completed in
-### full — stories in docs/15; corpus proven by full sweep, all pushed)
+### ▶️ DAY SESSION 2026-07-19 (Kamil, ~09:30: "finish everything besides
+### new task generation"; two directed decisions: 110_002 APPROVE, and
+### UNPARK all three derivation builds — spec-fim, TDD-inverse,
+### bundle-v2; T2.6-proper stays round #2 per the 07-16 sign-off).
+### Work queue IN ORDER, one solved item = one commit:
+### 1. 110_002 approve + cascade + retro_audit --only "110_002*"
+### 2. Note (a): sfim template harmonization (single-source template
+###    module + full-prompt resync + one deterministic pass)
+### 3. Note (b): validate-side F24 parse-gate self-test + CI wiring
+### 4. Parity row 16 (T1.4 DOC TRUTH checklist item + docs/12 row)
+### 5. bundle-v2 coverage (6 dirs) — investigate docs/13, close
+### 6. spec-fim miner (~1,869 sites) — sfim pattern: pilot → detached
+### 7. TDD-inverse — docs/13 design; new shape integration
+### Then: export/README/docs-15 refresh + push per item batch.
 
 **Open notes for Kamil (non-blocking, from the F24 landing):**
 (a) template-parenthetical harmonization — the sfim prompt's "including
