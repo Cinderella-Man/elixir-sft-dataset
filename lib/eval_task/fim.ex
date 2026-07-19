@@ -381,6 +381,15 @@ defmodule EvalTask.Fim do
     |> extract_candidate()
     |> Code.string_to_quoted!()
     |> Macro.prewalk(fn
+      # Doc-family attrs do not survive a Macro.to_string round-trip when the
+      # heredoc carries escaped quotes or interpolation (the reprint emits an
+      # invalid literal — found live on 096_001_…_12's doctest examples,
+      # 2026-07-19), and the mutant needs no attrs for its one job (compile,
+      # then fail the harness). Replaced with a harmless literal, not
+      # deleted, so block arity is preserved. Data attrs (constants) stay.
+      {:@, _m, [{attr, _, _}]} when attr in [:doc, :moduledoc, :typedoc, :spec, :impl] ->
+        :ok
+
       {d, m, [head, kw]} when d in [:def, :defp, :defmacro, :defmacrop] and is_list(kw) ->
         if Keyword.has_key?(kw, :do),
           do: {d, m, [head, [do: quote(do: raise("MUTATION"))]]},
