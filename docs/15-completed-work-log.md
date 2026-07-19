@@ -9,6 +9,20 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-19 (night) — FOLLOW-UP C CLOSED: all four approved landings
+  shipped, each on first-pass verification.** The three drafted
+  candidates (009_003 execute-timeout/non-blocking-retry precision,
+  014_001, 044_001) each landed on a GREEN first blind solve via
+  keep_land (S6 evidence rows appended); 007_002's keep packet landed on
+  Kamil's directed approval (kamil_keep_landed resolution row — the WMA
+  formula spell-out, keep-class hardness). Every landing ran the full
+  cascade — now SIX gates: the new resync_sfim_specs joined wt_/bugfix/
+  tfim/adapt/dedoc and healed 7+9+5+11 = 32 sfim children across the
+  four landings (its first live drifts, caught scoped-exact each time);
+  check_embeds 3,863 clean after each. Commits f1777c18, d80329e9,
+  8f09a509, 6f4c80d6. Rider: the adapt sweep also healed 3×015_00x
+  accumulated drift (rides f1777c18).
+
 - **2026-07-19 (night) — PHASE C SHIPPED THROUGH F24: deterministic sfim
   landed at 2,530 units, all golds standalone-parseable, after the
   runbook's own sample validation caught a carver defect in a third of

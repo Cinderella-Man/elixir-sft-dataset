@@ -44,25 +44,10 @@ resync_sfim_specs gate in one deterministic pass if desired;
 check (bite machine-proven: fired on 1,084 real units + 4 honest
 rejects).
 
-**STEP 2 — follow-up C landings (Kamil approved 2026-07-19; candidates
-are DRAFTED and verified-by-diff in `logs/followup_c_candidates/`).**
-[PROGRESS 02:07: candidate 1 (009_003) LANDED green + six-gate cascade +
-committed (f1777c18). Candidate 2 (014_001) running detached —
-logs/keep_land_014_001.log; then 044_001, then 007_002 --approve. Each:
-cascade + one commit. keep_land never runs concurrently with another
-prompt-writing tool.]
-For each of the three, run the keep path (1 blind solve each; lands on
-green, judge-packet on red — never lands unverified):
-`mix run scripts/keep_land.exs -- --candidate 009_003_retry_aware_request_deduplicator_01 --prompt logs/followup_c_candidates/cand_009_003.md`
-`mix run scripts/keep_land.exs -- --candidate 014_001_priority_queue_processor_01 --prompt logs/followup_c_candidates/cand_014_001.md`
-`mix run scripts/keep_land.exs -- --candidate 044_001_ets_based_metrics_collector_01 --prompt logs/followup_c_candidates/cand_044_001.md`
-Then the directed approval (Kamil's 2026-07-19 message names 007_002):
-`mix run scripts/keep_land.exs -- --approve 007_002_weightedmovingaverage_01`
-FAMILY SWEEP ALREADY DONE: all siblings of 007/009/014/044 verified
-precise (test-name-vs-prompt scan; the suspicious greps all resolved to
-already-stated semantics). After any landing: the standing cascade
-(resync_embeds --wt-all, resync_bugfix/tfim/adapt/dedoc, check_embeds)
-+ commit per landing.
+**STEP 2 — DONE 02:15: all four follow-up C landings shipped (3 green
+first blind solves + the 007_002 directed keep), six-gate cascade + one
+commit each (f1777c18, d80329e9, 8f09a509, 6f4c80d6) — docs/15 entry
+written. Next: Phase D decontam re-run, then STEP 3.**
 
 **STEP 3 — refresh + close.**
 `mix run scripts/export_dataset.exs` + `-- --check`; update README's
