@@ -9,6 +9,33 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-19 (midday, Kamil's 4h directive "maximize data + integrate
+  every shape into the loop") — SPEC-FIM SHIPPED (1,821), BUNDLE-FIM
+  SHIPPED (17 file-level units), LOOP DERIVATION COMPLETENESS LANDED,
+  EXPORT AT 14,641 (~56M tokens).** Spec-FIM: the 12th shape —
+  `# TODO: @spec` holes graded by normalized AST equality
+  (Runner.run_spec_fim; no-paren heads call-normalized, arg-name
+  annotations reduced), per-unit non-vacuity proven by a mandatory
+  failing return-type mutant; 1,816 full-mint + 5 pilot, 40 honest
+  duplicate-name/arity rejects, validation ALL PERFECT, corpus resync
+  dry-run 1,821 unchanged (miner/gate derivation identity). Bundle-FIM:
+  file-level holes in the six multi-file roots riding the existing
+  :fim bundle reconstruction (whole-file candidates were already a
+  tested path); honest vacuous/gut-uncompilable rejects on files the
+  harnesses never exercise. LOOP: sfim/tdd/specfim/bundlefim are now
+  GenTask.Work registry entries executed by the generic :derived stage
+  — a brand-new accepted root owes variations, fim, wt, tfim, bugfix,
+  adapt, dedoc, sfim, tdd, specfim and bundlefim in ONE run;
+  GenTask.DeriveMiners loads the guarded miner scripts (single
+  implementation); scripts/derive_family.exs is the scoped manual path;
+  proof = the loop's own GEN_ONLY=backfill run finished the last owed
+  work (13 tfim + bundle files) to a fully-green work matrix, and the
+  CLI's second shape table gained the missing :tdd entry plus :spec_fim
+  (whose fall-through would have graded down the WRONG path). Export:
+  14,641 examples / 14,051+590 family-atomic / round-trip OK; README
+  at the 12-shape table. Commits: ddaea7c0, 5f926f70, d972c94b,
+  76e45e3b + the tdd morning pair.
+
 - **2026-07-19 (morning) — TDD-INVERSE SHIPPED: 326 units, 100% yield,
   the 11th shape.** :tdd rides :single's grading end-to-end (validate
   perfect + whole-mutants green over all 326; format/embeds untouched by

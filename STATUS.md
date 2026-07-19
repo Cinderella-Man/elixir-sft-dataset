@@ -20,36 +20,11 @@ the generator; pilots before full runs; one solved item = one commit)
 ### bundle-v2; T2.6-proper stays round #2 per the 07-16 sign-off).
 ### Work queue (items 1-4 + the CI red DONE — docs/15 morning entry;
 ### build order corrected by integration-cost investigation):
-### 5. TDD-inverse — DONE 10:30 (326 units, 100% yield, all validated;
-###    docs/15). Export refreshed to 12,792.
-### 6. spec-fim — SHAPE BUILT + pilot green (ddaea7c0); FULL MINT
-###    RUNNING detached (logs/specfim_mint.log, ~2,570 sites, 2 evals
-###    each). On exit: validate specfim_*, spot-reads, export refresh,
-###    commit+push.
-### 7. bundle-FIM (6 bundles) — Runner.run_fim_bundle + reconstruct_bundle
-###    ALREADY EXIST (tested); build = a small miner carving one file per
-###    hole into the existing :fim shape.
-### 8. LOOP DERIVATION COMPLETENESS — ALL CODE WRITTEN 11:20, pending
-###    compile+pilot behind the running specfim mint (no mix while it
-###    holds _build). What landed on disk: 4 Work-registry entries
-###    (sfim/tdd/specfim/bundlefim) + Config GEN_SKIP_* flags +
-###    GenTask.DeriveMiners (loads the guarded miner scripts — script
-###    stays the single implementation) + scripts/derive_family.exs
-###    (manual one-command family derivation over the same registry) +
-###    bundle-FIM shape (BundleFimTemplate + mint_bundlefim.exs +
-###    resync_bundlefim_embeds.exs + hook/CI wiring + format_corpus
-###    template-split generalized + docs/16 rows).
-###    POST-MINT CHECKLIST (run IN ORDER when logs/specfim_mint.log
-###    exits): (a) mix format new files; compile --warnings-as-errors;
-###    mix test. (b) validate --only "specfim_*" + 3 spot-reads +
-###    resync_specfim dry-run (corpus-wide unchanged = derivation
-###    identity). (c) bundlefim: pilot --limit 3 → detailed read → full
-###    run → self-test + dry-run → check_embeds + format gate.
-###    (d) work_status matrix shows 4 new rows; derive_family --dry-run
-###    on 2 families reports all-complete (idempotency + full-coverage
-###    proof). (e) export refresh + README + docs/15 + commits + push.
-### 9. Close: full-corpus sweep (perfect+fim+mutants), decontam, export/
-###    README/docs-15 refresh, push.
+### Items 5-8 ALL DONE (docs/15 midday entry): tdd + spec-fim +
+### bundle-fim shipped; loop derivation completeness landed and proven
+### by the loop's own backfill (work matrix fully green; export 14,641).
+### 9. IN FLIGHT: final push (all gates) + full-corpus close-out sweep
+###    (perfect + fim + mutants + decontam) — logs/final_sweep.log.
 
 **Standing decision (Kamil):** the strategic fork — Phase 3 (490 queued
 bases; ~57/1000 ideas realized is the binding constraint) vs a
