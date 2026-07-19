@@ -9,6 +9,16 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-19 (night) — STEP 3 + PHASE D CLOSED: decontam re-run over
+  the grown corpus CLEAN (0 of 25,112 corpus texts flagged against the
+  786 public-benchmark rows), export refreshed to 12,466 examples
+  (11,988 train / 478 val across 4 whole val families, round-trip +
+  coverage OK) — fim is now 3,532 (2,541 deterministic sfim carvings),
+  dialogues 182, ~51M tokens at the README's 4-chars/token estimate;
+  README at-a-glance rewritten (conservative non-tfim count: 5,964).
+  With this, roadmap Phases A–D are all done; Phase E (the honest fork:
+  Phase 3 generation vs a training/eval cycle) is Kamil's call.**
+
 - **2026-07-19 (night) — FOLLOW-UP C CLOSED: all four approved landings
   shipped, each on first-pass verification.** The three drafted
   candidates (009_003 execute-timeout/non-blocking-retry precision,

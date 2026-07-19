@@ -26,15 +26,15 @@ quality standard.
 
 ## The dataset at a glance (2026-07-19)
 
-**9,924 exported training examples (~40M tokens, estimated at ~4 chars/token)
+**12,466 exported training examples (~51M tokens, estimated at ~4 chars/token)
 across 10 task shapes and 83 task families — or, counted conservatively,
-3,423 examples excluding the test-FIM carvings** (the 6,501 `tfim_` units
+5,964 examples excluding the test-FIM carvings** (the 6,502 `tfim_` units
 each blank one test out of a shared parent suite, so they intentionally share
 family text; the advisory `sample_weight` 0.25 in the export reflects that).
-Split 9,540 train / 384 val, family-atomic (no family straddles the split).
+Split 11,988 train / 478 val, family-atomic (no family straddles the split).
 Zero overlaps against the public Elixir benchmarks (MultiPL-E
 humaneval/mbpp-elixir, McEval; 786 benchmark rows, 8/10-gram + exact match —
-re-checked 2026-07-19).
+re-checked 2026-07-19 over all 25,112 corpus texts after the sfim landing).
 
 Every example's completion is **execution-verified at a perfect score**
 (compiles, zero warnings, every harness test green, house style clean), and
@@ -47,15 +47,15 @@ blind-solve screen. Export contract + round-trip validator: `docs/16`.
 |---|---|---|
 | base + variation tasks (`*_01`) | 326 | prompt (a spec) → full module solution |
 | multi-file (bundles within `*_01`) | 6 | spec → several files (controller + schema + migration…) |
-| code fill-in-the-middle (`*_02+`) | 991 | module with one function blanked → that function |
+| code fill-in-the-middle (`*_02+`) | 3,532 | module with one function blanked → that function (2,541 deterministically carved — every uncovered function of every single-module root) |
 | write-tests (`wt_*`) | 331 | module + spec → a full test suite |
-| test fill-in-the-middle (`tfim_*`) | 6,501 | test suite with one test blanked → that test |
+| test fill-in-the-middle (`tfim_*`) | 6,502 | test suite with one test blanked → that test |
 | bug-repair pairs (`bugfix_*`) | 962 | working spec + one-line-bugged module + real failing report → the fix |
 | brownfield adaptation (`adapt_*`) | 249 | a related working module + a new spec → the modified module |
 | de-documentation (`dedoc_*`) | 326 | doc-stripped module → the fully documented module |
 | style repair (`style_*`) | 50 | working-but-style-rejected code + the review → house-style fix |
 | multi-turn repair dialogues (`dialog_*`) | 182 | spec → failing attempt → real failure report → … → accepted fix |
-| **total** | **9,924** | ~40M tokens |
+| **total** | **12,466** | ~51M tokens |
 
 ## Task naming and families
 

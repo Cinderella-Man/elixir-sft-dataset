@@ -49,12 +49,12 @@ first blind solves + the 007_002 directed keep), six-gate cascade + one
 commit each (f1777c18, d80329e9, 8f09a509, 6f4c80d6) — docs/15 entry
 written. Next: Phase D decontam re-run, then STEP 3.**
 
-**STEP 3 — refresh + close.**
-`mix run scripts/export_dataset.exs` + `-- --check`; update README's
-at-a-glance numbers (will be ~12,300 examples / count `_0N` via the
-export report's shape table; keep the conservative framing sentence);
-docs/15 entry for: sfim shipped (tally from both logs), carver-bug
-story, follow-up C closed. Push.
+**STEP 3 — DONE 02:20 except the push: decontam re-run CLEAN (0/25,112
+corpus texts flagged), export refreshed 12,466 examples (11,988/478
+family-atomic, round-trip OK), README at-a-glance updated (fim 3,532,
+~51M tokens, conservative count 5,964). Final push IN FLIGHT:
+logs/push_step3.log — carries STEPs 2-4 commits; the new sfim-spec
+pre-push block executes for the first time in it.**
 
 **STEP 4 — DONE except push-verification: the sixth drift gate
 (scripts/resync_sfim_specs.exs) is BUILT, self-tested (5/5, plants a
@@ -75,42 +75,11 @@ weights, difficulty curve, T2.6-proper's worth — into measurements).
 ### ⏭️ ROADMAP (established 2026-07-19 night; Kamil's frame: improve +
 ### derive from existing, no new-task generation)
 
-**Phase A — running now (automatic):** tfim cap-lift backfill → rubric
-pass #2 → triage any both-judge lows against artifacts (rule 7).
-
-**Phase B — TD.2 multi-turn repair dialogues (~86 chains).** The ONLY
-shape that teaches iterative repair (spec → failing attempt → failure
-report → fix). Deterministic from the archived chains; per-pair
-re-verification like mint_repairs. Needs first: the multi-turn export
-format written into docs/16 (proposal: standard chat turns, gold = the
-accepted final attempt, earlier turns loss-masked by the training-run
-convention — documented, not enforced by us).
-
-**Phase C — deterministic sfim (~2,737 code-FIM units) — DESIGN
-CAPTURED 2026-07-20, build queued for a fresh session.** The last big
-volume lever; templated register precedented by tfim/adapt/dedoc/style.
-Reuse points verified in code: `GenTask.Fim.fn_targets/1` (AST-based
-target enumeration incl. multi-clause `{name, arity}`),
-`covered_targets`/`excluded_targets` + the fim-reject ledger,
-`EvalTask.Fim.build_skeleton/2` (the resync-gate-proven skeleton
-builder), and `GenTask.Fim`'s three mint gates (skeleton integrity,
-reconstruction green + 0 warnings, gutted-candidate mutant kill). The
-deterministic variant = Fim with the LLM's two roles replaced:
-target selection → ALL uncovered public/private carvable targets
-beyond the LLM-fim children (fim_max_per_task=3 stays the LLM bound);
-prompt prose → a template modeled on tfim's (name the function, its
-callers/callees context is already in the embedded skeleton). Units
-keep the existing `_0N`/`:fim` shape — NO new shape integration
-needed (exporter/freshness/resync already handle :fim; module-FIM
-resync covers regenerability). Standalone miner
-`scripts/mint_sfim.exs` (mint_style pattern: census → pilot →
-detached full mint, sha-keyed reject ledger, canonical writes via mix
-format semantics — remember the two-canons and zero-warnings lessons
-from TD.4/TD.2). Expected yield ~2,000-2,700 after gates.
-
-**Phase D — training-readiness hygiene:** decontam RE-RUN over the
-grown corpus (first pass was clean 0/786 but predates ~1,100 new units
-— cheap CPU, standing pre-export check), export refresh, full sweep.
+**Phases A–D: ALL DONE (docs/15).** A (tfim cap-lift + rubric pass #2)
+finished earlier on 2026-07-19/20; B (dialog_) turned out fully built —
+182 dirs + exporter :dialogue arm + round-trip, riding every export; C
+(deterministic sfim) shipped tonight at 2,530 units through F24; D
+(decontam re-run 0/25,112 clean + export refresh 12,466) done tonight.
 
 **Phase E — the honest fork (Kamil):** after C, existing-corpus
 derivation is ESSENTIALLY EXHAUSTED. Remaining upside: (a) Phase 3 —
