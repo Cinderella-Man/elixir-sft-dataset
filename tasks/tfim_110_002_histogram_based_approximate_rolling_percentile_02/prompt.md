@@ -241,6 +241,65 @@ defmodule HistogramPercentileTest do
     assert {:ok, 100.0} = HistogramPercentile.query(:c, 1.0)
   end
 
+  test "a below-range value lands in the first bucket rather than being dropped" do
+    start_server([])
+
+    HistogramPercentile.record(:lowc, -5)
+
+    # A single sample clamped into bucket 0 -> the median sits mid-bucket.
+    assert {:ok, p50} = HistogramPercentile.query(:lowc, 0.5)
+    assert_in_delta p50, 5.0, 0.001
+  end
+
+  test "an above-range value lands in the last bucket rather than being dropped" do
+    start_server([])
+
+    HistogramPercentile.record(:hic, 500)
+
+    assert {:ok, p50} = HistogramPercentile.query(:hic, 0.5)
+    assert_in_delta p50, 95.0, 0.001
+  end
+
+  test "a value exactly on an interior edge belongs to the higher bucket" do
+    start_server([])
+
+    HistogramPercentile.record(:edge, 10)
+
+    # Bucket 1 covers [10, 20), so the estimate is mid-bucket-1.
+    assert {:ok, p50} = HistogramPercentile.query(:edge, 0.5)
+    assert_in_delta p50, 15.0, 0.001
+  end
+
+  test "a value exactly on the top edge belongs to the closed last bucket" do
+    start_server([])
+
+    HistogramPercentile.record(:top, 100)
+
+    assert {:ok, p50} = HistogramPercentile.query(:top, 0.5)
+    assert_in_delta p50, 95.0, 0.001
+  end
+
+  test "interpolation weights the target against the counts of the chosen bucket" do
+    start_server([])
+
+    for _ <- 1..3, do: HistogramPercentile.record(:i, 5)
+    HistogramPercentile.record(:i, 95)
+
+    # n == 4; bucket 0 holds 3, bucket 9 holds 1.
+    assert {:ok, p25} = HistogramPercentile.query(:i, 0.25)
+    assert is_float(p25)
+    # target 1.0 inside bucket 0 -> 0 + 10 * (1/3)
+    assert_in_delta p25, 3.3333, 0.001
+
+    assert {:ok, p50} = HistogramPercentile.query(:i, 0.50)
+    # target 2.0 inside bucket 0 -> 0 + 10 * (2/3)
+    assert_in_delta p50, 6.6667, 0.001
+
+    assert {:ok, p90} = HistogramPercentile.query(:i, 0.90)
+    # target 3.6 falls in bucket 9 with cum_before 3 -> 90 + 10 * 0.6
+    assert_in_delta p90, 96.0, 0.001
+  end
+
   # ---------------------------------------------------------
   # Empty / reset
   # ---------------------------------------------------------
@@ -290,6 +349,87 @@ defmodule HistogramPercentileTest do
     assert {:error, :empty} = HistogramPercentile.query(:t, 0.5)
   end
 
+  test "samples inside one slice accumulate into the same histogram" do
+    # slice_ms = ceil(1000 / 4) = 250, so t = 0 and t = 4 share slice 0.
+    start_server(window_ms: 1000, slots: 4)
+
+    HistogramPercentile.record(:acc, 5)
+    Clock.advance(4)
+    HistogramPercentile.record(:acc, 95)
+
+    # n == 2: target 1.0 exhausts bucket 0 exactly -> its high edge.
+    assert {:ok, p50} = HistogramPercentile.query(:acc, 0.5)
+    assert_in_delta p50, 10.0, 0.001
+  end
+
+  test "slice width is the window divided by slots, rounded up" do
+    # slice_ms = ceil(1000 / 4) = 250, so a sample at t = 250 starts slice 250.
+    start_server(window_ms: 1000, slots: 4)
+
+    Clock.advance(250)
+    HistogramPercentile.record(:sw, 95)
+
+    Clock.advance(999)
+    # now = 1249: 1249 - 250 = 999 < 1000, still live.
+    assert {:ok, p50} = HistogramPercentile.query(:sw, 0.5)
+    assert_in_delta p50, 95.0, 0.001
+
+    Clock.advance(1)
+    # now = 1250: 1250 - 250 = 1000, aged out.
+    assert {:error, :empty} = HistogramPercentile.query(:sw, 0.5)
+  end
+
+  test "reusing a ring slot discards the previous cycle's counts" do
+    # slice_ms = 250 with 4 slots, so slice 4 (t = 1000) reuses slot 0.
+    start_server(window_ms: 1000, slots: 4)
+
+    HistogramPercentile.record(:ring, 5)
+    Clock.advance(1000)
+    HistogramPercentile.record(:ring, 95)
+
+    # Only the new sample survives; if the old counts lingered the median
+    # would be pulled down to bucket 0's high edge (10.0).
+    assert {:ok, p50} = HistogramPercentile.query(:ring, 0.5)
+    assert_in_delta p50, 95.0, 0.001
+  end
+
+  test "the default slot count is 60" do
+    # With window_ms = 61 the default 60 slots give slice_ms = ceil(61/60) = 2,
+    # so a sample recorded at t = 1 belongs to the slice starting at 0.
+    start_supervised!(
+      {HistogramPercentile,
+       clock: &Clock.now/0, edges: Enum.map(0..10, &(&1 * 10)), window_ms: 61}
+    )
+
+    Clock.advance(1)
+    HistogramPercentile.record(:ds, 5)
+
+    Clock.advance(59)
+    # now = 60: 60 - 0 = 60 < 61, still live.
+    assert {:ok, _} = HistogramPercentile.query(:ds, 0.5)
+
+    Clock.advance(1)
+    # now = 61: 61 - 0 = 61, the slice has aged out.
+    assert {:error, :empty} = HistogramPercentile.query(:ds, 0.5)
+  end
+
+  test "aged-out slice is excluded while a newer live slice remains" do
+    start_server([])
+
+    for _ <- 1..10, do: HistogramPercentile.record(:w, 5)
+    Clock.advance(500)
+    for _ <- 1..10, do: HistogramPercentile.record(:w, 95)
+
+    # now = 500: both slices live (a mix of low and high values).
+    # Advance so the first slice (start 0) ages out while the second
+    # (start 500) stays live; the first slot is never reused.
+    Clock.advance(600)
+
+    # now = 1100: 1100 - 0 >= 1000 (excluded), 1100 - 500 < 1000 (live).
+    assert {:ok, p50} = HistogramPercentile.query(:w, 0.5)
+    assert_in_delta p50, 95.0, 0.001
+  end
+
   # ---------------------------------------------------------
   # Independence & validation
   # ---------------------------------------------------------
@@ -315,6 +455,40 @@ defmodule HistogramPercentileTest do
         clock: &Clock.now/0,
         edges: [10, 5],
         window_ms: 1000
+      )
+    end
+  end
+
+  test "non-positive window_ms raises synchronously from start_link" do
+    assert_raise ArgumentError, fn ->
+      HistogramPercentile.start_link(
+        name: :bad_window,
+        clock: &Clock.now/0,
+        edges: [0, 10, 20],
+        window_ms: 0
+      )
+    end
+  end
+
+  test "edges with fewer than two entries raise" do
+    assert_raise ArgumentError, fn ->
+      HistogramPercentile.start_link(
+        name: :bad_edges_len,
+        clock: &Clock.now/0,
+        edges: [10],
+        window_ms: 1000
+      )
+    end
+  end
+
+  test "non-positive slots raises synchronously from start_link" do
+    assert_raise ArgumentError, fn ->
+      HistogramPercentile.start_link(
+        name: :bad_slots,
+        clock: &Clock.now/0,
+        edges: [0, 10, 20],
+        window_ms: 1000,
+        slots: 0
       )
     end
   end
