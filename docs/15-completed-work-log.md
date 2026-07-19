@@ -9,6 +9,29 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-19 (midday) — F26 FOUND BY THE PUSH GATE AND CLOSED
+  TWO-TIER: spec-span premature-parse truncation.** The corpus-wide
+  format gate (in the pre-push hook since the morning hardening)
+  refused the 4h-window push with 42 deviating embeds — two classes.
+  (1) 40 specfim units carried TRUNCATED golds: a union type's first
+  alternative parses as a complete spec, so the carve halted before
+  `| {:error, …}`, orphaning the continuation under the marker — which
+  round-trips byte-exactly, grades perfectly (self-consistent) and even
+  PARSES (as a cons on the @doc attribute), so only canonicality caught
+  it. Task A: honest detector = re-carve with the fixed logic and
+  byte-compare every gold (found exactly the 40), delete + re-mint, all
+  40 now full-span, validation + derivation-identity green. Task B:
+  build_site requires the next line to be a non-continuation before
+  halting, AND both miners grew a formatter-canonical-skeleton gate
+  (which future-proofs unknown truncation classes; its first
+  calibration bug — trailing-newline comparison — made it always-false
+  and was caught immediately by 40/40 rejects on the re-mint).
+  (2) Bundle-FIM seams: glued <file> blocks glued the hole against the
+  next defmodule; skeletons now build by parse-join (one blank line
+  between parts, formatter-stable, walker rule (d) already tolerant),
+  recovering 2 previously rejected files (19 units total). Export:
+  14,645; format gate 0/11,927; embeds 3,882 clean 0/0.
+
 - **2026-07-19 (midday, Kamil's 4h directive "maximize data + integrate
   every shape into the loop") — SPEC-FIM SHIPPED (1,821), BUNDLE-FIM
   SHIPPED (17 file-level units), LOOP DERIVATION COMPLETENESS LANDED,

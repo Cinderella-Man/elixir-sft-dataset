@@ -49,7 +49,6 @@ defmodule JsonlImporter do
     - `{:error, :empty_file}` if the file is zero bytes or contains no non-blank lines
   """
   # TODO: @spec
-          | {:error, :file_not_found | :empty_file}
   def import_file(file_path, schema) do
     case File.read(file_path) do
       {:ok, ""} ->

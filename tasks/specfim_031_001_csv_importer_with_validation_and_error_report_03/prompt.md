@@ -78,7 +78,6 @@ defmodule CsvImporter do
   input is empty or whitespace-only.
   """
   # TODO: @spec
-          | {:error, :empty_file}
   def import_string(csv_string, schema) do
     stripped = strip_bom(csv_string)
 

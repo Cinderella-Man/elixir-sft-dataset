@@ -87,12 +87,15 @@ defmodule ResyncBundlefimEmbeds do
            {:path, Regex.run(~r/## The bundle with `([^`\n]+)` missing/, prompt)},
          {:body, body} when is_binary(body) <-
            {:body, Bundle.parse(src) |> Enum.find_value(fn {p, b} -> p == path && b end)} do
-      stripped = Bundle.strip_markers(src)
+      files = Bundle.parse(src)
+      joined = Enum.map_join(files, "\n\n", fn {_, b} -> b end)
 
-      if length(String.split(stripped, body)) != 2 do
-        {:error, dir, "file body not uniquely locatable in the stripped parent"}
+      if length(String.split(joined, body)) != 2 do
+        {:error, dir, "file body not uniquely locatable in the joined parent"}
       else
-        skeleton = String.replace(stripped, body, "# TODO")
+        # Parse-join construction, mirroring the miner (F26 seam class).
+        skeleton =
+          Enum.map_join(files, "\n\n", fn {p, b} -> if p == path, do: "# TODO", else: b end)
 
         expected = %{
           "prompt.md" => BundleFimTemplate.prompt(path, spec, skeleton),

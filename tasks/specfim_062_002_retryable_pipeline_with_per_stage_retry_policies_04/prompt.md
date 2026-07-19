@@ -54,7 +54,6 @@ defmodule Pipeline do
   `{:error, failed_stage, reason, attempts}` when a stage exhausts its budget.
   """
   # TODO: @spec
-          | {:error, atom(), any(), pos_integer()}
   def run(%__MODULE__{stages: stages}, input) do
     execute(stages, input, [])
   end

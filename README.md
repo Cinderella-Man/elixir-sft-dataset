@@ -26,13 +26,13 @@ quality standard.
 
 ## The dataset at a glance (2026-07-19)
 
-**14,641 exported training examples (~56M tokens, estimated at ~4 chars/token)
+**14,645 exported training examples (~56M tokens, estimated at ~4 chars/token)
 across 12 task shapes and 83 task families — or, counted conservatively,
-8,126 examples excluding the test-FIM carvings** (the 6,515 `tfim_` units
+8,130 examples excluding the test-FIM carvings** (the 6,515 `tfim_` units
 each blank one test out of a shared parent suite, so they intentionally share
 family text; the advisory `sample_weight` 0.25 in the export reflects that,
 as it does for the 326 `tdd_` inversions whose golds are parent byte-copies).
-Split 14,051 train / 590 val, family-atomic (no family straddles the split).
+Split 14,055 train / 590 val, family-atomic (no family straddles the split).
 Zero overlaps against the public Elixir benchmarks (MultiPL-E
 humaneval/mbpp-elixir, McEval; 786 benchmark rows, 8/10-gram + exact match —
 re-checked 2026-07-19 over all 25,112 corpus texts after the sfim landing).
@@ -48,7 +48,7 @@ blind-solve screen. Export contract + round-trip validator: `docs/16`.
 |---|---|---|
 | base + variation tasks (`*_01`) | 326 | prompt (a spec) → full module solution |
 | multi-file (bundles within `*_01`) | 6 | spec → several files (controller + schema + migration…) |
-| code fill-in-the-middle (`*_02+`) | 3,547 | module with one function blanked → that function (2,541 deterministic function carves + 15 file-level bundle holes) |
+| code fill-in-the-middle (`*_02+`) | 3,551 | module with one function blanked → that function (2,541 deterministic function carves + 19 file-level bundle holes) |
 | write-tests (`wt_*`) | 331 | module + spec → a full test suite |
 | test fill-in-the-middle (`tfim_*`) | 6,515 | test suite with one test blanked → that test |
 | bug-repair pairs (`bugfix_*`) | 962 | working spec + one-line-bugged module + real failing report → the fix |
@@ -58,7 +58,7 @@ blind-solve screen. Export contract + round-trip validator: `docs/16`.
 | multi-turn repair dialogues (`dialog_*`) | 182 | spec → failing attempt → real failure report → … → accepted fix |
 | TDD-inverse (`tdd_*`) | 326 | a complete test suite as the spec → the module that passes it |
 | spec-FIM (`specfim_*`) | 1,821 | module with one `@spec` blanked → that typespec (AST-equality graded) |
-| **total** | **14,641** | ~56M tokens |
+| **total** | **14,645** | ~56M tokens |
 
 ## Task naming and families
 

@@ -76,12 +76,29 @@ defmodule GenTask.SpecFim do
 
       case Code.string_to_quoted(String.trim(span)) do
         {:ok, {:@, _, [{:spec, _, [expr]}]}} ->
-          {:halt, %{id: site_id(expr), lo: lo, hi: hi, span: span}}
+          # F26: parse success is NOT span-end — a union type's first
+          # alternative parses as a complete spec (`@spec f(x) ::\n {:ok, t}`
+          # halted before `| {:error, …}`, truncating the gold and orphaning
+          # the continuation under the marker; caught by the corpus format
+          # gate 2026-07-19). The span ends only when the NEXT line is not a
+          # continuation of the attribute.
+          if continuation?(Enum.at(lines, hi + 1)) do
+            {:cont, %{id: :unparseable, lo: lo, hi: hi, span: span}}
+          else
+            {:halt, %{id: site_id(expr), lo: lo, hi: hi, span: span}}
+          end
 
         _ ->
           {:cont, %{id: :unparseable, lo: lo, hi: hi, span: span}}
       end
     end)
+  end
+
+  defp continuation?(nil), do: false
+
+  defp continuation?(line) do
+    t = String.trim(line)
+    String.starts_with?(t, ["|", "when ", "::"])
   end
 
   defp site_id(expr) do

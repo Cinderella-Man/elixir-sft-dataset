@@ -70,7 +70,6 @@ defmodule JsonlImporter do
   Returns `{:ok, valid_records, error_report}` or `{:error, :empty_file}`.
   """
   # TODO: @spec
-          | {:error, :empty_file}
   def import_string(jsonl_string, schema) do
     stripped = strip_bom(jsonl_string)
 

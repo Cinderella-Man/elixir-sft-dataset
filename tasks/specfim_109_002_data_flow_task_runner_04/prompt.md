@@ -53,8 +53,6 @@ defmodule DataFlowRunner do
   end
 
   # TODO: @spec
-          | {:error, {:cycle, [term()]}}
-          | {:error, {:unknown_dependencies, [term()]}}
   @doc """
   Validates the dependency graph and executes every submitted task.
 

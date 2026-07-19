@@ -129,7 +129,17 @@ defmodule MintBundlefim do
   end
 
   defp mint_one(cand) do
-    stripped = Bundle.strip_markers(cand.src)
+    # Skeleton by parse-join, NOT textual replace (F26 sibling class: a parent
+    # bundle gluing two <file> blocks glued the hole against the next
+    # defmodule, which the format gate reflows). One blank line between parts
+    # is formatter-stable; reconstruct_bundle matches per-file bodies, so the
+    # seam normalization never affects grading; check_embeds rule (d) already
+    # tolerates blank-line bundle seams.
+    skeleton =
+      cand.files
+      |> Enum.map_join("\n\n", fn {p, b} -> if p == cand.path, do: "# TODO", else: b end)
+
+    joined = Enum.map_join(cand.files, "\n\n", fn {_, b} -> b end)
 
     cond do
       # Gate 1: the file must parse standalone and be non-trivial.
@@ -141,16 +151,27 @@ defmodule MintBundlefim do
         record_dead(cand, "file body too trivial to teach (< 4 lines)")
         :uncarvable
 
-      # Gate 2: the body must appear verbatim exactly once in the stripped
-      # bundle — the skeleton's hole→body substitution must round-trip.
-      length(String.split(stripped, cand.body)) != 2 ->
-        record_dead(cand, "file body not uniquely locatable in the stripped bundle")
+      # Gate 2: the body must appear exactly once across the joined bodies —
+      # hole→body substitution must be unambiguous.
+      length(String.split(joined, cand.body)) != 2 ->
+        record_dead(cand, "file body not uniquely locatable in the joined bundle")
+        :uncarvable
+
+      # F26 gate: the skeleton must be formatter-canonical.
+      not canonical?(skeleton) ->
+        record_dead(cand, "carve: skeleton not formatter-canonical (F26 class)")
         :uncarvable
 
       true ->
-        skeleton = String.replace(stripped, cand.body, "# TODO")
         stage_and_gate(cand, skeleton)
     end
+  end
+
+  defp canonical?(src) do
+    formatted = src |> Code.format_string!() |> IO.iodata_to_binary()
+    String.trim_trailing(formatted, "\n") == String.trim_trailing(src, "\n")
+  rescue
+    _ -> false
   end
 
   defp stage_and_gate(cand, skeleton) do

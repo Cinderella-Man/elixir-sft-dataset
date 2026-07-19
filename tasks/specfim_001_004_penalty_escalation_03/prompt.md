@@ -29,8 +29,6 @@ defmodule PenaltyLimiter do
   end
 
   # TODO: @spec
-          | {:error, :rate_limited, non_neg_integer(), pos_integer()}
-          | {:error, :cooling_down, non_neg_integer(), pos_integer()}
   @doc """
   Checks a request under `key` against the limit, escalating the cooldown through
   `penalty_ladder` on repeated violations. Returns `{:ok, remaining}`, or an

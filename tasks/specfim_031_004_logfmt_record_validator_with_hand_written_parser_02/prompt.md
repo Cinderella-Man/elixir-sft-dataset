@@ -51,7 +51,6 @@ defmodule LogfmtValidator do
   # ---------------------------------------------------------------------------
 
   # TODO: @spec
-          | {:error, :file_not_found | :empty_file}
   def validate_file(file_path, schema) do
     case File.read(file_path) do
       {:ok, ""} ->

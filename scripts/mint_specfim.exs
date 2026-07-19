@@ -135,19 +135,36 @@ defmodule MintSpecfim do
 
     # Gate 3: byte round-trip — the marker swapped back for the span must
     # reproduce the parent exactly.
-    if not GenTask.SpecFim.round_trip?(cand.src, site) do
-      record_dead(cand, "carve: round-trip mismatch", site_key(cand.site))
-      :uncarvable
-    else
-      [name, arity] = String.split(site.id, "/")
+    skeleton = GenTask.SpecFim.skeleton(cand.src, site)
 
-      stage_and_gate(
-        cand,
-        GenTask.SpecFim.skeleton(cand.src, site),
-        name,
-        String.to_integer(arity)
-      )
+    cond do
+      not GenTask.SpecFim.round_trip?(cand.src, site) ->
+        record_dead(cand, "carve: round-trip mismatch", site_key(cand.site))
+        :uncarvable
+
+      # F26 gate: the skeleton must be formatter-canonical — a truncated span
+      # orphans continuation lines under the marker, which round-trips and
+      # even parses (as garbage attached to the @doc attr) but always reflows.
+      not canonical?(skeleton) ->
+        record_dead(
+          cand,
+          "carve: skeleton not formatter-canonical (F26 class)",
+          site_key(cand.site)
+        )
+
+        :uncarvable
+
+      true ->
+        [name, arity] = String.split(site.id, "/")
+        stage_and_gate(cand, skeleton, name, String.to_integer(arity))
     end
+  end
+
+  defp canonical?(src) do
+    formatted = src |> Code.format_string!() |> IO.iodata_to_binary()
+    String.trim_trailing(formatted, "\n") == String.trim_trailing(src, "\n")
+  rescue
+    _ -> false
   end
 
   defp stage_and_gate(cand, skeleton, name, arity) do

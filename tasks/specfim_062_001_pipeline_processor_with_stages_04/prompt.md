@@ -71,7 +71,6 @@ defmodule Pipeline do
   including the one that failed.
   """
   # TODO: @spec
-          | {:error, atom(), any()}
   def run(%__MODULE__{stages: stages}, input) do
     execute(stages, input, [])
   end

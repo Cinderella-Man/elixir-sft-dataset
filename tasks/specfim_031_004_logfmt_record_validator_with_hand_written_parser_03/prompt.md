@@ -67,7 +67,6 @@ defmodule LogfmtValidator do
   end
 
   # TODO: @spec
-          | {:error, :empty_file}
   def validate_string(logfmt_string, schema) do
     stripped = strip_bom(logfmt_string)
 
