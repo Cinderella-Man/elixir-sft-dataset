@@ -182,22 +182,36 @@ grid of per-time-slice bucket counts.
     `[e0, e1, …, ek]` defining `k` buckets. Bucket `i` covers `[e_i, e_{i+1})`,
     with the final bucket `[e_{k-1}, ek]` treated as closed. A recorded value below
     `e0` is clamped into bucket 0; a value at or above `ek` is clamped into the last
-    bucket. Supplying anything else raises `ArgumentError`.
+    bucket. Supplying anything else raises `ArgumentError` — and the raise comes
+    **synchronously from `start_link/1` in the calling process**: validate the
+    options eagerly before spawning the server, rather than raising inside
+    `init/1`, which would turn the error into a linked-process exit instead of a
+    catchable raise.
   - `:window_ms` — **required** positive integer. A sample recorded at time `t`
     contributes to queries while `now - t < window_ms`.
   - `:slots` — positive integer, default `60`. The window is divided into this many
     time slices; each series keeps one histogram per slice in a ring buffer. When a
-    slice's slot is reused in a later cycle, its old counts are discarded.
+    slice's slot is reused in a later cycle, its old counts are discarded. Slot
+    reuse is **not** the only expiry: each slot must remember which time slice
+    wrote it, because a query must exclude any slot whose slice has already aged
+    out of the window — even when that slot has not been reused yet. Once
+    `window_ms` passes with no new samples recorded, a query on that series
+    returns `{:error, :empty}`.
 
-- `HistogramPercentile.record(name, value)` — increments the bucket for `value`
-  in the current time slice of series `name`. Returns `:ok`.
+- `HistogramPercentile.record(series, value)` — increments the bucket for `value`
+  in the current time slice of series `series`. Returns `:ok`.
 
-- `HistogramPercentile.query(name, percentile)` — returns `{:ok, estimate}` where
+- `HistogramPercentile.query(series, percentile)` — returns `{:ok, estimate}` where
   `estimate` is a float, or `{:error, :empty}` when no live counts exist.
   `percentile` is a float in `0.0..1.0`.
 
-- `HistogramPercentile.reset(name)` — discards all counts for series `name`.
+- `HistogramPercentile.reset(series)` — discards all counts for series `series`.
   Returns `:ok`.
+
+These three functions are always addressed to the singleton process registered
+under the **default** `HistogramPercentile` name — their first argument is a
+**series identifier** (an arbitrary term such as `:latency` or `:d`), never a
+server reference or pid. Do not thread a server argument through the API.
 
 ## Estimation algorithm (histogram quantile)
 
