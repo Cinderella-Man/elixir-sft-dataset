@@ -40,6 +40,7 @@ defmodule ExportDataset do
     dedoc: "solution.ex",
     style: "solution.ex",
     dialogue: "solution.ex",
+    tdd: "solution.ex",
     write_test: "test_harness.exs"
   }
 
@@ -53,6 +54,10 @@ defmodule ExportDataset do
     dedoc: 0.5,
     style: 0.5,
     dialogue: 1.0,
+    # tdd golds are byte-copies of their parent `_01` gold (tests-as-prompt
+    # inverts the framing, not the completion) — same near-duplication
+    # discount as tfim; the family-atomic split contains the leak.
+    tdd: 0.25,
     test_fim: 0.25
   }
 
@@ -165,7 +170,7 @@ defmodule ExportDataset do
   @doc false
   def ab_of(name) do
     case Regex.run(
-           ~r/^(?:repair_|bugfix_|tfim_|wt_|adapt_|dedoc_|style_|dialog_)?(\d{3}_\d{3})/,
+           ~r/^(?:repair_|bugfix_|tfim_|wt_|adapt_|dedoc_|style_|dialog_|tdd_)?(\d{3}_\d{3})/,
            name
          ) do
       [_, ab] -> ab
@@ -218,7 +223,10 @@ defmodule ExportDataset do
   # spec, and both live in the same family `a` — atomicity contains the leak.
   @doc false
   def family_of(name) do
-    case Regex.run(~r/^(?:repair_|bugfix_|tfim_|wt_|adapt_|dedoc_|style_|dialog_)?(\d{3})_/, name) do
+    case Regex.run(
+           ~r/^(?:repair_|bugfix_|tfim_|wt_|adapt_|dedoc_|style_|dialog_|tdd_)?(\d{3})_/,
+           name
+         ) do
       [_, a] -> a
       _ -> raise "cannot derive family from #{inspect(name)} — naming convention broken"
     end

@@ -101,6 +101,15 @@ if [ -n "$families" ]; then
       "run: mix run scripts/resync_sfim_specs.exs -- --only \"$globs\" --apply"
     exit 1
   fi
+
+  echo "[pre-push] tdd_ staleness check on touched families"
+  tdd_out=$(mix run scripts/resync_tdd_embeds.exs -- --only "$globs")
+  echo "$tdd_out" | tail -1
+  if echo "$tdd_out" | grep -q "would_resync\|ERROR"; then
+    echo "[pre-push] FAIL: tdd_ dirs drifted from their parents —" \
+      "run: mix run scripts/resync_tdd_embeds.exs -- --only \"$globs\" --apply"
+    exit 1
+  fi
 else
   echo "[pre-push] no task families touched — skipping corpus gates"
 fi

@@ -80,7 +80,8 @@ defmodule Validate do
     if opts[:self_test_integrity] do
       if integrity_self_test(),
         do: finish(true, "INTEGRITY SELF-TEST PASSED — planted unparseable fim gold flagged ✓"),
-        else: finish(false, "INTEGRITY SELF-TEST FAILED — planted unparseable fim gold NOT flagged")
+        else:
+          finish(false, "INTEGRITY SELF-TEST FAILED — planted unparseable fim gold NOT flagged")
     end
 
     discovered = EvalTask.Discovery.all()
@@ -229,7 +230,11 @@ defmodule Validate do
 
     plant = "tasks/#{fam}_#{String.pad_leading(to_string(next), 2, "0")}"
     File.cp_r!(src, plant)
-    File.write!(Path.join(plant, "solution.ex"), "\"\"\"\n" <> File.read!(Path.join(plant, "solution.ex")))
+
+    File.write!(
+      Path.join(plant, "solution.ex"),
+      "\"\"\"\n" <> File.read!(Path.join(plant, "solution.ex"))
+    )
 
     try do
       {_found, failures} = split_corpus(EvalTask.Discovery.all(), Path.basename(plant))
@@ -239,7 +244,10 @@ defmodule Validate do
           name == Path.basename(plant) and msg =~ "standalone-parseable"
         end)
 
-      IO.puts("  #{if caught?, do: "caught ✓", else: "MISSED ✗"}  planted corrupt gold at #{plant}")
+      IO.puts(
+        "  #{if caught?, do: "caught ✓", else: "MISSED ✗"}  planted corrupt gold at #{plant}"
+      )
+
       caught?
     after
       File.rm_rf!(plant)
@@ -421,7 +429,9 @@ defmodule Validate do
   # (--fim); :test_fim non-vacuousness is gated per-block at mint time (isolation
   # gate) and a gutted single test block is not meaningfully mutable here.
   defp whole_mutation(tasks) do
-    {mutable, rest} = Enum.split_with(tasks, &(&1.shape in [:single, :multifile, :write_test]))
+    {mutable, rest} =
+      Enum.split_with(tasks, &(&1.shape in [:single, :multifile, :write_test, :tdd]))
+
     skipped = Enum.frequencies_by(rest, & &1.shape)
 
     IO.puts(

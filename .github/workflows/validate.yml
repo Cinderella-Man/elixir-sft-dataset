@@ -119,6 +119,14 @@ jobs:
           out=$(mix run scripts/resync_sfim_specs.exs)
           echo "$out"
           echo "$out" | grep -q "would_resync\|ERROR" && exit 1 || true
+      # tdd_ dirs are FULLY derived (prompt = template over the parent harness;
+      # gold + harness byte-copies) — a parent harness growth or gold repair
+      # stales all three files (shape added 2026-07-19).
+      - run: mix run scripts/resync_tdd_embeds.exs -- --self-test
+      - run: |
+          out=$(mix run scripts/resync_tdd_embeds.exs)
+          echo "$out"
+          echo "$out" | grep -q "would_resync\|ERROR" && exit 1 || true
       # wt_ dirs are byte-copies of their parent (module + harness) plus a prompt
       # that embeds the parent SPEC. check_embeds only sees the module fence, so
       # until 2026-07-13 a parent-prompt or harness edit rotted wt_ silently (it

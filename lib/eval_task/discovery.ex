@@ -76,6 +76,12 @@ defmodule EvalTask.Discovery do
       String.starts_with?(base, "dialog_") ->
         task(dir, :dialogue, sol, found)
 
+      # TDD-inverse: the parent harness IS the prompt (tests-as-spec); the dir
+      # carries byte-copies of the parent gold + harness and grades like
+      # :single (docs/13 §2.8, unparked 2026-07-19).
+      String.starts_with?(base, "tdd_") ->
+        task(dir, :tdd, sol, found)
+
       # No harness of its own → a FIM subtask (parent _01 has the harness).
       not has_harness ->
         if EvalTask.Fim.fim_dir?(dir), do: task(dir, :fim, sol, found), else: nil
