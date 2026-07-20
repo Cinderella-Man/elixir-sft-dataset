@@ -31,13 +31,6 @@ detached+monitored jobs, one solved item = one commit).
 
 ## NEW from the 2026-07-20 nightly (6 fails, triaged)
 
-- **Postgres is down after the 10:56 reboot** (`systemctl is-active
-  postgresql` = inactive) — all five 017_001_search_endpoint_* dirs fail
-  to compile for that reason alone; nothing corpus-side changed. KAMIL:
-  `sudo systemctl start postgresql` (and consider `enable`) — then
-  re-verify with `elixir scripts/validate.exs --only "017_001_*"`.
-  017_001's mutants row is from yesterday (DB was up) at current shas, so
-  the G2 sweep resume skips it — no corruption risk.
 - **tfim_107_002_keyed_event_aggregator_..._11: hard stability-3 fail
   (1/17), but 7/7 GREEN solo afterwards** — zero prior flake history.
   Load-dependent timing failure (batching windows). Remaining task (a):
