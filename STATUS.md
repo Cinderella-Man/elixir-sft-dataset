@@ -25,10 +25,15 @@ detached+monitored jobs, one solved item = one commit).
   (resume: gaps_sha + harness_sha_after + gate_sha keyed — the 07-14
   phantom-todo warning in the tool header predates the gaps_sha fix and
   the 6 hand-closed families legitimately re-enter under NEW findings).
-  After batch 1: review a sample of applied diffs in detail, aggregate
-  the pre-flight-refused (reach-in debt → G4 interlock list), then
-  launch the remainder (unscoped `--go`; resume skips done). Idempotent
-  relaunch: `scripts/run_detached.sh logs/close_gaps_full.log mix run
+  After EVERY batch (pre-push drift gates enforce this — learned on the
+  pilot: dedoc_ AND tdd_ embeds drifted): the UNSCOPED resync sweep
+  over all projection families — every `scripts/resync_*_embeds.exs`
+  (adapt, bugfix, bundlefim, dedoc, specfim, tdd, tfim) + check
+  `resync_sfim_specs.exs` — with `--apply`, then commit + push. Then:
+  review a sample of applied diffs in detail, aggregate the
+  pre-flight-refused (reach-in debt → G4 interlock list), launch the
+  remainder (unscoped `--go`; resume skips done). Idempotent relaunch:
+  `scripts/run_detached.sh logs/close_gaps_full.log mix run
   scripts/close_gaps.exs -- --go --high-only`
 
 ## NEW from the 2026-07-20 nightly (6 fails, triaged)
