@@ -566,5 +566,29 @@ defmodule RateLimiterTest do
   test "start_link with no arguments starts an empty server" do
     # TODO
   end
+
+  # -------------------------------------------------------
+  # The periodic sweep is driven by an automatically scheduled timer
+  # -------------------------------------------------------
+
+  test "the periodic cleanup timer fires and re-arms automatically" do
+    test_pid = self()
+
+    # The clock is called afresh on every cleanup pass. This probe records each
+    # such call; no check/4 is issued, so every tick is an automatic sweep.
+    clock = fn ->
+      send(test_pid, :cleanup_clock_tick)
+      0
+    end
+
+    # A real, short documented interval drives the timer.
+    {:ok, _pid} = RateLimiter.start_link(clock: clock, cleanup_interval_ms: 25)
+
+    # The first tick proves the startup timer fired; the second proves the pass
+    # re-armed the next one, so the sweep repeats rather than running just once.
+    # A scheduler that never arms Process.send_after would produce no ticks.
+    assert_receive :cleanup_clock_tick, 1_000
+    assert_receive :cleanup_clock_tick, 1_000
+  end
 end
 ```
