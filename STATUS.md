@@ -87,6 +87,25 @@ needs-read dirs.
   frozen-evidence exclusion, error-atom guard, dedoc_ shielded from
   --fix-prompts).
 
+**G1b. Review-sweep interim signal (2026-07-20, 54/330 roots in): 30
+roots carry CONFIRMED findings — far above the 1-per-42 estimate; expect
+a close_gaps campaign of 100+ families.** Emerging classes beyond
+dormant-timer: (i) `:name` registration promised, never tested (spot-
+verified by hand on 005_003 + 007_001 — TRUE; too pattern-varied for a
+text lint, names pass through variables); (ii) fake-clock self-advancing
+assertions that hold vacuously (013_001/013_004 high); (iii)
+gold_defects incl. dead branches and @type-vs-prompt contradictions
+(hand-work per close_gaps contract, never auto-strengthened).
+- **Task B for (i)+(ii) — post-sweep lib-edit window** (same window as
+  G1a's S9 port, after the mutants sweep, before the next launch):
+  harden the promise-coverage audit checklist in lib/gen_task/prompts.ex
+  with the three recurring misses (registration :name, default clock,
+  automatic timer observation) + a vacuity item (an assertion that the
+  test's own clock advances make true proves nothing).
+- **Task A:** flows through the standing plan — close_gaps batch after
+  the review sweep completes (resumes by sha; gold_defect families are
+  hand-work).
+
 **G2. Weak-assertion tail — strengthen to the 0.6 kill floor
 corpus-wide, then make the floor a corpus GATE.** Corpus semantic-mutant
 kill ~71%; the 0.6 floor holds at accept for new tasks only. Re-measure
