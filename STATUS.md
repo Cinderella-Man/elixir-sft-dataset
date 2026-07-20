@@ -10,26 +10,10 @@ detached+monitored jobs, one solved item = one commit).
 
 ---
 
-## IN FLIGHT (2026-07-20 evening — G2 re-measure COMPLETED; G1 sweep
-## crashed at root 269/330 and was fixed + relaunched, see below)
-
-- **G1 sweep — semantic_review over all roots (3rd launch).** pid: see
-  `logs/semantic_review_full.pid` (last line), log
-  `logs/semantic_review_full.log`, ledger `logs/semantic_review.jsonl`.
-  Crash 2026-07-20 ~17:50 at 101_003 (root 269/330 of run 2): a verify
-  reply with malformed JSON (stray `;`) made BOTH script validators
-  return the raw `%Jason.DecodeError{}` struct as the contract-violation
-  message, which `Cycle.generate`'s log interpolation can't stringify.
-  Fixed 2026-07-20 in scripts/semantic_review.exs ONLY (both validators
-  now `Exception.message/1` the struct → the reminder-retry path works
-  as designed; no lib/ edit, review_sha untouched so all 333 ledger rows
-  stay valid). Also dropped the 100_002 row (its one finding was never
-  verified — error_max_turns 5/5 exhausted; relaunch redoes it fully;
-  backup in session scratchpad). ~60 roots remain; rides credit windows.
-  Interim signal: **203 of 333 reviewed roots carry ≥1 confirmed
-  finding.** Idempotent relaunch: `scripts/run_detached.sh
-  logs/semantic_review_full.log mix run scripts/semantic_review.exs --
-  --go --sample 400`
+## IN FLIGHT (2026-07-20 22:01 — NO detached jobs running. Both sweeps
+## COMPLETE: G2 re-measure done 12:30, G1 review sweep done 22:00. This
+## is the between-sweeps lib-edit window — land the queued Task-B gates
+## (G1a S9 port + G1b prompts hardening) BEFORE launching close_gaps.)
 
 ## NEW from the 2026-07-20 nightly (6 fails, triaged)
 
@@ -48,12 +32,18 @@ detached+monitored jobs, one solved item = one commit).
 
 ## THE GAP LIST (ranked; strike items only when fixed + gated + verified)
 
-**G1. Latent semantic defects — full review of EVERY root (not a
-sample).** Rubric pass #2 measured 1 real gold defect per 42
-execution-perfect roots; extrapolated ~6-8 more hide in the ~330 roots.
-Run `semantic_review` over ALL roots + `rubric_judge` full two-family
-pass; triage every finding against the artifacts; `close_gaps` the
-confirmed ones; every fix cascades + gets its generator gate (rule 7).
+**G1. Latent semantic defects — SWEEP COMPLETE 2026-07-20 (395 roots, 0
+errors): 327 confirmed findings across 236 roots (60%!). Split:
+harness_gap 264 / gold_defect 55 / prompt_defect 8; severity 48 high +
+279 medium; per-root: 159 clean, 159×1, 64×2, 12×3, 1×4.** The
+extrapolated "~6-8 defects" estimate was off by ~40×. Remaining, in
+order: (1) the lib-edit window Task-Bs below (gates BEFORE campaign,
+docs/12 §7.3); (2) build the triage worklist from the ledger grouped by
+class×family (verifier already adversarially confirmed each finding;
+triage decides fix-shape: close_gaps auto-strengthen vs gold_defect/
+prompt_defect hand-work — 48 highs first); (3) the close_gaps campaign
++ cascades + resync_adapt/dedoc --apply; (4) `rubric_judge` full
+two-family pass still owed after that.
 
 **G1a. Dormant-timer class (2026-07-20, generalized from 001_001's
 confirmed review finding).** Prompt promises an automatic periodic timer
