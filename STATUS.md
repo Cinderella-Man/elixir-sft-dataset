@@ -14,21 +14,22 @@ detached+monitored jobs, one solved item = one commit).
 ## Task-B gates LANDED (docs/15); gate_sha is now STABLE for the whole
 ## campaign — no lib/gen_task edits until it ends, rule 7 corollary.)
 
-- **close_gaps PILOT (rule 9) — one family, 001_001_rate_limiter_01.**
-  The campaign dry list is 183 families (~2 LLM calls each). Pilot log
-  `logs/close_gaps_pilot.log`, pid in `logs/close_gaps_pilot.pid`,
-  ledger `logs/close_gaps.jsonl` (gate-sha-stamped; all pre-2026-07-20
-  rows are invalid under the new Evaluator sha — intended). 001_001 is
-  the dormant-timer exemplar, so the pilot exercises BOTH new gates
-  end-to-end: the hardened promise_audit must produce a real-interval
-  observation test and the result must clear the new S9 dormant check.
-  Review the pilot IN DETAIL (candidate in logs/gap_candidates/, ledger
-  row, applied diff + wt_/tfim resync) before the full launch.
-  Idempotent relaunch: `scripts/run_detached.sh
-  logs/close_gaps_pilot.log mix run scripts/close_gaps.exs -- --go
-  --only "001_001*"`. Full campaign after pilot review: scoped batches
-  (NOT unscoped --go — 6 hand-closed families are phantom todos, see
-  tool header), HIGH families first (`--high-only` batch, then rest).
+- **close_gaps CAMPAIGN batch 1 — HIGH families (`--high-only`).**
+  Pilot DONE 2026-07-20 (001_001 applied + hand-reviewed; first attempt
+  was REJECTED by the new S9 gate because the mold prompt said to SKIP
+  wall-clock timer gaps — mold fixed: standing S9 lints of the current
+  harness are injected as MUST-CLOSE items, unclearable-add-only
+  families refuse BEFORE the paid call; commit 6ae07168d). Campaign
+  list: 183 families total. Batch log `logs/close_gaps_full.log`, pid
+  in `logs/close_gaps_full.pid`, ledger `logs/close_gaps.jsonl`
+  (resume: gaps_sha + harness_sha_after + gate_sha keyed — the 07-14
+  phantom-todo warning in the tool header predates the gaps_sha fix and
+  the 6 hand-closed families legitimately re-enter under NEW findings).
+  After batch 1: review a sample of applied diffs in detail, aggregate
+  the pre-flight-refused (reach-in debt → G4 interlock list), then
+  launch the remainder (unscoped `--go`; resume skips done). Idempotent
+  relaunch: `scripts/run_detached.sh logs/close_gaps_full.log mix run
+  scripts/close_gaps.exs -- --go --high-only`
 
 ## NEW from the 2026-07-20 nightly (6 fails, triaged)
 
