@@ -10,10 +10,10 @@ detached+monitored jobs, one solved item = one commit).
 
 ---
 
-## IN FLIGHT (2026-07-20 22:01 — NO detached jobs running. Both sweeps
-## COMPLETE: G2 re-measure done 12:30, G1 review sweep done 22:00. This
-## is the between-sweeps lib-edit window — land the queued Task-B gates
-## (G1a S9 port + G1b prompts hardening) BEFORE launching close_gaps.)
+## IN FLIGHT (2026-07-20 night — NO detached jobs running. Both sweeps
+## COMPLETE (G2 12:30, G1 22:00) and both queued lib-edit Task-B gates
+## LANDED (S9 dormant-timer hard check + promise_audit hardening,
+## docs/15). Next up: G1 triage worklist → close_gaps campaign.)
 
 ## NEW from the 2026-07-20 nightly (6 fails, triaged)
 
@@ -77,12 +77,8 @@ text lint, names pass through variables); (ii) fake-clock self-advancing
 assertions that hold vacuously (013_001/013_004 high); (iii)
 gold_defects incl. dead branches and @type-vs-prompt contradictions
 (hand-work per close_gaps contract, never auto-strengthened).
-- **Task B for (i)+(ii) — lib-edit window NOW OPEN** (same window as
-  G1a's S9 port; the mutants sweep completed 2026-07-20):
-  harden the promise-coverage audit checklist in lib/gen_task/prompts.ex
-  with the three recurring misses (registration :name, default clock,
-  automatic timer observation) + a vacuity item (an assertion that the
-  test's own clock advances make true proves nothing).
+- **Task B for (i)+(ii): DONE 2026-07-20** (promise_audit checklist
+  hardened with the three miss classes + NON-VACUOUS rule, docs/15).
 - **Task A:** flows through the standing plan — close_gaps batch after
   the review sweep completes (resumes by sha; gold_defect families are
   hand-work).

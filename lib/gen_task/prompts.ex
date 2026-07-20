@@ -592,6 +592,22 @@ defmodule GenTask.Prompts do
       callback/effect itself).
     - DEFAULTS and GUARDS: every documented default value and every documented
       guard needs a test that uses it.
+    - NAME REGISTRATION: if the prompt promises a `:name` option (or a default
+      registered name), at least one test must start the process under a name and
+      drive one real call through the REGISTERED NAME instead of the pid. Names
+      travel through variables and helpers — check what the start helper actually
+      passes, not what the option list looks like.
+    - AUTOMATIC TIMERS: if the prompt promises work that happens BY ITSELF
+      (`Process.send_after` in init, a periodic sweep, an interval/period option),
+      at least one test must enable it with a real but SHORT interval and OBSERVE
+      one automatic firing through the public API (e.g. a two-round probe through
+      a wider observation window). A suite where every test disables the timer
+      (`:infinity`) or only triggers the sweep by hand leaves a no-op scheduler
+      fully green.
+    - DEFAULT CLOCK: a promised "when omitted, uses the real clock" default needs
+      one test that OMITS the clock option and brackets the observed timestamp
+      between two real-clock readings taken around the call (no sleeps, no
+      margins) — never leave the promised default entirely unexercised.
     - STALENESS: any ref/token/generation the prompt implies must be tested with a
       deliberately stale message.
     - BOUNDARIES: thresholds at exactly-equal values; empty/one-element windows;
@@ -605,10 +621,17 @@ defmodule GenTask.Prompts do
       option values prompt.md does not document.
     - Deterministic: no bare `Process.sleep` waits; use the harness's existing
       helpers (they stay defined — do NOT redefine them), scripted functions, and
-      bounded `assert_receive`/`refute_receive`. NEVER write a test that depends on
-      the real wall clock (e.g. exercising a documented real-time default clock, or
-      asserting margins around real elapsed time) — such promises are untestable
-      deterministically; skip them.
+      bounded `assert_receive`/`refute_receive`. NEVER assert margins around real
+      elapsed time or race a real timer against a tight deadline. A documented
+      real-time default clock IS still testable without that (the DEFAULT CLOCK
+      bracket pattern above), and a promised automatic timer IS still testable
+      (short real interval + a bounded observation window) — write those tests
+      rather than skipping the promise.
+    - NON-VACUOUS: before returning a test, check it can actually FAIL against a
+      wrong module: the asserted value must be produced by the module under test,
+      not by the test's own bookkeeping (a fake-clock test that advances its own
+      clock and then asserts the advanced value it computed itself proves
+      nothing).
     - Zero compile warnings; every line ≤ 98 columns.
     - The test NAME must not duplicate any existing test name.
     - At most #{max} test blocks, most important first. Top-level `test` blocks

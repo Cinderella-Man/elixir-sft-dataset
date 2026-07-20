@@ -9,6 +9,22 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-20 (night) — G1b Task B LANDED: promise_audit checklist
+  hardened with the review sweep's three recurring miss classes**
+  (lib/gen_task/prompts.ex — powers BOTH accept-time T1.10 and the
+  close_gaps campaign tool): NAME REGISTRATION (start under a name and
+  drive one real call through the registered name — names travel through
+  variables, check what the helper actually passes), AUTOMATIC TIMERS
+  (enable with a short real interval and OBSERVE one automatic firing —
+  matches the new S9 hard gate so audited harnesses pass it), DEFAULT
+  CLOCK (omit the clock option and BRACKET the observed timestamp
+  between two real-clock readings — this REPLACES the old "skip
+  real-clock defaults as untestable" rule, which directly caused the
+  098/100-family confirmed-gap class), plus a NON-VACUOUS rule (a
+  returned test must be able to fail against a wrong module: never
+  assert a value the test's own clock arithmetic produced — the
+  013_001/013_004 fake-clock class). Suite 412 green.
+
 - **2026-07-20 (night) — G1a Task B LANDED: the dormant-timer detector
   is now an S9 HARD accept gate** (lib/gen_task/evaluator.ex): two new
   checks — "no dormant promised timer" (prompt promises
