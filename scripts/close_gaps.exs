@@ -188,9 +188,36 @@ defmodule CloseGaps do
       ts: now()
     }
 
+    standing = standing_harness_lints(prompt, harness0)
+
+    if standing.unclearable != [] do
+      Map.merge(base, %{
+        verdict: :rejected,
+        detail:
+          "standing S9 lint in EXISTING tests, unfixable add-only (no paid call made): " <>
+            Enum.join(standing.unclearable, "; ")
+      })
+    else
+      close_attempt(cfg, dir, id, prompt, solution, harness0, manifest, confirmed, standing, base)
+    end
+  end
+
+  defp close_attempt(
+         cfg,
+         dir,
+         id,
+         prompt,
+         solution,
+         harness0,
+         manifest,
+         confirmed,
+         standing,
+         base
+       ) do
     {rate0, _surv, _k, _t} = measure(cfg, id, prompt, solution, harness0, manifest)
 
-    with {:ok, harness1} <- gen_gap_tests(cfg, id, prompt, solution, harness0, confirmed),
+    with {:ok, harness1} <-
+           gen_gap_tests(cfg, id, prompt, solution, harness0, confirmed, standing.clearable),
          :ok <- add_only(harness0, harness1),
          {:ok, json} <- grade_green(cfg, id, prompt, solution, harness1, manifest),
          :ok <- lints(json, prompt, solution, harness1),
@@ -219,7 +246,7 @@ defmodule CloseGaps do
 
   # ── the call ────────────────────────────────────────────────────────────────
 
-  defp gen_gap_tests(cfg, id, prompt, solution, harness, confirmed) do
+  defp gen_gap_tests(cfg, id, prompt, solution, harness, confirmed, standing) do
     gaps = Enum.filter(confirmed, &(&1["class"] == "harness_gap"))
     others = confirmed -- gaps
 
@@ -243,11 +270,18 @@ defmodule CloseGaps do
     - A hard lint REJECTS the whole harness if any NEW test uses
       `:sys.get_state`/`:sys.replace_state`, `assert inspect(...)`, sends a
       process an internal message the prompt does not document, passes an
-      undocumented `:infinity`, or adds `Process.sleep`. Observe behavior only
-      through the public API (injected clocks/hooks are documented API). If a
-      gap cannot be closed that way — e.g. it requires real wall-clock timer
-      behavior and the module has no injected clock — SKIP that gap; a
-      partial close is better than a flaky or reach-in test.
+      undocumented `:infinity`, or adds a bare fixed `Process.sleep` wait.
+      Observe behavior only through the public API (injected clocks/hooks are
+      documented API). If a gap cannot be closed that way, SKIP it; a partial
+      close is better than a flaky or reach-in test — EXCEPT any STANDING
+      HARNESS LINT listed below: those gate the WHOLE harness, so skipping
+      them rejects everything. For a promised-automatic-timer lint, write the
+      observation test: start the server with a real but SHORT interval (the
+      documented option, e.g. 25ms), then observe at least one AUTOMATIC
+      firing through the public API within a GENEROUS bounded deadline (≥20×
+      the interval) — bounded `assert_receive`, or a poll-until-deadline loop
+      when the effect is poll-only. Never a fixed sleep sized to the interval;
+      the test must never send the trigger message itself.
     - Comments must describe BEHAVIOR, never the process that produced the
       test: no review citations, no `--- added` banners, no repair markers.
     - Same conventions as the existing harness (`use ExUnit.Case, async: false`,
@@ -258,7 +292,7 @@ defmodule CloseGaps do
 
     === VERIFIED COVERAGE GAPS (close these) ===
     #{Enum.map_join(gaps, "\n\n", &format_finding/1)}
-    #{other_findings_section(others)}
+    #{standing_lints_section(standing)}#{other_findings_section(others)}
     === task prompt.md ===
     #{prompt}
 
@@ -288,6 +322,57 @@ defmodule CloseGaps do
 
   defp format_finding(f) do
     "- [#{f["severity"]}] #{f["why"]}\n  Evidence: #{f["evidence"]}"
+  end
+
+  # S9 shortfalls the CURRENT harness already carries. lints/4 runs on the WHOLE
+  # strengthened harness, so a standing shortfall the mold leaves open rejects
+  # the family no matter how good the added tests are. Split by what ADD-ONLY
+  # molding can do: the promised-timer lints (2026-07-20 hard gate) are CLEARED
+  # by adding a real-interval observation test — the mold must see and close
+  # them; every other S9 lint lives in EXISTING test text the mold may not
+  # touch, so the family is unfixable here (reach-in debt is rewrite_reachins /
+  # hand scope) and the attempt is refused BEFORE the paid call.
+  # The stub grade passes every JSON-backed check so ONLY S9 text lints fire.
+  @clearable_s9 [
+    "S9: no dormant promised timer (every test takes the :infinity escape)",
+    "S9: no unconfigured promised timer (promised interval key never passed)"
+  ]
+
+  defp standing_harness_lints(prompt, harness) do
+    stub = %{
+      "compile_warnings" => 0,
+      "tests_total" => 999,
+      "analysis" => %{
+        "has_moduledoc" => true,
+        "has_typespecs" => true,
+        "has_doc_on_public_fns" => true,
+        "todo_count" => 0,
+        "public_fn_count" => 0
+      }
+    }
+
+    files = %{"prompt.md" => prompt, "test_harness.exs" => harness}
+
+    fails =
+      for {label, {:fail, msg}} <- Evaluator.quality_checks(stub, files),
+          String.starts_with?(label, "S9:"),
+          do: {label, msg}
+
+    %{
+      clearable: for({l, m} <- fails, l in @clearable_s9, do: m),
+      unclearable: for({l, m} <- fails, l not in @clearable_s9, do: m)
+    }
+  end
+
+  defp standing_lints_section([]), do: ""
+
+  defp standing_lints_section(lints) do
+    """
+
+    === STANDING HARNESS LINTS (the hard lint fails the suite AS-IS on these —
+    your added tests MUST clear every one; skipping them rejects the family) ===
+    #{Enum.map_join(lints, "\n\n", &("- " <> &1))}
+    """
   end
 
   # Known gold/prompt findings are context only: the model must not write a
