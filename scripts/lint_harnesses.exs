@@ -60,17 +60,30 @@ defmodule LintHarnesses do
 
   # ── detection ───────────────────────────────────────────────────────────────
 
+  # Frozen-evidence shapes (docs/13 §1.5): repair_/dialog_/style_ dirs carry a
+  # snapshot of their root's harness at mint time and are never strengthened in
+  # place — coverage-gap findings on them are permanent noise; their quality
+  # rides on the root the cascade fixes.
+  defp frozen_evidence?(dir) do
+    String.starts_with?(Path.basename(dir), ["repair_", "dialog_", "style_"])
+  end
+
   defp lint(dir, harness, prompt) do
     finding = %{
       dir: dir,
       infinity_keys: undocumented_infinity_keys(harness, prompt),
       trigger_atoms: undocumented_trigger_atoms(harness, prompt),
+      dormant_timer_keys:
+        if(frozen_evidence?(dir), do: [], else: dormant_timer_keys(harness, prompt)),
+      unconfigured_timer_keys:
+        if(frozen_evidence?(dir), do: [], else: unconfigured_timer_keys(harness, prompt)),
       sys_get_state: count(harness, ~r/:sys\.(get_state|replace_state)/),
       inspect_asserts: count(harness, ~r/assert\s+inspect\(/),
       exact_raise_msgs: count(harness, ~r/assert_raise\s+[\w.]+,\s*"/)
     }
 
     if finding.infinity_keys == [] and finding.trigger_atoms == [] and
+         finding.dormant_timer_keys == [] and finding.unconfigured_timer_keys == [] and
          finding.sys_get_state == 0 and finding.inspect_asserts == 0 and
          finding.exact_raise_msgs == 0,
        do: nil,
@@ -105,12 +118,59 @@ defmodule LintHarnesses do
     |> Enum.reject(&Regex.match?(~r/:#{&1}\b/, prompt))
   end
 
+  # The prompt promises an AUTOMATIC periodic timer (`Process.send_after` plus a
+  # configurable :interval/:period option) but no test ever ENABLES it — a
+  # solution whose scheduling helper is a no-op passes such a suite while
+  # violating the prompt's explicit contract (the 001_001 semantic-review
+  # finding class, 2026-07-20). Documenting `:infinity` (the R5b backfill) does
+  # NOT clear this: the escape hatch being documented is no excuse for every
+  # test taking it. Two confidence tiers:
+  #
+  #   * CONFIRMED (`dormant_timer_keys`) — the harness explicitly passes the
+  #     key as `:infinity` and never with any other value. Every entry is
+  #     actionable coverage debt (close_gaps; never a prompt edit).
+  #   * NEEDS-READ (`unconfigured_timer_keys`) — the key never appears in the
+  #     harness in keyword position at all. Mixed: relying on an hour-scale
+  #     default IS the same gap, but a harness passing the interval as a
+  #     POSITIONAL argument (the 015 heartbeat family observes real timer
+  #     firings via `assert_receive`) is invisible to this text lint —
+  #     hand-triage, do not batch-fix.
+  #
+  # Key shape is interval/period-only — `window_ms`-style per-call arguments
+  # are not timer options and must not flag.
+  defp promised_timer_keys(prompt) do
+    if String.contains?(prompt, "Process.send_after") do
+      ~r/:(\w*(?:interval|period)\w*)\b/
+      |> Regex.scan(prompt, capture: :all_but_first)
+      |> List.flatten()
+      |> Enum.uniq()
+      # An atom the prompt uses as an ERROR REASON (`{:error, :invalid_interval}`)
+      # is not a timer option, however interval-shaped its name.
+      |> Enum.reject(fn key -> String.contains?(prompt, "{:error, :#{key}") end)
+    else
+      []
+    end
+  end
+
+  defp dormant_timer_keys(harness, prompt) do
+    promised_timer_keys(prompt)
+    |> Enum.filter(fn key -> Regex.match?(~r/#{key}:\s*:infinity/, harness) end)
+    |> Enum.reject(fn key -> Regex.match?(~r/#{key}:\s*(?!:infinity)\S/, harness) end)
+  end
+
+  defp unconfigured_timer_keys(harness, prompt) do
+    promised_timer_keys(prompt)
+    |> Enum.reject(fn key -> Regex.match?(~r/#{key}:/, harness) end)
+  end
+
   defp count(harness, re), do: length(Regex.scan(re, harness))
 
   # ── report ──────────────────────────────────────────────────────────────────
 
   defp report(findings) do
     fixable = Enum.filter(findings, &(&1.infinity_keys != [] or &1.trigger_atoms != []))
+    dormant = Enum.filter(findings, &(&1.dormant_timer_keys != []))
+    unconfigured = Enum.filter(findings, &(&1.unconfigured_timer_keys != []))
     sys = Enum.filter(findings, &(&1.sys_get_state > 0))
     brittle = Enum.filter(findings, &(&1.inspect_asserts + &1.exact_raise_msgs > 0))
 
@@ -118,6 +178,8 @@ defmodule LintHarnesses do
     == Harness lint (#{length(findings)} dir(s) with findings) ==
 
     hidden contracts fixable prompt-side (--fix-prompts): #{length(fixable)}
+    promised timer disabled by every test (CONFIRMED, report-only): #{length(dormant)}
+    promised timer never configured (NEEDS-READ, report-only): #{length(unconfigured)}
     :sys.get_state internal-state asserts (report-only): #{length(sys)}
     brittle asserts (inspect/exact raise msg, report-only): #{length(brittle)}
     """)
@@ -126,6 +188,14 @@ defmodule LintHarnesses do
       IO.puts(
         "  FIXABLE #{f.dir}  infinity=#{inspect(f.infinity_keys)} triggers=#{inspect(f.trigger_atoms)}"
       )
+    end
+
+    for f <- dormant do
+      IO.puts("  DORMANT #{f.dir}  timer_keys=#{inspect(f.dormant_timer_keys)}")
+    end
+
+    for f <- unconfigured do
+      IO.puts("  DORMANT? #{f.dir}  timer_keys=#{inspect(f.unconfigured_timer_keys)}")
     end
 
     for f <- sys, do: IO.puts("  SYS     #{f.dir}  :sys.* calls=#{f.sys_get_state}")
@@ -143,10 +213,14 @@ defmodule LintHarnesses do
   # embeds the same spec and gets it inserted before its "## Module under test".
   # (`wt_` findings themselves resolve via their parent — the harness is a byte copy.)
   defp fix_prompts(findings) do
+    # dedoc_ prompts are DELIBERATELY de-documented — backfilling contract
+    # sections into them would undo the shape's whole point, so they are
+    # report-only here even when the detector fires (their harness is the
+    # root's; the root carries any real fix).
     fixable =
       findings
       |> Enum.filter(&(&1.infinity_keys != [] or &1.trigger_atoms != []))
-      |> Enum.reject(&String.starts_with?(Path.basename(&1.dir), "wt_"))
+      |> Enum.reject(&String.starts_with?(Path.basename(&1.dir), ["wt_", "dedoc_"]))
 
     IO.puts("\nApplying prompt-side backfill to #{length(fixable)} _01 prompt(s) ...")
 

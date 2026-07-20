@@ -44,6 +44,29 @@ Run `semantic_review` over ALL roots + `rubric_judge` full two-family
 pass; triage every finding against the artifacts; `close_gaps` the
 confirmed ones; every fix cascades + gets its generator gate (rule 7).
 
+**G1a. Dormant-timer class (2026-07-20, generalized from 001_001's
+confirmed review finding).** Prompt promises an automatic periodic timer
+(`Process.send_after` + interval option); no test ever enables it — a
+no-op scheduler passes. Deterministic enumeration: `mix run
+scripts/lint_harnesses.exs` → 83 CONFIRMED dirs (21 roots; every one
+takes the documented `:infinity` escape in all tests) + 8 DORMANT?
+needs-read dirs.
+- **Task A:** close_gaps the 21 confirmed roots (add-only automatic-sweep
+  observation test, e.g. two-round reclamation via a wider-window probe);
+  VERIFY the cascade reaches adapt_/dedoc_ harness copies (close_gaps
+  only does wt_+tfim — check the resync suite picks the rest up, extend
+  if not). Then hand-read the 8 DORMANT? dirs (015-family +
+  adapt_107_004 observe timers positionally/via assert_receive — likely
+  fine; adapt_023_004 + adapt_006_002 never configure the promised sweep
+  — likely real).
+- **Task B:** port the detector into the S9 block of
+  lib/gen_task/evaluator.ex as a HARD check + evaluator unit tests.
+  **QUEUED until the G2 mutants sweep completes** — editing Evaluator
+  flips gate_sha([Mutation, Evaluator]) and invalidates every
+  semantic-mutants ledger row mid-measure. Lint half is DONE (two tiers,
+  frozen-evidence exclusion, error-atom guard, dedoc_ shielded from
+  --fix-prompts).
+
 **G2. Weak-assertion tail — strengthen to the 0.6 kill floor
 corpus-wide, then make the floor a corpus GATE.** Corpus semantic-mutant
 kill ~71%; the 0.6 floor holds at accept for new tasks only. Re-measure
