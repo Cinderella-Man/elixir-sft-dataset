@@ -28,6 +28,9 @@
 #                 test-failure suspect (default 1). Recovered flakes are always
 #                 appended to logs/flaky.jsonl WITH the failing test name + message
 #                 from the parallel run — a repeat offender there needs fixing.
+#                 Suspects that fail even serially get a `hard_fail: true` row
+#                 carrying the serial failure detail too (they'd otherwise be
+#                 undiagnosable after the fact — the 2026-07-20 tfim_107_002 case).
 #   --semantic-mutants  REPORT-ONLY assertion-tightness measurement: first-order
 #                 semantic mutants (comparison swap, ±1, :ok↔:error, bool flip) of
 #                 the reference; per-task kill-rate + corpus histogram + weakest 20;
@@ -317,13 +320,24 @@ defmodule Validate do
     recovered =
       for {task, first_json, _} <- flaky_prone, reduce: [] do
         acc ->
-          if Enum.all?(1..stability, fn _ -> perfect?(eval(task.dir, task.solution)) end) do
+          # Keep the first failing SERIAL re-run's JSON: a hard fail's ledger
+          # row must say which test failed serially — the 2026-07-20
+          # tfim_107_002 hard fail was undiagnosable after the fact (solo
+          # re-runs green, no ledger row; only recoveries were logged).
+          serial_fail =
+            Enum.reduce_while(1..stability, nil, fn _, _ ->
+              j = eval(task.dir, task.solution)
+              if perfect?(j), do: {:cont, nil}, else: {:halt, j}
+            end)
+
+          if serial_fail == nil do
             IO.write("r")
             log_flake(task, first_json)
             acc
           else
             IO.write("F")
-            [failrec(task, first_json) | acc]
+            log_flake(task, first_json, serial_fail)
+            [failrec(task, serial_fail) | acc]
           end
       end
 
@@ -336,26 +350,36 @@ defmodule Validate do
   # the parallel failure (the serial re-run would otherwise discard them) — a single
   # occurrence then says WHERE the timing sensitivity is, and two occurrences on the
   # same test are far stronger evidence than two on the same task (docs/10 R9).
-  defp log_flake(task, first_json) do
+  defp log_flake(task, first_json, serial_fail \\ nil) do
     File.mkdir_p!("logs")
-
-    failures =
-      for f <- first_json["test_failures"] || [] do
-        %{
-          test: f["test"],
-          module: f["module"],
-          message: String.slice(f["message"] || "", 0, 300)
-        }
-      end
 
     entry = %{
       task: task.name,
       ts: DateTime.utc_now() |> DateTime.to_iso8601(),
       detail: Enum.join(get_in(first_json, ["score", "reasons"]) || [describe(first_json)], "; "),
-      failures: failures
+      failures: failure_details(first_json)
     }
 
+    # A suspect that also fails SERIALLY still gets a ledger row — marked, and
+    # carrying the serial failure detail. It counts toward the repeat-offender
+    # aggregation on purpose: a hard fail is stronger evidence of the same
+    # timing sensitivity than a recovery, not a different phenomenon.
+    entry =
+      if serial_fail,
+        do: Map.merge(entry, %{hard_fail: true, serial_failures: failure_details(serial_fail)}),
+        else: entry
+
     File.write!("logs/flaky.jsonl", Jason.encode!(entry) <> "\n", [:append])
+  end
+
+  defp failure_details(json) do
+    for f <- json["test_failures"] || [] do
+      %{
+        test: f["test"],
+        module: f["module"],
+        message: String.slice(f["message"] || "", 0, 300)
+      }
+    end
   end
 
   defp failrec(task, json) do

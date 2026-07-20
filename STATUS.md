@@ -21,15 +21,31 @@ detached+monitored jobs, one solved item = one commit).
   calls; rides credit windows (15 min/attempt, forever). Idempotent
   relaunch: `scripts/run_detached.sh logs/semantic_review_full.log mix run
   scripts/semantic_review.exs -- --go --sample 400`
-- **G2 re-measure relaunch — validate --semantic-mutants, QUEUED behind
-  the nightly sweep** (nightly pid 3279 started 11:14; running both
-  grading sweeps at once turns CPU contention into false rows — the
-  nightly's own guard exists for exactly this). validate.exs now resumes
-  from the ledger (rule-2 patch, piloted on 001_001: skip path exact).
-  494/~600 tasks already ledgered at current shas. When nightly exits:
-  pilot the measure path on one unmeasured task, review, then
-  `scripts/run_detached.sh logs/semantic_mutants_full.log elixir
-  scripts/validate.exs --semantic-mutants`
+- **G2 re-measure relaunch — validate --semantic-mutants.** Nightly
+  exited 12:0x (see below); measure-path pilot then full launch: pid in
+  `logs/semantic_mutants_full.pid`, log `logs/semantic_mutants_full.log`,
+  ledger `logs/semantic_mutants.jsonl` (sha-resume: current-sha rows
+  skipped). Idempotent relaunch: `scripts/run_detached.sh
+  logs/semantic_mutants_full.log elixir scripts/validate.exs
+  --semantic-mutants`
+
+## NEW from the 2026-07-20 nightly (6 fails, triaged)
+
+- **Postgres is down after the 10:56 reboot** (`systemctl is-active
+  postgresql` = inactive) — all five 017_001_search_endpoint_* dirs fail
+  to compile for that reason alone; nothing corpus-side changed. KAMIL:
+  `sudo systemctl start postgresql` (and consider `enable`) — then
+  re-verify with `elixir scripts/validate.exs --only "017_001_*"`.
+  017_001's mutants row is from yesterday (DB was up) at current shas, so
+  the G2 sweep resume skips it — no corruption risk.
+- **tfim_107_002_keyed_event_aggregator_..._11: hard stability-3 fail
+  (1/17), but 7/7 GREEN solo afterwards** — zero prior flake history.
+  Load-dependent timing failure (batching windows). Remaining task (a):
+  reproduce under controlled parallel load, capture the failing test,
+  fix or document the timing contract (G4 family). (Task (b) — hard-fail
+  ledger rows with serial failure detail — LANDED 2026-07-20 and
+  self-tested with a planted failing task; the next occurrence is
+  diagnosable from flaky.jsonl alone.)
 - **G7 instrumentation piloted-pending:** `scripts/mint_repairs.exs` now
   ledgers WHY each unverified pair fails (`logs/repair_unverified.jsonl`)
   — uncommitted until a rule-9 pilot run; run it AFTER the nightly (it
