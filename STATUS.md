@@ -52,11 +52,12 @@ errors): 327 confirmed findings across 236 roots (60%!). Split:
 harness_gap 264 / gold_defect 55 / prompt_defect 8; severity 48 high +
 279 medium; per-root: 159 clean, 159×1, 64×2, 12×3, 1×4.** The
 extrapolated "~6-8 defects" estimate was off by ~40×. Remaining, in
-order: (1) the lib-edit window Task-Bs below (gates BEFORE campaign,
-docs/12 §7.3); (2) build the triage worklist from the ledger grouped by
-class×family (verifier already adversarially confirmed each finding;
-triage decides fix-shape: close_gaps auto-strengthen vs gold_defect/
-prompt_defect hand-work — 48 highs first); (3) the close_gaps campaign
+order: (1) lib-edit window Task-Bs — DONE 2026-07-20 (docs/15); (2)
+triage worklists — harness_gaps are mechanized by close_gaps directly
+from the ledger (183-family dry list), and the 63 gold/prompt-defect
+hand-work findings (11 high, 52 families) are now enumerated in
+**docs/19-gold-defect-triage.md** — work top-down, one family = one
+commit + cascade; (3) the close_gaps campaign (pilot IN FLIGHT above)
 + cascades + resync_adapt/dedoc --apply; (4) `rubric_judge` full
 two-family pass still owed after that.
 
