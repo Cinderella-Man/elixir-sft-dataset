@@ -52,13 +52,17 @@ scripts/lint_harnesses.exs` → 83 CONFIRMED dirs (21 roots; every one
 takes the documented `:infinity` escape in all tests) + 8 DORMANT?
 needs-read dirs.
 - **Task A:** close_gaps the 21 confirmed roots (add-only automatic-sweep
-  observation test, e.g. two-round reclamation via a wider-window probe);
-  VERIFY the cascade reaches adapt_/dedoc_ harness copies (close_gaps
-  only does wt_+tfim — check the resync suite picks the rest up, extend
-  if not). Then hand-read the 8 DORMANT? dirs (015-family +
-  adapt_107_004 observe timers positionally/via assert_receive — likely
-  fine; adapt_023_004 + adapt_006_002 never configure the promised sweep
-  — likely real).
+  observation test, e.g. two-round reclamation via a wider-window probe).
+  Cascade VERIFIED 2026-07-20: close_gaps does wt_+tfim; adapt_/dedoc_
+  harnesses are byte-for-byte projections with standing CI drift gates —
+  after applying, run `resync_adapt_embeds -- --apply` and
+  `resync_dedoc_embeds -- --apply` and the 62 derivative DORMANT entries
+  collapse into the root fixes. Then hand-read the 8 DORMANT? dirs
+  (015-family + adapt_107_004 observe timers positionally/via
+  assert_receive — likely fine; adapt_023_004 + adapt_006_002 never
+  configure the promised sweep — likely real; note the adapt_ prompt
+  embeds the BASE gold, so its timer promise can be an artifact of the
+  projection rather than the variation's contract).
 - **Task B:** port the detector into the S9 block of
   lib/gen_task/evaluator.ex as a HARD check + evaluator unit tests.
   **QUEUED until the G2 mutants sweep completes** — editing Evaluator

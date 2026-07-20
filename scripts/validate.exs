@@ -706,7 +706,12 @@ defmodule Validate do
           end)
           |> Map.new(fn row ->
             {Enum.join(
-               [row["task"], row["solution_sha"], row["harness_sha"] || "", row["gate_sha"] || ""],
+               [
+                 row["task"],
+                 row["solution_sha"],
+                 row["harness_sha"] || "",
+                 row["gate_sha"] || ""
+               ],
                "|"
              ), row}
           end)
