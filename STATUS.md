@@ -64,16 +64,9 @@ needs-read dirs.
   configure the promised sweep — likely real; note the adapt_ prompt
   embeds the BASE gold, so its timer promise can be an artifact of the
   projection rather than the variation's contract).
-- **Task B:** port the detector into the S9 block of
-  lib/gen_task/evaluator.ex as a HARD check + evaluator unit tests.
-  **WINDOW NOW OPEN (2026-07-20): the G2 mutants sweep completed**, so
-  flipping gate_sha([Mutation, Evaluator]) no longer invalidates an
-  in-flight measure (the finished report is preserved in the log; the
-  post-strengthen re-measure re-runs under the new gate anyway, which is
-  correct per rule 7). Safe during the review sweep: semantic_review
-  never loads Evaluator/Prompts and its ledger is template-keyed. Lint
-  half is DONE (two tiers, frozen-evidence exclusion, error-atom guard,
-  dedoc_ shielded from --fix-prompts).
+- **Task B: DONE 2026-07-20** (S9 hard gate landed, docs/15) — only
+  Task A (the 21-root close_gaps batch + cascade + the 8 DORMANT?
+  hand-reads) remains for G1a.
 
 **G1b. Review-sweep interim signal (2026-07-20, 54/330 roots in): 30
 roots carry CONFIRMED findings — far above the 1-per-42 estimate; expect

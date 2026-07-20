@@ -9,6 +9,22 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-20 (night) — G1a Task B LANDED: the dormant-timer detector
+  is now an S9 HARD accept gate** (lib/gen_task/evaluator.ex): two new
+  checks — "no dormant promised timer" (prompt promises
+  `Process.send_after` + an interval/period option, every test passes it
+  as `:infinity`) and "no unconfigured promised timer" (the promised key
+  never passed at all). Ported 1:1 from scripts/lint_harnesses.exs
+  (interval/period-only key shape, error-reason-atom exclusion); 6 new
+  unit tests, suite 412 green, quality_checks count 17→19.
+  Corpus cross-validation: the dormant tier fires on EXACTLY the 21
+  known dormant roots (+7 dialog_/repair_ derivatives of those same
+  parents — the accept path never sees frozen dirs), the unconfigured
+  tier on ZERO existing dirs — precise at accept time. gate_sha flip:
+  semantic_mutants/close_gaps ledger rows keyed to the old Evaluator sha
+  auto-invalidate (by design, rule 7 corollary; the completed G2 report
+  is preserved in logs/semantic_mutants_full.log).
+
 - **2026-07-19 (afternoon) — THE LINE IS DRAWN: STEADY STATE (docs/12
   §7.2 executed; Kamil's order-inversion directive "catch-up finished
   BEFORE any new task").** The just-launched Phase-3 pilot was stopped

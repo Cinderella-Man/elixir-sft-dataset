@@ -469,7 +469,9 @@ defmodule GenTask.Evaluator do
     "S9: no exact assert_raise message pins",
     "S9: shared temp paths carry System.pid()",
     "S9: :infinity interval options are documented in the prompt",
-    "S9: trigger messages sent to the server are documented in the prompt"
+    "S9: trigger messages sent to the server are documented in the prompt",
+    "S9: no dormant promised timer (every test takes the :infinity escape)",
+    "S9: no unconfigured promised timer (promised interval key never passed)"
   ]
 
   # No harness text (e.g. quality_shortfall called with only the grade JSON) → skip.
@@ -481,6 +483,8 @@ defmodule GenTask.Evaluator do
     exact_raise = count(harness, ~r/assert_raise\s+[\w.]+,\s*"/)
     infinity = undocumented_infinity_keys(harness, prompt)
     triggers = undocumented_trigger_atoms(harness, prompt)
+    dormant = dormant_timer_keys(harness, prompt)
+    unconfigured = unconfigured_timer_keys(harness, prompt)
 
     # The first four are HARD shortfalls — the anti-pattern must go (the fixer reworks
     # the harness). The last two are documents-or-removes advisories that fire only
@@ -523,6 +527,23 @@ defmodule GenTask.Evaluator do
           "#{Enum.map_join(triggers, ", ", &":#{&1}")} to the server, which prompt.md never " <>
           "documents — rework the harness to drive that behavior through the documented " <>
           "public API instead; prompt.md may not be edited during repair"
+      ),
+      verdict(
+        dormant == [],
+        "prompt.md promises an automatic periodic timer (`Process.send_after`) driven by " <>
+          "#{Enum.map_join(dormant, ", ", &":#{&1}")}, but every test passes " <>
+          "#{Enum.map_join(dormant, ", ", &"#{&1}: :infinity")} — the promised automatic " <>
+          "behavior is never exercised and a no-op scheduler ships green; add a test that " <>
+          "starts the server with a real (short) interval and observes at least one " <>
+          "automatic firing (e.g. a two-round probe through a wider observation window)"
+      ),
+      verdict(
+        unconfigured == [],
+        "prompt.md promises an automatic periodic timer (`Process.send_after`) driven by " <>
+          "#{Enum.map_join(unconfigured, ", ", &":#{&1}")}, but no test ever passes that " <>
+          "option — the suite silently rides the default and the promised automatic " <>
+          "behavior is never exercised; add a test that configures a real (short) interval " <>
+          "via the option and observes at least one automatic firing"
       )
     ]
 
@@ -568,6 +589,40 @@ defmodule GenTask.Evaluator do
     |> List.flatten()
     |> Enum.uniq()
     |> Enum.reject(&Regex.match?(~r/:#{&1}\b/, prompt))
+  end
+
+  # The prompt promises an AUTOMATIC periodic timer (`Process.send_after` plus a
+  # configurable :interval/:period option) but no test ever ENABLES it — a solution
+  # whose scheduling helper is a no-op passes such a suite while violating the
+  # prompt's explicit contract (the 001_001 semantic-review class; 21 confirmed
+  # roots on 2026-07-20). Documenting `:infinity` does NOT clear this: the escape
+  # hatch being documented is no excuse for every test taking it. Two disjoint
+  # verdicts (`dormant` needs the key present as `:infinity`-only; `unconfigured`
+  # needs it absent), both silenced the same way: pass the key with a real value
+  # in a test that observes an automatic firing. Key shape is interval/period-only
+  # so `window_ms`-style per-call arguments never flag; an atom the prompt uses as
+  # an ERROR REASON (`{:error, :invalid_interval}`) is not a timer option either.
+  defp promised_timer_keys(prompt) do
+    if String.contains?(prompt, "Process.send_after") do
+      ~r/:(\w*(?:interval|period)\w*)\b/
+      |> Regex.scan(prompt, capture: :all_but_first)
+      |> List.flatten()
+      |> Enum.uniq()
+      |> Enum.reject(fn key -> String.contains?(prompt, "{:error, :#{key}") end)
+    else
+      []
+    end
+  end
+
+  defp dormant_timer_keys(harness, prompt) do
+    promised_timer_keys(prompt)
+    |> Enum.filter(fn key -> Regex.match?(~r/#{key}:\s*:infinity/, harness) end)
+    |> Enum.reject(fn key -> Regex.match?(~r/#{key}:\s*(?!:infinity)\S/, harness) end)
+  end
+
+  defp unconfigured_timer_keys(harness, prompt) do
+    promised_timer_keys(prompt)
+    |> Enum.reject(fn key -> Regex.match?(~r/#{key}:/, harness) end)
   end
 
   @doc """

@@ -251,6 +251,41 @@ defmodule GenTask.EvaluatorTest do
     test "a clean harness with a documenting prompt yields nil" do
       assert sf("test \"x\" do\n  assert Foo.bar() == :ok\nend", "Foo.bar/0 returns :ok.") == nil
     end
+
+    @timer_prompt "Schedule the first sweep in init/1 via Process.send_after. " <>
+                    "The :cleanup_interval_ms option controls the period; " <>
+                    "passing :infinity disables the timer."
+
+    test "HARD: a promised timer passed ONLY as :infinity (dormant) is a shortfall" do
+      assert sf("start(cleanup_interval_ms: :infinity)", @timer_prompt) =~ "no-op scheduler"
+    end
+
+    test "dormant timer does NOT fire when some test passes a real interval" do
+      harness = "start(cleanup_interval_ms: :infinity)\nstart(cleanup_interval_ms: 50)"
+      assert sf(harness, @timer_prompt) == nil
+    end
+
+    test "HARD: a promised timer key never passed at all (unconfigured) is a shortfall" do
+      assert sf("test \"x\" do\n  assert Foo.bar() == :ok\nend", @timer_prompt) =~
+               "rides the default"
+    end
+
+    test "unconfigured timer does NOT fire once the key is passed with a real value" do
+      assert sf("start(cleanup_interval_ms: 25)", @timer_prompt) == nil
+    end
+
+    test "no timer verdict without Process.send_after in the prompt" do
+      prompt = "The :refresh_interval option controls periodicity."
+      assert sf("test \"x\" do\n  assert Foo.bar() == :ok\nend", prompt) == nil
+    end
+
+    test "an interval-shaped ERROR REASON atom is not a promised timer key" do
+      prompt =
+        "Re-arm via Process.send_after. Returns {:error, :invalid_interval} on bad input. " <>
+          "Passing :infinity disables the timer."
+
+      assert sf("test \"x\" do\n  assert Foo.bar() == :ok\nend", prompt) == nil
+    end
   end
 
   describe "compile_warnings/1 (docs/12 item 1)" do

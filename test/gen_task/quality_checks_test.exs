@@ -36,7 +36,7 @@ defmodule GenTask.QualityChecksTest do
   test "a clean grade with no files: JSON checks ok, text checks skipped" do
     checks = Evaluator.quality_checks(@clean_json)
 
-    assert length(checks) == 17
+    assert length(checks) == 19
     json_backed = Enum.take(checks, 8)
     text_backed = Enum.drop(checks, 8)
 
