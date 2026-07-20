@@ -323,6 +323,7 @@ defmodule SemanticReview do
            end) do
       :ok
     else
+      {:error, %Jason.DecodeError{} = e} -> {:error, "review.json: " <> Exception.message(e)}
       {:error, msg} -> {:error, msg}
       _ -> {:error, "review.json must be {\"findings\": [{class,file,evidence,why,severity}]}"}
     end
@@ -383,6 +384,7 @@ defmodule SemanticReview do
          {:ok, %{"refuted" => r}} when is_boolean(r) <- Jason.decode(json) do
       :ok
     else
+      {:error, %Jason.DecodeError{} = e} -> {:error, "verdict.json: " <> Exception.message(e)}
       {:error, msg} -> {:error, msg}
       _ -> {:error, "verdict.json must be JSON with a boolean \"refuted\" field"}
     end

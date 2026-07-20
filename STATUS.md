@@ -10,24 +10,26 @@ detached+monitored jobs, one solved item = one commit).
 
 ---
 
-## IN FLIGHT (2026-07-20 — the 07-19 sweeps died by SIGTERM at 14:34, machine
-## rebooted 10:56; both ledgers survived and both scripts resume by sha)
+## IN FLIGHT (2026-07-20 evening — G2 re-measure COMPLETED; G1 sweep
+## crashed at root 269/330 and was fixed + relaunched, see below)
 
-- **G1 sweep relaunch — semantic_review over all roots.** pid: see
+- **G1 sweep — semantic_review over all roots (3rd launch).** pid: see
   `logs/semantic_review_full.pid` (last line), log
   `logs/semantic_review_full.log`, ledger `logs/semantic_review.jsonl`.
-  1/331 roots done (001_001: 1 confirmed harness_gap finding — needs G1
-  triage). Expected: ~330 rows appended, each ≤1 review + 2 verify LLM
-  calls; rides credit windows (15 min/attempt, forever). Idempotent
-  relaunch: `scripts/run_detached.sh logs/semantic_review_full.log mix run
-  scripts/semantic_review.exs -- --go --sample 400`
-- **G2 re-measure relaunch — validate --semantic-mutants.** Nightly
-  exited 12:0x (see below); measure-path pilot then full launch: pid in
-  `logs/semantic_mutants_full.pid`, log `logs/semantic_mutants_full.log`,
-  ledger `logs/semantic_mutants.jsonl` (sha-resume: current-sha rows
-  skipped). Idempotent relaunch: `scripts/run_detached.sh
-  logs/semantic_mutants_full.log elixir scripts/validate.exs
-  --semantic-mutants`
+  Crash 2026-07-20 ~17:50 at 101_003 (root 269/330 of run 2): a verify
+  reply with malformed JSON (stray `;`) made BOTH script validators
+  return the raw `%Jason.DecodeError{}` struct as the contract-violation
+  message, which `Cycle.generate`'s log interpolation can't stringify.
+  Fixed 2026-07-20 in scripts/semantic_review.exs ONLY (both validators
+  now `Exception.message/1` the struct → the reminder-retry path works
+  as designed; no lib/ edit, review_sha untouched so all 333 ledger rows
+  stay valid). Also dropped the 100_002 row (its one finding was never
+  verified — error_max_turns 5/5 exhausted; relaunch redoes it fully;
+  backup in session scratchpad). ~60 roots remain; rides credit windows.
+  Interim signal: **203 of 333 reviewed roots carry ≥1 confirmed
+  finding.** Idempotent relaunch: `scripts/run_detached.sh
+  logs/semantic_review_full.log mix run scripts/semantic_review.exs --
+  --go --sample 400`
 
 ## NEW from the 2026-07-20 nightly (6 fails, triaged)
 
@@ -74,11 +76,14 @@ needs-read dirs.
   projection rather than the variation's contract).
 - **Task B:** port the detector into the S9 block of
   lib/gen_task/evaluator.ex as a HARD check + evaluator unit tests.
-  **QUEUED until the G2 mutants sweep completes** — editing Evaluator
-  flips gate_sha([Mutation, Evaluator]) and invalidates every
-  semantic-mutants ledger row mid-measure. Lint half is DONE (two tiers,
-  frozen-evidence exclusion, error-atom guard, dedoc_ shielded from
-  --fix-prompts).
+  **WINDOW NOW OPEN (2026-07-20): the G2 mutants sweep completed**, so
+  flipping gate_sha([Mutation, Evaluator]) no longer invalidates an
+  in-flight measure (the finished report is preserved in the log; the
+  post-strengthen re-measure re-runs under the new gate anyway, which is
+  correct per rule 7). Safe during the review sweep: semantic_review
+  never loads Evaluator/Prompts and its ledger is template-keyed. Lint
+  half is DONE (two tiers, frozen-evidence exclusion, error-atom guard,
+  dedoc_ shielded from --fix-prompts).
 
 **G1b. Review-sweep interim signal (2026-07-20, 54/330 roots in): 30
 roots carry CONFIRMED findings — far above the 1-per-42 estimate; expect
@@ -89,8 +94,8 @@ text lint, names pass through variables); (ii) fake-clock self-advancing
 assertions that hold vacuously (013_001/013_004 high); (iii)
 gold_defects incl. dead branches and @type-vs-prompt contradictions
 (hand-work per close_gaps contract, never auto-strengthened).
-- **Task B for (i)+(ii) — post-sweep lib-edit window** (same window as
-  G1a's S9 port, after the mutants sweep, before the next launch):
+- **Task B for (i)+(ii) — lib-edit window NOW OPEN** (same window as
+  G1a's S9 port; the mutants sweep completed 2026-07-20):
   harden the promise-coverage audit checklist in lib/gen_task/prompts.ex
   with the three recurring misses (registration :name, default clock,
   automatic timer observation) + a vacuity item (an assertion that the
@@ -100,11 +105,14 @@ gold_defects incl. dead branches and @type-vs-prompt contradictions
   hand-work).
 
 **G2. Weak-assertion tail — strengthen to the 0.6 kill floor
-corpus-wide, then make the floor a corpus GATE.** Corpus semantic-mutant
-kill ~71%; the 0.6 floor holds at accept for new tasks only. Re-measure
-per family (`validate --semantic-mutants`), `strengthen_harnesses` the
-tail, re-measure, then promote the floor from report-only to a failing
-check in validate/CI.
+corpus-wide, then make the floor a corpus GATE.** Re-measure COMPLETE
+2026-07-20 (`SEMANTIC-MUTANT REPORT COMPLETE` in
+`logs/semantic_mutants_full.log`; ledger `logs/semantic_mutants.jsonl`,
+2,475 rows — the report regenerates from the ledger, and the tail list
+lives in the log even after Evaluator edits flip gate_sha). Remaining:
+`strengthen_harnesses` the tail (QUEUED behind the review sweep +
+close_gaps so harness edits don't race the reviewer), re-measure, then
+promote the floor from report-only to a failing check in validate/CI.
 
 **G3. Prompt-register monotony.** ~76% of seed prompts open "Write
 me…"; every templated shape (tfim/wt/sfim/specfim/tdd/bundlefim) has ONE
