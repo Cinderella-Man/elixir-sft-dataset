@@ -10,10 +10,25 @@ detached+monitored jobs, one solved item = one commit).
 
 ---
 
-## IN FLIGHT (2026-07-20 night — NO detached jobs running. Both sweeps
-## COMPLETE (G2 12:30, G1 22:00) and both queued lib-edit Task-B gates
-## LANDED (S9 dormant-timer hard check + promise_audit hardening,
-## docs/15). Next up: G1 triage worklist → close_gaps campaign.)
+## IN FLIGHT (2026-07-20 night — both sweeps COMPLETE, both lib-edit
+## Task-B gates LANDED (docs/15); gate_sha is now STABLE for the whole
+## campaign — no lib/gen_task edits until it ends, rule 7 corollary.)
+
+- **close_gaps PILOT (rule 9) — one family, 001_001_rate_limiter_01.**
+  The campaign dry list is 183 families (~2 LLM calls each). Pilot log
+  `logs/close_gaps_pilot.log`, pid in `logs/close_gaps_pilot.pid`,
+  ledger `logs/close_gaps.jsonl` (gate-sha-stamped; all pre-2026-07-20
+  rows are invalid under the new Evaluator sha — intended). 001_001 is
+  the dormant-timer exemplar, so the pilot exercises BOTH new gates
+  end-to-end: the hardened promise_audit must produce a real-interval
+  observation test and the result must clear the new S9 dormant check.
+  Review the pilot IN DETAIL (candidate in logs/gap_candidates/, ledger
+  row, applied diff + wt_/tfim resync) before the full launch.
+  Idempotent relaunch: `scripts/run_detached.sh
+  logs/close_gaps_pilot.log mix run scripts/close_gaps.exs -- --go
+  --only "001_001*"`. Full campaign after pilot review: scoped batches
+  (NOT unscoped --go — 6 hand-closed families are phantom todos, see
+  tool header), HIGH families first (`--high-only` batch, then rest).
 
 ## NEW from the 2026-07-20 nightly (6 fails, triaged)
 
