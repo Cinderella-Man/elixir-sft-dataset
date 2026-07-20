@@ -162,7 +162,31 @@ defmodule MintRepairs do
       File.write!(Path.join(dir, "broken.ex"), broken.files["solution.ex"])
       bad = grade(dir, "broken.ex")
 
-      green?(fix) and not green?(bad)
+      ok? = green?(fix) and not green?(bad)
+
+      # G7 (2026-07-19): the unverified side was a bare tally — 134 pairs
+      # invisible to triage. Ledger WHY each pair fails so the recoverable
+      # classes (env drift vs flaky broken-side vs genuinely stale chains)
+      # can be told apart.
+      unless ok? do
+        # Content keys let consumers dedupe re-verified pairs across topup runs
+        # (this ledger appends on EVERY failing verify, by design).
+        row = %{
+          id: final.meta["id"] || broken.meta["id"],
+          fix_green: green?(fix),
+          fix_summary:
+            "compiled=#{fix["compiled"]} passed=#{fix["tests_passed"]}/#{fix["tests_total"]} failed=#{fix["tests_failed"]} errors=#{fix["tests_errors"]}",
+          bad_green: green?(bad),
+          fix_sha: sha256(final.files["solution.ex"]),
+          broken_sha: sha256(broken.files["solution.ex"]),
+          harness_sha: sha256(final.files["test_harness.exs"]),
+          ts: DateTime.utc_now()
+        }
+
+        File.write!("logs/repair_unverified.jsonl", Jason.encode!(row) <> "\n", [:append])
+      end
+
+      ok?
     after
       File.rm_rf!(stage)
     end
@@ -217,6 +241,9 @@ defmodule MintRepairs do
     json["compiled"] == true and (json["tests_passed"] || 0) > 0 and
       (json["tests_failed"] || 0) == 0 and (json["tests_errors"] || 0) == 0
   end
+
+  defp sha256(nil), do: nil
+  defp sha256(body), do: :crypto.hash(:sha256, body) |> Base.encode16(case: :lower)
 
   defp repair_prompt(id, broken) do
     original = broken.files["prompt.md"] || "(original request unavailable)"
