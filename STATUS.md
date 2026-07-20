@@ -10,6 +10,31 @@ detached+monitored jobs, one solved item = one commit).
 
 ---
 
+## IN FLIGHT (2026-07-20 — the 07-19 sweeps died by SIGTERM at 14:34, machine
+## rebooted 10:56; both ledgers survived and both scripts resume by sha)
+
+- **G1 sweep relaunch — semantic_review over all roots.** pid: see
+  `logs/semantic_review_full.pid` (last line), log
+  `logs/semantic_review_full.log`, ledger `logs/semantic_review.jsonl`.
+  1/331 roots done (001_001: 1 confirmed harness_gap finding — needs G1
+  triage). Expected: ~330 rows appended, each ≤1 review + 2 verify LLM
+  calls; rides credit windows (15 min/attempt, forever). Idempotent
+  relaunch: `scripts/run_detached.sh logs/semantic_review_full.log mix run
+  scripts/semantic_review.exs -- --go --sample 400`
+- **G2 re-measure relaunch — validate --semantic-mutants, QUEUED behind
+  the nightly sweep** (nightly pid 3279 started 11:14; running both
+  grading sweeps at once turns CPU contention into false rows — the
+  nightly's own guard exists for exactly this). validate.exs now resumes
+  from the ledger (rule-2 patch, piloted on 001_001: skip path exact).
+  494/~600 tasks already ledgered at current shas. When nightly exits:
+  pilot the measure path on one unmeasured task, review, then
+  `scripts/run_detached.sh logs/semantic_mutants_full.log elixir
+  scripts/validate.exs --semantic-mutants`
+- **G7 instrumentation piloted-pending:** `scripts/mint_repairs.exs` now
+  ledgers WHY each unverified pair fails (`logs/repair_unverified.jsonl`)
+  — uncommitted until a rule-9 pilot run; run it AFTER the nightly (it
+  grades locally).
+
 ## THE GAP LIST (ranked; strike items only when fixed + gated + verified)
 
 **G1. Latent semantic defects — full review of EVERY root (not a

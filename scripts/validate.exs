@@ -686,12 +686,74 @@ defmodule Validate do
       |> Enum.filter(&(&1.shape in [:single, :multifile, :write_test]))
       |> Enum.reject(&String.starts_with?(&1.name, "repair_"))
 
+    # Resume (CONTEXT rule 2): the ledger already content-keys every row by
+    # (solution, harness, gate) sha — a task whose CURRENT shas match a row is
+    # measured, not to-do. Skipped tasks contribute their ledgered row to the
+    # report, so the summary stays corpus-wide across relaunches. Without this
+    # the 2026-07-19 SIGTERM'd full sweep would redo all 494 finished rows.
+    gate = GenTask.CycleLog.gate_sha([GenTask.Mutation, GenTask.Evaluator])
+
+    ledger =
+      case File.read("logs/semantic_mutants.jsonl") do
+        {:ok, body} ->
+          body
+          |> String.split("\n", trim: true)
+          |> Enum.flat_map(fn line ->
+            case Jason.decode(line) do
+              {:ok, %{"task" => _} = row} -> [row]
+              _ -> []
+            end
+          end)
+          |> Map.new(fn row ->
+            {Enum.join(
+               [row["task"], row["solution_sha"], row["harness_sha"] || "", row["gate_sha"] || ""],
+               "|"
+             ), row}
+          end)
+
+        _ ->
+          %{}
+      end
+
+    keyed =
+      Enum.map(mutable, fn task ->
+        harness_path = Path.join(task.dir, "test_harness.exs")
+
+        key =
+          Enum.join(
+            [
+              task.name,
+              sha256(File.read!(task.solution)),
+              if(File.regular?(harness_path), do: sha256(File.read!(harness_path))) || "",
+              gate
+            ],
+            "|"
+          )
+
+        {task, Map.get(ledger, key)}
+      end)
+
+    todo = for {task, nil} <- keyed, do: task
+
+    cached_rows =
+      for {_task, row} <- keyed, row != nil do
+        %{
+          task: row["task"],
+          killed: row["killed"] || 0,
+          total: row["total"] || 0,
+          survivors: row["survivors"] || [],
+          dropped: row["dropped"] || 0
+        }
+      end
+
     IO.puts(
-      "Semantic mutants (report-only): #{length(mutable)} tasks, ≤#{limit} mutants each ..."
+      "Semantic mutants (report-only): #{length(mutable)} tasks " <>
+        "(#{length(cached_rows)} already ledgered at current shas — skipped), " <>
+        "≤#{limit} mutants each ..."
     )
 
     rows =
-      mutable
+      todo
       |> pmap(fn task ->
         source = File.read!(task.solution)
         mutants = GenTask.Mutation.semantic_mutants(source, limit)
@@ -742,6 +804,8 @@ defmodule Validate do
         IO.write(".")
         row
       end)
+
+    rows = cached_rows ++ rows
 
     IO.puts("\n\n=== SEMANTIC-MUTANT REPORT (kill-rate = behavior changes noticed) ===")
 
