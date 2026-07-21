@@ -13,21 +13,36 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
 
 ## NEXT ACTIVITIES (in order)
 
-1. **[IN PROGRESS] close_gaps campaign — remainder batch (155
-   families).** Detached pid: last line of `logs/close_gaps_full.pid`,
-   log `logs/close_gaps_full.log`, ledger `logs/close_gaps.jsonl`.
-   Idempotent relaunch: `scripts/run_detached.sh
-   logs/close_gaps_full.log mix run scripts/close_gaps.exs -- --go`.
-   Batch-end contract: unscoped resync sweep (all
-   `scripts/resync_*_embeds.exs` + `resync_sfim_specs.exs`, `--apply`)
-   → commit+push → sample-review applied diffs → collect rejects.
-   (Batch 1/HIGH done 2026-07-21: 27/31 applied, 61 tests.)
+1. **[DONE except retry pass → see 2] close_gaps campaign.** Batch
+   1/HIGH: 27/31 applied (61 tests). Remainder: 111/155 applied (+253
+   tests). Campaign: 138/186 families, 314 tests, all gate-arbitrated;
+   resync sweeps + pushes done after each batch.
 
-2. **[ ] Campaign follow-ups.** One retry pass for INCONCLUSIVE
-   rejects; hand-check 102_001 if its added-test blind failure repeats;
-   hand-read the 8 DORMANT? timer dirs (015-family + adapt_107_004
-   likely fine, adapt_023_004 + adapt_006_002 likely real); pre-flight
-   refusals (reach-in debt) feed activity 6.
+2. **[IN PROGRESS] Campaign follow-ups.**
+   - **Retry pass over the 44 rejects RUNNING** (19/44 done, 3 applied
+     so far — most blind-ADDED rejects repeat, as expected). Detached
+     pid: last line of `logs/close_gaps_full.pid`, log
+     `logs/close_gaps_full.log`, ledger `logs/close_gaps.jsonl`.
+     Idempotent relaunch: `scripts/run_detached.sh
+     logs/close_gaps_full.log mix run scripts/close_gaps.exs -- --go`.
+     After exit: resync sweep + commit + push, then partition the final
+     rejects.
+   - **Hand-checks DONE 2026-07-21** (commit 27744833f): 102_004 = the
+     candidate didn't compile (bare `failing?` as variable) — NOT a
+     gold defect; 102_001 = added test's failure double raised
+     RuntimeError where real Ecto raises Ecto.InvalidChangesetError —
+     blind gate correctly defended honest solvers; mold rule added
+     (failure doubles must fail exactly like the real dependency).
+   - **[ ] Double-blind-ADDED families → per-family hand-read** (6
+     confirmed so far, final list when the retry pass exits; clustered
+     in the 018-022 endpoint families). Each read decides: added test
+     over-pins (fix test approach) vs promise not solver-salient (one
+     clarifying prompt sentence + anchored test land together). NOT
+     auto-reclassified as prompt defects — evidence is correlated
+     (same solver model both attempts).
+   - **[ ] Hand-read the 8 DORMANT? timer dirs** (015-family +
+     adapt_107_004 likely fine; adapt_023_004 + adapt_006_002 likely
+     real).
 
 3. **[ ] Hand-triage docs/19 — 63 gold/prompt-defect findings (11
    high, 52 families).** Top-down, one family = one commit + full
