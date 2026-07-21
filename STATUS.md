@@ -18,6 +18,18 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    tests). Campaign: 138/186 families, 314 tests, all gate-arbitrated;
    resync sweeps + pushes done after each batch.
 
+**NIGHT RUN 2026-07-21/22 — lanes:** rubric_judge FULL PASS (320
+roots × 2 judges) riding as pid in `logs/rubric_judge_full.pid`,
+monitor armed (activity 4 executing). rescreen6 (timer families)
+riding; rescreen_sw8 batch queued behind it (6 solver-weak entailment
+runs + 100_003/100_004 S6). G1a CLOSED (dormant count 25→0; 6
+reviewer-missed roots hand-closed with pilot-pattern tests; lint now
+shape-aware for adapt_/wt_/dedoc_). G7 CLOSED (all 134 unverified
+pairs are bad_green — no behavioral defect; style route already
+harvested). 100_003 closed with locally-computed RFC vectors;
+100_004 hand-landed. Next in-session: docs/19 hand-triage (activity
+3), HIGHs first.
+
 2. **[IN PROGRESS] Campaign follow-ups. MACHINE PHASE FINAL:
    159/182 families applied (87%), 23 open — all with human-shaped
    reasons.** (Passes 1-3 done; commit cc50ffd51.)
