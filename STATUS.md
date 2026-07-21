@@ -39,20 +39,16 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
      local gates, all re-graded green post-land with cascades.
      045_002 = REAL prompt defect (module-level API signatures make
      the :name/:table_name promises unexercisable) → docs/19.
-   - **S6 GREEN (fully done): 022_003, 108_003.** Round 3 done: all
-     red. **7 keep packets now stand after 2 red attempts each**
-     (020_002, 020_003, 022_002, 025_002, 045_003, 043_001, 102_001)
-     — reds are catastrophic solver attempts on pre-existing basics,
-     all ENTAILED. Packets: `logs/keep_review/<root>/`; approve:
-     `mix run scripts/keep_land.exs -- --approve <root>` (older
-     007_002 + 110_002 packets sit there too). **Push gate-blocked
-     until approvals.** 098_004 (hand-landed 2026-07-21, mold's
-     bitstring pin bug fixed by hand, 27/27) still needs its first
-     rescreen — batch it with the next LLM window.
-   - **005_003 rescreen verdict: NOT ENTAILED** — the judge says the
-     CURRENT prompt under-specifies its own pre-existing topic-drop
-     test → prompt-fix queue (verify the judge's reading by hand,
-     then: prompt sentence + re-screen).
+   - **S6 CLOSED 2026-07-21: zero stale roots, push UNBLOCKED (commit
+     e20224e59).** All 7 keep packets reviewed on the data and
+     APPROVED (delegated; resolution rows carry the honest resolver);
+     098_004 rescreened GREEN first try; the old 007_002/110_002
+     packets were MOOT (improvements already in the current prompts).
+     The 9 keep/hard families seed G9's probe set.
+   - **[ ] 005_003 prompt-fix** (rescreen judge: NOT ENTAILED — the
+     current prompt under-specifies its own pre-existing topic-drop
+     test; verify the judge's reading by hand, then prompt sentence +
+     re-screen).
    - **DORMANT? hand-reads: 8/8 DONE, all FINE** (4 observe via
      assert_receive; 2 observe positionally; adapt_006_002 +
      adapt_023_004 specs explicitly FORBID timers — projection
