@@ -399,5 +399,37 @@ defmodule GraceWatchdogTest do
   test "start_link without a :name option registers under the module name" do
     assert is_pid(Process.whereis(GraceWatchdog))
   end
+
+  # ------------------------------------------------------------------
+  # Heartbeat re-arms the interval timer
+  # ------------------------------------------------------------------
+
+  test "a heartbeat grants a full fresh interval before the next miss" do
+    test = self()
+    :ok = GraceWatchdog.register(:w, dummy_pid(), 150, 1, notifier(test))
+    :ok = GraceWatchdog.register(:gate, dummy_pid(), 100, 1, notifier(test, :gate))
+
+    # The gate fires ~100ms in, when :w still has ~50ms left on its first interval.
+    assert_receive {:gate, :gate, 1}, 1_000
+    assert :ok = GraceWatchdog.heartbeat(:w)
+
+    # After the heartbeat :w owes nothing for another full 150ms; a timer still
+    # counting down from registration would record its miss ~50ms from here.
+    refute_receive {:timed_out, :w, _}, 100
+
+    # The interval armed by the heartbeat still elapses on its own.
+    assert_receive {:timed_out, :w, 1}, 1_000
+  end
+
+  # ------------------------------------------------------------------
+  # Misses are driven by the watchdog's own timer
+  # ------------------------------------------------------------------
+
+  test "a missed interval is recorded automatically with no external trigger" do
+    test = self()
+    :ok = GraceWatchdog.register(:auto, dummy_pid(), 25, 1, notifier(test))
+
+    assert_receive {:timed_out, :auto, 1}, 1_000
+  end
 end
 ```

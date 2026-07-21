@@ -403,5 +403,49 @@ defmodule MergeSchemaTest do
     wide_data = MergeSchema.partial("a\n1,2,3\n")
     assert wide_data.ncols == 3
   end
+
+  test "an unquoted empty field is null and never enters the category set" do
+    p = MergeSchema.partial("a,b\n1,\n2,3\n")
+
+    assert p.categories == %{
+             0 => MapSet.new([:integer]),
+             1 => MapSet.new([:integer])
+           }
+
+    assert MergeSchema.finalize(p) == %{"a" => :integer, "b" => :integer}
+  end
+
+  test "a column of only unquoted empty fields resolves to string from an empty set" do
+    p = MergeSchema.partial("a,b\n1,\n2,\n")
+
+    assert p.categories == %{0 => MapSet.new([:integer])}
+    assert MergeSchema.finalize(p) == %{"a" => :integer, "b" => :string}
+  end
+
+  test "a quoted empty field is a non-null empty string value" do
+    p = MergeSchema.partial("a\n\"\"\n1\n")
+
+    assert p.categories == %{0 => MapSet.new([:string, :integer])}
+    assert MergeSchema.finalize(p) == %{"a" => :string}
+  end
+
+  test "a chunk whose cells are all unquoted empties is neutral for merged types" do
+    header = MergeSchema.partial("a,b\n1,2.5\n")
+    blanks = MergeSchema.partial(",\n", headers: false)
+
+    expected = %{"a" => :integer, "b" => :float}
+
+    assert MergeSchema.finalize(MergeSchema.merge(header, blanks)) == expected
+    assert MergeSchema.finalize(MergeSchema.merge(blanks, header)) == expected
+  end
+
+  test "a quoted empty field in a later chunk forces the merged column to string" do
+    header = MergeSchema.partial("a\n1\n")
+    quoted_blank = MergeSchema.partial("\"\"\n", headers: false)
+
+    merged = MergeSchema.merge(header, quoted_blank)
+    assert merged.categories == %{0 => MapSet.new([:integer, :string])}
+    assert MergeSchema.finalize(merged) == %{"a" => :string}
+  end
 end
 ```

@@ -429,5 +429,60 @@ defmodule WeightedDAGTest do
     assert WeightedDAG.successors(dag, :a) == [:c]
     assert WeightedDAG.successors(dag, :c) == []
   end
+
+  # -------------------------------------------------------
+  # Neighbour ordering
+  # -------------------------------------------------------
+
+  test "wide neighbour lists are returned in ascending term order" do
+    ids = Enum.to_list(1..40)
+
+    tasks = [{:src, 1}, {:target, 1}] ++ Enum.map(Enum.reverse(ids), &{&1, 1})
+    deps = Enum.flat_map(Enum.reverse(ids), fn i -> [{:src, i}, {i, :target}] end)
+
+    dag = build(tasks, deps)
+
+    assert WeightedDAG.successors(dag, :src) == ids
+    assert WeightedDAG.predecessors(dag, :target) == ids
+  end
+
+  test "neighbour ordering follows term ordering across mixed id types" do
+    tasks = [{:hub, 1}, {"s", 1}, {:b, 1}, {3, 1}, {:a, 1}, {1, 1}]
+    deps = [{"s", :hub}, {:b, :hub}, {3, :hub}, {:a, :hub}, {1, :hub}]
+
+    dag = build(tasks, deps)
+
+    assert WeightedDAG.predecessors(dag, :hub) == [1, 3, :a, :b, "s"]
+  end
+
+  # -------------------------------------------------------
+  # Deterministic tie-breaking
+  # -------------------------------------------------------
+
+  test "tied parallel branches resolve to the smallest task id" do
+    #        a(2)
+    #       /    \
+    #    z(3)    b(3)      both branches are equally long
+    #       \    /
+    #        d(1)
+    dag =
+      build(
+        [{:a, 2}, {:z, 3}, {:b, 3}, {:d, 1}],
+        [{:a, :z}, {:a, :b}, {:z, :d}, {:b, :d}]
+      )
+
+    assert {:ok, 6} = WeightedDAG.makespan(dag)
+    assert {:ok, [:a, :b, :d]} = WeightedDAG.critical_path(dag)
+  end
+
+  test "tied sinks resolve to the smallest task id" do
+    #      s(1)
+    #     /    \
+    #   y(3)   m(3)         both sinks finish at the makespan
+    dag = build([{:s, 1}, {:y, 3}, {:m, 3}], [{:s, :y}, {:s, :m}])
+
+    assert {:ok, 4} = WeightedDAG.makespan(dag)
+    assert {:ok, [:s, :m]} = WeightedDAG.critical_path(dag)
+  end
 end
 ```

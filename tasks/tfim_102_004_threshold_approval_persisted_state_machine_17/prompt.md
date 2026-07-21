@@ -384,6 +384,24 @@ Ecto.Migrator.run(
 
 Ecto.Adapters.SQL.Sandbox.mode(StateMachine.Repo, :manual)
 
+# A repo whose writes always fail while its reads keep working against the real
+# database. Injected through the documented `repo:` option, it lets the suite
+# exercise the documented DB-write-failure contract of `transition/3` without
+# touching the GenServer's internals.
+defmodule FailingWriteRepo do
+  @moduledoc false
+
+  @failure :db_unavailable
+
+  def insert(_struct_or_changeset, _opts \\ []), do: {:error, @failure}
+
+  def insert!(_struct_or_changeset, _opts \\ []), do: raise("write failure")
+
+  def one(queryable, opts \\ []), do: StateMachine.Repo.one(queryable, opts)
+
+  def all(queryable, opts \\ []), do: StateMachine.Repo.all(queryable, opts)
+end
+
 defmodule StateMachineTest do
   use ExUnit.Case, async: false
 
@@ -591,6 +609,42 @@ defmodule StateMachineTest do
     assert last.from_state == :in_review
     assert last.to_state == :withdrawn
     assert last.approvals == 2
+  end
+
+  # ---------------------------------------------------------------------------
+  # DB write failures
+  # ---------------------------------------------------------------------------
+
+  test "a failed write reports {:db_error, reason} and leaves the entity in :draft" do
+    {:ok, sm} = StateMachine.start_link(repo: FailingWriteRepo)
+    assert {:ok, :draft, 0} = StateMachine.start(sm, "cr:dberr")
+
+    assert {:error, {:db_error, _reason}} = StateMachine.transition(sm, "cr:dberr", :submit)
+
+    # The server survives the failed write and the entity has not moved.
+    assert {:ok, :draft, 0} = StateMachine.get_state(sm, "cr:dberr")
+    assert {:ok, []} = StateMachine.history(sm, "cr:dberr")
+  end
+
+  test "a failed approve neither increments the count nor records a transition" do
+    {:ok, healthy} = StateMachine.start_link(repo: StateMachine.Repo, required_approvals: 3)
+    {:ok, :draft, 0} = StateMachine.start(healthy, "cr:dbapp")
+    {:ok, :in_review, 0} = StateMachine.transition(healthy, "cr:dbapp", :submit)
+    {:ok, :in_review, 1} = StateMachine.transition(healthy, "cr:dbapp", :approve)
+
+    {:ok, broken} = StateMachine.start_link(repo: FailingWriteRepo, required_approvals: 3)
+    assert {:ok, :in_review, 1} = StateMachine.start(broken, "cr:dbapp")
+    assert {:error, {:db_error, _reason}} = StateMachine.transition(broken, "cr:dbapp", :approve)
+
+    # Count is untouched in memory and nothing extra was persisted.
+    assert {:ok, :in_review, 1} = StateMachine.get_state(broken, "cr:dbapp")
+    assert {:ok, entries} = StateMachine.history(healthy, "cr:dbapp")
+    assert length(entries) == 2
+    assert List.last(entries).approvals == 1
+
+    # The lost approval must still be needed: two more are required to approve.
+    assert {:ok, :in_review, 2} = StateMachine.transition(healthy, "cr:dbapp", :approve)
+    assert {:ok, :approved, 3} = StateMachine.transition(healthy, "cr:dbapp", :approve)
   end
 end
 ```

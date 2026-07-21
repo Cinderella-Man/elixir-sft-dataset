@@ -389,5 +389,27 @@ defmodule Catalog.RankedTest do
     assert Enum.map(data, & &1.score) == [3, 3, 3]
     assert ids(data) == [9, 3, 7]
   end
+
+  test "name sort with no order defaults to ascending alphabetical" do
+    assert {:ok, %{data: data}} = Ranked.search(products(), %{"sort" => "name"})
+
+    # Keyboard Wrist Rest(4), Running Shoes(1), Trail Runner Pro(2),
+    # Wireless Mouse(3), Yoga Mat(5)
+    assert ids(data) == [4, 1, 2, 3, 5]
+  end
+
+  test "explicit name sort asc orders alphabetically and breaks equal names by id ascending" do
+    catalog = [
+      %{id: 7, name: "Alpha Kit", description: "kit", category: "c", price_cents: 100},
+      %{id: 3, name: "Alpha Kit", description: "kit", category: "c", price_cents: 200},
+      %{id: 9, name: "Alpha Box", description: "kit", category: "c", price_cents: 300}
+    ]
+
+    assert {:ok, %{data: data}} =
+             Ranked.search(catalog, %{"sort" => "name", "order" => "asc"})
+
+    # Alpha Box(9) first, then the two Alpha Kit rows by id ascending
+    assert ids(data) == [9, 3, 7]
+  end
 end
 ```

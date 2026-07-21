@@ -207,5 +207,35 @@ defmodule RankingTest do
     c = item(id: :c, upvotes: 1, downvotes: 4)
     assert ids(Ranking.rank([c, b, a])) == ids(Ranking.rank([c, b, a], z: 1.96))
   end
+
+  # -------------------------------------------------------
+  # rank/2 — opts threading and the total-votes tiebreak
+  # -------------------------------------------------------
+
+  test "rank threads a non-default :z through, reordering the results" do
+    tiny = item(id: :tiny, upvotes: 1, downvotes: 0)
+    small = item(id: :small, upvotes: 5, downvotes: 0)
+    big = item(id: :big, upvotes: 50, downvotes: 10)
+
+    # At the default z the wide interval punishes the small samples, so the
+    # large, well-supported item leads. A narrow interval (z: 0.25) barely
+    # penalizes uncertainty, so the perfect-ratio items lead instead.
+    assert ids(Ranking.rank([tiny, small, big])) == [:big, :small, :tiny]
+    assert ids(Ranking.rank([tiny, small, big], z: 0.25)) == [:small, :tiny, :big]
+  end
+
+  test "equal scores are broken by more total votes first" do
+    none = item(id: :none, upvotes: 0, downvotes: 0)
+    two = item(id: :two, upvotes: 0, downvotes: 2)
+    eight = item(id: :eight, upvotes: 0, downvotes: 8)
+
+    # With no upvotes the centre and the margin cancel exactly, so all three
+    # score 0.0 and only the total-vote count can order them.
+    assert Ranking.score(two) === Ranking.score(none)
+    assert Ranking.score(eight) === Ranking.score(none)
+
+    assert ids(Ranking.rank([none, two, eight])) == [:eight, :two, :none]
+    assert ids(Ranking.rank([two, eight, none])) == [:eight, :two, :none]
+  end
 end
 ```

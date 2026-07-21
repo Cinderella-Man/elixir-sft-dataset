@@ -377,6 +377,90 @@ defmodule ParallelMapTest do
     assert results == input
   end
 
+  # An element whose function exits abnormally (rather than raising) still
+  # yields {:error, reason} in that element's slot, and its neighbours keep
+  # running to completion.
+  test "an exiting function returns {:error, reason} for that item only" do
+    results =
+      ParallelMap.pmap(
+        1..5,
+        fn
+          3 -> exit(:no_thanks)
+          x -> slow(x * 2, 40)
+        end,
+        5
+      )
+
+    assert Enum.at(results, 0) == 2
+    assert Enum.at(results, 1) == 4
+    assert match?({:error, _}, Enum.at(results, 2))
+    assert Enum.at(results, 3) == 8
+    assert Enum.at(results, 4) == 10
+  end
+
+  # A task that dies without any chance to report — a brutal kill of its own
+  # process — is still reported as {:error, reason} for that element, and the
+  # other in-flight tasks are neither cancelled nor corrupted.
+  test "a brutally killed task returns {:error, reason} without cancelling others" do
+    results =
+      ParallelMap.pmap(
+        1..4,
+        fn
+          2 -> Process.exit(self(), :kill)
+          x -> slow(x * 3, 40)
+        end,
+        4
+      )
+
+    assert Enum.at(results, 0) == 3
+    assert match?({:error, _}, Enum.at(results, 1))
+    assert Enum.at(results, 2) == 9
+    assert Enum.at(results, 3) == 12
+  end
+
+  # An abnormal exit frees its concurrency slot: the still-queued elements are
+  # all spawned and every element gets a result, in input order.
+  test "queued items still run after earlier tasks exit abnormally" do
+    input = Enum.to_list(1..8)
+
+    results =
+      ParallelMap.pmap(
+        input,
+        fn
+          x when x in [1, 2] -> exit({:bad, x})
+          x -> slow(x * 100, 20)
+        end,
+        2
+      )
+
+    assert length(results) == 8
+    assert match?({:error, _}, Enum.at(results, 0))
+    assert match?({:error, _}, Enum.at(results, 1))
+    assert Enum.drop(results, 2) == Enum.map(3..8, &(&1 * 100))
+  end
+
+  # A mixture of failure modes across a single call: each failing element gets
+  # its own {:error, reason} and successes are unaffected.
+  test "raise, exit and kill failures coexist in one call" do
+    results =
+      ParallelMap.pmap(
+        [:raise, :ok_a, :exit, :ok_b, :kill],
+        fn
+          :raise -> raise "nope"
+          :exit -> exit(:bye)
+          :kill -> Process.exit(self(), :kill)
+          other -> slow(other, 30)
+        end,
+        3
+      )
+
+    assert match?({:error, _}, Enum.at(results, 0))
+    assert Enum.at(results, 1) == :ok_a
+    assert match?({:error, _}, Enum.at(results, 2))
+    assert Enum.at(results, 3) == :ok_b
+    assert match?({:error, _}, Enum.at(results, 4))
+  end
+
   # -------------------------------------------------------
   # ConcurrencyCounter unit tests
   # -------------------------------------------------------

@@ -385,5 +385,47 @@ defmodule MetricsTest do
     Metrics.increment(:requests, %{method: "GET"})
     assert Metrics.get(:requests, %{method: "GET"}) == 1
   end
+
+  test "increment completes while the owning process is suspended" do
+    owner = Process.whereis(Metrics)
+    assert is_pid(owner)
+
+    Metrics.increment(:hot, %{path: "/fast"}, 2)
+    :sys.suspend(owner, 5_000)
+
+    writer =
+      Task.async(fn ->
+        Metrics.increment(:hot, %{path: "/fast"}, 3)
+        Metrics.increment(:hot, %{path: "/fast"})
+        Metrics.increment(:hot, %{path: "/other"}, 7)
+        :written
+      end)
+
+    outcome = Task.yield(writer, 2_000)
+    Task.shutdown(writer, :brutal_kill)
+    :sys.resume(owner, 5_000)
+
+    assert {:ok, :written} = outcome
+    assert Metrics.get(:hot, %{path: "/fast"}) == 6
+    assert Metrics.get(:hot, %{path: "/other"}) == 7
+    assert Metrics.get(:hot) == 13
+  end
+
+  test "concurrent increments still total correctly while the owner is suspended" do
+    owner = Process.whereis(Metrics)
+    :sys.suspend(owner, 5_000)
+
+    tasks =
+      Enum.map(1..50, fn _ ->
+        Task.async(fn -> Metrics.increment(:bypass, %{shard: "a"}, 1) end)
+      end)
+
+    results = Task.yield_many(tasks, 3_000)
+    Enum.each(tasks, &Task.shutdown(&1, :brutal_kill))
+    :sys.resume(owner, 5_000)
+
+    assert Enum.count(results, fn {_task, result} -> match?({:ok, _}, result) end) == 50
+    assert Metrics.get(:bypass, %{shard: "a"}) == 50
+  end
 end
 ```

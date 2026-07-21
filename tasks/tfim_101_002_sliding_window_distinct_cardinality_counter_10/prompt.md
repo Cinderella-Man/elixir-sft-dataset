@@ -639,5 +639,87 @@ defmodule SlidingUniqueCounterTest do
     # Buckets 0 and 5 are both in window at now=500; union = {"u1", "u2"}.
     assert 2 = SlidingUniqueCounter.distinct_count(sc, "k", 1_000)
   end
+
+  # -------------------------------------------------------
+  # Automatic timer-driven cleanup, observed through the public API only
+  # -------------------------------------------------------
+
+  test "expired data is purged automatically on a 25ms cleanup interval" do
+    {:ok, sc} =
+      SlidingUniqueCounter.start_link(
+        clock: &Clock.now/0,
+        bucket_ms: 100,
+        cleanup_interval_ms: 25,
+        max_window_ms: 1_000
+      )
+
+    Clock.set(0)
+    SlidingUniqueCounter.add(sc, "k", "u1")
+    assert SlidingUniqueCounter.tracked_key_count(sc) == 1
+
+    # The key is now far outside the retention horizon. Nothing here sends the
+    # process a :cleanup message, so tracked_key_count can only reach 0 if the
+    # process wakes itself up on the configured interval.
+    Clock.set(10_000)
+
+    assert poll_until(fn -> SlidingUniqueCounter.tracked_key_count(sc) == 0 end, 1_000),
+           "expired data was never purged by a self-scheduled cleanup"
+  end
+
+  test "the automatic cleanup timer re-arms so later data is also reclaimed" do
+    {:ok, sc} =
+      SlidingUniqueCounter.start_link(
+        clock: &Clock.now/0,
+        bucket_ms: 100,
+        cleanup_interval_ms: 25,
+        max_window_ms: 1_000
+      )
+
+    Clock.set(0)
+    SlidingUniqueCounter.add(sc, "k1", "u1")
+    Clock.set(10_000)
+
+    assert poll_until(fn -> SlidingUniqueCounter.tracked_key_count(sc) == 0 end, 1_000),
+           "the first self-scheduled cleanup never ran"
+
+    # Data written after that purge must also be reclaimed, which only happens
+    # if every cleanup schedules the next one.
+    SlidingUniqueCounter.add(sc, "k2", "u2")
+    assert SlidingUniqueCounter.tracked_key_count(sc) == 1
+
+    Clock.set(20_000)
+
+    assert poll_until(fn -> SlidingUniqueCounter.tracked_key_count(sc) == 0 end, 1_000),
+           "cleanup did not re-schedule itself after its first firing"
+  end
+
+  test "cleanup_interval_ms defaults to 60_000 so nothing is purged right away" do
+    {:ok, sc} = start_reporting_counter([])
+
+    SlidingUniqueCounter.add(sc, "k", "u1")
+    assert SlidingUniqueCounter.tracked_key_count(sc) == 1
+    flush_clock_reads()
+
+    # With the default one-minute interval, no cleanup may run in the next few
+    # hundred milliseconds, so the process must not read the clock again and
+    # the expired key must still be retained.
+    Clock.advance(10_000)
+    refute_receive {:clock_read, _}, 300
+
+    assert SlidingUniqueCounter.tracked_key_count(sc) == 1
+  end
+
+  defp poll_until(fun, timeout_ms) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    poll_until_deadline(fun, deadline)
+  end
+
+  defp poll_until_deadline(fun, deadline) do
+    cond do
+      fun.() -> true
+      System.monotonic_time(:millisecond) >= deadline -> false
+      true -> poll_until_deadline(fun, deadline)
+    end
+  end
 end
 ```

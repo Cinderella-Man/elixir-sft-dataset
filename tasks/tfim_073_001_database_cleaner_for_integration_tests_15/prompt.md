@@ -548,5 +548,99 @@ defmodule DBCleanerTest do
     assert_receive {:echo_query, EchoRepo, "TRUNCATE users RESTART IDENTITY CASCADE", []}, 100
     refute_receive {:echo_query, _, _, _}, 50
   end
+
+  # -------------------------------------------------------
+  # Isolation guarantee driven through the DBCleaner API
+  # -------------------------------------------------------
+
+  # A stand-in repo holding rows for several tables. It applies the documented
+  # effects of the calls DBCleaner is specified to make: a
+  # `TRUNCATE <table> RESTART IDENTITY CASCADE` statement received through
+  # query!/3 empties that one table, begin_transaction/0 snapshots the rows and
+  # rollback/0 restores the snapshot.
+  defmodule TableRepo do
+    use Agent
+
+    @truncate ~r/\ATRUNCATE ([a-zA-Z_][a-zA-Z0-9_]*) RESTART IDENTITY CASCADE\z/
+
+    def start_link(_opts \\ []) do
+      Agent.start_link(fn -> %{rows: [], snapshot: nil} end, name: __MODULE__)
+    end
+
+    def insert(table, row) do
+      Agent.update(__MODULE__, fn state ->
+        %{state | rows: state.rows ++ [{table, row}]}
+      end)
+    end
+
+    def rows(table) do
+      Agent.get(__MODULE__, fn state ->
+        for {name, row} <- state.rows, name == table, do: row
+      end)
+    end
+
+    def begin_transaction do
+      Agent.update(__MODULE__, fn state -> %{state | snapshot: state.rows} end)
+      {:ok, make_ref()}
+    end
+
+    def rollback do
+      Agent.update(__MODULE__, fn state ->
+        %{state | rows: state.snapshot || [], snapshot: nil}
+      end)
+
+      :ok
+    end
+
+    def query!(_repo, sql, _params) do
+      case Regex.run(@truncate, sql) do
+        [_, table] ->
+          Agent.update(__MODULE__, fn state ->
+            %{state | rows: Enum.reject(state.rows, fn {name, _row} -> name == table end)}
+          end)
+
+        nil ->
+          :ok
+      end
+
+      %{rows: [], num_rows: 0}
+    end
+  end
+
+  test "truncation: rows written between start/2 and clean/0 are gone from the listed tables" do
+    start_supervised!(TableRepo)
+
+    assert {:ok, :truncation} =
+             DBCleaner.start(:truncation, repo: TableRepo, tables: ["users", "posts"])
+
+    TableRepo.insert("users", %{id: 1, name: "Alice"})
+    TableRepo.insert("posts", %{id: 1, title: "Hello"})
+    TableRepo.insert("audits", %{id: 1, event: "login"})
+
+    assert DBCleaner.clean() == :ok
+
+    assert TableRepo.rows("users") == []
+    assert TableRepo.rows("posts") == []
+    # Unlisted tables receive no statement, so their rows survive cleanup.
+    assert TableRepo.rows("audits") == [%{id: 1, event: "login"}]
+  end
+
+  test "transaction: rows written between start/2 and clean/0 do not survive the rollback" do
+    start_supervised!(TableRepo)
+
+    TableRepo.insert("users", %{id: 1, name: "Existing"})
+
+    assert {:ok, :transaction} =
+             DBCleaner.start(:transaction, repo: TableRepo, tables: ["users"])
+
+    TableRepo.insert("users", %{id: 2, name: "Bob"})
+    assert length(TableRepo.rows("users")) == 2
+
+    assert DBCleaner.clean() == :ok
+
+    # The rollback undoes the test's write; rows present before start/2 remain,
+    # since this strategy issues no TRUNCATE for the listed table.
+    assert TableRepo.rows("users") == [%{id: 1, name: "Existing"}]
+  end
 end
 ```

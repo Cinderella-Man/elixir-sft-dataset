@@ -354,6 +354,27 @@ defmodule RefreshAheadCacheTest do
     end)
   end
 
+  # Poll a public-API predicate until it holds or the deadline passes.  Returns
+  # :ok as soon as it holds, :timeout otherwise — never waits a fixed duration
+  # for the observed effect itself.
+  defp poll_until(fun, timeout_ms) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+
+    Stream.repeatedly(fun)
+    |> Enum.reduce_while(:timeout, fn
+      true, _ ->
+        {:halt, :ok}
+
+      false, acc ->
+        if System.monotonic_time(:millisecond) > deadline do
+          {:halt, acc}
+        else
+          Process.sleep(5)
+          {:cont, acc}
+        end
+    end)
+  end
+
   # -------------------------------------------------------
   # Basic put/get/delete (TTLCache parity)
   # -------------------------------------------------------
@@ -697,6 +718,31 @@ defmodule RefreshAheadCacheTest do
     assert {:ok, :r2} = RefreshAheadCache.get(c, :a)
 
     assert Loader.calls() == 2
+  end
+
+  # -------------------------------------------------------
+  # Periodic sweep runs on its own timer
+  # -------------------------------------------------------
+
+  test "configured sweep_interval_ms expires entries without any manual sweep" do
+    Clock.set(0)
+
+    {:ok, d} =
+      RefreshAheadCache.start_link(clock: &Clock.now/0, sweep_interval_ms: 25)
+
+    :ok = RefreshAheadCache.put(d, :a, 1, 1_000, fn -> :never end)
+    assert %{entries: 1} = RefreshAheadCache.stats(d)
+
+    # Hard-expire :a on the injected clock.  Nothing here reads :a and nothing
+    # triggers a sweep by hand, so only the periodic timer can evict it.
+    Clock.advance(1_000)
+    assert :ok = poll_until(fn -> RefreshAheadCache.stats(d).entries == 0 end, 2_000)
+
+    # A second entry, expired after the first automatic sweep already ran, must
+    # also be evicted — which only happens if the sweep reschedules itself.
+    :ok = RefreshAheadCache.put(d, :b, 2, 1_000, fn -> :never end)
+    Clock.advance(1_000)
+    assert :ok = poll_until(fn -> RefreshAheadCache.stats(d).entries == 0 end, 2_000)
   end
 end
 ```

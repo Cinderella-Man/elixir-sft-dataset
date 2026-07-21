@@ -971,5 +971,60 @@ defmodule CascadeCrud.ArchiveTest do
     assert {:error, :parent_not_found} =
              Archive.create_folder(s, %{name: "sub", parent_id: f.id})
   end
+
+  # -------------------------------------------------------
+  # Timestamp precision seen through every archived view
+  # -------------------------------------------------------
+
+  # A stamp must be a UTC DateTime with no sub-second component left.
+  defp assert_utc_second_precision(stamp) do
+    assert %DateTime{} = stamp
+    assert stamp.time_zone == "Etc/UTC"
+    assert stamp.utc_offset == 0
+    assert stamp.std_offset == 0
+    assert stamp.microsecond == {0, 0}
+    assert DateTime.truncate(stamp, :second) == stamp
+  end
+
+  test "list_archived stamps are UTC second-precision for both origins", %{server: s} do
+    root = folder!(s, "root")
+    sub = folder!(s, "sub", root.id)
+    leaf = file!(s, "a.txt", sub.id)
+    other = folder!(s, "other")
+
+    %{node: root_target} = archive!(s, root.id)
+    %{node: other_target} = archive!(s, other.id)
+
+    assert {:ok, archived} = Archive.list_archived(s)
+    assert Enum.map(archived, & &1.id) == Enum.sort([root.id, sub.id, leaf.id, other.id])
+
+    for node <- archived do
+      assert_utc_second_precision(node.archived_at)
+    end
+
+    stamps = Map.new(archived, &{&1.id, &1.archived_at})
+    assert stamps[root.id] == root_target.archived_at
+    assert stamps[sub.id] == root_target.archived_at
+    assert stamps[leaf.id] == root_target.archived_at
+    assert stamps[other.id] == other_target.archived_at
+  end
+
+  test "re-archiving stamps UTC second-precision seen via list_children", %{server: s} do
+    root = folder!(s, "root")
+    sub = folder!(s, "sub", root.id)
+    f = file!(s, "a.txt", sub.id)
+
+    archive!(s, root.id)
+    assert {:ok, _} = Archive.unarchive_node(s, root.id)
+
+    assert {:ok, %{node: node, cascaded: [_ | _]}} = Archive.archive_node(s, sub.id)
+    assert_utc_second_precision(node.archived_at)
+
+    assert {:ok, children} = Archive.list_children(s, sub.id, include_archived: true)
+    assert [child] = children
+    assert child.id == f.id
+    assert_utc_second_precision(child.archived_at)
+    assert child.archived_at == node.archived_at
+  end
 end
 ```

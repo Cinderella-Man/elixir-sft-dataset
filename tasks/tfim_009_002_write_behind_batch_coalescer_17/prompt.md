@@ -274,6 +274,28 @@ defmodule BatchCollectorTest do
     assert items == Enum.sort(items)
   end
 
+  test "flush_fn receives items in submission order, not value order" do
+    {:ok, bc} = BatchCollector.start_link(flush_interval_ms: 60_000)
+
+    ff = fn items -> {:ok, items} end
+
+    # Each item is only submitted once the previous one is confirmed buffered,
+    # so submission order is fixed: 3, then 1, then 2. The values are chosen so
+    # that sorted, reversed, and submission order are all different lists.
+    t1 = Task.async(fn -> BatchCollector.submit(bc, :seq, 3, ff, max_batch_size: 3) end)
+    assert await_pending(bc, :seq, 1) == 1
+
+    t2 = Task.async(fn -> BatchCollector.submit(bc, :seq, 1, ff, max_batch_size: 3) end)
+    assert await_pending(bc, :seq, 2) == 2
+
+    # The third item reaches the threshold and flushes the batch.
+    t3 = Task.async(fn -> BatchCollector.submit(bc, :seq, 2, ff, max_batch_size: 3) end)
+
+    results = Task.await_many([t1, t2, t3], 5_000)
+
+    assert Enum.all?(results, &(&1 == {:ok, [3, 1, 2]}))
+  end
+
   # -------------------------------------------------------
   # Count threshold flush
   # -------------------------------------------------------
@@ -314,6 +336,22 @@ defmodule BatchCollectorTest do
     assert result == {:ok, [:item]}
     assert elapsed >= 80_000
     assert elapsed < 300_000
+  end
+
+  test "short flush_interval_ms fires the batch automatically without any threshold hit" do
+    {:ok, bc} = BatchCollector.start_link(flush_interval_ms: 25)
+    parent = self()
+
+    ff = fn items ->
+      send(parent, {:auto_flushed, items})
+      {:ok, items}
+    end
+
+    task = Task.async(fn -> BatchCollector.submit(bc, :auto, :solo, ff, max_batch_size: 500) end)
+
+    # Nothing but the interval timer can flush a 1-item batch under a 500 threshold.
+    assert_receive {:auto_flushed, [:solo]}, 2_000
+    assert Task.await(task, 5_000) == {:ok, [:solo]}
   end
 
   # -------------------------------------------------------
@@ -540,6 +578,17 @@ defmodule BatchCollectorTest do
     assert_receive {:flushed, [:only]}, 1_000
     assert Task.await(task, 1_000) == {:ok, [:only]}
     assert BatchCollector.pending_count(bc, :pc) == 0
+  end
+
+  # Polls pending_count until the key holds at least `target` items, so that a
+  # subsequent submit is guaranteed to be buffered after the earlier ones.
+  defp await_pending(bc, key, target) do
+    Enum.reduce_while(1..200_000, 0, fn _, _ ->
+      case BatchCollector.pending_count(bc, key) do
+        n when n >= target -> {:halt, n}
+        _ -> {:cont, 0}
+      end
+    end)
   end
 end
 ```

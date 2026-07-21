@@ -528,5 +528,69 @@ defmodule CatalogTest do
     assert Catalog.get(c.id) == c
     assert Catalog.count() == 3
   end
+
+  test "skipped ancestor is the nearest skipped ancestor, not the root invalid item" do
+    # Chain: invalid@0 -> 1 -> 2 -> 3. Each skipped item must report its own
+    # nearest bad/skipped ancestor, which for 2 and 3 is a *skipped* item.
+    items = [
+      %{"name" => "", "ref" => "bad"},
+      %{"name" => "mid one", "ref" => "m1", "parent" => "bad"},
+      %{"name" => "mid two", "ref" => "m2", "parent" => "m1"},
+      %{"name" => "leaf", "parent" => "m2"}
+    ]
+
+    assert {:ok, results} = Catalog.bulk_create(items, partial: true)
+
+    assert {0, :error, {:validation, _}} = Enum.find(results, fn {i, _, _} -> i == 0 end)
+    assert {1, :skipped, 0} = Enum.find(results, fn {i, _, _} -> i == 1 end)
+    assert {2, :skipped, 1} = Enum.find(results, fn {i, _, _} -> i == 2 end)
+    assert {3, :skipped, 2} = Enum.find(results, fn {i, _, _} -> i == 3 end)
+
+    assert Catalog.count() == 0
+    assert Catalog.all() == []
+  end
+
+  test "skipped ancestor below a cycle is the nearest skipped item, not a cycle member" do
+    # Cycle on 0 and 1; 2 hangs off the cycle and 3 hangs off 2, so 3's nearest
+    # bad/skipped ancestor is the skipped item 2.
+    items = [
+      %{"name" => "a", "ref" => "a", "parent" => "b"},
+      %{"name" => "b", "ref" => "b", "parent" => "a"},
+      %{"name" => "below", "ref" => "below", "parent" => "a"},
+      %{"name" => "further below", "parent" => "below"}
+    ]
+
+    assert {:ok, results} = Catalog.bulk_create(items, partial: true)
+
+    assert {0, :error, :cycle} = Enum.find(results, fn {i, _, _} -> i == 0 end)
+    assert {1, :error, :cycle} = Enum.find(results, fn {i, _, _} -> i == 1 end)
+    assert {2, :skipped, 0} = Enum.find(results, fn {i, _, _} -> i == 2 end)
+    assert {3, :skipped, 2} = Enum.find(results, fn {i, _, _} -> i == 3 end)
+
+    assert Catalog.count() == 0
+    assert Catalog.all() == []
+  end
+
+  test "skipped ancestor below a duplicate-ref item is the immediate skipped parent" do
+    # 2 points at a duplicated-but-known ref, so it is skipped; 3 depends on 2
+    # and must report 2 rather than either duplicate-ref declaring index.
+    items = [
+      %{"name" => "one", "ref" => "dup"},
+      %{"name" => "two", "ref" => "dup"},
+      %{"name" => "child", "ref" => "child", "parent" => "dup"},
+      %{"name" => "grandchild", "parent" => "child"}
+    ]
+
+    assert {:ok, results} = Catalog.bulk_create(items, partial: true)
+
+    assert {0, :error, :duplicate_ref} = Enum.find(results, fn {i, _, _} -> i == 0 end)
+    assert {1, :error, :duplicate_ref} = Enum.find(results, fn {i, _, _} -> i == 1 end)
+    assert {2, :skipped, ancestor} = Enum.find(results, fn {i, _, _} -> i == 2 end)
+    assert ancestor in [0, 1]
+    assert {3, :skipped, 2} = Enum.find(results, fn {i, _, _} -> i == 3 end)
+
+    assert Catalog.count() == 0
+    assert Catalog.all() == []
+  end
 end
 ```
