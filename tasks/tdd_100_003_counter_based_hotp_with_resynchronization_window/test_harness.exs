@@ -134,4 +134,25 @@ defmodule HOTPTest do
     params = URI.decode_query(URI.parse(uri).query)
     assert params["counter"] == "0"
   end
+
+  # -------------------------------------------------------------------
+  # Left-padding normalization (codes whose 6-digit form has leading zeros)
+  # -------------------------------------------------------------------
+
+  # RFC-seed vectors with leading-zero codes: counter 44 -> "000152",
+  # counter 36 -> "003784". A code supplied as the integer 152 (or the short
+  # string "152") must be left-padded to "000152" before comparison.
+  test "valid? left-pads a short integer code to 6 digits before comparing" do
+    assert HOTP.valid?(@secret, 152, 44) == {:ok, 45}
+  end
+
+  test "valid? left-pads a short string code to 6 digits before comparing" do
+    assert HOTP.valid?(@secret, "152", 44) == {:ok, 45}
+  end
+
+  test "left-padded matching composes with the forward look-ahead window" do
+    # Counter 36 owns "003784"; starting from 30 with look_ahead: 10 the first
+    # (lowest) match is 36, so the stored counter advances to 37.
+    assert HOTP.valid?(@secret, 3784, 30, look_ahead: 10) == {:ok, 37}
+  end
 end
