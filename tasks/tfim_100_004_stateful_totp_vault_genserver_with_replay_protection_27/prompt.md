@@ -579,5 +579,39 @@ defmodule TOTPVaultTest do
   test "a code numerically below 100000 is still six characters wide", %{vault: v} do
     # TODO
   end
+
+  # -------------------------------------------------------------------
+  # default :time — UNIX seconds when the option is omitted
+  # -------------------------------------------------------------------
+
+  test "current_code without :time uses the current UNIX second", %{vault: v} do
+    {:ok, secret} = TOTPVault.register(v, "alice")
+
+    # Bracket the call: the only codes it may return are those of the UNIX
+    # second-derived steps the call could have straddled. A millisecond,
+    # monotonic or otherwise-scaled clock lands on an unrelated step.
+    started_at = System.system_time(:second)
+    assert {:ok, code} = TOTPVault.current_code(v, "alice")
+    finished_at = System.system_time(:second)
+
+    acceptable =
+      for step <- div(started_at, 30)..div(finished_at, 30),
+          do: rfc6238_code(secret, step * 30)
+
+    assert code in acceptable
+  end
+
+  test "consume without :time validates against the current UNIX second", %{vault: v} do
+    {:ok, _} = TOTPVault.register(v, "alice")
+
+    now = System.system_time(:second)
+    {:ok, code} = TOTPVault.current_code(v, "alice", time: now)
+
+    # The default window of 1 step absorbs a second boundary crossed between
+    # the two calls, so a seconds-based default must accept this code and
+    # then treat the very same code as spent.
+    assert TOTPVault.consume(v, "alice", code) == :ok
+    assert TOTPVault.consume(v, "alice", code) == {:error, :replayed}
+  end
 end
 ```
