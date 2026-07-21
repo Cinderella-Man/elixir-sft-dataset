@@ -214,11 +214,16 @@ defmodule SharedPoolBucket do
         # Never seen — fresh buckets are full.
         {:reply, {:ok, key_cap}, state}
 
-      {:ok, _} ->
+      {:ok, existing} ->
+        # A query never mutates: compute the lazily-refilled level with the
+        # CALLER'S capacity/rate arguments purely, storing nothing back —
+        # the stored bucket keeps its last-acquire capacity, rate, tokens
+        # and timestamp untouched.
         now = state.clock.()
-        {bucket, state} = get_and_refill_bucket(state, name, key_cap, key_rate, now)
-        new_buckets = Map.put(state.buckets, name, bucket)
-        {:reply, {:ok, trunc(bucket.free)}, %{state | buckets: new_buckets}}
+        elapsed = now - existing.last_update_at
+        added = elapsed * key_rate / 1000
+        level = min(key_cap * 1.0, existing.free + added)
+        {:reply, {:ok, trunc(level)}, state}
     end
   end
 

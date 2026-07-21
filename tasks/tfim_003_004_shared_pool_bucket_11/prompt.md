@@ -181,11 +181,16 @@ defmodule SharedPoolBucket do
         # Never seen — fresh buckets are full.
         {:reply, {:ok, key_cap}, state}
 
-      {:ok, _} ->
+      {:ok, existing} ->
+        # A query never mutates: compute the lazily-refilled level with the
+        # CALLER'S capacity/rate arguments purely, storing nothing back —
+        # the stored bucket keeps its last-acquire capacity, rate, tokens
+        # and timestamp untouched.
         now = state.clock.()
-        {bucket, state} = get_and_refill_bucket(state, name, key_cap, key_rate, now)
-        new_buckets = Map.put(state.buckets, name, bucket)
-        {:reply, {:ok, trunc(bucket.free)}, %{state | buckets: new_buckets}}
+        elapsed = now - existing.last_update_at
+        added = elapsed * key_rate / 1000
+        level = min(key_cap * 1.0, existing.free + added)
+        {:reply, {:ok, trunc(level)}, state}
     end
   end
 
@@ -647,6 +652,29 @@ defmodule SharedPoolBucketTest do
     # A scheduler that never arms Process.send_after would produce no ticks.
     assert_receive :cleanup_clock_tick, 1_000
     assert_receive :cleanup_clock_tick, 1_000
+  end
+
+  test "key_level is a pure query: it never rewrites stored capacity or rate" do
+    {:ok, sp} =
+      SharedPoolBucket.start_link(
+        global_capacity: 100,
+        global_refill_rate: 1.0,
+        clock: &Clock.now/0,
+        cleanup_interval_ms: :infinity
+      )
+
+    # Define the bucket per-acquire at capacity 5 and drain it fully
+    # (a tiny refill rate keeps the refill negligible at the fake clock's 0).
+    {:ok, 0, _} = SharedPoolBucket.acquire(sp, "k", 5, 0.001, 5)
+
+    # Query at a WILDLY different capacity: reported against 100...
+    assert {:ok, 0} = SharedPoolBucket.key_level(sp, "k", 100, 0.001)
+
+    # ...but the stored bucket is untouched: re-acquiring at the original
+    # capacity still sees the drained 5-token bucket (nothing to give), and
+    # a plain re-query at capacity 5 reports the same drained level.
+    assert {:error, :key_empty, _retry} = SharedPoolBucket.acquire(sp, "k", 5, 0.001, 1)
+    assert {:ok, 0} = SharedPoolBucket.key_level(sp, "k", 5, 0.001)
   end
 end
 ```
