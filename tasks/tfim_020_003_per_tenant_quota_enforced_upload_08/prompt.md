@@ -522,5 +522,74 @@ defmodule FileUploadTest do
     up = upload_conn(opts, "acct1", "t.csv", "a,b\n1,2\n")
     assert {:ok, _dt, _} = DateTime.from_iso8601(json_body(up)["uploaded_at"])
   end
+
+  test "extension outside .csv/.json is rejected even when the content parses", _ctx do
+    start_supervised!({FileUpload.Store, name: :qext, quota_bytes: 1000})
+    o = opts_for(:qext)
+
+    conn = upload_conn(o, "A", "notes.txt", "a,b\n1,2\n")
+    assert conn.status == 422
+    assert json_body(conn)["error"] =~ "File type not allowed"
+    # nothing reserved, nothing written
+    assert FileUpload.Store.usage(:qext, "A") == 0
+    assert File.ls!(@upload_dir) == []
+  end
+
+  test "well-formed .json upload is accepted regardless of extension case", _ctx do
+    start_supervised!({FileUpload.Store, name: :qjson, quota_bytes: 1000})
+    o = opts_for(:qjson)
+    content = ~s({"rows":[{"a":1},{"b":2}]})
+
+    conn = upload_conn(o, "A", "data.json", content)
+    assert conn.status == 201
+    body = json_body(conn)
+    assert body["used_bytes"] == byte_size(content)
+    assert File.exists?(Path.join(@upload_dir, body["id"] <> ".json"))
+
+    # the allowed-extension check ignores case
+    assert upload_conn(o, "A", "upper.JSON", content).status == 201
+  end
+
+  test "malformed .json upload returns 422 with an Invalid JSON message", _ctx do
+    start_supervised!({FileUpload.Store, name: :qbadjson, quota_bytes: 1000})
+    o = opts_for(:qbadjson)
+
+    conn = upload_conn(o, "A", "broken.json", ~s({"a": 1,))
+    assert conn.status == 422
+    assert String.starts_with?(json_body(conn)["error"], "Invalid JSON: ")
+    # nothing reserved, nothing written
+    assert FileUpload.Store.usage(:qbadjson, "A") == 0
+    assert File.ls!(@upload_dir) == []
+  end
+
+  test "missing account header returns 400 on DELETE and leaves the file intact", %{opts: opts} do
+    up = upload_conn(opts, "acct1", "d.csv", "a,b\n1,2\n")
+    id = json_body(up)["id"]
+
+    conn = delete_conn(opts, nil, id)
+    assert conn.status == 400
+    assert json_body(conn)["error"] =~ "Missing account"
+    # record kept, quota still held, file still on disk
+    assert {:ok, _rec} = FileUpload.Store.get(:big_store, id)
+    assert FileUpload.Store.usage(:big_store, "acct1") == 8
+    assert File.exists?(Path.join(@upload_dir, id <> ".csv"))
+  end
+
+  test "empty account header returns 400 on both POST and DELETE", %{opts: opts} do
+    up = upload_conn(opts, "acct1", "e.csv", "a,b\n1,2\n")
+    id = json_body(up)["id"]
+
+    post = upload_conn(opts, "", "e2.csv", "c,d\n3,4\n")
+    assert post.status == 400
+    assert json_body(post)["error"] =~ "Missing account"
+
+    del = delete_conn(opts, "", id)
+    assert del.status == 400
+    assert json_body(del)["error"] =~ "Missing account"
+
+    # neither request changed usage or the stored file
+    assert FileUpload.Store.usage(:big_store, "acct1") == 8
+    assert File.exists?(Path.join(@upload_dir, id <> ".csv"))
+  end
 end
 ```
