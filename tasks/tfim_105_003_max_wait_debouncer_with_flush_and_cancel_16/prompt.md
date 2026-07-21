@@ -346,5 +346,51 @@ defmodule MaxWaitDebouncerTest do
 
     refute_receive :never, 400
   end
+
+  # -------------------------------------------------------
+  # A firing func runs off the server's reduction path
+  # -------------------------------------------------------
+
+  test "a running slow func does not wedge the server for other keys" do
+    test = self()
+    # Announces that it has begun, then stays busy far longer than any of the
+    # bounds asserted below, so the server is observed while the func runs.
+    slow = fn ->
+      send(test, :slow_started)
+      Process.sleep(1_000)
+    end
+
+    MaxWaitDebouncer.call("slow", 0, 0, slow)
+    assert_receive :slow_started, 500
+
+    # The func is still running here: a synchronous call must still be answered
+    # promptly, and a fresh key must still get its own fire.
+    {micros, :ok} = :timer.tc(fn -> MaxWaitDebouncer.cancel("absent") end)
+    assert micros < 300_000
+
+    MaxWaitDebouncer.call("other", 0, 0, notify(:other_ran))
+    assert_receive :other_ran, 400
+  end
+
+  test "a crashing func neither kills the server nor loses other pending work" do
+    server = Process.whereis(MaxWaitDebouncer)
+
+    # Pending work on an untouched key; it must survive the crash below.
+    MaxWaitDebouncer.call("survivor", 250, 250, notify(:survived))
+
+    test = self()
+
+    boom = fn ->
+      send(test, :boom_started)
+      raise "boom"
+    end
+
+    MaxWaitDebouncer.call("boom", 0, 0, boom)
+    assert_receive :boom_started, 500
+
+    assert_receive :survived, 800
+    assert :ok = MaxWaitDebouncer.flush("absent")
+    assert Process.whereis(MaxWaitDebouncer) == server
+  end
 end
 ```

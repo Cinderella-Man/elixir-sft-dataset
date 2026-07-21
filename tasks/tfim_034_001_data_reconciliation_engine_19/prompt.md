@@ -175,7 +175,7 @@ end
 
 ```elixir
 defmodule ReconcilerTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   # ---------------------------------------------------------------------------
   # Basic matching
@@ -336,6 +336,38 @@ defmodule ReconcilerTest do
     refute Map.has_key?(entry.differences, :id)
   end
 
+  test "an explicit nil compare_fields compares all non-key fields" do
+    left = [%{id: 1, a: 1, b: 2}]
+    right = [%{id: 1, a: 9, b: 2}]
+
+    result =
+      Reconciler.reconcile(left, right,
+        key_fields: [:id],
+        compare_fields: nil
+      )
+
+    [entry] = result.matched
+    assert entry.differences == %{a: %{left: 1, right: 9}}
+  end
+
+  test "an explicit nil compare_fields treats a field missing on one side as nil" do
+    left = [%{id: 1, score: 42}]
+    right = [%{id: 1, extra: "x"}]
+
+    result =
+      Reconciler.reconcile(left, right,
+        key_fields: [:id],
+        compare_fields: nil
+      )
+
+    [entry] = result.matched
+
+    assert entry.differences == %{
+             score: %{left: 42, right: nil},
+             extra: %{left: nil, right: "x"}
+           }
+  end
+
   # ---------------------------------------------------------------------------
   # Composite keys
   # ---------------------------------------------------------------------------
@@ -474,6 +506,20 @@ defmodule ReconcilerTest do
     assert result.only_in_right == [%{org_id: 1, user_id: 11, name: "Alice"}]
   end
 
+  test "an explicit nil compare_fields with composite keys skips every key field" do
+    left = [%{org_id: 1, user_id: 10, name: "Alice", tier: "gold"}]
+    right = [%{org_id: 1, user_id: 10, name: "Alice", tier: "silver"}]
+
+    result =
+      Reconciler.reconcile(left, right,
+        key_fields: [:org_id, :user_id],
+        compare_fields: nil
+      )
+
+    [entry] = result.matched
+    assert entry.differences == %{tier: %{left: "gold", right: "silver"}}
+  end
+
   # ---------------------------------------------------------------------------
   # :key_fields validation (required option)
   # ---------------------------------------------------------------------------
@@ -505,6 +551,12 @@ defmodule ReconcilerTest do
   test "omitting :key_fields raises ArgumentError" do
     assert_raise ArgumentError, fn ->
       Reconciler.reconcile([%{id: 1}], [%{id: 1}], [])
+    end
+  end
+
+  test "key_fields validation runs even when compare_fields is nil" do
+    assert_raise ArgumentError, fn ->
+      Reconciler.reconcile([%{id: 1}], [%{id: 1}], key_fields: [], compare_fields: nil)
     end
   end
 end

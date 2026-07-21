@@ -866,6 +866,38 @@ defmodule ObjectStorageTest do
     assert obj.metadata == %{"x" => "y"}
   end
 
+  # Listing must be reconstructed from the reused root_dir, not from an index that
+  # only lives for the lifetime of one server process: after a restart the keys,
+  # their sizes and the prefix filter must all behave as they did before the stop.
+  test "list_objects returns stored keys after a restart on the same root_dir",
+       %{os: os, tmp_dir: tmp_dir} do
+    ObjectStorage.create_bucket(os, "durable")
+    ObjectStorage.put_object(os, "durable", "docs/a.txt", "alpha", "text/plain", %{"n" => "1"})
+    ObjectStorage.put_object(os, "durable", "docs/b.txt", "bravo", "text/markdown", %{})
+    ObjectStorage.put_object(os, "durable", "img/c.png", "charlie!", "image/png", %{"n" => "3"})
+
+    GenServer.stop(os)
+
+    {:ok, pid2} = ObjectStorage.start_link(root_dir: tmp_dir)
+
+    assert {:ok, ["durable"]} = ObjectStorage.list_buckets(pid2)
+
+    assert {:ok, objects} = ObjectStorage.list_objects(pid2, "durable")
+    assert Enum.map(objects, & &1.key) == ["docs/a.txt", "docs/b.txt", "img/c.png"]
+    assert Enum.map(objects, & &1.size) == [5, 5, 8]
+    assert Enum.all?(objects, &match?(%DateTime{}, &1.last_modified))
+
+    assert {:ok, filtered} = ObjectStorage.list_objects(pid2, "durable", prefix: "docs/")
+    assert Enum.map(filtered, & &1.key) == ["docs/a.txt", "docs/b.txt"]
+
+    assert {:ok, obj} = ObjectStorage.get_object(pid2, "durable", "img/c.png")
+    assert obj.data == "charlie!"
+    assert obj.content_type == "image/png"
+    assert obj.metadata == %{"n" => "3"}
+
+    GenServer.stop(pid2)
+  end
+
   # -------------------------------------------------------
   # Concurrent multipart uploads
   # -------------------------------------------------------

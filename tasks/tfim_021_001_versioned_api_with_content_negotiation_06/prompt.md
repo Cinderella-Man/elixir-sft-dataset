@@ -332,5 +332,48 @@ defmodule VersionedApi.RouterTest do
 
     assert conn.status == 404
   end
+
+  # -------------------------------------------------------
+  # The version plug is driven by its own :supported/:default
+  # options, not by a fixed built-in version list
+  # -------------------------------------------------------
+
+  defp call_version_plug(headers, opts) do
+    conn =
+      Enum.reduce(headers, conn(:get, "/api/users/1"), fn {key, val}, c ->
+        Plug.Conn.put_req_header(c, key, val)
+      end)
+
+    VersionedApi.Plugs.ApiVersion.call(conn, VersionedApi.Plugs.ApiVersion.init(opts))
+  end
+
+  test "plug assigns the configured :default version when no header is present" do
+    opts = [supported: ["v1", "v2", "v3"], default: "v3"]
+    conn = call_version_plug([], opts)
+
+    assert conn.assigns[:api_version] == "v3"
+    refute conn.halted
+  end
+
+  test "plug accepts a version that only the configured :supported list allows" do
+    opts = [supported: ["v3", "v4"], default: "v3"]
+    conn = call_version_plug([{"accept-version", "v4"}], opts)
+
+    assert conn.assigns[:api_version] == "v4"
+    refute conn.halted
+  end
+
+  test "plug halts with 406 for a version absent from the configured :supported list" do
+    opts = [supported: ["v3", "v4"], default: "v3"]
+    conn = call_version_plug([{"accept-version", "v1"}], opts)
+
+    assert conn.status == 406
+    assert conn.halted
+
+    body = json_body(conn)
+    assert body["error"] =~ "unsupported"
+    # The 406 body echoes the versions this plug was configured with
+    assert body["supported"] == ["v3", "v4"]
+  end
 end
 ```

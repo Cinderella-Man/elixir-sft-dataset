@@ -283,7 +283,7 @@ end
 
 ```elixir
 defmodule AccessLogAnalyzerTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   # ---------------------------------------------------------------------------
   # Helpers
@@ -662,6 +662,54 @@ defmodule AccessLogAnalyzerTest do
 
   test "error_rate treats status_code exactly 400 as an error and 399 as success" do
     # TODO
+  end
+
+  test "time_range is the chronological earliest and latest, not the first and last lines" do
+    path = tmp_path("out_of_order")
+
+    # Neither endpoint sits at a file boundary: the earliest timestamp is on the
+    # third line and the latest is on the second.
+    write_lines(path, [
+      access_line("2024-05-10T12:00:00Z", "GET", "/c", 200, 1.0),
+      access_line("2024-05-10T15:30:00Z", "GET", "/d", 200, 2.0),
+      access_line("2024-05-10T08:15:00Z", "GET", "/a", 200, 3.0),
+      access_line("2024-05-10T09:45:00Z", "GET", "/b", 200, 4.0)
+    ])
+
+    on_exit(fn -> File.rm(path) end)
+
+    {:ok, expected_first, _} = DateTime.from_iso8601("2024-05-10T08:15:00Z")
+    {:ok, expected_last, _} = DateTime.from_iso8601("2024-05-10T15:30:00Z")
+
+    assert {:ok, report} = AccessLogAnalyzer.analyze(path)
+    {first, last} = report.time_range
+    assert DateTime.compare(first, expected_first) == :eq
+    assert DateTime.compare(last, expected_last) == :eq
+  end
+
+  test "time_range ignores malformed boundary lines and spans days in reverse order" do
+    path = tmp_path("reverse_order")
+
+    # Malformed lines bracket the file, and the valid entries run newest-first
+    # across a day boundary.
+    write_lines(path, [
+      "definitely not json",
+      access_line("2024-02-02T06:00:00Z", "GET", "/late", 200, 1.0),
+      access_line("2024-02-01T22:30:00Z", "GET", "/mid", 200, 2.0),
+      access_line("2024-02-01T21:00:00Z", "GET", "/early", 200, 3.0),
+      access_line("bogus-timestamp", "GET", "/skip", 200, 4.0)
+    ])
+
+    on_exit(fn -> File.rm(path) end)
+
+    {:ok, expected_first, _} = DateTime.from_iso8601("2024-02-01T21:00:00Z")
+    {:ok, expected_last, _} = DateTime.from_iso8601("2024-02-02T06:00:00Z")
+
+    assert {:ok, report} = AccessLogAnalyzer.analyze(path)
+    assert report.malformed_count == 2
+    {first, last} = report.time_range
+    assert DateTime.compare(first, expected_first) == :eq
+    assert DateTime.compare(last, expected_last) == :eq
   end
 end
 ```

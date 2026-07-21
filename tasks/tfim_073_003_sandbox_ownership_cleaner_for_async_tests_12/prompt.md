@@ -372,5 +372,63 @@ defmodule DBCleanerTest do
     spawn(fn -> send(parent, {:lookup, DBCleaner.lookup()}) end)
     assert_receive {:lookup, :error}, 1000
   end
+
+  test "clean/0 drops the allowance entry itself, not merely the owner entry" do
+    allowed =
+      spawn(fn ->
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    assert {:ok, conn1} = DBCleaner.start(:sandbox, repo: FakeRepo, mode: :manual)
+    assert {:ok, ^allowed} = DBCleaner.allow(self(), allowed)
+    assert {:ok, ^conn1} = DBCleaner.lookup(allowed)
+
+    assert :ok = DBCleaner.clean()
+    assert :error = DBCleaner.lookup(allowed)
+
+    # The very same owner process checks out a fresh connection. A retained
+    # allowance would silently reattach the once-allowed process to it.
+    assert {:ok, conn2} = DBCleaner.start(:sandbox, repo: FakeRepo, mode: :manual)
+    refute conn2 == conn1
+    assert :error = DBCleaner.lookup(allowed)
+
+    send(allowed, :stop)
+  end
+
+  test "clean/0 keeps allowances that point at a different owner" do
+    parent = self()
+
+    other_owner =
+      spawn(fn ->
+        {:ok, other_conn} = DBCleaner.start(:sandbox, repo: FakeRepo, mode: :manual)
+        send(parent, {:other_ready, other_conn})
+
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    assert_receive {:other_ready, other_conn}, 1000
+
+    allowed_on_other =
+      spawn(fn ->
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    assert {:ok, ^allowed_on_other} = DBCleaner.allow(other_owner, allowed_on_other)
+
+    assert {:ok, _own_conn} = DBCleaner.start(:sandbox, repo: FakeRepo, mode: :manual)
+    assert :ok = DBCleaner.clean()
+
+    # Only allowances pointing at the cleaned owner are revoked.
+    assert {:ok, ^other_conn} = DBCleaner.lookup(allowed_on_other)
+
+    send(allowed_on_other, :stop)
+    send(other_owner, :stop)
+  end
 end
 ```

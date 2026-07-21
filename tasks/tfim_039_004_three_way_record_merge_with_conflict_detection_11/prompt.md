@@ -372,5 +372,53 @@ defmodule RecordMergeTest do
 
     assert RecordMerge.merge(base, ours, theirs) == %{merged: [], conflicts: []}
   end
+
+  test "merged list is sorted ascending by key when inputs arrive out of key order" do
+    # First appearance across the inputs is 20, 30, 10, 40; the result must be
+    # ordered by key value, not by the order the records were supplied in.
+    base = [%{id: 20, a: 1}, %{id: 30, a: 1}, %{id: 10, a: 1}]
+    ours = [%{id: 20, a: 2}, %{id: 40, a: 4}, %{id: 10, a: 1}]
+    theirs = [%{id: 10, a: 3}, %{id: 30, a: 1}, %{id: 20, a: 1}]
+
+    # id 10: only theirs changed -> theirs. id 20: only ours changed -> ours.
+    # id 30: deleted by ours, unchanged by theirs -> dropped. id 40: added by ours.
+    assert RecordMerge.merge(base, ours, theirs) ==
+             %{
+               merged: [%{id: 10, a: 3}, %{id: 20, a: 2}, %{id: 40, a: 4}],
+               conflicts: []
+             }
+  end
+
+  test "multiple conflicts of different types are sorted ascending by key" do
+    # First appearance across the inputs is 5, 2, 9; conflicts must come back as 2, 5, 9.
+    base = [%{id: 5, a: 1}, %{id: 2, a: 1}]
+    ours = [%{id: 5, a: 2}, %{id: 9, z: 1}, %{id: 2, a: 2}]
+    theirs = [%{id: 5, a: 3}, %{id: 9, z: 2}]
+
+    assert RecordMerge.merge(base, ours, theirs) ==
+             %{
+               merged: [],
+               conflicts: [
+                 %{id: 2, type: :delete_modify, deleted_by: :theirs, modified: %{id: 2, a: 2}},
+                 %{id: 5, type: :modify_modify, fields: %{a: %{base: 1, ours: 2, theirs: 3}}},
+                 %{id: 9, type: :add_add, ours: %{id: 9, z: 1}, theirs: %{id: 9, z: 2}}
+               ]
+             }
+  end
+
+  test "sorting follows the custom :key field values, not input order" do
+    # First appearance across the inputs is "c", "b", "a"; merged must come back as "a", "b".
+    base = [%{sku: "c", q: 1}, %{sku: "b", q: 1}]
+    ours = [%{sku: "c", q: 2}, %{sku: "b", q: 2}, %{sku: "a", q: 9}]
+    theirs = [%{sku: "c", q: 3}, %{sku: "b", q: 1}]
+
+    assert RecordMerge.merge(base, ours, theirs, key: :sku) ==
+             %{
+               merged: [%{sku: "a", q: 9}, %{sku: "b", q: 2}],
+               conflicts: [
+                 %{sku: "c", type: :modify_modify, fields: %{q: %{base: 1, ours: 2, theirs: 3}}}
+               ]
+             }
+  end
 end
 ```

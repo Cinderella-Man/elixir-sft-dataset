@@ -429,5 +429,68 @@ defmodule TTLCacheTest do
     Clock.advance(500)
     assert :miss = TTLCache.get(cache, "k")
   end
+
+  # -------------------------------------------------------
+  # Automatic (timer-driven) sweep
+  # -------------------------------------------------------
+
+  # Waits for the cache to drop `key` on its own, without the test ever sending
+  # a `:sweep` message. The fake clock is parked past the entry's expiration so
+  # a timer-driven sweep can discard it, then rewound to a moment when the entry
+  # was still live before probing: a still-stored entry reads as a hit there,
+  # while a swept one is gone for good. Gives up at a real-time deadline.
+  defp await_auto_sweep(cache, key, live_time, expired_time, deadline_ms) do
+    deadline = System.monotonic_time(:millisecond) + deadline_ms
+    poll_auto_sweep(cache, key, live_time, expired_time, deadline)
+  end
+
+  defp poll_auto_sweep(cache, key, live_time, expired_time, deadline) do
+    Clock.set(expired_time)
+
+    receive do
+    after
+      10 -> :ok
+    end
+
+    Clock.set(live_time)
+
+    case TTLCache.get(cache, key) do
+      :miss ->
+        :swept
+
+      {:ok, _value} ->
+        if System.monotonic_time(:millisecond) < deadline do
+          poll_auto_sweep(cache, key, live_time, expired_time, deadline)
+        else
+          :still_stored
+        end
+    end
+  end
+
+  test "sweep_interval_ms schedules an automatic sweep that reschedules itself" do
+    Clock.set(0)
+
+    {:ok, cache} =
+      TTLCache.start_link(
+        clock: &Clock.now/0,
+        sweep_interval_ms: 25
+      )
+
+    # Written at time 0, expires at 100, and is never read while expired — only
+    # a timer-driven sweep can remove it.
+    assert :ok = TTLCache.put(cache, "first", "v1", 100)
+    assert :swept = await_auto_sweep(cache, "first", 50, 1_000, 1_000)
+
+    # A second entry written only after the first automatic sweep already ran is
+    # removed as well, which requires the sweep to have rescheduled itself.
+    Clock.set(2_000)
+    assert :ok = TTLCache.put(cache, "second", "v2", 100)
+    assert :swept = await_auto_sweep(cache, "second", 2_050, 3_000, 1_000)
+
+    # Automatic sweeps leave the cache fully usable.
+    Clock.set(4_000)
+    assert :ok = TTLCache.put(cache, "third", "v3", 60_000)
+    assert {:ok, "v3"} = TTLCache.get(cache, "third")
+  end
 end
 ```

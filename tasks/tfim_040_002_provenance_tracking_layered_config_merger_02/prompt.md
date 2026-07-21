@@ -422,5 +422,38 @@ defmodule LayeredConfigTest do
     assert result |> Map.keys() |> Enum.sort() == [:config, :provenance]
     assert map_size(result) == 2
   end
+
+  # -------------------------------------------------------
+  # Append with a single contributing layer
+  # -------------------------------------------------------
+
+  # Under :append the contributors of a list leaf are exactly the layers that set a
+  # list at that path, in precedence order; a layer that sets no list there is never
+  # named, including when only one layer contributes at all. The provenance is read
+  # through List.wrap/1 so a lone contributor is accepted either as its bare name or
+  # as a one-element list of names -- what is pinned is *which* layers are named.
+  test "append names only the single contributing layer, never the silent ones" do
+    lower_only = [
+      {:base, %{plugins: ["core"]}},
+      {:file, %{other: 1}},
+      {:env, %{unrelated: true}}
+    ]
+
+    result = LayeredConfig.merge(lower_only, list_strategy: :append)
+
+    assert result.config.plugins == ["core"]
+    assert List.wrap(result.provenance[[:plugins]]) == [:base]
+
+    higher_only = [
+      {:base, %{db: %{host: "localhost"}}},
+      {:file, %{db: %{port: 5432}}},
+      {:env, %{db: %{tags: ["metrics"]}}}
+    ]
+
+    nested = LayeredConfig.merge(higher_only, list_strategy: :append)
+
+    assert nested.config.db.tags == ["metrics"]
+    assert List.wrap(nested.provenance[[:db, :tags]]) == [:env]
+  end
 end
 ```

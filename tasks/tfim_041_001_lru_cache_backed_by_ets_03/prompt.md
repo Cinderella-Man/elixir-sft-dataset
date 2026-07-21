@@ -717,5 +717,44 @@ defmodule LRUCacheTest do
     LRUCache.put(c, :c, 3)
     assert :ets.tab2list(order_table(c)) == [{4, :a}, {5, :c}]
   end
+
+  # -------------------------------------------------------
+  # Start-up validation is not bypassed by the supervised path
+  # -------------------------------------------------------
+
+  test "a non-positive max_size fails the start under a supervisor too" do
+    # The same option contract holds when the cache is placed under a
+    # supervisor through its child_spec: the child must fail to start.
+    assert {:error, _zero_reason} =
+             start_supervised({LRUCache, name: unique_name(), max_size: 0})
+
+    assert {:error, _negative_reason} =
+             start_supervised({LRUCache, name: unique_name(), max_size: -1})
+  end
+
+  test "start-up rejects non-integer max_size values that compare above zero" do
+    # Erlang term ordering places atoms and binaries above every integer, so a
+    # cache that only checked `max_size > 0` would accept these; a max_size
+    # that is not an integer must be rejected regardless of how it compares.
+    assert %ArgumentError{} = start_error(name: unique_name(), max_size: true)
+    assert %ArgumentError{} = start_error(name: unique_name(), max_size: "3")
+  end
+
+  test "a valid supervised start still yields a working cache of that capacity" do
+    # Rejecting bad options must not come at the cost of the legal path: a
+    # supervised cache started with max_size 2 holds two entries and then
+    # evicts exactly the least-recently used one.
+    name = unique_name()
+    assert pid = start_supervised!({LRUCache, name: name, max_size: 2})
+    assert is_pid(pid)
+
+    assert :ok = LRUCache.put(name, :a, 1)
+    assert :ok = LRUCache.put(name, :b, 2)
+    assert :ok = LRUCache.put(name, :c, 3)
+
+    assert :miss = LRUCache.get(name, :a)
+    assert {:ok, 2} = LRUCache.get(name, :b)
+    assert {:ok, 3} = LRUCache.get(name, :c)
+  end
 end
 ```

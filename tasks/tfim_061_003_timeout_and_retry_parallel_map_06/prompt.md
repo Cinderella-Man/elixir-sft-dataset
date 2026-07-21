@@ -483,5 +483,48 @@ defmodule RetryMapTest do
     assert ConcurrencyCounter.decrement(:retry_map_named_counter) == 1
     assert ConcurrencyCounter.peak(:retry_map_named_counter) == 2
   end
+
+  # -------------------------------------------------------
+  # Default per-attempt timeout (5000 ms)
+  # -------------------------------------------------------
+
+  test "the omitted :timeout tolerates work far shorter than the 5000 ms default" do
+    results =
+      RetryMap.pmap(
+        [1],
+        fn x ->
+          Process.sleep(300)
+          x * 3
+        end,
+        max_concurrency: 1,
+        max_attempts: 1
+      )
+
+    assert results == [{:ok, 3}]
+  end
+
+  test "the omitted :timeout is finite and fires at the 5000 ms default" do
+    parent = self()
+
+    spawn(fn ->
+      out =
+        RetryMap.pmap(
+          [1],
+          fn _ ->
+            Process.sleep(9_000)
+            :never
+          end,
+          max_concurrency: 1,
+          max_attempts: 1
+        )
+
+      send(parent, {:default_timeout_done, out})
+    end)
+
+    # A default shorter than 5000 ms would yield a terminal result within 3 s.
+    refute_receive {:default_timeout_done, _}, 3_000
+    # A default that never fires would yield nothing, since the work runs for 9 s.
+    assert_receive {:default_timeout_done, [{:error, :timeout}]}, 4_000
+  end
 end
 ```

@@ -507,5 +507,42 @@ defmodule DLQTest do
     assert entry.id == id
     assert entry.message == :kept
   end
+
+  # -------------------------------------------------------
+  # default clock (no :clock option given)
+  # -------------------------------------------------------
+
+  # Spin until at least `min_ms` of real time has elapsed, so the ages the
+  # default clock reports are known to sit inside a wide millisecond window.
+  defp elapse_real_ms(min_ms) do
+    spin_until(System.monotonic_time(:millisecond) + min_ms)
+  end
+
+  defp spin_until(deadline) do
+    if System.monotonic_time(:millisecond) < deadline do
+      spin_until(deadline)
+    else
+      :ok
+    end
+  end
+
+  test "without a :clock option purge ages messages on a real millisecond clock" do
+    dlq = start_supervised!({DLQ, []}, id: :default_clock_dlq)
+
+    {:ok, _} = DLQ.push(dlq, "young", :m1, :err, %{})
+    {:ok, _} = DLQ.push(dlq, "aged", :m2, :err, %{})
+
+    elapse_real_ms(50)
+
+    # Roughly 50 ms of real time has passed: no message is a full minute old,
+    # so a 60_000 ms threshold must purge nothing.
+    assert {:ok, 0} = DLQ.purge(dlq, "young", 60_000)
+    assert [%{message: :m1}] = DLQ.peek(dlq, "young", 10)
+
+    # The same elapsed time is well past a 20 ms threshold, so that purge
+    # must remove the message.
+    assert {:ok, 1} = DLQ.purge(dlq, "aged", 20)
+    assert DLQ.peek(dlq, "aged", 10) == []
+  end
 end
 ```

@@ -140,6 +140,45 @@ defmodule ConcurrentBloomFilterTest do
   end
 
   # -------------------------------------------------------
+  # add/2 return value
+  # -------------------------------------------------------
+
+  test "add/2 returns the unchanged filter handle" do
+    filter = ConcurrentBloomFilter.new(100, 0.01)
+
+    # The documented return value is the same (unchanged) handle that was passed
+    # in — not :ok and not a freshly built struct.
+    assert ConcurrentBloomFilter.add(filter, "handle-back") == filter
+
+    # Because the handle comes back unchanged, adds chain and every item added
+    # through the chain is still a member of the original handle.
+    returned =
+      filter
+      |> ConcurrentBloomFilter.add(:chained_one)
+      |> ConcurrentBloomFilter.add({:chained, 2})
+
+    assert returned == filter
+    assert ConcurrentBloomFilter.member?(filter, :chained_one)
+    assert ConcurrentBloomFilter.member?(filter, {:chained, 2})
+  end
+
+  test "add/2 in another process returns a handle usable back in the caller" do
+    filter = ConcurrentBloomFilter.new(100, 0.01)
+
+    returned =
+      Task.async(fn -> ConcurrentBloomFilter.add(filter, "returned-from-task") end)
+      |> Task.await()
+
+    # The handle travelled back across processes unchanged and still reads the
+    # same shared array.
+    assert returned == filter
+    assert ConcurrentBloomFilter.member?(returned, "returned-from-task")
+
+    ConcurrentBloomFilter.add(returned, "added-via-returned-handle")
+    assert ConcurrentBloomFilter.member?(filter, "added-via-returned-handle")
+  end
+
+  # -------------------------------------------------------
   # No false negatives
   # -------------------------------------------------------
 

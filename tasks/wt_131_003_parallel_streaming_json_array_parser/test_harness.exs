@@ -333,4 +333,56 @@ defmodule ParallelJsonStreamerTest do
     assert_receive {:seen, 3}, 500
     refute_receive {:seen, _}, 50
   end
+
+  # -------------------------------------------------------
+  # Decode work really runs concurrently
+  # -------------------------------------------------------
+
+  @heavy_lines 16
+  @floats_per_line 20_000
+
+  # Each element line is expensive to decode, so wall-clock time is dominated by
+  # decoding rather than by reading the file or by the handler.
+  defp write_decode_heavy_array(path) do
+    line = JSON.encode!(Enum.map(1..@floats_per_line, fn i -> i + 0.125 end))
+    write_array(path, List.duplicate(line, @heavy_lines))
+  end
+
+  # Wall-clock time of the fastest of `runs` complete passes over the file at the
+  # given concurrency limit, each pass checked for full, error-free processing.
+  defp best_elapsed_ms(path, concurrency, runs) do
+    handler = fn _item -> :ok end
+
+    samples =
+      for _ <- 1..runs do
+        started = System.monotonic_time(:microsecond)
+
+        assert {:ok, stats} =
+                 ParallelJsonStreamer.process(path, handler, max_concurrency: concurrency)
+
+        elapsed_us = System.monotonic_time(:microsecond) - started
+        assert stats.processed == @heavy_lines
+        assert stats.errors == 0
+        elapsed_us / 1000
+      end
+
+    Enum.min(samples)
+  end
+
+  test "a wide concurrency window decodes lines in parallel", %{path: path} do
+    write_decode_heavy_array(path)
+
+    # Discarded pass so one-time costs are not charged to the measured runs.
+    _warmup = best_elapsed_ms(path, 8, 1)
+
+    wide_ms = best_elapsed_ms(path, 8, 2)
+    single_slot_ms = best_elapsed_ms(path, 1, 2)
+
+    # With more than one scheduler, decoding eight lines at a time must finish
+    # clearly sooner than decoding one line at a time; a sequential decoder that
+    # only echoes :max_concurrency shows no such gain.
+    ratio_cap = if System.schedulers_online() >= 2, do: 0.8, else: 1.5
+
+    assert wide_ms < single_slot_ms * ratio_cap
+  end
 end

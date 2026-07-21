@@ -204,7 +204,7 @@ end
 
 ```elixir
 defmodule LogMaskerTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   setup do
     masker = LogMasker.new([:password, :ssn, :credit_card, :token, :secret])
@@ -445,6 +445,31 @@ defmodule LogMaskerTest do
     assert r1[:password] == "[MASKED]"
     assert r2[:user] == "bob"
     assert r2[:token] == "[MASKED]"
+  end
+
+  # -------------------------------------------------------
+  # mask/2 — raw string input (top-level, not a nested value)
+  # -------------------------------------------------------
+
+  test "mask/2 given a raw string returns a string with all patterns scrubbed", %{m: m} do
+    input = "ssn 123-45-6789, card 4111-1111-1111-1234, mail john.doe@example.com"
+    result = LogMasker.mask(m, input)
+    assert is_binary(result)
+    assert result =~ "***-**-****"
+    assert result =~ "****-****-****-1234"
+    assert result =~ "j***@example.com"
+    refute result =~ "123-45-6789"
+    refute result =~ "john.doe@example.com"
+  end
+
+  test "mask/2 on a raw string agrees with mask_string/2", %{m: m} do
+    input = "contact carol@domain.org about 5500 0055 5555 5559 and 987-65-4321"
+    assert LogMasker.mask(m, input) == LogMasker.mask_string(m, input)
+  end
+
+  test "mask/2 returns a pattern-free raw string unchanged", %{m: m} do
+    plain = "Hello, world! Nothing sensitive here."
+    assert LogMasker.mask(m, plain) == plain
   end
 end
 ```

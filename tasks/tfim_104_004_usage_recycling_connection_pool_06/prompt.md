@@ -438,6 +438,19 @@ defmodule RecyclingPoolTest do
     assert s.in_use == 0
   end
 
+  test "the default create produces distinct reference connections" do
+    start_supervised!({RecyclingPool, name: :rp_default_create, min_size: 1, max_size: 2})
+
+    # The eagerly created connection and the lazily created one both come from
+    # the default factory `fn -> make_ref() end`.
+    assert {:ok, c1} = RecyclingPool.checkout(:rp_default_create, 2_000)
+    assert {:ok, c2} = RecyclingPool.checkout(:rp_default_create, 2_000)
+
+    assert is_reference(c1)
+    assert is_reference(c2)
+    assert c1 != c2
+  end
+
   test "min_size equal to max_size is accepted and pre-fills the pool" do
     start_supervised!({RecyclingPool, name: :rp_min_eq_max, min_size: 2, max_size: 2})
 

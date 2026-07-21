@@ -78,6 +78,54 @@ defmodule ClockV2Test do
   end
 
   # -------------------------------------------------------
+  # Clock.Fake.advance/2 — full documented unit vocabulary
+  # -------------------------------------------------------
+
+  describe "Clock.Fake.advance/2 unit vocabulary" do
+    test "minutes and hours advance by their full-length equivalents" do
+      {:ok, c} = Clock.Fake.start_link([])
+
+      Clock.Fake.advance(c, minutes: 2)
+      assert Clock.Fake.monotonic(c, :second) == 120
+      assert Clock.Fake.monotonic(c, :millisecond) == 120_000
+
+      Clock.Fake.advance(c, hours: 1)
+      assert Clock.Fake.monotonic(c, :second) == 3720
+      assert Clock.Fake.monotonic(c, :millisecond) == 3_720_000
+      assert Clock.Fake.monotonic(c, :microsecond) == 3_720_000_000
+    end
+
+    test "singular unit keys advance identically to their plural forms" do
+      {:ok, singular} = Clock.Fake.start_link([])
+      {:ok, plural} = Clock.Fake.start_link([])
+
+      Clock.Fake.advance(singular, microsecond: 7, millisecond: 3, second: 5)
+      Clock.Fake.advance(singular, minute: 2, hour: 1)
+
+      Clock.Fake.advance(plural, microseconds: 7, milliseconds: 3, seconds: 5)
+      Clock.Fake.advance(plural, minutes: 2, hours: 1)
+
+      assert Clock.Fake.monotonic(singular, :microsecond) == 3_725_003_007
+
+      assert Clock.Fake.monotonic(singular, :microsecond) ==
+               Clock.Fake.monotonic(plural, :microsecond)
+    end
+
+    test "measure reports minute-scale advances in whole milliseconds" do
+      {:ok, c} = Clock.Fake.start_link([])
+
+      {result, elapsed} =
+        Clock.measure(c, fn ->
+          Clock.Fake.advance(c, minute: 1, seconds: 30)
+          :long
+        end)
+
+      assert result == :long
+      assert elapsed == 90_000
+    end
+  end
+
+  # -------------------------------------------------------
   # Clock.measure/2
   # -------------------------------------------------------
 

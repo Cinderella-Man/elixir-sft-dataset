@@ -256,4 +256,59 @@ defmodule LRUCacheShardedTest do
       assert {:ok, ^v} = LRUCacheSharded.get(c, k)
     end
   end
+
+  # -------------------------------------------------------
+  # put/3 return value
+  # -------------------------------------------------------
+
+  test "put returns the bare atom :ok for new keys, updates and evicting inserts" do
+    c = start_cache(1, 2)
+
+    # brand new key in an empty shard
+    assert :ok = LRUCacheSharded.put(c, :a, 1)
+    assert :ok = LRUCacheSharded.put(c, :b, 2)
+
+    # in-place update of an existing key while the shard is exactly full
+    assert :ok = LRUCacheSharded.put(c, :a, 99)
+
+    # new key into a full shard, i.e. the insert that evicts the LRU entry
+    assert :ok = LRUCacheSharded.put(c, :c, 3)
+
+    # re-inserting an evicted key is a plain new insert again
+    assert :ok = LRUCacheSharded.put(c, :b, 22)
+  end
+
+  # -------------------------------------------------------
+  # Owner is off the hot path
+  # -------------------------------------------------------
+
+  test "get, put, size, num_shards and shard_index work while the owner cannot reply" do
+    c = start_cache(4, 10)
+    assert :ok = LRUCacheSharded.put(c, :parked, :v0)
+
+    # Routing comes from the routing ETS table, not from a call into the
+    # owner, so every public function keeps serving while the owner is
+    # suspended and therefore unable to answer any call.
+    :sys.suspend(c)
+
+    try do
+      assert LRUCacheSharded.num_shards(c) == 4
+
+      idx = LRUCacheSharded.shard_index(c, :parked)
+      assert idx >= 0 and idx < 4
+      assert LRUCacheSharded.shard_index(c, :parked) == idx
+
+      assert :ok = LRUCacheSharded.put(c, :during, :v1)
+      assert {:ok, :v1} = LRUCacheSharded.get(c, :during)
+      assert {:ok, :v0} = LRUCacheSharded.get(c, :parked)
+      assert :miss = LRUCacheSharded.get(c, :absent)
+      assert LRUCacheSharded.size(c) == 2
+    after
+      :sys.resume(c)
+    end
+
+    # and the cache is unchanged once the owner is answering again
+    assert {:ok, :v1} = LRUCacheSharded.get(c, :during)
+    assert LRUCacheSharded.size(c) == 2
+  end
 end

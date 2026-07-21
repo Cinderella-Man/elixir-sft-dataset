@@ -319,4 +319,70 @@ defmodule LeaseManagerTest do
     refute String.contains?(id1, "=")
     assert id1 != id2
   end
+
+  # -------------------------------------------------------
+  # Automatic periodic sweep (finite :cleanup_interval_ms)
+  # -------------------------------------------------------
+
+  # With a finite interval the sweep must run on its own, without anything
+  # poking the server. A sweep is told apart from lazy cleanup-on-access by
+  # rewinding the clock before looking: a lease that was merely left in place
+  # is live again once the clock sits before its expiry, so observing
+  # `{:error, :available}` at the rewound time means the lease was genuinely
+  # removed while the clock was ahead of expiry — i.e. by the sweep.
+  test "sweep runs automatically on a finite interval and keeps re-arming", %{mgr: _mgr} do
+    {:ok, sweeper} =
+      LeaseManager.start_link(
+        clock: &Clock.now/0,
+        lease_duration_ms: 1_000,
+        cleanup_interval_ms: 25
+      )
+
+    on_exit(fn ->
+      try do
+        GenServer.stop(sweeper)
+      catch
+        :exit, _ -> :ok
+      end
+    end)
+
+    {:ok, _} = LeaseManager.acquire(sweeper, :printer, :alice)
+
+    # Leave the clock past expiry so an automatic pass sees an expired lease.
+    Clock.set(10_000)
+    assert await_swept(sweeper, :printer, 500, 10_000, 1_000)
+
+    # A second lease, expired later, is swept as well: the timer is periodic
+    # rather than a single one-shot pass.
+    Clock.set(20_000)
+    {:ok, _} = LeaseManager.acquire(sweeper, :printer, :bob)
+
+    Clock.set(30_000)
+    assert await_swept(sweeper, :printer, 20_500, 30_000, 1_000)
+  end
+
+  # Polls until the resource is observed as removed, or the budget runs out.
+  defp await_swept(server, resource, live_time, expired_time, budget_ms) do
+    deadline = System.monotonic_time(:millisecond) + budget_ms
+    Clock.set(expired_time)
+    poll_swept(server, resource, live_time, expired_time, deadline)
+  end
+
+  defp poll_swept(server, resource, live_time, expired_time, deadline) do
+    Clock.set(live_time)
+    observed = LeaseManager.holder(server, resource)
+    Clock.set(expired_time)
+
+    cond do
+      match?({:error, :available}, observed) ->
+        true
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        false
+
+      true ->
+        Process.sleep(5)
+        poll_swept(server, resource, live_time, expired_time, deadline)
+    end
+  end
 end

@@ -297,4 +297,65 @@ defmodule AssertHelpersTest do
       assert Enum.any?(elapsed_values, &(&1 == 0))
     end
   end
+
+  describe "assert_changeset_error/3 matches by exact string equality" do
+    test "a message that is only a substring of the actual error does not match" do
+      cs = make_changeset(name: {"can't be blank", []})
+
+      assert_raise ExUnit.AssertionError, fn ->
+        assert_changeset_error(cs, :name, "blank")
+      end
+    end
+
+    test "an actual error that is only a substring of the expected does not match" do
+      cs = make_changeset(email: {"is invalid", []})
+
+      assert_raise ExUnit.AssertionError, fn ->
+        assert_changeset_error(cs, :email, "is invalid, must be a work address")
+      end
+    end
+
+    test "a message present on another field does not satisfy the assertion" do
+      cs = make_changeset(email: {"is invalid", []})
+
+      assert_raise ExUnit.AssertionError, fn ->
+        assert_changeset_error(cs, :name, "is invalid")
+      end
+    end
+  end
+
+  describe "assert_recent/2 rejects non-datetime values" do
+    test "nil, a Date, a string and an integer all fail the assertion" do
+      # apply/3 keeps each value opaque to the type checker so the macro's
+      # fallback branch stays reachable.
+      for value <- [nil, Date.utc_today(), "2024-01-01T00:00:00Z", 1_704_067_200] do
+        assert_raise ExUnit.AssertionError, fn ->
+          assert_recent(apply(Function, :identity, [value]))
+        end
+      end
+    end
+
+    test "a non-datetime fails the assertion even with an explicit tolerance" do
+      assert_raise ExUnit.AssertionError, fn ->
+        assert_recent(apply(Function, :identity, [:not_a_datetime]), 30)
+      end
+    end
+  end
+
+  describe "assert_eventually/3 timeout report labels the configured values" do
+    test "non-default timeout and interval are echoed with an ms suffix" do
+      message =
+        try do
+          assert_eventually(fn -> nil end, 150, 40)
+          ""
+        rescue
+          e in ExUnit.AssertionError -> e.message
+        end
+
+      assert message =~ ~r/timeout\D*150ms/
+      assert message =~ ~r/interval\D*40ms/
+      assert message =~ ~r/elapsed\D*\d+ms/
+      assert message =~ "nil"
+    end
+  end
 end

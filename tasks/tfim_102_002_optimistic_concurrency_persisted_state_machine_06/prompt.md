@@ -419,6 +419,35 @@ case StateMachine.MigrationRepo.start_link() do
   {:error, {:already_started, _pid}} -> :ok
 end
 
+# ---------------------------------------------------------------------------
+# Repo whose writes always fail.
+#
+# The repo is an injected dependency (`repo:` option of `start_link/1`), so a
+# repo module whose `insert` reports failure is the public-API way to drive the
+# documented `{:error, {:db_error, reason}}` path. Reads are forwarded to the
+# real repo so `start/2` and `history/2` behave normally, which lets a test
+# observe that a failed write left both the in-memory state/version and the
+# persisted history untouched.
+# ---------------------------------------------------------------------------
+
+defmodule StateMachine.FailingInsertRepo do
+  @moduledoc false
+
+  def insert(struct_or_changeset), do: insert(struct_or_changeset, [])
+  def insert(_struct_or_changeset, _opts), do: {:error, :write_failed}
+
+  def insert!(struct_or_changeset), do: insert!(struct_or_changeset, [])
+  def insert!(_struct_or_changeset, _opts), do: raise("write_failed")
+
+  defdelegate all(queryable, opts \\ []), to: StateMachine.Repo
+  defdelegate one(queryable, opts \\ []), to: StateMachine.Repo
+  defdelegate get(queryable, id, opts \\ []), to: StateMachine.Repo
+  defdelegate get_by(queryable, clauses, opts \\ []), to: StateMachine.Repo
+  defdelegate aggregate(queryable, aggregate, opts \\ []), to: StateMachine.Repo
+  defdelegate preload(structs, preloads, opts \\ []), to: StateMachine.Repo
+  defdelegate transaction(fun_or_multi, opts \\ []), to: StateMachine.Repo
+end
+
 defmodule StateMachineTest do
   use ExUnit.Case, async: false
 
@@ -569,6 +598,28 @@ defmodule StateMachineTest do
   end
 
   # ---------------------------------------------------------------------------
+  # DB write failures
+  # ---------------------------------------------------------------------------
+
+  test "failed insert returns {:db_error, reason} and leaves state and version intact" do
+    {:ok, sm} = StateMachine.start_link(repo: StateMachine.FailingInsertRepo)
+    entity = "order:dbfail:#{System.pid()}:#{System.unique_integer([:positive])}"
+
+    assert {:ok, :pending, 0} = StateMachine.start(sm, entity)
+    assert {:error, {:db_error, _reason}} = StateMachine.transition(sm, entity, :confirm, 0)
+
+    # The failed write must leave the in-memory state and version untouched.
+    assert {:ok, :pending, 0} = StateMachine.get_state(sm, entity)
+
+    # Version 0 is therefore still current: retrying at 0 must reach the write
+    # again (a wrongly-advanced version would answer {:stale_version, _} here).
+    assert {:error, {:db_error, _reason}} = StateMachine.transition(sm, entity, :confirm, 0)
+
+    # And nothing was persisted for the entity.
+    assert {:ok, []} = StateMachine.history(sm, entity)
+  end
+
+  # ---------------------------------------------------------------------------
   # History
   # ---------------------------------------------------------------------------
 
@@ -588,6 +639,23 @@ defmodule StateMachineTest do
     assert second.from_state == :confirmed
     assert second.to_state == :shipped
     assert second.version == 2
+  end
+
+  test "history/2 entries carry the stored :inserted_at timestamp", %{sm: sm} do
+    # Bracket the transition, allowing slack for stored-timestamp precision.
+    lower = DateTime.utc_now() |> DateTime.add(-5, :second) |> DateTime.to_naive()
+
+    {:ok, :pending, 0} = StateMachine.start(sm, "order:stamped")
+    {:ok, :confirmed, 1} = StateMachine.transition(sm, "order:stamped", :confirm, 0)
+
+    upper = DateTime.utc_now() |> DateTime.add(5, :second) |> DateTime.to_naive()
+
+    assert {:ok, [entry]} = StateMachine.history(sm, "order:stamped")
+    assert Map.has_key?(entry, :inserted_at)
+
+    stamp = as_naive(entry.inserted_at)
+    assert NaiveDateTime.compare(stamp, lower) in [:gt, :eq]
+    assert NaiveDateTime.compare(stamp, upper) in [:lt, :eq]
   end
 
   test "history/2 for unknown entity returns empty list", %{sm: sm} do
@@ -643,5 +711,10 @@ defmodule StateMachineTest do
     results = Task.await_many(tasks)
     assert Enum.all?(results, &match?({:ok, :confirmed, 1}, &1))
   end
+
+  # Stored timestamps may come back as either a UTC datetime or a naive one;
+  # normalise so a single comparison covers both.
+  defp as_naive(%DateTime{} = datetime), do: DateTime.to_naive(datetime)
+  defp as_naive(%NaiveDateTime{} = naive), do: naive
 end
 ```

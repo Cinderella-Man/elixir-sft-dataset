@@ -423,5 +423,68 @@ defmodule LFUCacheTest do
     assert :ets.info(data, :size) == 2
     assert {:ok, 3} = LFUCache.get(c, :c)
   end
+
+  # -------------------------------------------------------
+  # On-disk row shape: callers may read data rows directly
+  # -------------------------------------------------------
+
+  test "a data row is {key, {value, frequency, seq}} with the triple nested, not flattened" do
+    c = start_cache(3)
+    data = :"#{c}_data"
+
+    # a brand-new entry is stored at frequency 1 alongside its recency stamp
+    LFUCache.put(c, :a, :v1)
+    assert [{:a, {:v1, 1, seq1}}] = :ets.lookup(data, :a)
+    assert is_integer(seq1)
+
+    # a hit raises the frequency in place and draws a strictly larger stamp
+    assert {:ok, :v1} = LFUCache.get(c, :a)
+    assert [{:a, {:v1, 2, seq2}}] = :ets.lookup(data, :a)
+    assert is_integer(seq2)
+    assert seq2 > seq1
+
+    # an update rewrites the value inside the same nested triple
+    LFUCache.put(c, :a, :v2)
+    assert [{:a, {:v2, 3, seq3}}] = :ets.lookup(data, :a)
+    assert is_integer(seq3)
+    assert seq3 > seq2
+  end
+
+  test "each live entry holds a unique recency stamp that grows with insertion order" do
+    c = start_cache(4)
+    data = :"#{c}_data"
+
+    for k <- [:a, :b, :c, :d], do: LFUCache.put(c, k, k)
+
+    stamps =
+      for k <- [:a, :b, :c, :d] do
+        assert [{^k, {^k, 1, seq}}] = :ets.lookup(data, k)
+        assert is_integer(seq)
+        seq
+      end
+
+    # no two live entries share a stamp, and every insert drew a larger one
+    assert length(Enum.uniq(stamps)) == 4
+    assert stamps == Enum.sort(stamps)
+  end
+
+  test "an evicted key leaves no row behind and restarts at frequency 1 when re-put" do
+    c = start_cache(2)
+    data = :"#{c}_data"
+
+    # :a reaches frequency 4, :b reaches frequency 3
+    LFUCache.put(c, :a, 1)
+    for _ <- 1..3, do: LFUCache.get(c, :a)
+    LFUCache.put(c, :b, 2)
+    for _ <- 1..2, do: LFUCache.get(c, :b)
+
+    # :b is the least frequently used, so inserting :c removes its row entirely
+    LFUCache.put(c, :c, 3)
+    assert :ets.lookup(data, :b) == []
+
+    # re-inserting :b does not remember the frequency it had before eviction
+    LFUCache.put(c, :b, 20)
+    assert [{:b, {20, 1, _seq}}] = :ets.lookup(data, :b)
+  end
 end
 ```

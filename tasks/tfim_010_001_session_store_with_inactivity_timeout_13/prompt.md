@@ -619,5 +619,76 @@ defmodule SessionStoreTest do
     refute String.contains?(id, "=")
     assert id =~ ~r/\A[A-Za-z0-9_-]+\z/
   end
+
+  # -------------------------------------------------------
+  # Automatic periodic sweep
+  # -------------------------------------------------------
+
+  # Discards clock reads already in the mailbox, so any read observed after
+  # this point belongs to work the server started later.
+  defp drain_clock_reads do
+    receive do
+      :clock_read -> drain_clock_reads()
+    after
+      0 -> :ok
+    end
+  end
+
+  # Polls until the expired session has disappeared without the test ever
+  # asking the server to clean up. Each round waits for the server to consult
+  # the injected clock on its own, then rewinds the fake clock: a session the
+  # server still holds is well inside its timeout at time 0, so {:ok, _} means
+  # "still stored" and {:error, :not_found} means the sweep removed it. When it
+  # is still stored, the fake clock is pushed back past the deadline and the
+  # next automatic round is awaited, until the overall deadline passes.
+  defp await_automatic_sweep(store, id, deadline) do
+    assert_receive :clock_read, 1_000
+
+    Clock.set(0)
+
+    case SessionStore.get(store, id) do
+      {:error, :not_found} ->
+        :ok
+
+      {:ok, _data} ->
+        assert System.monotonic_time(:millisecond) < deadline,
+               "expired session was never removed without an explicit cleanup trigger"
+
+        Clock.set(1_100)
+        drain_clock_reads()
+        await_automatic_sweep(store, id, deadline)
+    end
+  end
+
+  test "periodic sweep removes expired sessions on its own and keeps rescheduling" do
+    test_pid = self()
+
+    # The injected clock reports every read, so sweeps that the test never
+    # requested are observable through the documented clock hook alone.
+    clock = fn ->
+      now = Clock.now()
+      send(test_pid, :clock_read)
+      now
+    end
+
+    {:ok, store} =
+      SessionStore.start_link(clock: clock, timeout_ms: 1_000, cleanup_interval_ms: 25)
+
+    {:ok, id_a} = SessionStore.create(store, %{user: "alice"})
+
+    # Move the fake time past alice's deadline; from here the only thing that
+    # can drop her is the server's own periodic timer.
+    Clock.set(1_100)
+    drain_clock_reads()
+    await_automatic_sweep(store, id_a, System.monotonic_time(:millisecond) + 2_000)
+
+    # A second expired session is swept as well, so the sweep is periodic
+    # rather than a single run at startup.
+    {:ok, id_b} = SessionStore.create(store, %{user: "bob"})
+
+    Clock.set(1_100)
+    drain_clock_reads()
+    await_automatic_sweep(store, id_b, System.monotonic_time(:millisecond) + 2_000)
+  end
 end
 ```

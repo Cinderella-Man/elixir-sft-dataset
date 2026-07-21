@@ -114,6 +114,43 @@ defmodule ObjectStoreTest do
     assert t1 != t2
   end
 
+  test "trees differing only in entry type produce different hashes", %{store: s} do
+    {:ok, blob_hash} = ObjectStore.store(s, "same target object")
+
+    {:ok, as_blob} = ObjectStore.tree(s, [%{name: "thing", hash: blob_hash, type: :blob}])
+    {:ok, as_tree} = ObjectStore.tree(s, [%{name: "thing", hash: blob_hash, type: :tree}])
+
+    assert as_blob != as_tree
+  end
+
+  test "trees differing only in entry name produce different hashes", %{store: s} do
+    {:ok, blob_hash} = ObjectStore.store(s, "same target object")
+
+    {:ok, t1} = ObjectStore.tree(s, [%{name: "a.txt", hash: blob_hash, type: :blob}])
+    {:ok, t2} = ObjectStore.tree(s, [%{name: "b.txt", hash: blob_hash, type: :blob}])
+
+    assert t1 != t2
+  end
+
+  test "multi-entry trees differing only in one entry's type differ", %{store: s} do
+    {:ok, h1} = ObjectStore.store(s, "first target")
+    {:ok, h2} = ObjectStore.store(s, "second target")
+
+    {:ok, t1} =
+      ObjectStore.tree(s, [
+        %{name: "a", hash: h1, type: :blob},
+        %{name: "b", hash: h2, type: :blob}
+      ])
+
+    {:ok, t2} =
+      ObjectStore.tree(s, [
+        %{name: "a", hash: h1, type: :blob},
+        %{name: "b", hash: h2, type: :tree}
+      ])
+
+    assert t1 != t2
+  end
+
   test "tree can contain nested tree references", %{store: s} do
     {:ok, blob_hash} = ObjectStore.store(s, "nested content")
 

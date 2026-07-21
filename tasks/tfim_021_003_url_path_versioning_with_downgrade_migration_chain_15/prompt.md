@@ -154,6 +154,10 @@ defmodule PathVersionApi.RouterTest do
     PathVersionApi.Router.call(conn(:get, path), @opts)
   end
 
+  defp call(method, path) do
+    PathVersionApi.Router.call(conn(method, path), @opts)
+  end
+
   defp json_body(conn), do: Jason.decode!(conn.resp_body)
 
   defp content_type(conn) do
@@ -369,6 +373,36 @@ defmodule PathVersionApi.RouterTest do
       refute version in PathVersionApi.Migrations.supported()
       assert call("/api/#{version}/users/1").status == 400
     end
+  end
+
+  # -------------------------------------------------------
+  # Only GET matches the user route; other methods are 404
+  # -------------------------------------------------------
+
+  test "non-GET methods on the user path return the not-found response" do
+    for method <- [:post, :put, :patch, :delete] do
+      conn = call(method, "/api/v1/users/1")
+
+      assert conn.status == 404
+      assert json_body(conn) == %{"error" => "not found"}
+      assert content_type(conn) =~ "application/json"
+    end
+  end
+
+  test "every supported version rejects a non-GET request with 404 rather than a body" do
+    for version <- ["v1", "v2", "v3"] do
+      conn = call(:post, "/api/#{version}/users/1")
+
+      assert conn.status == 404
+      assert json_body(conn) == %{"error" => "not found"}
+    end
+  end
+
+  test "a non-GET request with an unsupported version is 404, not the 400 version error" do
+    conn = call(:delete, "/api/v9/users/1")
+
+    assert conn.status == 404
+    assert json_body(conn) == %{"error" => "not found"}
   end
 end
 ```

@@ -184,6 +184,64 @@ defmodule Catalog.KeysetSearchTest do
 
     assert ids(d2) == [6, 4, 1]
   end
+
+  # A catalog whose name ordering differs from both its id ordering and its
+  # price ordering, with a duplicated name so the id tie-break is observable.
+  defp named_products do
+    [
+      %{id: 30, name: "Anvil", category: "tools", price_cents: 500},
+      %{id: 10, name: "Zephyr Fan", category: "home", price_cents: 100},
+      %{id: 20, name: "Mallet", category: "tools", price_cents: 300},
+      %{id: 5, name: "Mallet", category: "tools", price_cents: 900}
+    ]
+  end
+
+  test "sorting by name returns rows ordered by name with id tie-break" do
+    assert {:ok, %{data: data, has_more: false, next_cursor: nil}} =
+             KeysetSearch.search(named_products(), %{"sort" => "name", "limit" => "10"})
+
+    assert ids(data) == [30, 5, 20, 10]
+  end
+
+  test "name-sorted cursor resumes strictly after the last name on the page" do
+    p = named_products()
+
+    assert {:ok, %{data: d1, next_cursor: c1, has_more: true}} =
+             KeysetSearch.search(p, %{"sort" => "name", "limit" => "2"})
+
+    assert ids(d1) == [30, 5]
+    assert is_binary(c1)
+
+    assert {:ok, %{data: d2, next_cursor: nil, has_more: false}} =
+             KeysetSearch.search(p, %{"sort" => "name", "limit" => "2", "cursor" => c1})
+
+    assert ids(d2) == [20, 10]
+  end
+
+  test "name-sorted results descend when order is desc" do
+    assert {:ok, %{data: data}} =
+             KeysetSearch.search(named_products(), %{
+               "sort" => "name",
+               "order" => "desc",
+               "limit" => "10"
+             })
+
+    assert ids(data) == [10, 20, 5, 30]
+  end
+
+  test "absent sort defaults to ordering by id" do
+    assert {:ok, %{data: data, has_more: false}} =
+             KeysetSearch.search(products(), %{"limit" => "10"})
+
+    assert ids(data) == [1, 2, 3, 4, 5, 6, 7, 8]
+  end
+
+  test "absent sort defaults to id even when name and price orderings differ" do
+    assert {:ok, %{data: data, has_more: true}} =
+             KeysetSearch.search(named_products(), %{"limit" => "2"})
+
+    assert ids(data) == [5, 10]
+  end
 end
 ```
 

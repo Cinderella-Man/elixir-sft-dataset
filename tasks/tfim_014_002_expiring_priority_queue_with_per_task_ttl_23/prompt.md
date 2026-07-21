@@ -967,5 +967,33 @@ defmodule ExpiringPriorityQueueTest do
   test "enqueue refuses a priority outside high, normal and low" do
     # TODO
   end
+
+  # -------------------------------------------------------
+  # Default processor
+  # -------------------------------------------------------
+
+  test "omitting :processor processes tasks through the identity function" do
+    clock_agent = start_clock(0)
+
+    {:ok, pq} =
+      ExpiringPriorityQueue.start_link(
+        clock: clock_fn(clock_agent),
+        default_ttl_ms: 100_000
+      )
+
+    assert :ok = ExpiringPriorityQueue.enqueue(pq, "alpha", :normal)
+    assert :ok = ExpiringPriorityQueue.enqueue(pq, {:payload, 7}, :high)
+    assert await_drain(pq) == {:ok, :ok}
+
+    # Each recorded result is the task itself, so a default returning a constant
+    # such as :ok or nil is ruled out, as is one that drops the task entirely.
+    assert ExpiringPriorityQueue.processed(pq) == [
+             {"alpha", "alpha"},
+             {{:payload, 7}, {:payload, 7}}
+           ]
+
+    assert ExpiringPriorityQueue.expired(pq) == []
+    assert ExpiringPriorityQueue.status(pq) == %{high: 0, normal: 0, low: 0, expired: 0}
+  end
 end
 ```

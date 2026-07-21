@@ -471,5 +471,60 @@ defmodule WeightedMapTest do
     assert WeightMeter.sub(:audit_weight_meter, 7) == 0
     assert WeightMeter.peak(:audit_weight_meter) == 7
   end
+
+  test "a raising element frees its weight for a queued element while a sibling runs" do
+    parent = self()
+
+    spawn_link(fn ->
+      results =
+        WeightedMap.pmap(
+          [{:hold, 1}, {:boom, 3}, {:queued, 3}],
+          fn
+            {:boom, _} ->
+              raise "boom"
+
+            {tag, _} ->
+              send(parent, {:started, tag, self()})
+
+              receive do
+                :go -> tag
+              end
+          end,
+          fn {_tag, weight} -> weight end,
+          4
+        )
+
+      send(parent, {:results, results})
+    end)
+
+    assert_receive {:started, :hold, hold_pid}, 1_000
+
+    # The raising element's weight of 3 goes back to the budget at once, so the
+    # queued element of weight 3 is admitted while the first element still runs.
+    assert_receive {:started, :queued, queued_pid}, 1_000
+
+    send(hold_pid, :go)
+    send(queued_pid, :go)
+    assert_receive {:results, [:hold, {:error, _}, :queued]}, 1_000
+  end
+
+  test "an abnormal exit at full budget frees the budget for the blocked queue head" do
+    # Every weight equals the budget, so element 3 can only start if the weight
+    # of the killed element 2 was returned to the budget.
+    results =
+      WeightedMap.pmap(
+        [1, 2, 3],
+        fn
+          2 -> Process.exit(self(), :kill)
+          x -> x * 10
+        end,
+        fn _ -> 3 end,
+        3
+      )
+
+    assert Enum.at(results, 0) == 10
+    assert Enum.at(results, 1) == {:error, :killed}
+    assert Enum.at(results, 2) == 30
+  end
 end
 ```

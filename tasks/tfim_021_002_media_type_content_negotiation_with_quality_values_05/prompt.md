@@ -422,6 +422,44 @@ defmodule MediaVersionApi.RouterTest do
     assert conn.status == 404
   end
 
+  # A request that matches no route gets the same 404 payload as a missing
+  # user: a JSON body carrying the "not found" error, served as
+  # application/json — not an empty or plain-text body.
+  test "unmatched route returns the same json 404 body as a missing user" do
+    conn = call("/api/nope")
+
+    assert conn.status == 404
+    assert content_type(conn) =~ "application/json"
+    assert json_body(conn) == %{"error" => "not found"}
+
+    missing_user = call("/api/users/999")
+
+    assert missing_user.status == 404
+    assert json_body(missing_user) == json_body(conn)
+    assert content_type(missing_user) == content_type(conn)
+  end
+
+  # The unmatched-route 404 is reached only after negotiation succeeds, and it
+  # keeps its json body for other verbs and for paths outside /api as well.
+  test "unmatched paths and verbs keep the json 404 body" do
+    root =
+      conn(:get, "/")
+      |> MediaVersionApi.Router.call(@opts)
+
+    assert root.status == 404
+    assert content_type(root) =~ "application/json"
+    assert json_body(root) == %{"error" => "not found"}
+
+    posted =
+      conn(:post, "/api/users/1")
+      |> Plug.Conn.put_req_header("accept", "application/vnd.acme.v1+json")
+      |> MediaVersionApi.Router.call(@opts)
+
+    assert posted.status == 404
+    assert content_type(posted) =~ "application/json"
+    assert json_body(posted) == %{"error" => "not found"}
+  end
+
   test "application/* resolves to the default version" do
     conn = call("/api/users/1", [{"accept", "application/*"}])
 

@@ -323,6 +323,23 @@ defmodule TreePathsTest do
     assert ids(nodes) == [1]
   end
 
+  test "discarding an orphan also drops its whole descendant subtree" do
+    # 2 is an orphan (parent 99 is absent); 3 and 4 hang beneath it and must
+    # vanish with it rather than being promoted or emitted on their own.
+    items = [
+      %{id: 1, parent_id: nil},
+      %{id: 2, parent_id: 99},
+      %{id: 3, parent_id: 2},
+      %{id: 4, parent_id: 3},
+      %{id: 5, parent_id: 1}
+    ]
+
+    assert {:ok, nodes} = TreePaths.build(items)
+    assert ids(nodes) == [1, 5]
+    assert Enum.map(nodes, & &1.path) == [[1], [1, 5]]
+    assert {:error, :not_found} = TreePaths.subtree(nodes, 3)
+  end
+
   test ":raise_to_root turns an orphan into a root with its own subtree" do
     items = [
       %{id: 2, parent_id: 99},

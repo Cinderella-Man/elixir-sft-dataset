@@ -399,5 +399,62 @@ defmodule TreeValidatorTest do
     all_cycle_ids = cycles |> Enum.flat_map(& &1.ids) |> Enum.sort()
     assert all_cycle_ids == [1, 2, 3, 4]
   end
+
+  test "root and sibling order follow input order, not id order" do
+    items = [
+      %{id: 3, parent_id: nil},
+      %{id: 30, parent_id: 3},
+      %{id: 1, parent_id: nil},
+      %{id: 10, parent_id: 1},
+      %{id: 2, parent_id: nil},
+      %{id: 9, parent_id: 3}
+    ]
+
+    assert {:ok, forest} = TreeValidator.build(items)
+    assert Enum.map(forest, & &1.id) == [3, 1, 2]
+
+    [three, one, _two] = forest
+    assert Enum.map(three.children, & &1.id) == [30, 9]
+    assert Enum.map(one.children, & &1.id) == [10]
+  end
+
+  test "raised orphan and missing-parent roots keep their input positions" do
+    items = [
+      # orphan: parent 99 is not in the node set, so it is raised to a root
+      %{id: 10, parent_id: 99},
+      %{id: 1, parent_id: nil},
+      # no :parent_id key at all, so it is treated as a root
+      %{id: 20},
+      %{id: 5, parent_id: 1}
+    ]
+
+    assert {:issues, forest, issues} = TreeValidator.build(items)
+    assert Enum.map(forest, & &1.id) == [10, 1, 20]
+
+    one = Enum.find(forest, &(&1.id == 1))
+    assert Enum.map(one.children, & &1.id) == [5]
+
+    assert issue(issues, :orphan).ids == [10]
+    assert issue(issues, :missing_parent_id).ids == [20]
+  end
+
+  test "root order after deduplication and cycle removal follows input order" do
+    items = [
+      %{id: 4, parent_id: nil},
+      # cycle 7 <-> 8, both removed from the forest
+      %{id: 7, parent_id: 8},
+      %{id: 8, parent_id: 7},
+      %{id: 2, parent_id: nil},
+      # later duplicate of 4 is dropped; the first occurrence keeps its position
+      %{id: 4, parent_id: nil},
+      %{id: 1, parent_id: nil}
+    ]
+
+    assert {:issues, forest, issues} = TreeValidator.build(items)
+    assert Enum.map(forest, & &1.id) == [4, 2, 1]
+
+    assert issue(issues, :duplicate_id).ids == [4]
+    assert Enum.sort(issue(issues, :cycle).ids) == [7, 8]
+  end
 end
 ```

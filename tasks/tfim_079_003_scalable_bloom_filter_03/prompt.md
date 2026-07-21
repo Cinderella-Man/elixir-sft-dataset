@@ -202,6 +202,47 @@ defmodule ScalableBloomFilterTest do
     assert ScalableBloomFilter.num_slices(filter) == 1
   end
 
+  # Slice i holds initial_capacity * 2^i items, and a fresh slice is appended as
+  # soon as the active slice's own item count reaches its capacity. With an
+  # initial capacity of 100 the slice boundaries therefore fall at 100 and 300,
+  # so 500 items occupy exactly three slices.
+  test "slices open exactly at 100 and 300 items for an initial capacity of 100" do
+    filter = ScalableBloomFilter.new(100, 0.01)
+
+    f = add_seq(filter, 1..99, "g")
+    assert ScalableBloomFilter.num_slices(f) == 1
+
+    f = add_seq(f, 100..100, "g")
+    assert ScalableBloomFilter.num_slices(f) == 2
+
+    f = add_seq(f, 101..299, "g")
+    assert ScalableBloomFilter.num_slices(f) == 2
+
+    f = add_seq(f, 300..300, "g")
+    assert ScalableBloomFilter.num_slices(f) == 3
+
+    f = add_seq(f, 301..500, "g")
+    assert ScalableBloomFilter.num_slices(f) == 3
+    assert ScalableBloomFilter.count(f) == 500
+  end
+
+  # The growth factor is 2, so with an initial capacity of 1 the cumulative
+  # capacity after i+1 slices is 2^(i+1) - 1: new slices appear at 1, 3, 7, 15
+  # and 31 items.
+  test "capacities double per slice: a capacity-1 filter grows at 1, 3, 7, 15, 31" do
+    filter = ScalableBloomFilter.new(1, 0.01)
+    milestones = [{1, 2}, {3, 3}, {7, 4}, {15, 5}, {31, 6}]
+
+    Enum.reduce(milestones, {filter, 1}, fn {total, slices}, {f, next} ->
+      f = add_seq(f, next..total, "p")
+
+      assert ScalableBloomFilter.num_slices(f) == slices,
+             "expected #{slices} slices once #{total} items had been added"
+
+      {f, total + 1}
+    end)
+  end
+
   # -------------------------------------------------------
   # No false negatives (across slices)
   # -------------------------------------------------------
@@ -256,6 +297,33 @@ defmodule ScalableBloomFilterTest do
     assert ScalableBloomFilter.count(filter) == 200
   end
 
+  # Duplicate detection is exact, so a term the probabilistic query wrongly
+  # reports as present is still counted as a genuinely new insertion, and only
+  # becomes a real duplicate once it has actually been added.
+  test "a term the membership query falsely reports is still counted as new" do
+    # A tiny, loosely tuned filter makes member?/2 report true for terms that
+    # were never inserted.
+    filter = add_seq(ScalableBloomFilter.new(4, 0.5), 1..3, "seed")
+
+    ghost = find_false_positive(filter, "ghost", 20_000) || "never-added-term"
+    before_count = ScalableBloomFilter.count(filter)
+
+    grown = ScalableBloomFilter.add(filter, ghost)
+    assert ScalableBloomFilter.count(grown) == before_count + 1
+    assert ScalableBloomFilter.member?(grown, ghost)
+
+    again = ScalableBloomFilter.add(grown, ghost)
+    assert ScalableBloomFilter.count(again) == before_count + 1
+  end
+
+  # Even in a filter tuned so loosely that membership queries report present for
+  # many unseen terms, every distinct term passed to add/2 is counted.
+  test "count stays exact in a filter riddled with false positives" do
+    filter = add_seq(ScalableBloomFilter.new(4, 0.5), 1..200, "exact")
+
+    assert ScalableBloomFilter.count(filter) == 200
+  end
+
   # -------------------------------------------------------
   # Empty
   # -------------------------------------------------------
@@ -296,6 +364,25 @@ defmodule ScalableBloomFilterTest do
 
     assert observed < p * 3,
            "compound false positive rate #{observed} exceeded bound #{p * 3}"
+  end
+
+  # -------------------------------------------------------
+  # Helpers
+  # -------------------------------------------------------
+
+  defp add_seq(filter, range, prefix) do
+    Enum.reduce(range, filter, fn i, f ->
+      ScalableBloomFilter.add(f, "#{prefix}-#{i}")
+    end)
+  end
+
+  # Returns a never-added term the membership query reports as present, or nil
+  # when the scan finds none.
+  defp find_false_positive(filter, prefix, limit) do
+    Enum.find_value(1..limit, fn i ->
+      candidate = "#{prefix}-#{i}"
+      if ScalableBloomFilter.member?(filter, candidate), do: candidate
+    end)
   end
 end
 ```

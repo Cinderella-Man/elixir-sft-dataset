@@ -478,5 +478,82 @@ defmodule PooledFetcherTest do
     assert PooledFetcher.fetch_all([{:later, fn -> {:ok, :fresh} end}], 1, 2_000) ==
              %{later: {:ok, :fresh}}
   end
+
+  # -------------------------------------------------------
+  # No late result reaches the caller
+  # -------------------------------------------------------
+
+  # Once the timeout has fired, no late result may be delivered to the caller:
+  # a fetch that finishes in the instant between the deadline expiring and its
+  # process being killed must not leave its reply sitting in the caller's
+  # mailbox. Since fetch_all only returns once every process it spawned is
+  # finished or confirmed dead, the mailbox can be inspected the moment it
+  # returns. Each trial aims the fetches at the deadline with a slightly
+  # different microsecond offset so the narrow window is swept across trials
+  # rather than hit by luck; either outcome per source ({:ok, value} collected
+  # in time, or {:error, :timeout}) is legitimate, but a stray result carrying
+  # the fetched value never is.
+  test "no late fetch result is left in the caller's mailbox after a timeout" do
+    budget_ms = 15
+
+    for trial <- 0..31 do
+      target_us = System.monotonic_time(:microsecond) + budget_ms * 1_000 + trial * 25 - 200
+
+      racer = fn ->
+        spin_until(target_us)
+        {:ok, :late_marker}
+      end
+
+      sources = for i <- 1..3, do: {{:racer, i}, racer}
+      result = PooledFetcher.fetch_all(sources, 3, budget_ms)
+
+      assert map_size(result) == 3
+
+      for i <- 1..3 do
+        assert result[{:racer, i}] in [{:ok, :late_marker}, {:error, :timeout}]
+      end
+
+      leftovers = drain_mailbox()
+
+      refute Enum.any?(leftovers, &carries?(&1, :late_marker)),
+             "a late fetch result was delivered to the caller after the timeout fired"
+    end
+  end
+
+  # Busy-polls the monotonic clock until the given microsecond target, so a
+  # fetch can be aimed at the deadline far more precisely than a sleep allows.
+  defp spin_until(target_us) do
+    if System.monotonic_time(:microsecond) < target_us do
+      spin_until(target_us)
+    else
+      :ok
+    end
+  end
+
+  # Collects everything currently sitting in this process's mailbox, without
+  # waiting for anything further to arrive.
+  defp drain_mailbox(acc \\ []) do
+    receive do
+      msg -> drain_mailbox([msg | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
+
+  # True when the marker value appears anywhere inside the term, so a delivered
+  # result can be spotted regardless of how it is wrapped.
+  defp carries?(term, marker) when is_tuple(term) do
+    term |> Tuple.to_list() |> Enum.any?(&carries?(&1, marker))
+  end
+
+  defp carries?(term, marker) when is_list(term) do
+    Enum.any?(term, &carries?(&1, marker))
+  end
+
+  defp carries?(term, marker) when is_map(term) do
+    Enum.any?(Map.to_list(term), fn {k, v} -> carries?(k, marker) or carries?(v, marker) end)
+  end
+
+  defp carries?(term, marker), do: term == marker
 end
 ```

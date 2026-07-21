@@ -469,6 +469,44 @@ defmodule CacheLayerSingleFlightTest do
     assert MapSet.disjoint?(created_tabs, MapSet.new(:ets.all()))
   end
 
+  test "shutdown by a supervisor erases the persistent_term registry for its tables" do
+    # A supervisor stops a child by sending it an exit signal rather than calling
+    # GenServer.stop/3, and terminate/2 only runs for a server that traps exits.
+    # This is the ordinary shutdown path, so a cache stopped this way must also
+    # leave no process-global registration behind. Snapshot the registry and the
+    # live table list first, assuming nothing about how entries are named.
+    before_keys = MapSet.new(:persistent_term.get(), fn {key, _} -> key end)
+    before_tabs = MapSet.new(:ets.all())
+
+    {:ok, sup} = Supervisor.start_link([{CacheLayer, []}], strategy: :one_for_one)
+    [{_id, pid, _type, _modules}] = Supervisor.which_children(sup)
+
+    table = :"sup_shutdown_#{System.pid()}_#{System.unique_integer([:positive])}"
+    assert {:ok, :db_value} = CacheLayer.fetch(pid, table, "u:1", fn -> :db_value end)
+
+    boom = fn -> raise "fallback must not run on a cache hit" end
+    assert {:ok, :db_value} = CacheLayer.fetch(pid, table, "u:1", boom)
+
+    created_keys =
+      MapSet.new(:persistent_term.get(), fn {key, _} -> key end)
+      |> MapSet.difference(before_keys)
+
+    created_tabs = MapSet.difference(MapSet.new(:ets.all()), before_tabs)
+
+    # Supervisor.stop/2 terminates the child with an exit signal and waits for it.
+    ref = Process.monitor(pid)
+    :ok = Supervisor.stop(sup, :normal)
+    assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 5_000
+
+    # A server that never trapped exits dies before terminate/2 can run, leaving
+    # its process-global entries behind, and this assertion fails.
+    remaining_keys = MapSet.new(:persistent_term.get(), fn {key, _} -> key end)
+    assert MapSet.disjoint?(created_keys, remaining_keys)
+
+    # The ETS tables die with their owner in either case.
+    assert MapSet.disjoint?(created_tabs, MapSet.new(:ets.all()))
+  end
+
   # -------------------------------------------------------
   # Invalidation
   # -------------------------------------------------------

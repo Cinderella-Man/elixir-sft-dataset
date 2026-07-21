@@ -289,6 +289,38 @@ defmodule MovingAverageTest do
     assert {:ok, ema} = MovingAverage.get(ma, "flat", :ema, 5)
     assert_close(ema, 7.0)
   end
+
+  # -------------------------------------------------------
+  # Process registration via the :name option
+  # -------------------------------------------------------
+
+  test "start_link registers the process under the :name option" do
+    registered =
+      String.to_atom("moving_average_#{System.pid()}_#{System.unique_integer([:positive])}")
+
+    assert {:ok, pid} = MovingAverage.start_link(name: registered)
+    assert Process.whereis(registered) == pid
+  end
+
+  test "a server started with :name serves push and get addressed by that name" do
+    registered =
+      String.to_atom("moving_average_#{System.pid()}_#{System.unique_integer([:positive])}")
+
+    assert {:ok, _pid} = MovingAverage.start_link(name: registered)
+
+    assert {:error, :no_data} = MovingAverage.get(registered, "named", :sma, 3)
+
+    assert :ok = MovingAverage.push(registered, "named", 4.0)
+    assert :ok = MovingAverage.push(registered, "named", 8.0)
+
+    assert {:ok, sma} = MovingAverage.get(registered, "named", :sma, 2)
+    # mean of [4, 8]
+    assert_close(sma, 6.0)
+
+    # k = 2/(2+1) = 2/3; seed 4, then 8*(2/3) + 4*(1/3) = 20/3
+    assert {:ok, ema} = MovingAverage.get(registered, "named", :ema, 2)
+    assert_close(ema, 20.0 / 3.0)
+  end
 end
 ```
 

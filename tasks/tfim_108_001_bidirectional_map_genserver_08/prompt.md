@@ -374,5 +374,52 @@ defmodule BiMapTest do
     assert :error = BiMap.get_by_key(bm, :b)
     assert :error = BiMap.get_by_value(bm, :b)
   end
+
+  # -------------------------------------------------------
+  # Which entry an overlapping term loses: the owner of the
+  # conflicting value, not every entry naming that term
+  # -------------------------------------------------------
+
+  test "self-mapping a key evicts the key that owned that term as a value", %{bm: bm} do
+    assert :ok = BiMap.put(bm, :a, :b)
+    assert :ok = BiMap.put(bm, :b, :a)
+    assert :ok = BiMap.put(bm, :c, :d)
+
+    # Value :a currently belongs to key :b, so putting {:a, :a} reassigns that
+    # value to key :a and :b's whole mapping is removed. :a's old value :b is
+    # orphaned at the same time, leaving :b absent in both directions.
+    assert :ok = BiMap.put(bm, :a, :a)
+
+    assert :error = BiMap.get_by_key(bm, :b)
+    assert :error = BiMap.get_by_value(bm, :b)
+
+    # The surviving self-pair is consistent both ways.
+    assert {:ok, :a} = BiMap.get_by_key(bm, :a)
+    assert {:ok, :a} = BiMap.get_by_value(bm, :a)
+
+    # An unrelated pair is untouched by the eviction.
+    assert {:ok, :d} = BiMap.get_by_key(bm, :c)
+    assert {:ok, :c} = BiMap.get_by_value(bm, :d)
+  end
+
+  test "value eviction removes the owning key while the same term survives as a key",
+       %{bm: bm} do
+    assert :ok = BiMap.put(bm, :a, :b)
+    assert :ok = BiMap.put(bm, :b, :c)
+
+    # Value :b belongs to key :a, so key :a loses its mapping. Term :b is also
+    # a key in its own right; that entry :b -> :c is not the owner of value :b
+    # and stays put.
+    assert :ok = BiMap.put(bm, :c, :b)
+
+    assert :error = BiMap.get_by_key(bm, :a)
+    assert :error = BiMap.get_by_value(bm, :a)
+
+    assert {:ok, :c} = BiMap.get_by_key(bm, :b)
+    assert {:ok, :b} = BiMap.get_by_value(bm, :c)
+
+    assert {:ok, :b} = BiMap.get_by_key(bm, :c)
+    assert {:ok, :c} = BiMap.get_by_value(bm, :b)
+  end
 end
 ```

@@ -258,6 +258,19 @@ defmodule DedupDLQTest do
     assert length(DedupDLQ.peek(dlq, "q", 3)) == 3
   end
 
+  test "peek returns at most count entries from a larger queue", %{dlq: dlq} do
+    for k <- ["a", "b", "c", "d", "e"] do
+      {:ok, :new, _} = DedupDLQ.push(dlq, "q", k, :m, :err, %{})
+      Clock.advance(1)
+    end
+
+    assert Enum.map(DedupDLQ.peek(dlq, "q", 3), & &1.dedup_key) == ["a", "b", "c"]
+    assert Enum.map(DedupDLQ.peek(dlq, "q", 4), & &1.dedup_key) == ["a", "b", "c", "d"]
+    # a count at or above the queue size yields every entry, still oldest-first
+    assert Enum.map(DedupDLQ.peek(dlq, "q", 5), & &1.dedup_key) == ["a", "b", "c", "d", "e"]
+    assert Enum.map(DedupDLQ.peek(dlq, "q", 99), & &1.dedup_key) == ["a", "b", "c", "d", "e"]
+  end
+
   test "retry success removes the coalesced entry", %{dlq: dlq} do
     {:ok, :new, _} = DedupDLQ.push(dlq, "q", "k", :m, :err, %{})
     assert :ok = DedupDLQ.retry(dlq, "q", "k", fn _ -> :ok end)
@@ -286,6 +299,26 @@ defmodule DedupDLQTest do
     assert e.first_seen == 0
     assert e.last_seen == 30
     assert e.message == :second
+  end
+
+  test "repeated duplicate pushes never reset an accumulated retry_count", %{dlq: dlq} do
+    {:ok, :new, id} = DedupDLQ.push(dlq, "q", "k", :m1, :err_a, %{v: 1})
+    assert {:error, :boom} = DedupDLQ.retry(dlq, "q", "k", fn _ -> {:error, :boom} end)
+    assert {:error, :boom} = DedupDLQ.retry(dlq, "q", "k", fn _ -> {:error, :boom} end)
+
+    Clock.advance(10)
+    assert {:ok, :duplicate, ^id} = DedupDLQ.push(dlq, "q", "k", :m2, :err_b, %{v: 2})
+    Clock.advance(10)
+    assert {:ok, :duplicate, ^id} = DedupDLQ.push(dlq, "q", "k", :m3, :err_c, %{v: 3})
+
+    assert [e] = DedupDLQ.peek(dlq, "q", 10)
+    assert e.retry_count == 2
+    assert e.occurrences == 3
+    assert e.first_seen == 0
+    assert e.last_seen == 20
+    assert e.message == :m3
+    assert e.error_reason == :err_c
+    assert e.metadata == %{v: 3}
   end
 
   test "raising handler counts as failure without crashing", %{dlq: dlq} do

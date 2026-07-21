@@ -766,5 +766,68 @@ defmodule InvertedIndexTest do
     assert_in_delta doc2.score, :math.log(3 / 2) / 3, 1.0e-9
     assert doc1.score > doc2.score
   end
+
+  # -------------------------------------------------------
+  # Stemmer: trailing doubled-letter handling
+  # -------------------------------------------------------
+
+  test "stemming collapses a trailing doubled consonant to a single letter", %{idx: idx} do
+    :ok = InvertedIndex.index(idx, "doc1", %{body: "running"}, stem: true)
+    :ok = InvertedIndex.index(idx, "doc2", %{body: "run"}, stem: true)
+    :ok = InvertedIndex.index(idx, "doc3", %{body: "zebra"}, stem: true)
+
+    # stripping "-ing" leaves "runn", whose trailing doubled consonant collapses
+    # to a single letter, so "running" and the bare word "run" share a term
+    results = InvertedIndex.search(idx, "run", stem: true)
+    assert results |> Enum.map(& &1.id) |> Enum.sort() == ["doc1", "doc2"]
+  end
+
+  test "stemming keeps a trailing doubled vowel intact", %{idx: idx} do
+    :ok = InvertedIndex.index(idx, "doc1", %{body: "seeing"}, stem: true)
+    :ok = InvertedIndex.index(idx, "doc2", %{body: "sees"}, stem: true)
+    :ok = InvertedIndex.index(idx, "doc3", %{body: "zebra"}, stem: true)
+
+    # "seeing" strips "-ing" and "sees" strips "-s"; both land on "see" because
+    # the doubled letter is a vowel and therefore survives the collapse rule
+    results = InvertedIndex.search(idx, "seeing", stem: true)
+    assert results |> Enum.map(& &1.id) |> Enum.sort() == ["doc1", "doc2"]
+
+    # a vowel-collapsed "se" is not the stored term, so it matches nothing
+    assert InvertedIndex.search(idx, "se", stem: true) == []
+  end
+
+  # -------------------------------------------------------
+  # Stemmer: -tion, -ment and -ly rules
+  # -------------------------------------------------------
+
+  test "stemming rewrites the -tion suffix to -t", %{idx: idx} do
+    :ok = InvertedIndex.index(idx, "doc1", %{body: "creation"}, stem: true)
+    :ok = InvertedIndex.index(idx, "doc2", %{body: "created"}, stem: true)
+    :ok = InvertedIndex.index(idx, "doc3", %{body: "zebra"}, stem: true)
+
+    # "creation" → "creat" via the "-tion" → "-t" rule, meeting "created" → "creat"
+    results = InvertedIndex.search(idx, "created", stem: true)
+    assert results |> Enum.map(& &1.id) |> Enum.sort() == ["doc1", "doc2"]
+  end
+
+  test "stemming strips the -ment suffix", %{idx: idx} do
+    :ok = InvertedIndex.index(idx, "doc1", %{body: "payment"}, stem: true)
+    :ok = InvertedIndex.index(idx, "doc2", %{body: "pay"}, stem: true)
+    :ok = InvertedIndex.index(idx, "doc3", %{body: "zebra"}, stem: true)
+
+    # "payment" → "pay", the same term the bare word "pay" produces
+    results = InvertedIndex.search(idx, "payment", stem: true)
+    assert results |> Enum.map(& &1.id) |> Enum.sort() == ["doc1", "doc2"]
+  end
+
+  test "stemming strips the -ly suffix", %{idx: idx} do
+    :ok = InvertedIndex.index(idx, "doc1", %{body: "quickly"}, stem: true)
+    :ok = InvertedIndex.index(idx, "doc2", %{body: "quick"}, stem: true)
+    :ok = InvertedIndex.index(idx, "doc3", %{body: "zebra"}, stem: true)
+
+    # "quickly" → "quick", the same term the bare word "quick" produces
+    results = InvertedIndex.search(idx, "quickly", stem: true)
+    assert results |> Enum.map(& &1.id) |> Enum.sort() == ["doc1", "doc2"]
+  end
 end
 ```

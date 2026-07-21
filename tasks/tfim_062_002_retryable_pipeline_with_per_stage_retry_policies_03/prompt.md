@@ -350,5 +350,46 @@ defmodule PipelineTest do
       Pipeline.stage(pipeline, :bad_arity, fn a, b -> {:ok, a + b} end)
     end
   end
+
+  test "one backoff sleep per retry used, so total wait scales with the retry count" do
+    backoff_ms = 40
+    retries = 3
+
+    pipeline =
+      Pipeline.new()
+      |> Pipeline.stage(:x, always_fail(:nope), retries: retries, backoff_ms: backoff_ms)
+
+    {elapsed_us, result} = :timer.tc(fn -> Pipeline.run(pipeline, :in) end)
+
+    assert {:error, :x, :nope, 4} = result
+    # Four attempts of an instant function are separated by three sleeps, so
+    # the run cannot finish faster than three whole backoff periods.
+    assert elapsed_us >= retries * backoff_ms * 1_000
+  end
+
+  test "a stage that succeeds on its first attempt never pays its backoff" do
+    backoff_ms = 5_000
+
+    pipeline =
+      Pipeline.new()
+      |> Pipeline.stage(:fast, ok_stage(&(&1 * 2)), retries: 3, backoff_ms: backoff_ms)
+
+    {elapsed_us, result} = :timer.tc(fn -> Pipeline.run(pipeline, 21) end)
+
+    assert {:ok, 42, [%{stage: :fast, attempts: 1}]} = result
+    # Backoff separates attempts; with a single attempt there is nothing to
+    # separate, so the run must finish far below one backoff period.
+    assert elapsed_us < 1_000_000
+  end
+
+  test "backoff_ms defaults to zero so retries run back to back" do
+    pipeline = Pipeline.new() |> Pipeline.stage(:x, always_fail(:boom), retries: 20)
+
+    {elapsed_us, result} = :timer.tc(fn -> Pipeline.run(pipeline, :in) end)
+
+    assert {:error, :x, :boom, 21} = result
+    # Twenty instant retries with the default zero backoff cost no wall time.
+    assert elapsed_us < 1_000_000
+  end
 end
 ```

@@ -434,6 +434,35 @@ defmodule CounterTSDBTest do
   end
 
   # -------------------------------------------------------
+  # Duplicate timestamps are both retained
+  # -------------------------------------------------------
+
+  test "query returns both points inserted at the same timestamp", %{db: db} do
+    :ok = CounterTSDB.insert(db, "reqs", %{"i" => "a"}, 100, 5)
+    :ok = CounterTSDB.insert(db, "reqs", %{"i" => "a"}, 100, 9)
+    :ok = CounterTSDB.insert(db, "reqs", %{"i" => "a"}, 200, 20)
+
+    [{%{"i" => "a"}, points}] = CounterTSDB.query(db, "reqs", %{"i" => "a"}, {0, 500})
+
+    # Both duplicate-timestamp samples survive, and the list stays sorted by
+    # timestamp, so the pair at 100 precedes the point at 200.
+    assert length(points) == 3
+    assert Enum.map(points, fn {ts, _v} -> ts end) == [100, 100, 200]
+    assert Enum.sort(points) == [{100, 5}, {100, 9}, {200, 20}]
+  end
+
+  test "increase counts a duplicate-timestamp pair as two points", %{db: db} do
+    # Two samples share timestamp 100 and carry equal values, so whatever their
+    # relative order the window holds 2 points and contributes a delta of 0.
+    # A store that collapsed them would leave 1 point and omit the window.
+    :ok = CounterTSDB.insert(db, "reqs", %{}, 100, 7)
+    :ok = CounterTSDB.insert(db, "reqs", %{}, 100, 7)
+
+    [{_labels, range}] = CounterTSDB.query_range(db, "reqs", %{}, {0, 1000}, :increase, 1_000)
+    assert range == [{0, 0}]
+  end
+
+  # -------------------------------------------------------
   # Label matching / multiple series
   # -------------------------------------------------------
 

@@ -528,5 +528,111 @@ defmodule ValidatingPoolTest do
     assert is_reference(r2)
     assert r1 != r2
   end
+
+  # --- validated handoff on checkin ----------------------------------------
+
+  test "a healthy connection checked in is validated then handed to the waiter itself" do
+    {counter, create} = counting_create()
+    {:ok, checked} = Agent.start_link(fn -> [] end)
+    {validate, destroy, _poison, destroyed_list} = validation_tools()
+
+    recording_validate = fn conn ->
+      Agent.update(checked, fn seen -> [conn | seen] end)
+      validate.(conn)
+    end
+
+    start_supervised!(
+      {ValidatingPool,
+       name: :vp_ci_ok,
+       max_size: 1,
+       create: create,
+       validate: recording_validate,
+       destroy: destroy}
+    )
+
+    assert {:ok, c0} = ValidatingPool.checkout(:vp_ci_ok, 100)
+    assert c0 == {:conn, 0}
+
+    parent = self()
+
+    spawn(fn ->
+      send(parent, {:result, ValidatingPool.checkout(:vp_ci_ok, 2_000)})
+      # Stay alive past the assertions: a dead waiter would trigger the
+      # pool's crash reclamation and change the stats being asserted.
+      receive do
+        :release -> :ok
+      end
+    end)
+
+    refute_receive {:result, _}, 100
+
+    # The returned connection is validated before the blocked caller is served;
+    # since it is healthy, that very connection is what the waiter receives.
+    assert :ok = ValidatingPool.checkin(:vp_ci_ok, c0)
+    assert_receive {:result, {:ok, ^c0}}, 1_000
+
+    assert c0 in Agent.get(checked, & &1)
+    assert destroyed_list.() == []
+    assert created(counter) == 1
+
+    s = ValidatingPool.stats(:vp_ci_ok)
+    assert s.total == 1 and s.in_use == 1 and s.available == 0
+  end
+
+  test "checkout skips stale connections and hands out an available healthy one" do
+    {counter, create} = counting_create()
+    {validate, destroy, poison, destroyed_list} = validation_tools()
+
+    start_supervised!(
+      {ValidatingPool,
+       name: :vp_mixed, max_size: 3, create: create, validate: validate, destroy: destroy}
+    )
+
+    conns =
+      for _ <- 1..3 do
+        assert {:ok, c} = ValidatingPool.checkout(:vp_mixed, 100)
+        c
+      end
+
+    Enum.each(conns, fn c -> assert :ok = ValidatingPool.checkin(:vp_mixed, c) end)
+    [c0, c1, c2] = conns
+    poison.(c0)
+    poison.(c1)
+
+    # Two of the three available connections are stale: the caller must receive
+    # the healthy one, and no new connection is created while one is available.
+    assert {:ok, ^c2} = ValidatingPool.checkout(:vp_mixed, 100)
+    assert created(counter) == 3
+
+    # Only stale connections may be destroyed, and destroyed ones stop counting
+    # toward the total.
+    discarded = destroyed_list.()
+    assert Enum.all?(discarded, fn c -> c in [c0, c1] end)
+
+    s = ValidatingPool.stats(:vp_mixed)
+    assert s.in_use == 1
+    assert s.total == 3 - length(discarded)
+    assert s.total == s.available + s.in_use
+  end
+
+  test "a waiter whose timeout elapses is not served by a later checkin" do
+    start_supervised!({ValidatingPool, name: :vp_late, max_size: 1})
+    assert {:ok, c} = ValidatingPool.checkout(:vp_late, 100)
+
+    parent = self()
+
+    # The server itself must expire this waiter: nothing here nudges it.
+    spawn(fn -> send(parent, {:late, ValidatingPool.checkout(:vp_late, 25)}) end)
+    assert_receive {:late, {:error, :timeout}}, 1_000
+
+    # The connection returned afterwards belongs to nobody and becomes available
+    # for the next checkout.
+    assert :ok = ValidatingPool.checkin(:vp_late, c)
+
+    s = ValidatingPool.stats(:vp_late)
+    assert s.total == 1 and s.available == 1 and s.in_use == 0
+
+    assert {:ok, ^c} = ValidatingPool.checkout(:vp_late, 100)
+  end
 end
 ```

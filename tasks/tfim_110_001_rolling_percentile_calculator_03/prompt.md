@@ -438,5 +438,29 @@ defmodule PercentileTest do
     assert {:ok, 50} = Percentile.query(:both, 0.50)
     assert {:ok, 50} = Percentile.query(:both, 1.0)
   end
+
+  test "neither window alone accounts for the live set when both are configured" do
+    start_server(window_ms: 1_000, max_samples: 3)
+
+    # t=0: 100, 200, 300 arrive. t=500: 5 and 6 arrive, pushing the series over
+    # the count limit, so 100 and 200 are dropped and the live set is
+    # [300@0, 5@500, 6@500].
+    for v <- [100, 200, 300], do: Percentile.record(:mix, v)
+    Clock.advance(500)
+    for v <- [5, 6], do: Percentile.record(:mix, v)
+
+    # Sorted live samples are [5, 6, 300]: ceil(0.5*3) = 2 -> s_2 = 6. With the
+    # count limit ignored, all five samples would still be live at t=500 and
+    # the nearest-rank p50 of [5, 6, 100, 200, 300] would be 100 instead.
+    assert {:ok, 6} = Percentile.query(:mix, 0.50)
+    assert {:ok, 300} = Percentile.query(:mix, 1.0)
+
+    # t=1100: 300 was recorded at t=0, so its age of 1100 reaches the window and
+    # it expires, leaving [5, 6]. With time expiry ignored, 300 would survive
+    # the count window and still be reported as the maximum.
+    Clock.advance(600)
+    assert {:ok, 5} = Percentile.query(:mix, 0.0)
+    assert {:ok, 6} = Percentile.query(:mix, 1.0)
+  end
 end
 ```

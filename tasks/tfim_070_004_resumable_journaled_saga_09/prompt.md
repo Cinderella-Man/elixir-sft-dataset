@@ -290,6 +290,69 @@ defmodule SagaTest do
     assert match?({:exception, _, _}, comp[:a])
   end
 
+  test "a raising compensation does not abort the compensations that follow it" do
+    Process.put(:comp_order, [])
+    record = fn n -> Process.put(:comp_order, [n | Process.get(:comp_order)]) end
+
+    result =
+      Saga.new()
+      |> Saga.step(:a, fn _ -> {:ok, 1} end, fn _ ->
+        record.(:a)
+        :ua
+      end)
+      |> Saga.step(:b, fn _ -> {:ok, 2} end, fn _ ->
+        record.(:b)
+        raise "boom"
+      end)
+      |> Saga.step(:c, fn _ -> {:error, :fail} end, fn _ -> :uc end)
+      |> Saga.execute(%{})
+
+    assert {:error, :c, :fail, comp, journal} = result
+    # :b's compensation raises first, so :a's compensation is the one that
+    # must still run after the raise.
+    assert Enum.reverse(Process.get(:comp_order)) == [:b, :a]
+    assert [{:b, {:exception, %RuntimeError{}, _}}, {:a, :ua}] = comp
+
+    assert [
+             {:completed, :a, 1},
+             {:completed, :b, 2},
+             {:failed, :c, :fail},
+             {:compensated, :b, {:exception, %RuntimeError{}, _}},
+             {:compensated, :a, :ua}
+           ] = journal
+  end
+
+  test "resume compensates every remaining step after a replayed step's raise" do
+    Process.put(:resume_comp_order, [])
+    record = fn n -> Process.put(:resume_comp_order, [n | Process.get(:resume_comp_order)]) end
+
+    saga =
+      Saga.new()
+      |> Saga.step(:a, fn _ -> {:ok, 1} end, fn _ ->
+        record.(:a)
+        :ua
+      end)
+      |> Saga.step(:b, fn _ -> {:ok, 2} end, fn _ ->
+        record.(:b)
+        raise "boom"
+      end)
+      |> Saga.step(:c, fn _ -> {:error, :late} end, fn _ -> :uc end)
+
+    result = Saga.resume(saga, %{}, [{:completed, :a, 1}])
+
+    assert {:error, :c, :late, comp, journal} = result
+    assert Enum.reverse(Process.get(:resume_comp_order)) == [:b, :a]
+    assert [{:b, {:exception, %RuntimeError{}, _}}, {:a, :ua}] = comp
+
+    assert [
+             {:completed, :a, 1},
+             {:completed, :b, 2},
+             {:failed, :c, :late},
+             {:compensated, :b, {:exception, %RuntimeError{}, _}},
+             {:compensated, :a, :ua}
+           ] = journal
+  end
+
   test "empty saga returns original context with an empty journal" do
     # TODO
   end

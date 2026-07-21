@@ -314,6 +314,58 @@ defmodule OverflowPoolTest do
     assert s.total == 1 and s.in_use == 1 and s.available == 0 and s.overflow == 0
   end
 
+  test "checkout with timeout 0 hands out an available connection" do
+    start_supervised!({OverflowPool, name: :op_zero_avail, size: 2, max_overflow: 0})
+
+    # A zero timeout only bounds blocking; an available connection is still
+    # handed out as a normal successful checkout.
+    assert {:ok, c1} = OverflowPool.checkout(:op_zero_avail, 0)
+    assert {:ok, c2} = OverflowPool.checkout(:op_zero_avail, 0)
+    assert c1 != c2
+
+    s = OverflowPool.stats(:op_zero_avail)
+    assert s.total == 2 and s.in_use == 2 and s.available == 0 and s.overflow == 0
+  end
+
+  test "checkout with timeout 0 creates an overflow connection when the pool can grow" do
+    {destroy, destroyed} = destroy_tracker()
+
+    start_supervised!(
+      {OverflowPool, name: :op_zero_grow, size: 1, max_overflow: 1, destroy: destroy}
+    )
+
+    assert {:ok, c1} = OverflowPool.checkout(:op_zero_grow, 100)
+
+    # The base is fully in use but the pool is below size + max_overflow, so a
+    # zero-timeout checkout lazily creates an overflow connection instead of
+    # reporting a timeout.
+    assert {:ok, c2} = OverflowPool.checkout(:op_zero_grow, 0)
+    assert c1 != c2
+
+    s = OverflowPool.stats(:op_zero_grow)
+    assert s.total == 2 and s.in_use == 2 and s.available == 0 and s.overflow == 1
+
+    # It is a genuine overflow connection: returning it with no waiter destroys it.
+    assert :ok = OverflowPool.checkin(:op_zero_grow, c2)
+    assert destroyed.() == [c2]
+  end
+
+  test "a zero-timeout checkout leaves no waiter behind for a later checkin" do
+    start_supervised!({OverflowPool, name: :op_zero_no_waiter, size: 1, max_overflow: 0})
+
+    assert {:ok, c1} = OverflowPool.checkout(:op_zero_no_waiter, 100)
+    assert {:error, :timeout} = OverflowPool.checkout(:op_zero_no_waiter, 0)
+
+    # That caller already has its timeout result, so the returned connection is
+    # reused normally rather than handed to it.
+    assert :ok = OverflowPool.checkin(:op_zero_no_waiter, c1)
+
+    s = OverflowPool.stats(:op_zero_no_waiter)
+    assert s.total == 1 and s.available == 1 and s.in_use == 0 and s.overflow == 0
+
+    assert {:ok, ^c1} = OverflowPool.checkout(:op_zero_no_waiter, 0)
+  end
+
   # --- ephemeral overflow --------------------------------------------------
 
   test "an overflow connection returned with no waiter is destroyed" do

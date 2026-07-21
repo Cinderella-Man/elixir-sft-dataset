@@ -571,6 +571,54 @@ defmodule CancellablePriorityQueueTest do
     assert :empty = CancellablePriorityQueue.peek(pq)
   end
 
+  test "peek returns the earliest-enqueued task of the winning priority level" do
+    parent = self()
+
+    {:ok, pq2} =
+      CancellablePriorityQueue.start_link(
+        processor: fn task ->
+          send(parent, {:started, task, self()})
+
+          receive do
+            :release -> :ok
+          end
+
+          {:processed, task}
+        end
+      )
+
+    CancellablePriorityQueue.enqueue(pq2, "blocker", 0)
+    assert_receive {:started, "blocker", worker}, 1_000
+
+    # Three tasks share the winning priority level, so peek must discriminate by
+    # arrival order, not just by priority number.
+    CancellablePriorityQueue.enqueue(pq2, "lowest_priority", 9)
+    {:ok, first_ref} = CancellablePriorityQueue.enqueue(pq2, "first_at_2", 2)
+    CancellablePriorityQueue.enqueue(pq2, "second_at_2", 2)
+    CancellablePriorityQueue.enqueue(pq2, "third_at_2", 2)
+
+    assert {:ok, "first_at_2", 2} = CancellablePriorityQueue.peek(pq2)
+    # Peeking does not consume: the same front task is reported again.
+    assert {:ok, "first_at_2", 2} = CancellablePriorityQueue.peek(pq2)
+
+    # Removing the front task promotes the next-oldest task at that priority.
+    assert :ok = CancellablePriorityQueue.cancel(pq2, first_ref)
+    assert {:ok, "second_at_2", 2} = CancellablePriorityQueue.peek(pq2)
+
+    send(worker, :release)
+
+    for expected <- ["second_at_2", "third_at_2", "lowest_priority"] do
+      assert_receive {:started, ^expected, next_worker}, 1_000
+      send(next_worker, :release)
+    end
+
+    assert :ok = CancellablePriorityQueue.drain(pq2)
+    assert :empty = CancellablePriorityQueue.peek(pq2)
+
+    tasks = CancellablePriorityQueue.processed(pq2) |> Enum.map(&elem(&1, 0))
+    assert tasks == ["blocker", "second_at_2", "third_at_2", "lowest_priority"]
+  end
+
   # -------------------------------------------------------
   # Edge cases
   # -------------------------------------------------------

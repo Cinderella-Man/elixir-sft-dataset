@@ -232,6 +232,11 @@ end
 ## Test harness — implement the `# TODO` test
 
 ```elixir
+defmodule LogRedactorStructFixture do
+  @moduledoc false
+  defstruct [:name, :password, :note]
+end
+
 defmodule LogRedactorTest do
   use ExUnit.Case, async: false
 
@@ -355,6 +360,41 @@ defmodule LogRedactorTest do
   test "redact_string on a clean string returns it unchanged with a zero report", %{r: r} do
     {scrubbed, report} = LogRedactor.redact_string(r, "nothing sensitive here")
     assert scrubbed == "nothing sensitive here"
+    assert report == %{keys_masked: 0, credit_cards: 0, emails: 0, ssns: 0}
+  end
+
+  # -------------------------------------------------------
+  # redact/2 — structs are returned unchanged
+  # -------------------------------------------------------
+
+  test "a top-level struct is returned unchanged with an all-zero report", %{r: r} do
+    original = %LogRedactorStructFixture{
+      name: "erin",
+      password: "hunter2",
+      note: "ssn 123-45-6789"
+    }
+
+    assert LogRedactor.redact(r, original) ==
+             {original, %{keys_masked: 0, credit_cards: 0, emails: 0, ssns: 0}}
+  end
+
+  test "a struct nested under a non-sensitive key is returned unchanged", %{r: r} do
+    profile = %LogRedactorStructFixture{name: "frank", password: "pw", note: "a@b.com"}
+    {scrubbed, report} = LogRedactor.redact(r, %{user_id: 7, profile: profile})
+    assert scrubbed.user_id == 7
+    assert scrubbed.profile == profile
+    assert report == %{keys_masked: 0, credit_cards: 0, emails: 0, ssns: 0}
+  end
+
+  test "a struct inside a list is returned unchanged", %{r: r} do
+    profile = %LogRedactorStructFixture{
+      name: "gina",
+      password: "pw",
+      note: "card 4111111111111234"
+    }
+
+    {scrubbed, report} = LogRedactor.redact(r, [profile])
+    assert scrubbed == [profile]
     assert report == %{keys_masked: 0, credit_cards: 0, emails: 0, ssns: 0}
   end
 end

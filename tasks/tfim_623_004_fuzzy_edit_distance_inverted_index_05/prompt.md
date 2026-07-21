@@ -521,6 +521,37 @@ defmodule FuzzyIndexTest do
     assert FuzzyIndex.stats(idx).term_count == 4
   end
 
+  test "removal drops vocabulary terms held only by the removed document", %{idx: idx} do
+    :ok = FuzzyIndex.index(idx, "doc1", "alpha beta")
+    :ok = FuzzyIndex.index(idx, "doc2", "beta gamma delta")
+
+    # vocabulary is alpha, beta, gamma, delta
+    assert FuzzyIndex.stats(idx).term_count == 4
+
+    :ok = FuzzyIndex.remove(idx, "doc2")
+
+    # "gamma" and "delta" appear in no remaining document, so they leave the
+    # vocabulary; "beta" survives in doc1
+    assert FuzzyIndex.stats(idx).term_count == 2
+    assert FuzzyIndex.terms_like(idx, "gamma", 0) == []
+    assert FuzzyIndex.terms_like(idx, "delta", 0) == []
+    assert FuzzyIndex.terms_like(idx, "beta", 0) == ["beta"]
+  end
+
+  test "re-indexing drops vocabulary terms no other document holds", %{idx: idx} do
+    :ok = FuzzyIndex.index(idx, "doc1", "alpha beta")
+    :ok = FuzzyIndex.index(idx, "doc2", "beta gamma")
+
+    assert FuzzyIndex.stats(idx).term_count == 3
+
+    # doc2's only unique term, "gamma", is replaced by "delta"
+    :ok = FuzzyIndex.index(idx, "doc2", "beta delta")
+
+    assert FuzzyIndex.stats(idx).term_count == 3
+    assert FuzzyIndex.terms_like(idx, "gamma", 0) == []
+    assert FuzzyIndex.terms_like(idx, "delta", 0) == ["delta"]
+  end
+
   test "removing a non-existent document does not raise", %{idx: idx} do
     assert :ok = FuzzyIndex.remove(idx, "nonexistent")
   end

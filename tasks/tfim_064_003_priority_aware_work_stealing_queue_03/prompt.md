@@ -317,5 +317,131 @@ defmodule WorkStealQueueTest do
     assert length(results) == 6
     assert Enum.sort(payloads(results)) == Enum.sort(refs)
   end
+
+  # -------------------------------------------------------
+  # Victim selection: the busiest peer is the steal target
+  # -------------------------------------------------------
+
+  test "an idle worker steals from the peer holding the most remaining items" do
+    # Worker 0 is the deep queue (7 items left), worker 1 the shallow one
+    # (4 items left), worker 2 the thief. Only the deep worker may be robbed.
+    probe = run_steal_probe([:deep, :shallow, :thief])
+
+    assert probe.stolen, "expected the idle worker to steal before the deadline"
+    assert length(probe.results) == 24
+
+    first_stolen = Enum.find(probe.order, &stealable?/1)
+    assert match?({:deep, _}, first_stolen)
+
+    by_payload = Map.new(probe.results, fn r -> {r.item, r} end)
+    assert by_payload[first_stolen].worker_id == 2
+
+    # The victim keeps grinding on its own most urgent item.
+    assert by_payload[{:deep, 30}].worker_id == 0
+  end
+
+  test "victim choice follows queue length rather than worker id" do
+    # Same scenario with the roles rotated: worker 0 is now the shallow peer and
+    # worker 2 the deep one, so the busiest victim is no longer the lowest id.
+    probe = run_steal_probe([:shallow, :thief, :deep])
+
+    assert probe.stolen, "expected the idle worker to steal before the deadline"
+    assert length(probe.results) == 24
+
+    first_stolen = Enum.find(probe.order, &stealable?/1)
+    assert match?({:deep, _}, first_stolen)
+
+    by_payload = Map.new(probe.results, fn r -> {r.item, r} end)
+    assert by_payload[first_stolen].worker_id == 1
+    assert by_payload[{:deep, 30}].worker_id == 2
+  end
+
+  # -------------------------------------------------------
+  # Steal-probe scaffolding
+  # -------------------------------------------------------
+
+  # Three chunks of 8 items each, so a 24-item input across 3 workers hands one
+  # whole chunk to each worker in input order. The :deep worker parks inside
+  # process_fn while holding its most urgent item, leaving 7 queued; the
+  # :shallow worker parks after burning three fast items, leaving 4 queued; the
+  # :thief worker finishes its own chunk only once both peers are parked, so the
+  # steal that follows has exactly one busiest victim.
+  defp chunk(:deep) do
+    [{90, :gate_deep}] ++ Enum.map([30, 29, 28, 27, 26, 25, 24], fn p -> {p, {:deep, p}} end)
+  end
+
+  defp chunk(:shallow) do
+    Enum.map([60, 59, 58], fn p -> {p, {:fast, p}} end) ++
+      [{57, :gate_shallow}] ++
+      Enum.map([20, 19, 18, 17], fn p -> {p, {:shallow, p}} end)
+  end
+
+  defp chunk(:thief) do
+    Enum.map([50, 49, 48, 47, 46, 45, 44], fn p -> {p, {:own, p}} end) ++ [{43, :gate_thief}]
+  end
+
+  # Payloads that can only be touched by a thief while both peers are parked.
+  defp stealable?({:deep, _}), do: true
+  defp stealable?({:shallow, _}), do: true
+  defp stealable?(_), do: false
+
+  defp run_steal_probe(slots) do
+    items = Enum.flat_map(slots, &chunk/1)
+    {:ok, log} = Agent.start_link(fn -> [] end)
+    {:ok, gate} = Agent.start_link(fn -> MapSet.new() end)
+
+    process_fn = fn payload ->
+      Agent.update(log, fn acc -> [payload | acc] end)
+      hold(gate, payload)
+      payload
+    end
+
+    task = Task.async(fn -> WorkStealQueue.run(items, 3, process_fn) end)
+
+    stolen = poll_until(4_000, fn -> Enum.any?(Agent.get(log, & &1), &stealable?/1) end)
+
+    set_flag(gate, :release)
+    results = Task.await(task, 20_000)
+    order = log |> Agent.get(& &1) |> Enum.reverse()
+    Agent.stop(log)
+    Agent.stop(gate)
+
+    %{stolen: stolen, order: order, results: results}
+  end
+
+  defp hold(gate, :gate_deep) do
+    set_flag(gate, :deep_parked)
+    poll_until(4_000, fn -> flag?(gate, :release) end)
+  end
+
+  defp hold(gate, :gate_shallow) do
+    set_flag(gate, :shallow_parked)
+    poll_until(4_000, fn -> flag?(gate, :release) end)
+  end
+
+  defp hold(gate, :gate_thief) do
+    poll_until(4_000, fn -> flag?(gate, :deep_parked) and flag?(gate, :shallow_parked) end)
+  end
+
+  defp hold(_gate, _payload), do: :ok
+
+  defp set_flag(gate, flag), do: Agent.update(gate, fn flags -> MapSet.put(flags, flag) end)
+
+  defp flag?(gate, flag), do: Agent.get(gate, fn flags -> MapSet.member?(flags, flag) end)
+
+  # Polls until the condition holds or the budget runs out; true when observed.
+  defp poll_until(budget_ms, check) do
+    cond do
+      check.() ->
+        true
+
+      budget_ms <= 0 ->
+        false
+
+      true ->
+        Process.sleep(5)
+        poll_until(budget_ms - 5, check)
+    end
+  end
 end
 ```

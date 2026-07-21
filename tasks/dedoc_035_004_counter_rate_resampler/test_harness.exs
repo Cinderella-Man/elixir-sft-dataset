@@ -186,4 +186,31 @@ defmodule CounterResamplerTest do
       CounterResampler.resample([{0, 100}, {300, 150}], -1_000, mode: :delta)
     end
   end
+
+  test "an omitted :mode defaults to :delta while other options are explicit" do
+    # Increments +50 and +50 both land in bucket 0.  Under :delta the bucket is
+    # the integer 50 + 50 = 100; under :rate it would be the float 100.0, so the
+    # strict comparison discriminates the two modes.
+    data = [{0, 100}, {300, 150}, {700, 200}]
+    result = CounterResampler.resample(data, @interval, reset: :detect, fill: :zero)
+
+    assert result === [{0, 100}]
+  end
+
+  test "an omitted :reset defaults to :detect while other options are explicit" do
+    # The pair 100 -> 40 decreases, so reset detection attributes the later
+    # value 40 to bucket 0; :raw would have attributed -60 instead.
+    data = [{0, 100}, {300, 40}]
+    result = CounterResampler.resample(data, @interval, mode: :delta, fill: :zero)
+
+    assert result == [{0, 40}]
+  end
+
+  test "an omitted :fill defaults to :zero while other options are explicit" do
+    # Bucket 1000 receives no increment; the default fill makes it 0, not nil.
+    data = [{0, 100}, {300, 150}, {2_300, 400}]
+    result = CounterResampler.resample(data, @interval, mode: :delta, reset: :detect)
+
+    assert result === [{0, 50}, {1_000, 0}, {2_000, 250}]
+  end
 end

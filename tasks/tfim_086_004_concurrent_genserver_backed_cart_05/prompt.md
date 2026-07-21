@@ -333,5 +333,34 @@ defmodule CartServerTest do
     assert_in_delta emptied.tax, 0.0, 0.001
     assert_in_delta emptied.grand_total, 0.0, 0.001
   end
+
+  test "update_quantity keeps product_id and unit_price while repricing the line" do
+    {:ok, pid} = CartServer.start_link(tax_rate: 0.1)
+    :ok = CartServer.add_item(pid, "widget", 2, 4.0)
+    :ok = CartServer.add_item(pid, "gadget", 1, 4.0)
+
+    :ok = CartServer.update_quantity(pid, "widget", 10)
+
+    totals = CartServer.totals(pid)
+    by_id = Map.new(totals.items, fn item -> {item.product_id, item} end)
+
+    assert Map.keys(by_id) |> Enum.sort() == ["gadget", "widget"]
+
+    widget = by_id["widget"]
+    assert widget.quantity == 10
+    assert_in_delta widget.unit_price, 4.0, 0.001
+    assert widget.discount_rate == 0.1
+    assert_in_delta widget.line_total, 36.0, 0.001
+
+    gadget = by_id["gadget"]
+    assert gadget.quantity == 1
+    assert_in_delta gadget.unit_price, 4.0, 0.001
+    assert gadget.discount_rate == 0.0
+    assert_in_delta gadget.line_total, 4.0, 0.001
+
+    assert_in_delta totals.subtotal, 40.0, 0.001
+    assert_in_delta totals.tax, 4.0, 0.001
+    assert_in_delta totals.grand_total, 44.0, 0.001
+  end
 end
 ```

@@ -474,6 +474,22 @@ defmodule ConditionalObjectStorageTest do
     assert :ok = ConditionalObjectStorage.delete_object(os, "b", "never")
   end
 
+  test "delete with no precondition removes the existing object", %{os: os} do
+    ConditionalObjectStorage.create_bucket(os, "b")
+    {:ok, _} = ConditionalObjectStorage.put_object(os, "b", "gone", "v")
+    {:ok, _} = ConditionalObjectStorage.put_object(os, "b", "kept", "w")
+
+    assert :ok = ConditionalObjectStorage.delete_object(os, "b", "gone")
+    assert {:error, :not_found} = ConditionalObjectStorage.get_object(os, "b", "gone")
+
+    assert {:ok, remaining} = ConditionalObjectStorage.list_objects(os, "b")
+    assert Enum.map(remaining, & &1.key) == ["kept"]
+
+    # deleting the now-absent key again is still a success
+    assert :ok = ConditionalObjectStorage.delete_object(os, "b", "gone")
+    assert {:ok, %{data: "w"}} = ConditionalObjectStorage.get_object(os, "b", "kept")
+  end
+
   test "delete with if_match succeeds only on a matching etag", %{os: os} do
     ConditionalObjectStorage.create_bucket(os, "b")
     {:ok, etag} = ConditionalObjectStorage.put_object(os, "b", "k", "v")
@@ -493,6 +509,22 @@ defmodule ConditionalObjectStorageTest do
 
     assert {:error, :precondition_failed} =
              ConditionalObjectStorage.delete_object(os, "b", "missing", if_match: "x")
+  end
+
+  test "a deleted key can be recreated with if_none_match *", %{os: os} do
+    ConditionalObjectStorage.create_bucket(os, "b")
+    {:ok, _} = ConditionalObjectStorage.put_object(os, "b", "k", "old")
+
+    assert {:error, :precondition_failed} =
+             ConditionalObjectStorage.put_object(os, "b", "k", "new", if_none_match: "*")
+
+    assert :ok = ConditionalObjectStorage.delete_object(os, "b", "k")
+
+    assert {:ok, etag} =
+             ConditionalObjectStorage.put_object(os, "b", "k", "new", if_none_match: "*")
+
+    assert etag == etag_of("new")
+    assert {:ok, %{data: "new"}} = ConditionalObjectStorage.get_object(os, "b", "k")
   end
 
   # -------------------------------------------------------

@@ -675,5 +675,95 @@ defmodule TSDBTest do
     [{_labels, points}] = TSDB.query(db, "m", %{}, {1000, 1999})
     assert points == [{1000, 2}, {1001, 3}]
   end
+
+  # -------------------------------------------------------
+  # Periodic cleanup driven by :cleanup_interval_ms
+  # -------------------------------------------------------
+
+  test "expired chunks disappear on their own with a real cleanup interval" do
+    # A short interval must make cleanup happen without anyone sending :cleanup,
+    # and it must keep happening: the second expiry needs a later firing.
+    {:ok, db} =
+      TSDB.start_link(
+        clock: &Clock.now/0,
+        chunk_duration_ms: 1_000,
+        retention_ms: 1_000,
+        cleanup_interval_ms: 25
+      )
+
+    :ok = TSDB.insert(db, "auto", %{}, 0, 1)
+    assert [{_labels, [{0, 1}]}] = TSDB.query(db, "auto", %{}, {0, 1_000_000})
+
+    # chunk 0 ends at 1_000, which is <= 5_000 - 1_000, so it is expired.
+    Clock.set(5_000)
+    assert :ok = await_metric_gone(db, "auto", 1_000)
+
+    # This chunk ends at 11_000 and is still well inside retention at now = 5_000.
+    :ok = TSDB.insert(db, "auto", %{}, 10_000, 2)
+    assert [{_labels, [{10_000, 2}]}] = TSDB.query(db, "auto", %{}, {0, 1_000_000})
+
+    # Now it is expired too, and only a subsequent automatic run can collect it.
+    Clock.set(20_000)
+    assert :ok = await_metric_gone(db, "auto", 1_000)
+  end
+
+  # -------------------------------------------------------
+  # Process registration via :name
+  # -------------------------------------------------------
+
+  test "start_link registers under :name and the whole API works through it" do
+    name = :"tsdb_named_#{System.pid()}_#{System.unique_integer([:positive])}"
+
+    {:ok, pid} =
+      TSDB.start_link(
+        name: name,
+        clock: &Clock.now/0,
+        chunk_duration_ms: 1_000
+      )
+
+    assert Process.whereis(name) == pid
+
+    assert :ok = TSDB.insert(name, "cpu", %{"host" => "n"}, 100, 7)
+
+    result = TSDB.query(name, "cpu", %{"host" => "n"}, {0, 200})
+    assert [{%{"host" => "n"}, [{100, 7}]}] = result
+
+    assert [{_labels, [{0, 7}]}] = TSDB.query_agg(name, "cpu", %{}, {0, 1_000}, :sum, 1_000)
+  end
+
+  test "start_link without :name starts unnamed, so several stores coexist" do
+    {:ok, first} = TSDB.start_link(clock: &Clock.now/0, chunk_duration_ms: 1_000)
+    {:ok, second} = TSDB.start_link(clock: &Clock.now/0, chunk_duration_ms: 1_000)
+
+    assert is_pid(first)
+    assert is_pid(second)
+    assert first != second
+
+    :ok = TSDB.insert(first, "m", %{}, 100, 1)
+
+    assert [{_labels, [{100, 1}]}] = TSDB.query(first, "m", %{}, {0, 200})
+    assert [] = TSDB.query(second, "m", %{}, {0, 200})
+  end
+
+  # --- Polling helper: waits for a metric to vanish, bounded by a deadline ---
+
+  defp await_metric_gone(db, metric, budget_ms) do
+    poll_metric_gone(db, metric, System.monotonic_time(:millisecond) + budget_ms)
+  end
+
+  defp poll_metric_gone(db, metric, deadline) do
+    case TSDB.query(db, metric, %{}, {0, 1_000_000}) do
+      [] ->
+        :ok
+
+      _still_there ->
+        if System.monotonic_time(:millisecond) >= deadline do
+          :timeout
+        else
+          Process.sleep(5)
+          poll_metric_gone(db, metric, deadline)
+        end
+    end
+  end
 end
 ```

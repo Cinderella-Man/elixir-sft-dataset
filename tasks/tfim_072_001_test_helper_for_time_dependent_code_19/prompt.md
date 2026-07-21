@@ -202,7 +202,7 @@ end
 
 ```elixir
 defmodule ClockTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   # -------------------------------------------------------
   # Clock.Real
@@ -256,6 +256,31 @@ defmodule ClockTest do
       past = ~U[2000-01-01 00:00:00Z]
       Clock.Fake.freeze(clock, past)
       assert Clock.Fake.now(clock) == past
+    end
+  end
+
+  # -------------------------------------------------------
+  # Clock.Fake — default starting time
+  # -------------------------------------------------------
+
+  describe "Clock.Fake default :initial" do
+    test "start_link without :initial starts frozen at 2024-01-01 00:00:00Z" do
+      {:ok, clock} = Clock.Fake.start_link([])
+      assert Clock.Fake.now(clock) == ~U[2024-01-01 00:00:00Z]
+    end
+
+    test "the default start time is the base advance/2 moves from" do
+      {:ok, clock} = Clock.Fake.start_link([])
+      Clock.Fake.advance(clock, hours: 1, minutes: 30)
+      assert Clock.Fake.now(clock) == ~U[2024-01-01 01:30:00Z]
+    end
+
+    test "the default applies when only :name is supplied" do
+      name =
+        String.to_atom("fake_clock_#{System.pid()}_#{System.unique_integer([:positive])}")
+
+      {:ok, _pid} = Clock.Fake.start_link(name: name)
+      assert Clock.now(name) == ~U[2024-01-01 00:00:00Z]
     end
   end
 
@@ -366,6 +391,29 @@ defmodule ClockTest do
     rescue
       # Accept either calling convention — implementation detail
       _ -> :ok
+    end
+
+    test "repeated advances land on one clock and leave its twin frozen" do
+      start = ~U[2024-01-01 00:00:00Z]
+      {:ok, c1} = Clock.Fake.start_link(initial: start)
+      {:ok, c2} = Clock.Fake.start_link(initial: start)
+
+      for _ <- 1..10, do: Clock.Fake.advance(c1, seconds: 1)
+
+      assert Clock.Fake.now(c1) == DateTime.add(start, 10, :second)
+      assert Clock.Fake.now(c2) == start
+      assert Clock.Fake.now(c1) != Clock.Fake.now(c2)
+    end
+
+    test "freezing one clock leaves its twin at its own time" do
+      start = ~U[2024-01-01 00:00:00Z]
+      {:ok, c1} = Clock.Fake.start_link(initial: start)
+      {:ok, c2} = Clock.Fake.start_link(initial: start)
+
+      Clock.Fake.freeze(c1, ~U[2031-05-05 05:05:05Z])
+
+      assert Clock.Fake.now(c1) == ~U[2031-05-05 05:05:05Z]
+      assert Clock.Fake.now(c2) == start
     end
   end
 

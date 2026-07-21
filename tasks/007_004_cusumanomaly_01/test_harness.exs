@@ -1,5 +1,5 @@
 defmodule CusumAnomalyTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   defp close_to(a, b, eps \\ 1.0e-9), do: abs(a - b) <= eps
 
@@ -255,5 +255,60 @@ defmodule CusumAnomalyTest do
 
     # The 11th push is the first CUSUM-active push (default warmup is 10).
     assert :ok = CusumAnomaly.push(c, "s", 5.0)
+  end
+
+  # -------------------------------------------------------
+  # Live CUSUM accumulators are visible between pushes
+  # -------------------------------------------------------
+
+  test "check/2 reports the running s_high accumulated by non-alerting pushes" do
+    {:ok, c} = CusumAnomaly.start_link(warmup_samples: 3, threshold: 100.0, slack: 0.5)
+
+    # Warmup leaves mean 10.0 and population stddev sqrt(8/3), which is
+    # comfortably above slack, so the next push runs the CUSUM step.
+    for v <- [10.0, 12.0, 8.0], do: assert(:warming_up = CusumAnomaly.push(c, "s", v))
+
+    z1 = (20.0 - 10.0) / :math.sqrt(8 / 3)
+    assert :ok = CusumAnomaly.push(c, "s", 20.0)
+
+    {:ok, after_one} = CusumAnomaly.check(c, "s")
+    assert after_one.status == :normal
+    # s_high = max(0.0, 0.0 + z - slack) after a single upward deviation.
+    assert close_to(after_one.s_high, z1 - 0.5, 1.0e-9)
+    # A positive z can only drive s_low to max(0.0, -z - slack) = 0.0.
+    assert after_one.s_low == 0.0
+
+    # The second push z-scores against the mean/stddev that now include 20.0
+    # and accumulates onto the surviving s_high rather than restarting it.
+    z2 = (20.0 - 12.5) / :math.sqrt(83 / 4)
+    assert :ok = CusumAnomaly.push(c, "s", 20.0)
+
+    {:ok, after_two} = CusumAnomaly.check(c, "s")
+    assert close_to(after_two.s_high, z1 - 0.5 + (z2 - 0.5), 1.0e-9)
+    assert after_two.s_high > after_one.s_high
+    assert after_two.s_low == 0.0
+  end
+
+  test "check/2 reports the running s_low accumulated by non-alerting pushes" do
+    {:ok, c} = CusumAnomaly.start_link(warmup_samples: 3, threshold: 100.0, slack: 0.5)
+
+    for v <- [10.0, 12.0, 8.0], do: assert(:warming_up = CusumAnomaly.push(c, "s", v))
+
+    z1 = (0.0 - 10.0) / :math.sqrt(8 / 3)
+    assert :ok = CusumAnomaly.push(c, "s", 0.0)
+
+    {:ok, after_one} = CusumAnomaly.check(c, "s")
+    assert after_one.status == :normal
+    # s_low = max(0.0, 0.0 - z - slack) after a single downward deviation.
+    assert close_to(after_one.s_low, -z1 - 0.5, 1.0e-9)
+    assert after_one.s_high == 0.0
+
+    z2 = (0.0 - 7.5) / :math.sqrt(83 / 4)
+    assert :ok = CusumAnomaly.push(c, "s", 0.0)
+
+    {:ok, after_two} = CusumAnomaly.check(c, "s")
+    assert close_to(after_two.s_low, -z1 - 0.5 + (-z2 - 0.5), 1.0e-9)
+    assert after_two.s_low > after_one.s_low
+    assert after_two.s_high == 0.0
   end
 end

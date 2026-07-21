@@ -355,6 +355,17 @@ defmodule PromoCodesTest do
     assert {:ok, 330} = PromoCodes.apply("R33", 1_001)
   end
 
+  test "percentage discount rounds an exact half-cent up to the next cent" do
+    {:ok, _} = PromoCodes.create(%{code: "R50", type: :percentage, value: 50})
+
+    # 1001 * 50 / 100 == 500.5 -> round/1 goes up to 501
+    # (truncation gives 500, and round-half-to-even would also give 500)
+    assert {:ok, 501} = PromoCodes.apply("R50", 1_001)
+
+    # 4999 * 50 / 100 == 2499.5 -> 2500 under the same rule
+    assert {:ok, 2_500} = PromoCodes.apply("R50", 4_999)
+  end
+
   test "fixed_amount: $15 off returns 1500" do
     # TODO
   end

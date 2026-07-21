@@ -26,6 +26,14 @@ defmodule WorkflowTest do
     rec
   end
 
+  defp in_progress_order do
+    rec = submittable_draft()
+    {:ok, rec} = Workflow.transition(rec, :submit)
+    {:ok, rec} = Workflow.transition(rec, :approve)
+    {:ok, rec} = Workflow.transition(rec, :start)
+    rec
+  end
+
   # -------------------------------------------------------
   # Construction
   # -------------------------------------------------------
@@ -77,6 +85,59 @@ defmodule WorkflowTest do
     {:ok, rec} = Workflow.transition(rec, :submit)
     assert rec.meta == %{customer: "acme"}
     assert rec.items == [:a]
+  end
+
+  # -------------------------------------------------------
+  # The :cancel side branch
+  # -------------------------------------------------------
+
+  test "cancel moves :in_progress to :cancelled, records it, and stays undoable" do
+    rec = in_progress_order()
+    assert rec.state == :in_progress
+
+    {:ok, cancelled} = Workflow.transition(rec, :cancel)
+    assert cancelled.state == :cancelled
+    assert Workflow.history(cancelled) == [:submit, :approve, :start, :cancel]
+    assert cancelled.note == "hello"
+
+    for event <- [:submit, :approve, :reject, :start, :complete, :cancel] do
+      assert {:error, :invalid_transition, :cancelled, ^event} =
+               Workflow.transition(cancelled, event)
+    end
+
+    {:ok, back} = Workflow.undo(cancelled)
+    assert back.state == :in_progress
+    assert Workflow.history(back) == [:submit, :approve, :start]
+  end
+
+  test "cancel carries no guard and fires regardless of items/approved_by" do
+    hostile = %{in_progress_order() | items: [], approved_by: ""}
+    assert {:ok, %{state: :cancelled}} = Workflow.transition(hostile, :cancel)
+  end
+
+  test "can?/2 permits :cancel only from :in_progress" do
+    draft = submittable_draft()
+    {:ok, submitted} = Workflow.transition(draft, :submit)
+    {:ok, approved} = Workflow.transition(submitted, :approve)
+    {:ok, started} = Workflow.transition(approved, :start)
+    {:ok, completed} = Workflow.transition(started, :complete)
+
+    assert Workflow.can?(draft, :cancel) == false
+    assert Workflow.can?(submitted, :cancel) == false
+    assert Workflow.can?(approved, :cancel) == false
+    assert Workflow.can?(started, :cancel) == true
+    assert Workflow.can?(completed, :cancel) == false
+
+    {:ok, cancelled} = Workflow.transition(started, :cancel)
+    assert Workflow.can?(cancelled, :cancel) == false
+  end
+
+  test ":complete and :cancel lead to different destinations from :in_progress" do
+    rec = in_progress_order()
+    {:ok, completed} = Workflow.transition(rec, :complete)
+    {:ok, cancelled} = Workflow.transition(rec, :cancel)
+    assert completed.state == :completed
+    assert cancelled.state == :cancelled
   end
 
   # -------------------------------------------------------

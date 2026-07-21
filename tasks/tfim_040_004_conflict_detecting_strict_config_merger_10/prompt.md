@@ -287,6 +287,44 @@ defmodule StrictConfigMergerTest do
   end
 
   # -------------------------------------------------------
+  # Tuple key-paths
+  # -------------------------------------------------------
+
+  test "locked path written as a tuple behaves like the list form" do
+    base = %{db: %{password: "s3cr3t", pool: 5}}
+    override = %{db: %{password: "pwned", pool: 10}}
+
+    assert {:error, [conflict]} =
+             StrictConfigMerger.merge(base, override, locked: [{:db, :password}])
+
+    assert conflict.type == :locked_violation
+    assert conflict.path == [:db, :password]
+    assert conflict.base == "s3cr3t"
+    assert conflict.override == "pwned"
+  end
+
+  test "tuple locked path untouched by the override is not a conflict" do
+    base = %{db: %{password: "s3cr3t", pool: 5}}
+    override = %{db: %{pool: 10}}
+
+    assert {:ok, merged} = StrictConfigMerger.merge(base, override, locked: [{:db, :password}])
+    assert merged.db == %{password: "s3cr3t", pool: 10}
+  end
+
+  test "required path written as a tuple behaves like the list form" do
+    base = %{a: %{b: 1}}
+    override = %{}
+
+    assert {:error, [conflict]} =
+             StrictConfigMerger.merge(base, override, required: [{:a, :missing}])
+
+    assert conflict.type == :missing_required
+    assert conflict.path == [:a, :missing]
+
+    assert {:ok, _merged} = StrictConfigMerger.merge(base, override, required: [{:a, :b}])
+  end
+
+  # -------------------------------------------------------
   # List strategy
   # -------------------------------------------------------
 
@@ -324,6 +362,21 @@ defmodule StrictConfigMergerTest do
 
     types = conflicts |> Enum.map(& &1.type) |> Enum.sort()
     assert types == [:locked_violation, :missing_required, :type_mismatch]
+  end
+
+  test "tuple and list key-paths mix freely across locked and required" do
+    base = %{db: %{password: "s3cr3t"}, port: 4000}
+    override = %{db: %{password: "pwned"}, port: 9000}
+
+    assert {:error, conflicts} =
+             StrictConfigMerger.merge(base, override,
+               locked: [{:db, :password}],
+               required: [[:tls, :cert]]
+             )
+
+    assert Enum.map(conflicts, & &1.path) == [[:db, :password], [:tls, :cert]]
+    types = conflicts |> Enum.map(& &1.type) |> Enum.sort()
+    assert types == [:locked_violation, :missing_required]
   end
 end
 ```

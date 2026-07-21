@@ -430,5 +430,35 @@ defmodule SubscriptionAggregateTest do
   test "start_link registers the process under the given :name option" do
     # TODO
   end
+
+  test ":subscription_created event :plan key holds the plan name from the command",
+       %{agg: agg} do
+    assert {:ok, [gold_event]} = SubscriptionAggregate.execute(agg, "sub:1", {:create, "gold"})
+    assert gold_event.plan == "gold"
+
+    # A second aggregate created with a different plan carries its own plan name,
+    # so the key cannot be a constant.
+    assert {:ok, [basic_event]} = SubscriptionAggregate.execute(agg, "sub:2", {:create, "basic"})
+    assert basic_event.plan == "basic"
+
+    # The persisted history keeps the same plan value that was returned.
+    assert [persisted] = SubscriptionAggregate.events(agg, "sub:1")
+    assert persisted.type == :subscription_created
+    assert persisted.plan == "gold"
+  end
+
+  test ":subscription_suspended event :reason key holds the suspend reason", %{agg: agg} do
+    SubscriptionAggregate.execute(agg, "sub:1", {:create, "premium"})
+    SubscriptionAggregate.execute(agg, "sub:1", {:activate})
+
+    assert {:ok, [suspended]} =
+             SubscriptionAggregate.execute(agg, "sub:1", {:suspend, "card_expired"})
+
+    assert suspended.reason == "card_expired"
+
+    assert [_created, _activated, persisted] = SubscriptionAggregate.events(agg, "sub:1")
+    assert persisted.type == :subscription_suspended
+    assert persisted.reason == "card_expired"
+  end
 end
 ```

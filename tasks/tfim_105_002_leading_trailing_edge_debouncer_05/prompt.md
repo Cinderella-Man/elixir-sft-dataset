@@ -324,5 +324,54 @@ defmodule EdgeDebouncerTest do
     # The default-named process from setup/1 is a distinct registration.
     assert Process.whereis(EdgeDebouncer) != pid
   end
+
+  # -------------------------------------------------------
+  # A stuck or crashing func cannot stall its own burst
+  # -------------------------------------------------------
+
+  test "a leading func stuck forever still lets its own burst's trailing run" do
+    test = self()
+
+    # Never returns until released, so a func executed on the server's own
+    # reduction path would hold the burst's timer hostage forever.
+    blocking = fn ->
+      send(test, {:leading_started, self()})
+
+      receive do
+        :release -> :ok
+      end
+    end
+
+    EdgeDebouncer.call("k", 100, blocking, edge: :both)
+    assert_receive {:leading_started, blocker}, 500
+
+    # A second call in the same burst means a trailing execution is owed.
+    EdgeDebouncer.call("k", 100, notify(:trailing_ran), edge: :both)
+    assert_receive :trailing_ran, 600
+
+    send(blocker, :release)
+  end
+
+  @tag :capture_log
+  test "a raising leading func still lets its own burst's trailing run" do
+    EdgeDebouncer.call("k", 80, fn -> raise "boom" end, edge: :both)
+    EdgeDebouncer.call("k", 80, notify(:trailing_ran), edge: :both)
+
+    # The leading crash neither kills the server nor cancels the trailing edge.
+    assert_receive :trailing_ran, 600
+  end
+
+  @tag :capture_log
+  test "a raising trailing func leaves the key clear for a brand-new burst" do
+    EdgeDebouncer.call("k", 60, fn -> raise "boom" end)
+
+    # The burst that crashed must still have settled and cleared its key, so
+    # the next call opens a fresh burst and fires leading immediately.
+    EdgeDebouncer.call("clock", 200, notify(:tick))
+    assert_receive :tick, 600
+
+    EdgeDebouncer.call("k", 100, notify(:fresh_lead), edge: :leading)
+    assert_receive :fresh_lead, 300
+  end
 end
 ```

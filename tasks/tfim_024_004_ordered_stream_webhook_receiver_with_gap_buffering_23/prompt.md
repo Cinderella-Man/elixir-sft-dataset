@@ -554,5 +554,36 @@ defmodule WebhookReceiverOrderedTest do
     assert :error = WebhookReceiver.Signature.verify("p", sign("p", @secret), nil)
     assert :error = WebhookReceiver.Signature.verify("p", sign("p", @secret), 123)
   end
+
+  test "each drained event keeps its own id and :delivered status in order", %{
+    opts: opts,
+    store: store
+  } do
+    assert deliver(opts, "first", "s1", 1).status == 200
+    assert deliver(opts, "third", "s1", 3).status == 202
+    assert deliver(opts, "fourth", "s1", 4).status == 202
+    assert deliver(opts, "second", "s1", 2).status == 200
+
+    events = WebhookReceiver.Store.delivered_events(store, "s1")
+    assert Enum.map(events, & &1.event_id) == ["first", "second", "third", "fourth"]
+    assert Enum.map(events, & &1.sequence) == [1, 2, 3, 4]
+    assert Enum.map(events, & &1.status) == [:delivered, :delivered, :delivered, :delivered]
+    assert WebhookReceiver.Store.buffered_sequences(store, "s1") == []
+  end
+
+  test "signature computed over a different body returns 401", %{opts: opts, store: store} do
+    payload = build_event("e1", "s1", 1)
+    other = build_event("e1", "s1", 2)
+
+    conn =
+      do_request(opts, :post, "/api/webhooks/stripe", payload, [
+        {"stripe-signature", sign(other, @secret)}
+      ])
+
+    assert conn.status == 401
+    assert json_body(conn)["error"] == "invalid_signature"
+    assert WebhookReceiver.Store.last_sequence(store, "s1") == 0
+    assert WebhookReceiver.Store.delivered_events(store, "s1") == []
+  end
 end
 ```

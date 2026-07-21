@@ -641,5 +641,43 @@ defmodule TtlObjectStorageTest do
     assert Enum.map(listing, & &1.key) == ["Charlie", "alpha", "bravo", "delta"]
     assert Enum.map(listing, & &1.size) == [1, 1, 1, 1]
   end
+
+  # -------------------------------------------------------
+  # Default ttl outlives explicit ttls
+  # -------------------------------------------------------
+
+  # Polls the object until it reads as absent, or until the deadline passes.
+  defp await_expiry(server, bucket, key, deadline_ms) do
+    case TtlObjectStorage.get_object(server, bucket, key) do
+      {:error, :not_found} ->
+        :expired
+
+      _live ->
+        if System.monotonic_time(:millisecond) >= deadline_ms do
+          :still_live
+        else
+          Process.sleep(10)
+          await_expiry(server, bucket, key, deadline_ms)
+        end
+    end
+  end
+
+  test "an object written with the default ttl survives a far longer explicit ttl",
+       %{os: os} do
+    TtlObjectStorage.create_bucket(os, "b")
+    # No :ttl_ms, so the server default (documented as :infinity) applies.
+    :ok = TtlObjectStorage.put_object(os, "b", "keeper", "v")
+    :ok = TtlObjectStorage.put_object(os, "b", "canary", "v", ttl_ms: 400)
+
+    deadline = System.monotonic_time(:millisecond) + 6_000
+    assert :expired = await_expiry(os, "b", "canary", deadline)
+
+    # Well past the canary's lifetime, the default-ttl object is untouched by
+    # both lazy reads and the bulk sweep, and still blocks bucket deletion.
+    assert {:ok, %{data: "v"}} = TtlObjectStorage.get_object(os, "b", "keeper")
+    assert {:ok, 0} = TtlObjectStorage.purge_expired(os)
+    assert {:ok, [%{key: "keeper"}]} = TtlObjectStorage.list_objects(os, "b")
+    assert {:error, :not_empty} = TtlObjectStorage.delete_bucket(os, "b")
+  end
 end
 ```

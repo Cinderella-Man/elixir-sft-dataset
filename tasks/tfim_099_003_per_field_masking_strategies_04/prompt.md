@@ -331,6 +331,33 @@ defmodule FieldMaskerTest do
     assert result.ssn == "[MASKED]"
   end
 
+  test "hash digests the raw value, not a pattern-scrubbed rewrite of it" do
+    # The strategy sees the original "123-45-6789"; had the SSN pattern been
+    # scrubbed to "***-**-****" first, the digest would differ.
+    m = FieldMasker.new(%{ssn: :hash})
+    result = FieldMasker.mask(m, %{ssn: "123-45-6789"})
+    expected = "sha256:" <> Base.encode16(:crypto.hash(:sha256, "123-45-6789"), case: :lower)
+    assert result.ssn == expected
+  end
+
+  test "hash digests a raw e-mail value rather than its pattern-masked form" do
+    m = FieldMasker.new(%{contact: :hash})
+    result = FieldMasker.mask(m, %{contact: "john.doe@example.com"})
+
+    expected =
+      "sha256:" <> Base.encode16(:crypto.hash(:sha256, "john.doe@example.com"), case: :lower)
+
+    assert result.contact == expected
+  end
+
+  test "last4 keeps the raw final four digits of an SSN-shaped value" do
+    # Scrubbing first would yield "***-**-****", whose last four characters
+    # are stars; the strategy must operate on the untouched value.
+    m = FieldMasker.new(%{ssn: :last4})
+    result = FieldMasker.mask(m, %{ssn: "123-45-6789"})
+    assert result.ssn == "*******6789"
+  end
+
   # -------------------------------------------------------
   # Structure / config handling
   # -------------------------------------------------------

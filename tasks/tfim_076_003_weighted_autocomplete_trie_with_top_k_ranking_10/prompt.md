@@ -430,5 +430,55 @@ defmodule AutocompleteTrieTest do
     assert AutocompleteTrie.size(t) == 2
     assert AutocompleteTrie.suggest(t, "a", 2) == ["aa", "ab"]
   end
+
+  # -------------------------------------------------------
+  # The empty string as a stored word
+  # -------------------------------------------------------
+
+  test "an inserted empty string is a full-fledged word with accumulating weight" do
+    t =
+      AutocompleteTrie.new()
+      |> AutocompleteTrie.insert("", 3)
+      |> AutocompleteTrie.insert("", 4)
+
+    assert AutocompleteTrie.member?(t, "") == true
+    assert AutocompleteTrie.weight(t, "") == 7
+    assert AutocompleteTrie.size(t) == 1
+    assert AutocompleteTrie.words(t) == [""]
+    assert AutocompleteTrie.suggest(t, "", 5) == [""]
+  end
+
+  test "stored empty string ranks with other words and matches only the empty prefix" do
+    t =
+      AutocompleteTrie.new()
+      |> AutocompleteTrie.insert("", 5)
+      |> AutocompleteTrie.insert("apple", 5)
+      |> AutocompleteTrie.insert("ant", 9)
+
+    assert AutocompleteTrie.size(t) == 3
+    assert AutocompleteTrie.words(t) == ["", "ant", "apple"]
+    # ant(9) leads; "" and "apple" tie at 5, so "" wins lexicographically
+    assert AutocompleteTrie.suggest(t, "", 3) == ["ant", "", "apple"]
+    assert AutocompleteTrie.suggest(t, "a", 5) == ["ant", "apple"]
+  end
+
+  test "deleting the empty string leaves other words intact and allows a fresh re-insert" do
+    t =
+      AutocompleteTrie.new()
+      |> AutocompleteTrie.insert("", 8)
+      |> AutocompleteTrie.insert("cat", 2)
+
+    t2 = AutocompleteTrie.delete(t, "")
+
+    assert AutocompleteTrie.member?(t2, "") == false
+    assert AutocompleteTrie.weight(t2, "") == 0
+    assert AutocompleteTrie.size(t2) == 1
+    assert AutocompleteTrie.words(t2) == ["cat"]
+    assert AutocompleteTrie.member?(t, "") == true
+
+    t3 = AutocompleteTrie.insert(t2, "", 1)
+    assert AutocompleteTrie.weight(t3, "") == 1
+    assert AutocompleteTrie.size(t3) == 2
+  end
 end
 ```

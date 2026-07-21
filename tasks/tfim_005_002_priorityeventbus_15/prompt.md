@@ -321,6 +321,17 @@ defmodule PriorityEventBusTest do
     pid
   end
 
+  # Takes the OLDEST delivery notification still sitting in the mailbox, so a
+  # sequence of calls reproduces the exact order the bus reached subscribers
+  # (unlike a pattern-pinned assert_receive, which can skip ahead).
+  defp next_delivered_tag(timeout) do
+    receive do
+      {:got, tag, _topic, _event} -> tag
+    after
+      timeout -> flunk("no further delivery arrived within #{timeout}ms")
+    end
+  end
+
   # -------------------------------------------------------
   # Basic subscribe / publish / ack
   # -------------------------------------------------------
@@ -413,6 +424,34 @@ defmodule PriorityEventBusTest do
     assert_receive {:got, :s3, _, _}
   end
 
+  test "exact arrival sequence is descending priority then oldest subscription",
+       %{bus: bus} do
+    mid_a = spawn_sub(:seq_mid_a, policy: :ack)
+    low = spawn_sub(:seq_low, policy: :ack)
+    high = spawn_sub(:seq_high, policy: :ack)
+    mid_b = spawn_sub(:seq_mid_b, policy: :ack)
+
+    # Subscription order deliberately unrelated to priority order; mid_a and
+    # mid_b share a priority level, with mid_a subscribed first.
+    sub!(bus, "t", mid_a, 5)
+    sub!(bus, "t", low, 1)
+    sub!(bus, "t", high, 10)
+    sub!(bus, "t", mid_b, 5)
+
+    assert {:ok, 4} = PriorityEventBus.publish(bus, "t", :evt)
+
+    # Delivery is serial, so each notification is fully queued before the next
+    # subscriber is reached: mailbox order IS delivery order.
+    order = [
+      next_delivered_tag(1_000),
+      next_delivered_tag(1_000),
+      next_delivered_tag(1_000),
+      next_delivered_tag(1_000)
+    ]
+
+    assert [:seq_high, :seq_mid_a, :seq_mid_b, :seq_low] == order
+  end
+
   # -------------------------------------------------------
   # Cancel short-circuits lower priorities (the other defining property)
   # -------------------------------------------------------
@@ -486,6 +525,54 @@ defmodule PriorityEventBusTest do
     assert dt >= 150
     assert_receive {:got, :quiet, _, _}
     assert_receive {:got, :low, _, _}
+  end
+
+  # -------------------------------------------------------
+  # Start-up options: registration and the default delivery timeout
+  # -------------------------------------------------------
+
+  test "start_link registers the bus under :name and serves the whole API by name" do
+    name = :"priority_event_bus_#{System.pid()}_#{System.unique_integer([:positive])}"
+    {:ok, pid} = PriorityEventBus.start_link(name: name, delivery_timeout_ms: 200)
+    on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
+
+    assert Process.whereis(name) == pid
+
+    sub = spawn_sub(:named, policy: :ack)
+    {:ok, ref} = PriorityEventBus.subscribe(name, "t", sub, 7)
+    assert [{^ref, ^sub, 7}] = PriorityEventBus.subscribers(name, "t")
+
+    assert {:ok, 1} = PriorityEventBus.publish(name, "t", :evt)
+    assert_receive {:got, :named, "t", :evt}
+
+    assert :ok = PriorityEventBus.unsubscribe(name, "t", ref)
+    assert [] = PriorityEventBus.subscribers(name, "t")
+  end
+
+  test "default delivery timeout is long enough that a 1s cancel still vetoes" do
+    # No :delivery_timeout_ms given → the documented 5_000ms default applies, so
+    # a cancel sent one second into the handler is still the live reply and must
+    # suppress the lower-priority subscriber.
+    {:ok, bus} = PriorityEventBus.start_link([])
+    on_exit(fn -> if Process.alive?(bus), do: GenServer.stop(bus) end)
+
+    s_slow = spawn_sub(:default_slow, policy: {:sleep, 1_000, :cancel})
+    s_low = spawn_sub(:default_low, policy: :ack)
+
+    sub!(bus, "t", s_slow, 100)
+    sub!(bus, "t", s_low, 1)
+
+    t0 = System.monotonic_time(:millisecond)
+    assert {:ok, 1} = PriorityEventBus.publish(bus, "t", :evt)
+    dt = System.monotonic_time(:millisecond) - t0
+
+    assert_receive {:got, :default_slow, "t", :evt}
+    refute_received {:got, :default_low, _, _}
+
+    # It waited for the slow reply rather than timing out early, and returned as
+    # soon as the cancel landed rather than sitting out the full timeout.
+    assert dt >= 900
+    assert dt < 4_000
   end
 
   # -------------------------------------------------------

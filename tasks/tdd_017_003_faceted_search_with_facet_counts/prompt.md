@@ -229,6 +229,39 @@ defmodule Catalog.FacetedTest do
     assert facets.categories == %{"footwear" => 2, "electronics" => 3, "fitness" => 1}
     assert facets.tags == %{}
   end
+
+  test "rendered item exposes exactly id, name, category, price and tags" do
+    assert {:ok, %{data: [item]}} = Faceted.search(products(), %{"name" => "wireless mouse"})
+
+    assert item.id == 3
+    assert item.name == "Wireless Mouse"
+    assert item.category == "electronics"
+    assert item.price == "29.99"
+    assert item.tags == ["wireless", "office"]
+    assert Enum.sort(Map.keys(item)) == [:category, :id, :name, :price, :tags]
+  end
+
+  test "every rendered item carries its own name and tags" do
+    assert {:ok, %{data: data, total: 6}} = Faceted.search(products(), %{"sort" => "id"})
+
+    assert Enum.map(data, & &1.name) == [
+             "Running Shoes",
+             "Leather Boots",
+             "Wireless Mouse",
+             "Mechanical Keyboard",
+             "USB-C Cable",
+             "Yoga Mat"
+           ]
+
+    assert Enum.map(data, & &1.tags) == [
+             ["running", "outdoor"],
+             ["formal", "outdoor"],
+             ["wireless", "office"],
+             ["wired", "office"],
+             ["wired", "office"],
+             ["outdoor", "home"]
+           ]
+  end
 end
 ```
 

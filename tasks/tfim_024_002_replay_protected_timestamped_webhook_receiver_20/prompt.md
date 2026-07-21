@@ -504,5 +504,31 @@ defmodule WebhookReceiverReplayTest do
     assert is_list(events)
     assert Enum.sort(Enum.map(events, & &1.event_id)) == ["evt_a1", "evt_a2", "evt_a3"]
   end
+
+  test "now defaults to the current system time when the option is omitted", %{store: store} do
+    opts = [secret: @secret, store: store, tolerance: 300]
+    real_now = System.system_time(:second)
+
+    fresh = build_event("evt_sys_now_#{System.pid()}_#{System.unique_integer([:positive])}")
+    hdr_fresh = header(real_now, fresh, @secret)
+    conn_fresh = post_webhook(opts, fresh, [{"stripe-signature", hdr_fresh}])
+    assert conn_fresh.status == 200
+    assert json_body(conn_fresh)["status"] == "received"
+
+    stale = build_event("evt_sys_old_#{System.pid()}_#{System.unique_integer([:positive])}")
+    hdr_stale = header(real_now - 1000, stale, @secret)
+    conn_stale = post_webhook(opts, stale, [{"stripe-signature", hdr_stale}])
+    assert conn_stale.status == 401
+    assert json_body(conn_stale)["error"] == "timestamp_expired"
+  end
+
+  test "default now rejects a fixture timestamp far outside the tolerance window",
+       %{store: store} do
+    opts = [secret: @secret, store: store, tolerance: 300]
+    payload = build_event("evt_sys_fixture_#{System.unique_integer([:positive])}")
+    conn = post_webhook(opts, payload, [{"stripe-signature", header(@now, payload, @secret)}])
+    assert conn.status == 401
+    assert json_body(conn)["error"] == "timestamp_expired"
+  end
 end
 ```

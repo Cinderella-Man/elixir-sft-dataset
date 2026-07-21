@@ -324,5 +324,30 @@ defmodule RankingTest do
     long = ids(Ranking.rank([old, fresh], now: @now, weights: w, half_life_hours: 48))
     assert long == [:old, :fresh]
   end
+
+  # -------------------------------------------------------
+  # Omitted options: :now defaults to the system clock in seconds
+  # -------------------------------------------------------
+
+  test "score/1 with no options at all ages the item against System.os_time(:second)" do
+    # Zero net votes and zero views, so the score is the recency term alone.
+    # Twelve real hours of age under the default 12h half-life -> recency 0.5.
+    # A `now` of 0, of `created_at`, or of milliseconds would give 1.0, 1.0, or ~0.0.
+    it = item(created_at: System.os_time(:second) - 12 * @hour)
+
+    assert_in_delta Ranking.score(it), 0.5, 1.0e-3
+  end
+
+  test "rank/1 with no options orders against the system clock in seconds" do
+    now = System.os_time(:second)
+
+    # Fresh: recency ~1.0, engagement 0.0 -> ~1.0.
+    # Old (100h): recency ~0.003, engagement 50/100 -> ~0.503.
+    # Without real seconds-based aging the stale, engagement-heavy item would lead.
+    fresh = item(id: :fresh, view_count: 100, comment_count: 0, created_at: now)
+    old = item(id: :old, view_count: 100, comment_count: 50, created_at: now - 100 * @hour)
+
+    assert ids(Ranking.rank([old, fresh])) == [:fresh, :old]
+  end
 end
 ```

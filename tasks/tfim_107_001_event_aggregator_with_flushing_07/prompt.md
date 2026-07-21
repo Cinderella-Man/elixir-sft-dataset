@@ -379,5 +379,60 @@ defmodule AggregatorTest do
     assert Aggregator.push(pid, :a) == :ok
     assert Aggregator.push(name, :b) == :ok
   end
+
+  # ---------------------------------------------------------------
+  # The interval fires on its own
+  # ---------------------------------------------------------------
+
+  test "the aggregator flushes on its own schedule with no external trigger" do
+    # 25ms interval, batch size far out of reach: the only thing that can ever
+    # deliver this event is the aggregator's own elapsed-interval flush.
+    agg = start_agg(batch_size: 1_000, interval_ms: 25)
+
+    Aggregator.push(agg, :tick)
+
+    assert_receive {:flushed, [:tick]}, 2_000
+  end
+
+  test "a second interval flush follows the first without any further prompting" do
+    agg = start_agg(batch_size: 1_000, interval_ms: 25)
+
+    Aggregator.push(agg, :first)
+    assert_receive {:flushed, [:first]}, 2_000
+
+    # The timer keeps running after a flush, so a later event is picked up by
+    # the next automatic firing too.
+    Aggregator.push(agg, :second)
+    assert_receive {:flushed, [:second]}, 2_000
+  end
+
+  # ---------------------------------------------------------------
+  # Starting with no options
+  # ---------------------------------------------------------------
+
+  test "starts with an empty option list and keeps accepting pushes" do
+    # Every option is optional, so a bare start must succeed and stay healthy.
+    agg = start_supervised!({Aggregator, []})
+    ref = Process.monitor(agg)
+
+    assert Aggregator.push(agg, :a) == :ok
+    assert Aggregator.push(agg, :b) == :ok
+
+    refute_receive {:DOWN, ^ref, :process, ^agg, _reason}, 300
+    assert Process.alive?(agg)
+  end
+
+  test "a :name registration is honoured for non-atom names passed to GenServer" do
+    gname = {:global, :"aggregator_global_#{System.pid()}_#{System.unique_integer([:positive])}"}
+
+    start_agg(name: gname, batch_size: 2, interval_ms: 5_000)
+
+    # :name is handed straight to GenServer.start_link/3, so any server name it
+    # accepts must work for registration and for push/2.
+    assert Aggregator.push(gname, :a) == :ok
+    Aggregator.push(gname, :b)
+
+    assert_receive {:flushed, [:a, :b]}, 500
+  end
 end
 ```

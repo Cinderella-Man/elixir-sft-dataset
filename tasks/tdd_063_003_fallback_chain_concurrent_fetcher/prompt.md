@@ -28,6 +28,13 @@ defmodule FallbackFetcherTest do
     end
   end
 
+  defp slow_error(reason, delay_ms) do
+    fn ->
+      Process.sleep(delay_ms)
+      {:error, reason}
+    end
+  end
+
   # -------------------------------------------------------
   # Fallback-chain behaviour
   # -------------------------------------------------------
@@ -75,6 +82,31 @@ defmodule FallbackFetcherTest do
 
     assert result[:fast] == {:ok, :done}
     assert result[:slow] == {:error, :timeout}
+  end
+
+  # The budget covers the whole chain summed sequentially, not each fallback on
+  # its own: three 100ms attempts overrun a 150ms budget even though no single
+  # attempt does.
+  test "a chain whose fallbacks sum past the global timeout is reported as :timeout" do
+    sources = [
+      {:fast, [fast_ok(:done)]},
+      {:chained, [slow_error(:one, 100), slow_error(:two, 100), slow_ok(:three, 100)]}
+    ]
+
+    result = FallbackFetcher.fetch_all(sources, 150)
+
+    assert result[:fast] == {:ok, :done}
+    assert result[:chained] == {:error, :timeout}
+  end
+
+  # The mirror case: a multi-step chain whose summed work fits inside the budget
+  # runs to its successful fallback.
+  test "a chain whose fallbacks sum within the global timeout succeeds on a later fallback" do
+    sources = [{:chained, [slow_error(:one, 30), slow_error(:two, 30), slow_ok(:three, 30)]}]
+
+    result = FallbackFetcher.fetch_all(sources, 2_000)
+
+    assert result[:chained] == {:ok, :three}
   end
 
   # -------------------------------------------------------

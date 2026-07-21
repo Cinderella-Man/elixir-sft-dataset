@@ -250,7 +250,7 @@ end
 
 ```elixir
 defmodule LogAnalyzerTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   # ---------------------------------------------------------------------------
   # Helpers
@@ -527,6 +527,95 @@ defmodule LogAnalyzerTest do
     {first, last} = report.time_range
     assert DateTime.compare(first, expected_first) == :eq
     assert DateTime.compare(last, expected_last) == :eq
+  end
+
+  # ---------------------------------------------------------------------------
+  # Sharper top_errors ranking coverage
+  #
+  # The 10-entry cap applies to the *sorted* list: ranking by descending count
+  # (ties alphabetical) happens first, truncation second.
+  # ---------------------------------------------------------------------------
+
+  # Emit one error line per occurrence, one second apart, so that the order of
+  # lines in the file matches neither the count ranking nor its reverse.
+  defp write_error_frequency_file(path, message_counts) do
+    {:ok, base, _} = DateTime.from_iso8601("2024-07-01T00:00:00Z")
+
+    lines =
+      message_counts
+      |> Enum.sort_by(fn {message, _count} -> message end)
+      |> Enum.flat_map(fn {message, count} -> List.duplicate(message, count) end)
+      |> Enum.with_index()
+      |> Enum.map(fn {message, index} ->
+        timestamp = base |> DateTime.add(index, :second) |> DateTime.to_iso8601()
+        log_line(timestamp, "error", message)
+      end)
+
+    write_lines(path, lines)
+  end
+
+  test "top errors keeps the 10 most frequent messages, not an arbitrary 10" do
+    path = tmp_path("top10_by_frequency")
+
+    # The most frequent messages are alphabetically last, and the least
+    # frequent ones are alphabetically first, so truncating before sorting
+    # would drop exactly the messages that must survive.
+    message_counts = [
+      {"zeta failure", 7},
+      {"yankee failure", 6},
+      {"xray failure", 5},
+      {"whiskey failure", 4},
+      {"victor failure", 3},
+      {"uniform failure", 2},
+      {"tango failure", 2},
+      {"sierra failure", 2},
+      {"romeo failure", 2},
+      {"quebec failure", 2},
+      {"alpha failure", 1},
+      {"bravo failure", 1},
+      {"charlie failure", 1},
+      {"delta failure", 1},
+      {"echo failure", 1}
+    ]
+
+    write_error_frequency_file(path, message_counts)
+    on_exit(fn -> File.rm(path) end)
+
+    assert {:ok, report} = LogAnalyzer.analyze(path)
+
+    assert report.top_errors == [
+             {"zeta failure", 7},
+             {"yankee failure", 6},
+             {"xray failure", 5},
+             {"whiskey failure", 4},
+             {"victor failure", 3},
+             {"quebec failure", 2},
+             {"romeo failure", 2},
+             {"sierra failure", 2},
+             {"tango failure", 2},
+             {"uniform failure", 2}
+           ]
+  end
+
+  test "top errors cap keeps the alphabetically first messages when all counts tie" do
+    path = tmp_path("top10_all_tied")
+
+    message_counts =
+      for i <- 1..11 do
+        {"error #{String.pad_leading(Integer.to_string(i), 2, "0")}", 1}
+      end
+
+    write_error_frequency_file(path, message_counts)
+    on_exit(fn -> File.rm(path) end)
+
+    assert {:ok, report} = LogAnalyzer.analyze(path)
+
+    expected =
+      for i <- 1..10 do
+        {"error #{String.pad_leading(Integer.to_string(i), 2, "0")}", 1}
+      end
+
+    assert report.top_errors == expected
   end
 end
 ```

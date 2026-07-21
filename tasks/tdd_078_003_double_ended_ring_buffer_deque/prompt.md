@@ -186,6 +186,61 @@ defmodule RingDequeTest do
 
     assert RingDeque.to_list(d) == [[1, 2, 3], :atom, 42, "hello", {:tuple, 1}]
   end
+
+  # -------------------------------------------------------
+  # Backing representation: fixed-size tuple, not a list
+  # -------------------------------------------------------
+
+  test "new/1 pre-allocates a capacity-slot tuple as the store" do
+    d = RingDeque.new(4)
+    store = backing_tuple(d, 4)
+    assert tuple_size(store) == 4
+
+    # A head index and a live count are carried alongside the store.
+    integers = d |> Map.from_struct() |> Map.values() |> Enum.filter(&is_integer/1)
+    assert length(integers) >= 2
+  end
+
+  test "the store tuple holds the live items and keeps its capacity size" do
+    d =
+      RingDeque.new(3)
+      |> RingDeque.push_back(:a)
+      |> RingDeque.push_back(:b)
+      |> RingDeque.push_back(:c)
+
+    slots = d |> backing_tuple(3) |> Tuple.to_list()
+    assert Enum.sort(slots) == Enum.sort(RingDeque.to_list(d))
+
+    d =
+      d
+      |> RingDeque.push_back(:d)
+      |> RingDeque.push_front(:z)
+      |> RingDeque.push_back(:e)
+
+    assert RingDeque.size(d) == 3
+    slots = d |> backing_tuple(3) |> Tuple.to_list()
+    assert Enum.sort(slots) == Enum.sort(RingDeque.to_list(d))
+
+    {:ok, _, d} = RingDeque.pop_front(d)
+    {:ok, _, d} = RingDeque.pop_back(d)
+    d = RingDeque.push_front(d, :w)
+
+    store = backing_tuple(d, 3)
+    assert tuple_size(store) == 3
+    assert Enum.all?(RingDeque.to_list(d), &(&1 in Tuple.to_list(store)))
+  end
+
+  # Returns the struct's single tuple field sized to `capacity`, failing if the
+  # deque is backed by a list or by anything other than that fixed-size tuple.
+  defp backing_tuple(deque, capacity) do
+    fields = deque |> Map.from_struct() |> Map.values()
+
+    refute Enum.any?(fields, &is_list/1),
+           "the primary store must be a fixed-size tuple, not a list"
+
+    assert [store] = Enum.filter(fields, &(is_tuple(&1) and tuple_size(&1) == capacity))
+    store
+  end
 end
 ```
 

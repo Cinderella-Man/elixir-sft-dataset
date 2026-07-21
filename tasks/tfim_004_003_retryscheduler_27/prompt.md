@@ -343,6 +343,14 @@ defmodule RetrySchedulerTest do
     def throw_value, do: throw(:thrown)
   end
 
+  # Job that tags every run, so several jobs on one server stay distinguishable.
+  defmodule TaggedJob do
+    def run(test_pid, tag) do
+      send(test_pid, {:tagged_run, tag})
+      :ok
+    end
+  end
+
   @t0 ~N[2025-01-01 00:00:00]
 
   setup do
@@ -754,6 +762,55 @@ defmodule RetrySchedulerTest do
     assert_received :ran
 
     assert [{"j", :completed, %NaiveDateTime{}, 1}] = RetryScheduler.jobs(rs)
+  end
+
+  # -------------------------------------------------------
+  # Default clock (no :clock option) and :name registration
+  # -------------------------------------------------------
+
+  test "start_link without :clock defaults to wall-clock time when deciding due jobs" do
+    {:ok, rs} = RetryScheduler.start_link(tick_interval_ms: 25)
+
+    real_now = NaiveDateTime.utc_now()
+    past = NaiveDateTime.add(real_now, -60, :second)
+    future = NaiveDateTime.add(real_now, 3_600, :second)
+
+    :ok = RetryScheduler.schedule(rs, "past", past, {TaggedJob, :run, [self(), :past]})
+    :ok = RetryScheduler.schedule(rs, "future", future, {TaggedJob, :run, [self(), :future]})
+
+    # Only the automatic tick can drive this, and only a wall-clock `now`
+    # makes the past job due while leaving the far-future job alone.
+    assert_receive {:tagged_run, :past}, 2_000
+    assert {:ok, :completed, 1} = RetryScheduler.status(rs, "past")
+
+    refute_receive {:tagged_run, :future}, 300
+    assert {:ok, :pending, 0} = RetryScheduler.status(rs, "future")
+  end
+
+  test "start_link with :name registers the process and the API accepts that name" do
+    reg_name =
+      String.to_atom("retry_scheduler_#{System.pid()}_#{System.unique_integer([:positive])}")
+
+    {:ok, pid} =
+      RetryScheduler.start_link(
+        name: reg_name,
+        clock: &Clock.now/0,
+        tick_interval_ms: :infinity
+      )
+
+    assert Process.whereis(reg_name) == pid
+
+    assert :ok =
+             RetryScheduler.schedule(reg_name, "j", @t0, {TaggedJob, :run, [self(), :named]})
+
+    assert {:ok, :pending, 0} = RetryScheduler.status(reg_name, "j")
+
+    tick(pid)
+    assert_received {:tagged_run, :named}
+    assert [{"j", :completed, %NaiveDateTime{}, 1}] = RetryScheduler.jobs(reg_name)
+
+    assert :ok = RetryScheduler.cancel(reg_name, "j")
+    assert {:error, :not_found} = RetryScheduler.status(reg_name, "j")
   end
 end
 ```

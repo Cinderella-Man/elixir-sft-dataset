@@ -414,5 +414,50 @@ defmodule SecureTokenTest do
     bare_mac = Base.url_encode64(:binary.copy(<<0>>, 32), padding: false)
     assert {:error, :malformed} = verify(bare_mac, "secret")
   end
+
+  # -------------------------------------------------------
+  # Default clock (:clock omitted, opts omitted entirely)
+  # -------------------------------------------------------
+
+  test "generate/3 and verify/2 work with opts omitted entirely" do
+    # The optional opts keyword must genuinely be optional on both calls,
+    # and a token minted and checked with the default clock is still live.
+    payload = %{sub: "default-arity", scopes: ["read"]}
+    token = SecureToken.generate(payload, "default-secret", 300)
+    assert is_binary(token)
+    assert {:ok, ^payload} = SecureToken.verify(token, "default-secret")
+
+    # An explicitly empty opts list means the same thing as omitting it.
+    token2 = SecureToken.generate(payload, "default-secret", 300, [])
+    assert {:ok, ^payload} = SecureToken.verify(token2, "default-secret", [])
+  end
+
+  test "verify with no clock option reads the real current time for expiry" do
+    # Minted far in the past on an injected clock, so under a default clock
+    # that reads System.os_time(:second) the token is long expired.
+    token = SecureToken.generate("stale", "secret", 60, clock: fn -> 0 end)
+    assert {:error, :expired} = SecureToken.verify(token, "secret")
+    assert {:error, :expired} = SecureToken.verify(token, "secret", [])
+
+    # A token minted against the real wall clock is accepted by that same
+    # default clock, which also pins the default to seconds, not milliseconds.
+    fresh =
+      SecureToken.generate("fresh", "secret", 300, clock: fn -> System.os_time(:second) end)
+
+    assert {:ok, "fresh"} = SecureToken.verify(fresh, "secret")
+  end
+
+  test "generate with no clock option stamps the real current time" do
+    reference = System.os_time(:second)
+    token = SecureToken.generate("issued-now", "secret", 60)
+
+    # Issued at roughly `reference`, so it is live at that instant...
+    assert {:ok, "issued-now"} = SecureToken.verify(token, "secret", clock: fn -> reference end)
+
+    # ...and expired well before an hour later, which would not hold if the
+    # issue time were taken from anything other than the current epoch second.
+    assert {:error, :expired} =
+             SecureToken.verify(token, "secret", clock: fn -> reference + 3_600 end)
+  end
 end
 ```

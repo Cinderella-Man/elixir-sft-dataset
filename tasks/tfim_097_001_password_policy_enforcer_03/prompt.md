@@ -245,7 +245,7 @@ end
 
 ```elixir
 defmodule PasswordPolicyEnforcerTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   # ExUnit port of the original hand-rolled harness for `PasswordPolicy`.
   #
@@ -331,6 +331,42 @@ defmodule PasswordPolicyEnforcerTest do
       })
 
     assert Enum.sort(violations(result)) == Enum.sort([:reused_password])
+  end
+
+  test "reuse comparison is exact, so a case variant of a previous password passes" do
+    # Reuse rejects only an exact match against :previous_passwords. "COrrect1!" differs
+    # from the stored "Correct1!" by letter case alone, so it is not a reuse; it still
+    # satisfies every character-class rule and is far from the username.
+    case_variant =
+      PasswordPolicy.validate("COrrect1!", %{
+        username: "user",
+        previous_passwords: ["Correct1!"]
+      })
+
+    assert case_variant == :ok
+
+    # The exact same string, on the other hand, is a reuse.
+    exact =
+      PasswordPolicy.validate("Correct1!", %{
+        username: "user",
+        previous_passwords: ["Correct1!"]
+      })
+
+    assert Enum.sort(violations(exact)) == Enum.sort([:reused_password])
+  end
+
+  test "one case variant is a common password but not a reused password" do
+    # The same stored string sits in both lists: :common_passwords compares
+    # case-insensitively (so it matches), while :previous_passwords requires an exact
+    # match (so it does not). Only :common_password may fire.
+    result =
+      PasswordPolicy.validate("Letmein1!", %{
+        username: "user",
+        common_passwords: ["LETMEIN1!"],
+        previous_passwords: ["LETMEIN1!"]
+      })
+
+    assert Enum.sort(violations(result)) == Enum.sort([:common_password])
   end
 
   test "too similar to username - distance <= threshold" do

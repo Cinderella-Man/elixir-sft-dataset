@@ -970,5 +970,83 @@ defmodule ManagedMonitorTest do
     trigger_check(mon, "svc")
     assert {:ok, %{last_check_at: 2_000}} = ManagedMonitor.status(mon, "svc")
   end
+
+  # -------------------------------------------------------
+  # Real periodic timers (no manual {:check, ...} driving)
+  # -------------------------------------------------------
+
+  # Drains check announcements already delivered by checks that ran before the
+  # call that stopped them; never blocks.
+  defp drain_ticks(tag) do
+    receive do
+      {:tick, ^tag} -> drain_ticks(tag)
+    after
+      0 -> :ok
+    end
+  end
+
+  test "registration arms a repeating check timer that fires on its own", %{mon: mon} do
+    test_pid = self()
+
+    check = fn ->
+      send(test_pid, {:tick, "auto_timer"})
+      :ok
+    end
+
+    assert :ok = ManagedMonitor.register(mon, "auto_timer", check, 25)
+
+    # The first firing comes from the timer armed at registration, and a further
+    # firing proves the timer re-arms itself after every fire.
+    assert_receive {:tick, "auto_timer"}, 1_000
+    assert_receive {:tick, "auto_timer"}, 1_000
+
+    assert {:ok, %{status: :up}} = ManagedMonitor.status(mon, "auto_timer")
+  end
+
+  test "paused service runs no checks yet keeps checking again after resume", %{mon: mon} do
+    test_pid = self()
+
+    check = fn ->
+      send(test_pid, {:tick, "pause_timer"})
+      :ok
+    end
+
+    assert :ok = ManagedMonitor.register(mon, "pause_timer", check, 25)
+    assert_receive {:tick, "pause_timer"}, 1_000
+
+    assert :ok = ManagedMonitor.pause(mon, "pause_timer")
+    drain_ticks("pause_timer")
+
+    # While paused the check function is not executed at all, across many
+    # intervals' worth of time.
+    refute_receive {:tick, "pause_timer"}, 250
+
+    # Resuming returns the service to normal monitoring, and checks happen
+    # again without any manual trigger.
+    assert :ok = ManagedMonitor.resume(mon, "pause_timer")
+    assert_receive {:tick, "pause_timer"}, 1_000
+  end
+
+  test "maintenance window ends by itself when the duration elapses" do
+    test_pid = self()
+
+    {:ok, mon} =
+      ManagedMonitor.start_link(
+        clock: &Clock.now/0,
+        notify: fn name, event, detail -> send(test_pid, {:notified, name, event, detail}) end
+      )
+
+    on_exit(fn -> Process.exit(mon, :kill) end)
+
+    assert :ok = ManagedMonitor.register(mon, "auto_maint", fn -> :ok end, 60_000)
+    assert :ok = ManagedMonitor.maintenance(mon, "auto_maint", 25)
+
+    # No {:maintenance_end, ...} is ever sent by the test: the window's own
+    # expiry must fire the notification and return the service to its health.
+    assert_receive {:notified, "auto_maint", :maintenance_ended, nil}, 1_000
+
+    assert {:ok, %{status: :pending, maintenance_ends_at: nil}} =
+             ManagedMonitor.status(mon, "auto_maint")
+  end
 end
 ```

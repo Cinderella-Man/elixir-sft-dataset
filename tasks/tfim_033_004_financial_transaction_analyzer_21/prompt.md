@@ -260,7 +260,7 @@ end
 
 ```elixir
 defmodule TransactionAnalyzerTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   # ---------------------------------------------------------------------------
   # Helpers
@@ -594,6 +594,59 @@ defmodule TransactionAnalyzerTest do
     assert report.malformed_count == 5
     assert report.top_accounts == []
     assert report.time_range == nil
+  end
+
+  test "non-empty timestamp string that is not a valid ISO 8601 datetime is malformed" do
+    path = tmp_path("bad_ts")
+
+    write_lines(path, [
+      txn_line("not-a-date", "acct_t", "credit", 100, "USD"),
+      txn_line("2024-13-45", "acct_t", "debit", 50, "USD")
+    ])
+
+    on_exit(fn -> File.rm(path) end)
+
+    assert {:ok, report} = TransactionAnalyzer.analyze(path)
+
+    # Both lines are skipped entirely: nothing is recorded under a fallback date.
+    assert report.malformed_count == 2
+    assert report.balance_by_account == %{}
+    assert report.volume_by_currency == %{}
+    assert report.transaction_count == %{}
+    assert report.top_accounts == []
+    assert report.daily_volume == %{}
+    assert report.time_range == nil
+  end
+
+  test "integer amounts still produce float balances, currency volumes and top_accounts" do
+    path = tmp_path("int_amounts")
+
+    write_lines(path, [
+      txn_line("2024-05-01T00:00:00Z", "acct_i", "credit", 100, "USD"),
+      txn_line("2024-05-01T01:00:00Z", "acct_i", "debit", 40, "USD"),
+      txn_line("2024-05-01T02:00:00Z", "acct_j", "debit", 25, "EUR")
+    ])
+
+    on_exit(fn -> File.rm(path) end)
+
+    assert {:ok, report} = TransactionAnalyzer.analyze(path)
+
+    assert is_float(report.balance_by_account["acct_i"])
+    assert is_float(report.balance_by_account["acct_j"])
+    assert is_float(report.volume_by_currency["USD"])
+    assert is_float(report.volume_by_currency["EUR"])
+
+    assert length(report.top_accounts) == 2
+
+    for {account_id, volume} <- report.top_accounts do
+      assert is_binary(account_id)
+      assert is_float(volume)
+    end
+
+    assert_in_delta report.balance_by_account["acct_i"], 60.0, 0.001
+    assert_in_delta report.balance_by_account["acct_j"], -25.0, 0.001
+    assert_in_delta report.volume_by_currency["USD"], 140.0, 0.001
+    assert_in_delta report.volume_by_currency["EUR"], 25.0, 0.001
   end
 end
 ```

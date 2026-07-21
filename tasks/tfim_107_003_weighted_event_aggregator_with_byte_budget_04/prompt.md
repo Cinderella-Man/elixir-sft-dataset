@@ -342,6 +342,21 @@ defmodule WeightedAggregatorTest do
     assert_receive {:flushed, [^big, "b"]}, 500
   end
 
+  test "the default interval is 1_000 ms" do
+    # No :interval_ms is given, so the default interval governs the only flush
+    # that can happen here: the budget is far out of reach.
+    agg = start_agg(max_bytes: 1_000, size_fn: fn n -> n end)
+
+    WeightedAggregator.push(agg, 7)
+
+    # Well short of a second the event must still be buffered, which rules out
+    # a much shorter default.
+    refute_receive {:flushed, _}, 600
+
+    # The timer then fires on its own; the test never triggers it by hand.
+    assert_receive {:flushed, [7]}, 2_000
+  end
+
   test "events can be pushed through a registered name" do
     start_agg(
       name: :weighted_aggregator_named_target,

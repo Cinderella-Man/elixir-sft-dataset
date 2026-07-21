@@ -413,5 +413,27 @@ defmodule MetricsTest do
     Metrics.increment(:zeroed, 4)
     assert Metrics.count(:zeroed) == 4
   end
+
+  # -------------------------------------------------------
+  # default clock
+  # -------------------------------------------------------
+
+  # Omitting :clock must fall back to real system time in seconds rather than
+  # requiring the option: starting bare still works, recording still works, and
+  # events recorded moments ago fall inside a recent window.
+  test "start_link works with no :clock option and buckets against system time" do
+    stop_supervised!(Metrics)
+    start_supervised!(Metrics)
+
+    assert :ok = Metrics.increment(:default_clock, 2)
+    assert :ok = Metrics.increment(:default_clock)
+
+    assert Metrics.count(:default_clock) == 3
+    assert Metrics.rate(:default_clock, 3600) == 3
+    assert Metrics.all()[:default_clock] == 3
+
+    # cutoff = now => a bucket stamped at or before now is never inside the window
+    assert Metrics.rate(:default_clock, 0) == 0
+  end
 end
 ```

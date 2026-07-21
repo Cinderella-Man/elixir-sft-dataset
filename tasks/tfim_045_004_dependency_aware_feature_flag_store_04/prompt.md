@@ -310,5 +310,33 @@ defmodule FeatureFlagsTest do
     tasks = for _ <- 1..50, do: Task.async(fn -> FeatureFlags.enabled?(:c) end)
     assert Enum.all?(Task.await_many(tasks), & &1)
   end
+
+  test "an explicit :name registers the process and writes still reach it" do
+    table = unique_atom("ff_named_table")
+    name = unique_atom("ff_named_server")
+    {:ok, pid} = FeatureFlags.start_link(table_name: table, name: name)
+
+    assert Process.whereis(name) == pid
+
+    FeatureFlags.enable(:registered_flag)
+    assert FeatureFlags.enabled?(:registered_flag)
+
+    :ok = GenServer.stop(pid)
+  end
+
+  test "omitting :name registers the process under the module name" do
+    table = unique_atom("ff_default_name_table")
+    {:ok, pid} = FeatureFlags.start_link(table_name: table)
+
+    assert Process.whereis(FeatureFlags) == pid
+
+    :ok = GenServer.stop(pid)
+  end
+
+  # Distinct atom per test run so concurrently living servers and ETS tables
+  # from other runs of this file never collide.
+  defp unique_atom(prefix) do
+    :"#{prefix}_#{System.pid()}_#{System.unique_integer([:positive])}"
+  end
 end
 ```

@@ -273,6 +273,35 @@ defmodule DebounceAggregatorTest do
     assert_receive {:flushed, [:b, :c, :d]}, 500
   end
 
+  test "a never-quiet batch after a max-wait flush is still capped by max_wait" do
+    agg = start_agg(idle_ms: 400, max_wait_ms: 200, batch_size: 1_000_000)
+
+    # First batch ends on its max-wait cap (200 < idle 400).
+    DebounceAggregator.push(agg, :first)
+    assert_receive {:flushed, [:first]}, 600
+
+    # A second stream that never goes quiet: a push every 80 ms for ~1.6 s, so
+    # the 400 ms idle timer can never elapse and the size trigger is out of
+    # reach. Any flush observed while this stream is still running can only
+    # come from a max-wait timer armed for the batch that began after the
+    # first flush.
+    pusher =
+      spawn(fn ->
+        Enum.each(1..20, fn n ->
+          DebounceAggregator.push(agg, n)
+          Process.sleep(80)
+        end)
+      end)
+
+    assert_receive {:flushed, batch}, 500
+    Process.exit(pusher, :kill)
+
+    # The capped batch holds the oldest buffered events, in push order,
+    # starting from the first event of this batch.
+    assert batch != []
+    assert batch == Enum.take(1..20, length(batch))
+  end
+
   test "default batch_size of infinity applies no size trigger" do
     agg = start_agg(idle_ms: 150, max_wait_ms: 5_000)
 

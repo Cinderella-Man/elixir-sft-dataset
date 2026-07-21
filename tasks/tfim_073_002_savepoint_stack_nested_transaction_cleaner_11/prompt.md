@@ -257,6 +257,15 @@ defmodule DBCleanerTest do
     assert Enum.any?(sqls(), &(&1 == "RELEASE SAVEPOINT b"))
   end
 
+  test "release/1 on an unknown savepoint returns an error and keeps the stack" do
+    DBCleaner.start(:savepoint, repo: FakeRepo)
+    DBCleaner.savepoint("a")
+    DBCleaner.savepoint("b")
+
+    assert {:error, {:no_such_savepoint, "z"}} = DBCleaner.release("z")
+    assert DBCleaner.active_savepoints() == ["a", "b"]
+  end
+
   test "savepoint/1 before start returns :not_started" do
     assert {:error, :not_started} = DBCleaner.savepoint("a")
   end

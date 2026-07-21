@@ -202,6 +202,26 @@ defmodule QueryPaginatorTest do
     assert Enum.map(data, & &1.id) == [6, 2, 4, 1, 5, 3]
   end
 
+  test "descending order reverses the whole ordering so tied items list ids descending" do
+    {:ok, %{data: by_age}} =
+      QueryPaginator.paginate(items(), %{"sort" => "age", "order" => "desc"})
+
+    assert Enum.map(by_age, & &1.age) == [40, 35, 30, 25, 25, 22]
+    assert Enum.map(by_age, & &1.id) == [3, 5, 1, 4, 2, 6]
+
+    same_name = [
+      %{id: 7, name: "zed", age: 50},
+      %{id: 8, name: "zed", age: 51},
+      %{id: 9, name: "abe", age: 52}
+    ]
+
+    {:ok, %{data: by_name}} =
+      QueryPaginator.paginate(same_name, %{"sort" => "name", "order" => "desc"})
+
+    assert Enum.map(by_name, & &1.name) == ["zed", "zed", "abe"]
+    assert Enum.map(by_name, & &1.id) == [8, 7, 9]
+  end
+
   test "rejects an invalid sort field" do
     assert {:error, :invalid_sort_field} = QueryPaginator.paginate(items(), %{"sort" => "email"})
   end

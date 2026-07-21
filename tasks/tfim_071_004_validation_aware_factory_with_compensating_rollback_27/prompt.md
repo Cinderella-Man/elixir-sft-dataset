@@ -465,5 +465,63 @@ defmodule FactoryTest do
     assert {:error, {:already_started, pid}} = Factory.start()
     assert is_pid(pid)
   end
+
+  test "build(:post) leaves every required field populated, none unresolved" do
+    post = Factory.build(:post)
+    assert %MyApp.Post{} = post
+    assert is_binary(post.title) and post.title != ""
+    assert is_binary(post.body) and post.body != ""
+    assert is_integer(post.user_id)
+  end
+
+  test "each build(:post) creates its own user row with a distinct id" do
+    before = length(FakeRepo.all())
+    post_a = Factory.build(:post)
+    post_b = Factory.build(:post)
+
+    assert is_integer(post_a.user_id)
+    assert is_integer(post_b.user_id)
+    assert post_a.user_id != post_b.user_id
+    assert length(FakeRepo.all()) == before + 2
+
+    for id <- [post_a.user_id, post_b.user_id] do
+      assert Enum.any?(FakeRepo.all(), fn
+               %MyApp.User{id: row_id} -> row_id == id
+               _ -> false
+             end)
+    end
+  end
+
+  test "a fresh sequence yields the dense run 1..10 with no gaps or repeats" do
+    values = for _ <- 1..10, do: Factory.sequence(:dense_seq, fn n -> n end)
+    assert values == Enum.to_list(1..10)
+  end
+
+  test "a sequence counter is unaffected by other names and by factory traffic" do
+    assert Factory.sequence(:isolated_seq, fn n -> n end) == 1
+
+    for name <- [:noise_seq_a, :noise_seq_b], _ <- 1..5 do
+      Factory.sequence(name, fn n -> n end)
+    end
+
+    Factory.build(:user)
+
+    assert Factory.sequence(:isolated_seq, fn n -> n end) == 2
+  end
+
+  test "concurrent access keeps two sequence names on separate counters" do
+    tasks =
+      for name <- [:par_seq_a, :par_seq_b], _ <- 1..25 do
+        Task.async(fn -> {name, Factory.sequence(name, fn n -> n end)} end)
+      end
+
+    grouped =
+      tasks
+      |> Task.await_many()
+      |> Enum.group_by(fn {name, _} -> name end, fn {_, n} -> n end)
+
+    assert Enum.sort(grouped[:par_seq_a]) == Enum.to_list(1..25)
+    assert Enum.sort(grouped[:par_seq_b]) == Enum.to_list(1..25)
+  end
 end
 ```

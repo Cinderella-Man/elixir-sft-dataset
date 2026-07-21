@@ -580,5 +580,105 @@ defmodule RollupTSDBTest do
     [{_labels, kept}] = RollupTSDB.query(db, "m", %{}, {0, 10_000})
     assert Enum.map(kept, &elem(&1, 0)) == [5_000]
   end
+
+  # -------------------------------------------------------
+  # Process registration
+  # -------------------------------------------------------
+
+  # Re-queries through the public API until `fun` reports success or the
+  # deadline passes, so an automatically-armed timer can be observed without
+  # waiting for any particular fixed duration.
+  defp poll_until(budget_ms, fun) do
+    deadline = System.monotonic_time(:millisecond) + budget_ms
+    do_poll(deadline, fun)
+  end
+
+  defp do_poll(deadline, fun) do
+    cond do
+      fun.() -> true
+      System.monotonic_time(:millisecond) >= deadline -> false
+      true -> do_poll(deadline, fun)
+    end
+  end
+
+  test "the :name option registers the process and the API works through that name" do
+    name = :"rollup_tsdb_#{System.pid()}_#{System.unique_integer([:positive])}"
+
+    {:ok, pid} =
+      RollupTSDB.start_link(
+        name: name,
+        clock: &Clock.now/0,
+        bucket_duration_ms: 1_000,
+        retention_ms: 10_000,
+        cleanup_interval_ms: :infinity
+      )
+
+    assert Process.whereis(name) == pid
+
+    :ok = RollupTSDB.insert(name, "cpu", %{"host" => "a"}, 100, 7)
+    [{%{"host" => "a"}, [{0, stats}]}] = RollupTSDB.query(name, "cpu", %{}, {0, 900})
+    assert stats.count == 1
+    assert stats.sum == 7
+  end
+
+  test "omitting :name starts the process unregistered but fully usable" do
+    {:ok, pid} =
+      RollupTSDB.start_link(
+        clock: &Clock.now/0,
+        bucket_duration_ms: 1_000,
+        cleanup_interval_ms: :infinity
+      )
+
+    assert Process.info(pid, :registered_name) == {:registered_name, []}
+
+    :ok = RollupTSDB.insert(pid, "m", %{}, 100, 1)
+    [{_labels, [{0, stats}]}] = RollupTSDB.query(pid, "m", %{}, {0, 900})
+    assert stats.count == 1
+  end
+
+  # -------------------------------------------------------
+  # Unrecognized messages
+  # -------------------------------------------------------
+
+  test "an unrecognized info message is ignored and leaves stored data intact", %{db: db} do
+    :ok = RollupTSDB.insert(db, "m", %{"host" => "a"}, 100, 7)
+
+    send(db, :not_a_cleanup)
+    send(db, {:unexpected, "payload"})
+    send(db, [:stray, :list])
+
+    # The query reply proves the stray messages were handled ahead of it
+    # without the process dying.
+    [{%{"host" => "a"}, [{0, stats}]}] = RollupTSDB.query(db, "m", %{}, {0, 900})
+    assert stats.count == 1
+    assert stats.sum == 7
+    assert Process.alive?(db)
+
+    :ok = RollupTSDB.insert(db, "m", %{"host" => "a"}, 200, 3)
+    [{_labels, [{0, after_stats}]}] = RollupTSDB.query(db, "m", %{}, {0, 900})
+    assert after_stats.count == 2
+  end
+
+  # -------------------------------------------------------
+  # Automatic cleanup observed through the public API
+  # -------------------------------------------------------
+
+  test "an automatically armed timer expires buckets with no message from the test" do
+    {:ok, db} =
+      RollupTSDB.start_link(
+        clock: &Clock.now/0,
+        bucket_duration_ms: 1_000,
+        retention_ms: 10_000,
+        cleanup_interval_ms: 25
+      )
+
+    :ok = RollupTSDB.insert(db, "m", %{"host" => "a"}, 100, 1)
+    [{_labels, [{0, _stats}]}] = RollupTSDB.query(db, "m", %{}, {0, 20_000})
+
+    # Past the retention window for bucket 0, so the next automatic run drops it.
+    Clock.set(100_000)
+
+    assert poll_until(1_000, fn -> RollupTSDB.query(db, "m", %{}, {0, 200_000}) == [] end)
+  end
 end
 ```

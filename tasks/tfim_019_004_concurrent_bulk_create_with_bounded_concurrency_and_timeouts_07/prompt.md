@@ -288,5 +288,86 @@ defmodule ConcurrentCatalogTest do
     assert ConcurrentCatalog.count() == 0
     assert ConcurrentCatalog.all() == []
   end
+
+  test "a timing-out item still yields ordered per-index results while tasks overlap" do
+    items = [
+      %{"name" => "quick1", "price" => 1, "delay" => 20},
+      %{"name" => "stuck", "price" => 2, "delay" => 600},
+      %{"name" => "quick2", "price" => 3, "delay" => 20},
+      %{"name" => "quick3", "price" => 4, "delay" => 20}
+    ]
+
+    results = ConcurrentCatalog.bulk_create(items, max_concurrency: 2, timeout_ms: 150)
+
+    # Exactly one result per input item, in original input order.
+    assert length(results) == 4
+    assert Enum.map(results, fn {i, _tag, _reason} -> i end) == [0, 1, 2, 3]
+    assert {0, :ok, %{name: "quick1"}} = Enum.at(results, 0)
+    assert {1, :error, :timeout} = Enum.at(results, 1)
+    assert {2, :ok, %{name: "quick2"}} = Enum.at(results, 2)
+    assert {3, :ok, %{name: "quick3"}} = Enum.at(results, 3)
+
+    # The killed item is never inserted; the surviving items all are.
+    assert ConcurrentCatalog.count() == 3
+    refute Enum.any?(ConcurrentCatalog.all(), fn item -> item.name == "stuck" end)
+
+    # Work still parallelizes while the long-running item is in flight.
+    assert ConcurrentCatalog.peak() >= 2
+  end
+
+  test "store stays consistent for later batches after a timed-out item is killed" do
+    first =
+      ConcurrentCatalog.bulk_create(
+        [
+          %{"name" => "gone", "price" => 5, "delay" => 600},
+          %{"name" => "kept", "price" => 6}
+        ],
+        max_concurrency: 2,
+        timeout_ms: 150
+      )
+
+    assert {0, :error, :timeout} = Enum.at(first, 0)
+    assert {1, :ok, _} = Enum.at(first, 1)
+
+    second =
+      ConcurrentCatalog.bulk_create([
+        %{"name" => "after1", "price" => 7},
+        %{"name" => "after2", "price" => 8}
+      ])
+
+    assert Enum.all?(second, fn {_i, tag, _reason} -> tag == :ok end)
+    assert ConcurrentCatalog.count() == 3
+
+    # Every reported item is retrievable by its own id, across both batches.
+    for {_i, :ok, item} <- first ++ second do
+      assert ConcurrentCatalog.get(item.id) == item
+    end
+
+    assert Enum.sort(Enum.map(ConcurrentCatalog.all(), & &1.name)) ==
+             ["after1", "after2", "kept"]
+
+    assert ConcurrentCatalog.get(999_999) == nil
+  end
+
+  test "validation errors map the input string key to a list of message strings" do
+    results =
+      ConcurrentCatalog.bulk_create([
+        %{"name" => "Priced wrong", "price" => 0},
+        %{"name" => "", "price" => 3}
+      ])
+
+    assert {0, :error, {:validation, price_errors}} = Enum.at(results, 0)
+    assert Map.keys(price_errors) == ["price"]
+    assert [_ | _] = price_errors["price"]
+    assert Enum.all?(price_errors["price"], &is_binary/1)
+
+    assert {1, :error, {:validation, name_errors}} = Enum.at(results, 1)
+    assert Map.keys(name_errors) == ["name"]
+    assert [_ | _] = name_errors["name"]
+    assert Enum.all?(name_errors["name"], &is_binary/1)
+
+    assert ConcurrentCatalog.count() == 0
+    assert ConcurrentCatalog.all() == []
+  end
 end
 ```

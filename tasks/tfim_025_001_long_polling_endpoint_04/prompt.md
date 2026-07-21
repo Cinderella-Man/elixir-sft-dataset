@@ -184,11 +184,49 @@ defmodule NotificationPollerTest do
   end
 
   # -------------------------------------------------------
+  # Default timeout when :timeout_ms is not supplied
+  # -------------------------------------------------------
+
+  test "omitting :timeout_ms keeps the connection open far past a short timeout",
+       %{server: server, opts: opts} do
+    default_opts = Keyword.delete(opts, :timeout_ms)
+    user_id = "user:default-timeout"
+    parent = self()
+
+    {pid, ref} =
+      spawn_monitor(fn -> send(parent, {:poll_result, poll(default_opts, user_id)}) end)
+
+    # With no :timeout_ms the documented 30_000ms default applies, so the poll
+    # must still be blocked (no 204 yet) long after any short timeout would fire.
+    refute_receive {:poll_result, _}, 1_500
+
+    # Still subscribed: a notification published this late is delivered as 200.
+    Notifications.publish(server, user_id, %{"late" => true})
+
+    assert_receive {:poll_result, conn}, 2_000
+    assert conn.status == 200
+    assert Jason.decode!(conn.resp_body) == %{"late" => true}
+
+    Process.demonitor(ref, [:flush])
+    Process.exit(pid, :kill)
+  end
+
+  # -------------------------------------------------------
   # Authentication
   # -------------------------------------------------------
 
   test "returns 401 when user_id is not in assigns", %{opts: opts} do
     # TODO
+  end
+
+  test "401 response carries the unauthorized body", %{opts: opts} do
+    conn =
+      :get
+      |> conn("/api/notifications/poll")
+      |> NotificationRouter.call(NotificationRouter.init(opts))
+
+    assert conn.status == 401
+    assert conn.resp_body == "unauthorized"
   end
 
   # -------------------------------------------------------

@@ -480,5 +480,39 @@ defmodule BackoffDLQTest do
     assert e2.error_reason == {:http, 503}
     assert e2.metadata == meta
   end
+
+  test "a server started with :name registers under that name and serves calls by it" do
+    name = :"backoff_dlq_#{System.pid()}_#{System.unique_integer([:positive])}"
+
+    assert {:ok, pid} =
+             BackoffDLQ.start_link(
+               name: name,
+               clock: &Clock.now/0,
+               base_backoff_ms: 1000,
+               max_attempts: 3
+             )
+
+    # the name resolves to the started process
+    assert Process.whereis(name) == pid
+
+    # every public call is usable through the registered name
+    assert {:ok, id} = BackoffDLQ.push(name, "q", :m, :err, %{src: "web"})
+    assert [e] = BackoffDLQ.peek(name, "q", 10)
+    assert e.id == id
+    assert e.status == :pending
+    assert [r] = BackoffDLQ.ready(name, "q", 10)
+    assert r.id == id
+
+    # work done via the name is visible via the pid: same process, same state
+    assert {:error, :boom} = BackoffDLQ.retry(name, "q", id, fn _ -> {:error, :boom} end)
+    assert [e2] = BackoffDLQ.peek(pid, "q", 10)
+    assert e2.retry_count == 1
+    assert e2.next_retry_at == 1000
+
+    Clock.advance(1000)
+    assert :ok = BackoffDLQ.retry(name, "q", id, fn _ -> :ok end)
+    assert BackoffDLQ.peek(name, "q", 10) == []
+    assert {:ok, 0} = BackoffDLQ.purge(name, "q", 0)
+  end
 end
 ```

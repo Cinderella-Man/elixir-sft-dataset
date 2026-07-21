@@ -317,6 +317,53 @@ defmodule DebouncerTest do
     # The fire-and-forget request is still honored once the server runs again.
     assert_receive :busy_ran, 400
   end
+
+  # -------------------------------------------------------
+  # The :name start option
+  # -------------------------------------------------------
+
+  # A registration name that cannot collide with any other test's instance.
+  defp unique_name(prefix) do
+    :"#{prefix}_#{System.pid()}_#{System.unique_integer([:positive])}"
+  end
+
+  test "start_link/1 registers a second instance under a custom :name" do
+    default = Process.whereis(Debouncer)
+    name = unique_name("debouncer_alt")
+
+    # The :name option decides the registration, so this instance coexists with
+    # the default one instead of colliding with it.
+    assert {:ok, alt} = Debouncer.start_link(name: name)
+    assert alt != default
+    assert Process.whereis(name) == alt
+
+    # A duplicate start under that same custom name is what gets rejected.
+    assert {:error, {:already_started, ^alt}} = Debouncer.start_link(name: name)
+
+    # The default registration is untouched by the custom-named instance.
+    assert Process.whereis(Debouncer) == default
+
+    GenServer.stop(alt)
+  end
+
+  test "call/3 targets the default process regardless of another instance's :name" do
+    default = Process.whereis(Debouncer)
+    name = unique_name("debouncer_other")
+    {:ok, other} = Debouncer.start_link(name: name)
+
+    # Scheduling still works while a differently-named instance is running.
+    Debouncer.call(:routed, 20, notify(:ran_while_other_up))
+    assert_receive :ran_while_other_up, 400
+
+    # Work was never routed to the custom-named instance: stopping it leaves
+    # the default process serving calls exactly as before.
+    GenServer.stop(other)
+    refute Process.alive?(other)
+
+    Debouncer.call(:routed, 20, notify(:ran_after_other_down))
+    assert_receive :ran_after_other_down, 400
+    assert Process.whereis(Debouncer) == default
+  end
 end
 ```
 

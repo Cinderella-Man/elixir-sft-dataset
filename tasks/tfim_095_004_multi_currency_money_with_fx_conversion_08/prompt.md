@@ -249,6 +249,20 @@ defmodule MoneyTest do
     assert result.amount == 182
   end
 
+  test "total/3 sums per-element conversions rather than converting the summed amount" do
+    # Each 5 USD rounds to 5 EUR (5 * 1.0 / 1.10 = 4.55 -> 5), so the total is 10.
+    # Summing first and converting once would give 9 (10 * 1.0 / 1.10 = 9.09 -> 9).
+    eur = Money.total([Money.new(5, :USD), Money.new(5, :USD)], :EUR, @rates)
+    assert eur.amount == 10
+    assert eur.currency == :EUR
+
+    # Each 3 USD rounds to 2 GBP (3 * 1.0 / 1.25 = 2.4 -> 2), so the total is 6.
+    # Summing first and converting once would give 7 (9 * 1.0 / 1.25 = 7.2 -> 7).
+    gbp = Money.total([Money.new(3, :USD), Money.new(3, :USD), Money.new(3, :USD)], :GBP, @rates)
+    assert gbp.amount == 6
+    assert gbp.currency == :GBP
+  end
+
   test "total/3 with a single already-target-currency element" do
     result = Money.total([Money.new(55, :GBP)], :GBP, @rates)
     assert result.amount == 55

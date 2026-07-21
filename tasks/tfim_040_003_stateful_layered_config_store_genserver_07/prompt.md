@@ -364,5 +364,23 @@ defmodule ConfigStoreTest do
 
     assert ConfigStore.get(s, [:plugins]) == ["auth"]
   end
+
+  test "locked top-level path absent from the base stays out of the effective config" do
+    s = start(base: %{host: "localhost"}, locked: [[:token]])
+    ConfigStore.put_layer(s, :env, %{token: "pwned", host: "evil.host"})
+
+    # The locked key is absent, not merely nil-valued, while its sibling still changes.
+    assert ConfigStore.get_config(s) == %{host: "evil.host"}
+    assert ConfigStore.get(s, [:token]) == nil
+  end
+
+  test "successive layers cannot introduce a deep locked path the base leaves undefined" do
+    s = start(base: %{db: %{opts: %{ssl: true}}}, locked: [[:db, :opts, :password]])
+    ConfigStore.put_layer(s, :file, %{db: %{opts: %{password: "one", ssl: false}}})
+    ConfigStore.put_layer(s, :env, %{db: %{opts: %{password: "two"}}})
+
+    assert ConfigStore.get_config(s) == %{db: %{opts: %{ssl: false}}}
+    assert ConfigStore.get(s, [:db, :opts, :password]) == nil
+  end
 end
 ```

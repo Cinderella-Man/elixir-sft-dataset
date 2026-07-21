@@ -410,5 +410,120 @@ defmodule SagaTest do
     assert ctx.total == 14
     assert ctx.child.seedy == 2
   end
+
+  test "a fully-succeeded nest three levels deep unwinds every level in reverse" do
+    Process.put(:order, [])
+
+    great =
+      Saga.new()
+      |> Saga.step(:g1, fn _ -> {:ok, 1} end, fn _ ->
+        track(:g1)
+        :ug1
+      end)
+      |> Saga.step(:g2, fn _ -> {:ok, 2} end, fn _ ->
+        track(:g2)
+        :ug2
+      end)
+
+    grand =
+      Saga.new()
+      |> Saga.nest(:great, great)
+      |> Saga.step(:d1, fn _ -> {:ok, 3} end, fn _ ->
+        track(:d1)
+        :ud1
+      end)
+
+    child =
+      Saga.new()
+      |> Saga.step(:c1, fn _ -> {:ok, 4} end, fn _ ->
+        track(:c1)
+        :uc1
+      end)
+      |> Saga.nest(:grand, grand)
+
+    result =
+      Saga.new()
+      |> Saga.nest(:child, child)
+      |> Saga.step(:boom, fn _ -> {:error, :late} end, fn _ -> :ubm end)
+      |> Saga.execute(%{})
+
+    assert {:error, [:boom], :late, comp} = result
+    # each nested entry is itself a keyword list, in reverse order, at every depth
+    assert comp == [child: [grand: [d1: :ud1, great: [g2: :ug2, g1: :ug1]], c1: :uc1]]
+    assert order() == [:d1, :g2, :g1, :c1]
+  end
+
+  test "inner compensations of a fully-succeeded nest see the results completed before failure" do
+    sub =
+      Saga.new()
+      |> Saga.step(:x, fn ctx -> {:ok, ctx.seed + 1} end, fn ctx -> {:x_saw, ctx} end)
+      |> Saga.step(:y, fn ctx -> {:ok, ctx.x * 2} end, fn ctx -> {:y_saw, ctx} end)
+
+    result =
+      Saga.new()
+      |> Saga.step(:top, fn _ -> {:ok, :t} end, fn _ -> :utop end)
+      |> Saga.nest(:child, sub)
+      |> Saga.step(:last, fn _ -> {:error, :late} end, fn _ -> :ul end)
+      |> Saga.execute(%{seed: 1})
+
+    assert {:error, [:last], :late, comp} = result
+    assert [{:child, inner}, {:top, :utop}] = comp
+    assert {:x_saw, x_ctx} = inner[:x]
+    assert {:y_saw, y_ctx} = inner[:y]
+    assert x_ctx.seed == 1
+    assert x_ctx.top == :t
+    assert x_ctx.x == 2
+    assert x_ctx.y == 4
+    assert y_ctx.x == 2
+    assert y_ctx.y == 4
+  end
+
+  test "compensation inside a nest of a fully-succeeded nest sees its own inner results" do
+    grand =
+      Saga.new()
+      |> Saga.step(:g, fn ctx -> {:ok, ctx.top + 1} end, fn ctx -> {:g_saw, ctx} end)
+
+    child =
+      Saga.new()
+      |> Saga.step(:m, fn _ -> {:ok, :mm} end, fn _ -> :um end)
+      |> Saga.nest(:grand, grand)
+
+    result =
+      Saga.new()
+      |> Saga.step(:top, fn _ -> {:ok, 1} end, fn _ -> :ut end)
+      |> Saga.nest(:child, child)
+      |> Saga.step(:last, fn _ -> {:error, :late} end, fn _ -> :ul end)
+      |> Saga.execute(%{})
+
+    assert {:error, [:last], :late, comp} = result
+    assert [{:child, inner}, {:top, :ut}] = comp
+    assert {:g_saw, g_ctx} = inner[:grand][:g]
+    assert g_ctx.top == 1
+    assert g_ctx.m == :mm
+    assert g_ctx.g == 2
+  end
+
+  test "compensations in a failing sub-saga see outer and inner completed results" do
+    sub =
+      Saga.new()
+      |> Saga.step(:x, fn ctx -> {:ok, ctx.base * 2} end, fn ctx -> {:inner_saw, ctx} end)
+      |> Saga.step(:y, fn _ -> {:error, :bad} end, fn _ -> :uy end)
+
+    result =
+      Saga.new()
+      |> Saga.step(:base, fn _ -> {:ok, 5} end, fn ctx -> {:outer_saw, ctx} end)
+      |> Saga.nest(:child, sub)
+      |> Saga.execute(%{seed: :s})
+
+    assert {:error, [:child, :y], :bad, comp} = result
+    assert [{:child, inner}, {:base, outer}] = comp
+    assert {:inner_saw, inner_ctx} = inner[:x]
+    assert inner_ctx.seed == :s
+    assert inner_ctx.base == 5
+    assert inner_ctx.x == 10
+    assert {:outer_saw, outer_ctx} = outer
+    assert outer_ctx.seed == :s
+    assert outer_ctx.base == 5
+  end
 end
 ```

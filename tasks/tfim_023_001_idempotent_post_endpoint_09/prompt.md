@@ -621,5 +621,65 @@ defmodule IdempotentPaymentsTest do
     assert length(IdempotentPayments.get_payments(pid)) == 1
     assert Process.alive?(pid)
   end
+
+  test "automatic sweeps keep recurring on the configured interval" do
+    {:ok, server} =
+      IdempotentPayments.start_link(
+        clock: &Clock.now/0,
+        ttl_ms: 10_000,
+        cleanup_interval_ms: 25
+      )
+
+    # Two independent rounds. Each round caches its own key at t=0, parks the
+    # clock past that key's expiry, and waits for an automatic sweep to purge
+    # it. Round two's key only starts existing after round one's sweep has
+    # already been observed, so a single non-repeating cleanup cannot cover
+    # both rounds: sweeping has to keep happening for the whole test to pass.
+    for round <- 1..2 do
+      key = "auto-recurring-#{round}"
+
+      Clock.set(0)
+      {:ok, cached} = IdempotentPayments.process_payment(server, @valid_params, key)
+      Clock.set(10_001)
+
+      reprocessed = await_swept_key(server, key, cached, 10_001, 1_000)
+      assert reprocessed.id != cached.id
+    end
+
+    # Per round: the originally cached record plus the one reprocessed after
+    # the sweep purged the key.
+    assert length(IdempotentPayments.get_payments(server)) == 4
+    assert Process.alive?(server)
+  end
+
+  # Waits, through the public API only, for an automatic sweep to purge `key`.
+  # Each probe rewinds the injected clock inside the key's TTL window: while
+  # the entry survives the probe is a cache hit that returns the original
+  # response and creates no record, so probing is a no-op. Once a sweep has
+  # removed the entry the very same probe reprocesses into a brand new record,
+  # which is the observable signal that the sweep ran.
+  defp await_swept_key(server, key, cached, parked_at, deadline_ms) do
+    deadline = System.monotonic_time(:millisecond) + deadline_ms
+    poll_for_sweep(server, key, cached, parked_at, deadline)
+  end
+
+  defp poll_for_sweep(server, key, cached, parked_at, deadline) do
+    Clock.set(0)
+    result = IdempotentPayments.process_payment(server, @valid_params, key)
+    Clock.set(parked_at)
+
+    case result do
+      {:ok, ^cached} ->
+        if System.monotonic_time(:millisecond) < deadline do
+          Process.sleep(5)
+          poll_for_sweep(server, key, cached, parked_at, deadline)
+        else
+          flunk("no automatic cleanup sweep purged #{key} before the deadline")
+        end
+
+      {:ok, reprocessed} ->
+        reprocessed
+    end
+  end
 end
 ```

@@ -391,5 +391,44 @@ defmodule BoundedIdempotentPaymentsTest do
     assert c.created_at == 300
     assert BoundedIdempotentPayments.keys_by_recency(srv) == ["b", "c"]
   end
+
+  test "omitted :max_keys retains exactly 1000 keys before evicting the LRU", %{pid: _pid} do
+    {:ok, srv} = BoundedIdempotentPayments.start_link(clock: &Clock.now/0)
+
+    for i <- 1..1000 do
+      {:ok, _} = BoundedIdempotentPayments.process_payment(srv, @valid, "k-#{i}")
+    end
+
+    # nothing evicted yet at exactly the default budget
+    keys = BoundedIdempotentPayments.keys_by_recency(srv)
+    assert length(keys) == 1000
+    assert List.first(keys) == "k-1"
+    assert List.last(keys) == "k-1000"
+
+    # the 1001st brand-new key overflows the default budget -> LRU "k-1" goes
+    {:ok, _} = BoundedIdempotentPayments.process_payment(srv, @valid, "k-1001")
+    keys = BoundedIdempotentPayments.keys_by_recency(srv)
+    assert length(keys) == 1000
+    assert List.first(keys) == "k-2"
+    assert List.last(keys) == "k-1001"
+
+    # "k-1" was evicted -> reprocessed into a fresh record (and evicts "k-2")
+    before = length(BoundedIdempotentPayments.get_payments(srv))
+    {:ok, _} = BoundedIdempotentPayments.process_payment(srv, @valid, "k-1")
+    assert length(BoundedIdempotentPayments.get_payments(srv)) == before + 1
+
+    # a still-retained key is a cache hit -> no new record
+    {:ok, _} = BoundedIdempotentPayments.process_payment(srv, @valid, "k-3")
+    assert length(BoundedIdempotentPayments.get_payments(srv)) == before + 1
+  end
+
+  test "starts with no options and stamps :created_at from the default clock", %{pid: _pid} do
+    {:ok, srv} = BoundedIdempotentPayments.start_link([])
+
+    assert {:ok, resp} = BoundedIdempotentPayments.process_payment(srv, @valid, "d")
+    assert is_integer(resp.created_at)
+    assert resp.status == "completed"
+    assert BoundedIdempotentPayments.keys_by_recency(srv) == ["d"]
+  end
 end
 ```

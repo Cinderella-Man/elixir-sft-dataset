@@ -396,5 +396,48 @@ defmodule LRUCacheTest do
     assert {:ok, 1} = LRUCache.get(name, :a)
     assert LRUCache.size(name) == 1
   end
+
+  # -------------------------------------------------------
+  # Default clock (:clock option omitted)
+  # -------------------------------------------------------
+
+  # Blocks until the system monotonic clock has advanced past its current
+  # reading, so each subsequent cache operation is stamped strictly later
+  # than every operation issued before the call.
+  defp await_monotonic_tick do
+    spin_past(System.monotonic_time())
+  end
+
+  defp spin_past(t) do
+    if System.monotonic_time() > t, do: :ok, else: spin_past(t)
+  end
+
+  test "omitting :clock uses the default monotonic clock for recency ordering" do
+    {:ok, c} = LRUCache.start_link(capacity: 3)
+
+    :ok = LRUCache.put(c, :a, 1)
+    await_monotonic_tick()
+    :ok = LRUCache.put(c, :b, 2)
+    await_monotonic_tick()
+    :ok = LRUCache.put(c, :c, 3)
+    await_monotonic_tick()
+
+    # Writes alone order the keys most-recently-used first.
+    assert [:c, :b, :a] = LRUCache.keys_by_recency(c)
+
+    # A hit refreshes :a, making it MRU and leaving :b as the oldest entry.
+    assert {:ok, 1} = LRUCache.get(c, :a)
+    await_monotonic_tick()
+    assert [:a, :c, :b] = LRUCache.keys_by_recency(c)
+
+    # Inserting a fourth key at capacity evicts exactly the oldest entry.
+    :ok = LRUCache.put(c, :d, 4)
+
+    assert :miss = LRUCache.get(c, :b)
+    assert {:ok, 1} = LRUCache.get(c, :a)
+    assert {:ok, 3} = LRUCache.get(c, :c)
+    assert {:ok, 4} = LRUCache.get(c, :d)
+    assert LRUCache.size(c) == 3
+  end
 end
 ```

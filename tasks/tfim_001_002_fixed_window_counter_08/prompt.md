@@ -359,6 +359,85 @@ defmodule FixedWindowLimiterTest do
     assert Process.alive?(fw)
   end
 
+  test "cleanup discards the counter of a window that has fully ended", %{fw: fw} do
+    # Exhaust window 0 (t=0..99) for this key.
+    assert {:ok, 0} = FixedWindowLimiter.check(fw, "gone", 1, 100)
+    assert {:error, :rate_limited, _} = FixedWindowLimiter.check(fw, "gone", 1, 100)
+
+    # At t=200 window 0 has fully ended (its end, t=100, is before now), so the
+    # sweep must drop that counter entry.
+    Clock.set(200)
+    send(fw, :cleanup)
+
+    # Mailbox order: this reply proves the sweep above already ran, so the
+    # clock cannot be moved before the sweep observes t=200.
+    assert {:ok, 0} = FixedWindowLimiter.check(fw, "flush", 1, 100)
+
+    # Observing a time that maps back onto window 0: the entry is gone, so the
+    # counter starts from zero. Had the sweep left it in place, the stale
+    # saturated counter would still reject this request.
+    Clock.set(0)
+    assert {:ok, 0} = FixedWindowLimiter.check(fw, "gone", 1, 100)
+  end
+
+  test "cleanup preserves counters whose window has not yet ended", %{fw: fw} do
+    # One of two allowed requests in window 0 (t=0..999).
+    assert {:ok, 1} = FixedWindowLimiter.check(fw, "live", 2, 1_000)
+
+    # t=50 is still inside window 0, which ends at t=1000, so the sweep removes
+    # nothing: only counters whose window has fully ended are dropped.
+    Clock.set(50)
+    send(fw, :cleanup)
+
+    # The surviving counter still stands at 1, leaving exactly one request.
+    assert {:ok, 0} = FixedWindowLimiter.check(fw, "live", 2, 1_000)
+    assert {:error, :rate_limited, _} = FixedWindowLimiter.check(fw, "live", 2, 1_000)
+  end
+
+  test "periodic sweep runs automatically on the configured interval" do
+    interval_ms = 25
+
+    {:ok, auto} =
+      FixedWindowLimiter.start_link(
+        clock: &Clock.now/0,
+        cleanup_interval_ms: interval_ms
+      )
+
+    # Arm the probe: window 0 (t=0..99) is exhausted for this key.
+    Clock.set(0)
+    assert {:ok, 0} = FixedWindowLimiter.check(auto, "probe", 1, 100)
+
+    # From t=200 onwards window 0 has fully ended, so a sweep that nobody
+    # triggers by hand must eventually discard the probe's counter.
+    Clock.set(200)
+
+    # Generous bound: 80 intervals of observation before giving up.
+    deadline = System.monotonic_time(:millisecond) + interval_ms * 80
+    assert :pruned = await_probe_pruned(auto, deadline)
+  end
+
+  # Polls the probe key until an automatic sweep has removed its expired
+  # counter, or the deadline passes. Each probe reads a time inside the
+  # already-ended window 0: a rejection means the stale counter is still
+  # tracked, `{:ok, 0}` means it was swept away (and re-arms the probe).
+  defp await_probe_pruned(server, deadline) do
+    Clock.set(0)
+    result = FixedWindowLimiter.check(server, "probe", 1, 100)
+    Clock.set(200)
+
+    cond do
+      match?({:ok, 0}, result) ->
+        :pruned
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        :timed_out
+
+      true ->
+        Process.sleep(5)
+        await_probe_pruned(server, deadline)
+    end
+  end
+
   test "registers under :name and serves calls via the registered name" do
     name = :fixed_window_limiter_named_test
 

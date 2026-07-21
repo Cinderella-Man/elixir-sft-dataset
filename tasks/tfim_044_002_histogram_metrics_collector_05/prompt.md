@@ -275,5 +275,40 @@ defmodule MetricsTest do
     assert summary.sum == 700
     assert summary.buckets[10] == 100
   end
+
+  # -------------------------------------------------------
+  # process registration (:name option)
+  # -------------------------------------------------------
+
+  defp unique_name do
+    :"metrics_#{System.pid()}_#{System.unique_integer([:positive])}"
+  end
+
+  test "start_link without :name registers the process under the module name" do
+    assert is_pid(Process.whereis(Metrics))
+  end
+
+  test "start_link registers the process under a custom :name" do
+    stop_supervised(Metrics)
+    name = unique_name()
+    pid = start_supervised!({Metrics, name: name})
+
+    assert Process.whereis(name) == pid
+    assert :ok = Metrics.observe(:named, 42)
+    assert Metrics.get(:named).count == 1
+  end
+
+  test "a custom :name is not mistaken for bucket configuration" do
+    stop_supervised(Metrics)
+    name = unique_name()
+    start_supervised!({Metrics, name: name, buckets: [1, 2, 3]})
+
+    Metrics.observe(:named_buckets, 2)
+    b = Metrics.get(:named_buckets).buckets
+    assert b[1] == 0
+    assert b[2] == 1
+    assert b[3] == 1
+    assert b[:infinity] == 1
+  end
 end
 ```

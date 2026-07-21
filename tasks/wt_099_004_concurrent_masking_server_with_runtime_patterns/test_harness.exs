@@ -54,6 +54,35 @@ defmodule MaskingServerTest do
     assert MaskingServer.mask_string(s, "4111-1111-1111-1234") == "****-****-****-1234"
   end
 
+  # Single spaces are a documented separator, and separators survive masking.
+  test "masks a space-separated credit card keeping the spaces", %{s: s} do
+    assert MaskingServer.mask_string(s, "4111 1111 1111 1234") == "**** **** **** 1234"
+  end
+
+  # Separators are optional: a bare digit run is still a credit card.
+  test "masks an unseparated credit card", %{s: s} do
+    assert MaskingServer.mask_string(s, "4111111111111234") == "************1234"
+  end
+
+  # The documented length range runs from 13 through 19 digits, and only the
+  # final four digits ever survive.
+  test "masks cards at the shortest and longest documented lengths", %{s: s} do
+    assert MaskingServer.mask_string(s, "4111111111234") == "*********1234"
+    assert MaskingServer.mask_string(s, "1234567890123456789") == "***************6789"
+  end
+
+  # Irregular grouping is preserved verbatim while every digit but the last
+  # four is starred.
+  test "masks a 15-digit card with uneven hyphen groups", %{s: s} do
+    assert MaskingServer.mask_string(s, "3782-822463-10005") == "****-******-*0005"
+  end
+
+  # Card scrubbing applies to string values reached through mask/2 as well.
+  test "masks a space-separated card inside a map value", %{s: s} do
+    result = MaskingServer.mask(s, %{note: "card 4111 1111 1111 1234 on file"})
+    assert result.note == "card **** **** **** 1234 on file"
+  end
+
   test "masks an SSN", %{s: s} do
     result = MaskingServer.mask_string(s, "SSN: 123-45-6789")
     assert result =~ "***-**-****"
@@ -80,6 +109,13 @@ defmodule MaskingServerTest do
     assert MaskingServer.mask_string(s, "4111-1111-1111-1234") == "****-****-****-1234"
   end
 
+  # Built-in card masking runs before custom patterns, so a later pattern sees
+  # the already-starred card rather than the raw digits.
+  test "space-separated cards survive a custom pattern being registered", %{s: s} do
+    MaskingServer.add_pattern(s, ~r/\bnow\b/, "[WHEN]")
+    assert MaskingServer.mask_string(s, "4111 1111 1111 1234 now") == "**** **** **** 1234 [WHEN]"
+  end
+
   # -------------------------------------------------------
   # stats/1
   # -------------------------------------------------------
@@ -92,6 +128,14 @@ defmodule MaskingServerTest do
 
   test "stats counts patterns_applied across string scrubs", %{s: s} do
     MaskingServer.mask_string(s, "a@b.com and 123-45-6789")
+    assert MaskingServer.stats(s).patterns_applied == 2
+  end
+
+  # Each card match counts once toward patterns_applied, whatever its
+  # separators or length.
+  test "stats counts one pattern per card regardless of separator style", %{s: s} do
+    MaskingServer.mask_string(s, "4111 1111 1111 1234")
+    MaskingServer.mask_string(s, "4111111111234")
     assert MaskingServer.stats(s).patterns_applied == 2
   end
 

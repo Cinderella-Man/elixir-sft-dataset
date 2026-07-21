@@ -710,6 +710,20 @@ defmodule CancellablePoolTest do
     assert {:error, _} = CancellablePool.await(pool, bogus_ref, 200)
   end
 
+  # An unknown ref is not resolved early: await has to block for the whole
+  # timeout window and then report exactly :timeout, never an immediate
+  # lookup failure such as :not_found.
+  test "await on an unknown ref blocks the full timeout then reports timeout",
+       %{pool: pool} do
+    bogus_ref = make_ref()
+    started = System.monotonic_time(:millisecond)
+
+    assert {:error, :timeout} = CancellablePool.await(pool, bogus_ref, 400)
+
+    elapsed = System.monotonic_time(:millisecond) - started
+    assert elapsed >= 350
+  end
+
   test "cancelling a queued task prevents that task from ever executing", %{pool: pool} do
     gate = self()
     me = self()

@@ -172,7 +172,7 @@ defmodule ResumableJsonStreamerTest do
             elems
             |> Enum.with_index()
             |> Enum.map_join("\n", fn {enc, idx} ->
-              if idx == last, do: enc, else: enc <> ","
+              if idx == last, do: enc <> ",", else: enc
             end)
 
           "[\n" <> inner <> "\n]\n"
@@ -438,6 +438,50 @@ defmodule ResumableJsonStreamerTest do
     assert stats.errors == 0
     assert stats.aborted == false
     assert Enum.map(Collector.items(c), & &1["id"]) == [1, 2, 3]
+  end
+
+  # -------------------------------------------------------
+  # Numeric contracts between :elapsed_ms and :throughput
+  # -------------------------------------------------------
+
+  test "throughput is items per second computed from elapsed_ms", %{path: path} do
+    write_array(path, for(i <- 1..20_000, do: valid(%{"id" => i})))
+
+    assert {:ok, stats} = ResumableJsonStreamer.process(path, fn _item -> :ok end)
+
+    assert stats.processed == 20_000
+    assert stats.elapsed_ms > 0
+
+    # throughput == processed / (elapsed_ms / 1000): items per SECOND, so a
+    # per-millisecond rate lands 1000x below this value.
+    expected = stats.processed / (stats.elapsed_ms / 1000)
+    assert_in_delta stats.throughput, expected, expected * 0.001
+  end
+
+  test "elapsed_ms reports the run's wall clock in milliseconds", %{path: path} do
+    write_array(path, for(i <- 1..20_000, do: valid(%{"id" => i})))
+
+    outer_start = System.monotonic_time(:microsecond)
+    assert {:ok, stats} = ResumableJsonStreamer.process(path, fn _item -> :ok end)
+    outer_ms = (System.monotonic_time(:microsecond) - outer_start) / 1000
+
+    assert stats.processed == 20_000
+
+    # The run's own measurement sits inside the window observed by the caller,
+    # so it cannot exceed it; microsecond-scaled reporting overshoots by ~1000x
+    # and second-scaled reporting undershoots by the same factor.
+    assert stats.elapsed_ms <= outer_ms + 50
+    assert stats.elapsed_ms >= outer_ms / 10
+  end
+
+  test "throughput is zero when nothing is processed", %{path: path, collector: c} do
+    write_array(path, for(i <- 1..5, do: valid(%{"id" => i})))
+
+    assert {:ok, stats} =
+             ResumableJsonStreamer.process(path, Collector.handler(c), resume_from: 5)
+
+    assert stats.processed == 0
+    assert stats.throughput == 0.0
   end
 end
 ```
