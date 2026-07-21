@@ -300,7 +300,9 @@ defmodule ProgressiveRecoveryCircuitBreaker do
       case func.() do
         {:ok, _value} = ok -> {:ok, ok}
         {:error, _reason} = err -> {:error, err}
-        other -> {:error, {:error, {:unexpected_return, other}}}
+        # Anything that is not {:ok, _} counts as a failure for the state
+        # bookkeeping, but the caller still sees exactly what func returned.
+        other -> {:error, other}
       end
     rescue
       exception -> {:error, {:error, exception}}

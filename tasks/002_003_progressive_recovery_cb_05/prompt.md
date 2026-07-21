@@ -58,6 +58,7 @@ defmodule ProgressiveRecoveryCircuitBreaker do
     GenServer.start_link(__MODULE__, opts, name: name)
   end
 
+  @doc "Runs `func`; returns its result or `{:error, :circuit_open}` (progressive recovery)."
   @spec call(GenServer.server(), (-> any())) :: any()
   def call(name, func) when is_function(func, 0) do
     GenServer.call(name, {:call, func})
@@ -244,7 +245,9 @@ defmodule ProgressiveRecoveryCircuitBreaker do
       case func.() do
         {:ok, _value} = ok -> {:ok, ok}
         {:error, _reason} = err -> {:error, err}
-        other -> {:error, {:error, {:unexpected_return, other}}}
+        # Anything that is not {:ok, _} counts as a failure for the state
+        # bookkeeping, but the caller still sees exactly what func returned.
+        other -> {:error, other}
       end
     rescue
       exception -> {:error, {:error, exception}}

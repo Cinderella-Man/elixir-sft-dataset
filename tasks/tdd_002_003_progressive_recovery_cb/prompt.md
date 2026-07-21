@@ -478,6 +478,12 @@ defmodule ProgressiveRecoveryCircuitBreakerTest do
     ProgressiveRecoveryCircuitBreaker.call(cb, err_fn())
     assert :open = ProgressiveRecoveryCircuitBreaker.state(cb)
   end
+
+  test "an unexpected return shape is passed through to the caller verbatim", %{cb: cb} do
+    # It still counts as a failure for the breaker's bookkeeping, but the
+    # reply contract holds: the caller sees exactly what func returned.
+    assert :not_a_result = ProgressiveRecoveryCircuitBreaker.call(cb, fn -> :not_a_result end)
+  end
 end
 ```
 

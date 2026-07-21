@@ -259,7 +259,9 @@ defmodule ProgressiveRecoveryCircuitBreaker do
       case func.() do
         {:ok, _value} = ok -> {:ok, ok}
         {:error, _reason} = err -> {:error, err}
-        other -> {:error, {:error, {:unexpected_return, other}}}
+        # Anything that is not {:ok, _} counts as a failure for the state
+        # bookkeeping, but the caller still sees exactly what func returned.
+        other -> {:error, other}
       end
     rescue
       exception -> {:error, {:error, exception}}
@@ -739,6 +741,12 @@ defmodule ProgressiveRecoveryCircuitBreakerTest do
 
   test "re-probe after reopening from a later stage restarts recovery at stage 0", %{cb: cb} do
     # TODO
+  end
+
+  test "an unexpected return shape is passed through to the caller verbatim", %{cb: cb} do
+    # It still counts as a failure for the breaker's bookkeeping, but the
+    # reply contract holds: the caller sees exactly what func returned.
+    assert :not_a_result = ProgressiveRecoveryCircuitBreaker.call(cb, fn -> :not_a_result end)
   end
 end
 ```
