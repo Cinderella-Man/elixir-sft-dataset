@@ -33,12 +33,14 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
 - **CPU lane:** G2 re-measure riding (`validate --semantic-mutants`,
   pid in `logs/semantic_mutants_full.pid`, sha-resume; rebuilds the
   post-campaign tail for activity 5; 15-min monitor).
-- **In-session:** docs/19 HIGHS (8/12 done: 035_001, 101_001,
-  074_001, 013_003, 040_003, 015_004 fixed; 031_002, 095_003
-  refuted-stale). Remaining highs: 019_004 (in progress), 040_001,
-  061_001, 045_002. G4 pre-classification DONE:
-  `logs/sleep_audit_worklist.jsonl` (179 harnesses, 142 bare-wait
-  audit-first candidates).
+- **In-session:** docs/19 HIGHS 11/12 done (035_001, 101_001,
+  074_001, 013_003, 040_003, 015_004, 019_004, 061_001 FIXED;
+  031_002, 095_003, 040_001 refuted-stale). LAST high 045_002:
+  addressing-mechanics candidate prompt (persistent_term routing
+  documented from the gold) blind-verifying now. PLUS the mechanical
+  staleness sweep: 5 more mediums refuted (evidence absent — prior-
+  campaign fixes); live medium worklist = 34 findings. G4
+  pre-classification DONE: `logs/sleep_audit_worklist.jsonl`.
 - **Deliberately QUEUED (same-lane contention, not idleness):** G9
   probe + G5 sweep + rewrite_reachins all need the LLM lane — they
   queue behind rubric so the backbone finishes tonight; G8 gated by
@@ -46,9 +48,10 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
 - CLOSED tonight: G1a (dormant 25→0), G7 (full accounting), all 3
   stragglers, CI adapt-drift (family-wide resync rule memorized).
 
-2. **[IN PROGRESS] Campaign follow-ups. MACHINE PHASE FINAL:
-   159/182 families applied (87%), 23 open — all with human-shaped
-   reasons.** (Passes 1-3 done; commit cc50ffd51.)
+2. **[DONE 2026-07-22] Campaign follow-ups — every hand queue
+   emptied** (blind-ADDED reads, solver-weak reads incl. the judge
+   overturns, stragglers, DORMANT? reads, prompt-fix batch, S6/keep
+   resolutions; details in docs/15-bound commits).
    - Mini-pass DONE: all 3 stragglers rejected with their SAME
      systematic reasons → hand queue (098_004 mold bitstring-pin bug,
      100_003 max_turns, 100_004 solver no-compile).
@@ -73,10 +76,6 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
      098_004 rescreened GREEN first try; the old 007_002/110_002
      packets were MOOT (improvements already in the current prompts).
      The 9 keep/hard families seed G9's probe set.
-   - **[ ] 005_003 prompt-fix** (rescreen judge: NOT ENTAILED — the
-     current prompt under-specifies its own pre-existing topic-drop
-     test; verify the judge's reading by hand, then prompt sentence +
-     re-screen).
    - **DORMANT? hand-reads: 8/8 DONE, all FINE** (4 observe via
      assert_receive; 2 observe positionally; adapt_006_002 +
      adapt_023_004 specs explicitly FORBID timers — projection
@@ -88,23 +87,6 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
      G1a tail: enumerate the lint's 25 CONFIRMED dirs** (derivatives +
      never-applied roots; no campaign-applied root can be dormant —
      the S9 gate proved each apply).
-   - **[ ] 8 solver-weak repeaters → hand-read** (005_003, 007_002,
-     013_003, 020_004, 031_001, 032_001, 041_004, 074_002): repeated
-     solver failures on PRE-EXISTING tests — decide hard-task
-     (document, feeds G9 difficulty metadata) vs a genuine trap.
-     **Plug.Parsers hypothesis REFUTED by A/B experiment 2026-07-21**
-     (gold ± `Plug.Parsers [:json]` both 31/31 green — Parsers no-ops
-     on Plug.Test's pre-fetched map-posts; no wiring trap exists).
-     018_001 + 019_001 dispositioned: hard multifile Phoenix families,
-     solver variance — they seed the G9 3-solve probe set (activity
-     11). NOTE for reads: reject details truncated failing names at 4
-     (now fixed to carry counts) — do not assume only 4 tests failed.
-   - **[ ] 3 systematic stragglers → hand-fix** (098_004 write the
-     harness fix by hand; 100_003/100_004 investigate why this
-     family's content blows the solver).
-   - **[ ] Hand-read the 8 DORMANT? timer dirs** (015-family +
-     adapt_107_004 likely fine; adapt_023_004 + adapt_006_002 likely
-     real).
 
 3. **[ ] Hand-triage docs/19 — 63 gold/prompt-defect findings (11
    high, 52 families).** Top-down, one family = one commit + full
