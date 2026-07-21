@@ -33,7 +33,7 @@ defmodule ConcurrentCatalog do
   @spec start_link(keyword()) :: Agent.on_start()
   def start_link(_ \\ []) do
     Agent.start_link(
-      fn -> %{items: %{}, next_id: 1, running: 0, peak: 0} end,
+      fn -> %{items: %{}, next_id: 1, running_pids: MapSet.new(), peak: 0} end,
       name: __MODULE__
     )
   end
@@ -67,6 +67,7 @@ defmodule ConcurrentCatalog do
   `opts[:timeout_ms]` (default 1000). Returns a list of index-aware result tuples.
   """
   @spec bulk_create([map()], keyword()) :: [result()]
+
   def bulk_create(list, opts \\ []) do
     # TODO
   end
@@ -140,17 +141,32 @@ defmodule ConcurrentCatalog do
     end)
   end
 
+  # Tracking must survive `on_timeout: :kill_task`: a brutally killed task
+  # never reaches its `after track_end()`, so a plain counter leaks upward and
+  # the reported peak could exceed `max_concurrency`. Tracking LIVE pids and
+  # pruning dead ones before each count keeps the high-water mark honest.
   @spec track_start() :: :ok
   defp track_start do
+    caller = self()
+
     Agent.update(__MODULE__, fn st ->
-      running = st.running + 1
-      %{st | running: running, peak: max(st.peak, running)}
+      pids =
+        st.running_pids
+        |> Enum.filter(&Process.alive?/1)
+        |> MapSet.new()
+        |> MapSet.put(caller)
+
+      %{st | running_pids: pids, peak: max(st.peak, MapSet.size(pids))}
     end)
   end
 
   @spec track_end() :: :ok
   defp track_end do
-    Agent.update(__MODULE__, fn st -> %{st | running: st.running - 1} end)
+    caller = self()
+
+    Agent.update(__MODULE__, fn st ->
+      %{st | running_pids: MapSet.delete(st.running_pids, caller)}
+    end)
   end
 end
 ```

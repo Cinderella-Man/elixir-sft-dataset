@@ -27,7 +27,7 @@ defmodule ConcurrentCatalog do
   @spec start_link(keyword()) :: Agent.on_start()
   def start_link(_ \\ []) do
     Agent.start_link(
-      fn -> %{items: %{}, next_id: 1, running: 0, peak: 0} end,
+      fn -> %{items: %{}, next_id: 1, running_pids: MapSet.new(), peak: 0} end,
       name: __MODULE__
     )
   end
@@ -150,14 +150,17 @@ defmodule ConcurrentCatalog do
     end)
   end
 
-  @spec track_start() :: :ok
   defp track_start do
     # TODO
   end
 
   @spec track_end() :: :ok
   defp track_end do
-    Agent.update(__MODULE__, fn st -> %{st | running: st.running - 1} end)
+    caller = self()
+
+    Agent.update(__MODULE__, fn st ->
+      %{st | running_pids: MapSet.delete(st.running_pids, caller)}
+    end)
   end
 end
 ```
