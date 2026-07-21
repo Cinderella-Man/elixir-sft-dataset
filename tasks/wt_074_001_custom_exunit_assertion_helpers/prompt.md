@@ -214,10 +214,11 @@ defmodule AssertHelpers do
   """
   defmacro assert_eventually(func, timeout_ms \\ 1_000, interval_ms \\ 50) do
     quote bind_quoted: [func: func, timeout_ms: timeout_ms, interval_ms: interval_ms] do
-      deadline = System.monotonic_time(:millisecond) + timeout_ms
+      started_at = System.monotonic_time(:millisecond)
+      deadline = started_at + timeout_ms
 
       result =
-        AssertHelpers.__poll__(func, deadline, interval_ms, _last_value = nil)
+        AssertHelpers.__poll__(func, deadline, started_at, interval_ms, _last_value = nil)
 
       case result do
         {:ok, _value} ->
@@ -241,9 +242,9 @@ defmodule AssertHelpers do
   # Public only so the macro-generated `quote` block can call it from any
   # module. Not intended for direct use.
   @doc false
-  @spec __poll__((-> term()), integer(), non_neg_integer(), term()) ::
+  @spec __poll__((-> term()), integer(), integer(), non_neg_integer(), term()) ::
           {:ok, term()} | {:error, term(), integer()}
-  def __poll__(func, deadline, interval_ms, _last_value) do
+  def __poll__(func, deadline, started_at, interval_ms, _last_value) do
     value = func.()
     now = System.monotonic_time(:millisecond)
 
@@ -257,12 +258,11 @@ defmodule AssertHelpers do
         {:ok, value}
 
       now >= deadline ->
-        elapsed = interval_ms + (now - (deadline - interval_ms))
-        {:error, value, max(elapsed, 0)}
+        {:error, value, now - started_at}
 
       true ->
         Process.sleep(interval_ms)
-        __poll__(func, deadline, interval_ms, value)
+        __poll__(func, deadline, started_at, interval_ms, value)
     end
   end
 end
