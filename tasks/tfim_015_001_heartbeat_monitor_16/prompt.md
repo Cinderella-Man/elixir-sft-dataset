@@ -806,5 +806,92 @@ defmodule MonitorTest do
 
     refute_receive {:checked, "single_chain"}, 600
   end
+
+  # -------------------------------------------------------
+  # Sub-threshold failures leave the status untouched
+  # -------------------------------------------------------
+
+  test "sub-threshold failures leave a never-checked service exactly :pending", %{mon: mon} do
+    CheckFn.set_result("quiet", {:error, :nope})
+    Monitor.register(mon, "quiet", CheckFn.build("quiet"), 5_000, 3)
+
+    # First failure: the counter moves, the status must not — a service that
+    # has never had a successful check is still :pending.
+    Clock.advance(5_000)
+    trigger_check(mon, "quiet")
+
+    assert {:ok, %{status: :pending, consecutive_failures: 1, last_check_at: 5_000}} =
+             Monitor.status(mon, "quiet")
+
+    # Second failure, still below max_failures: unchanged again.
+    Clock.advance(5_000)
+    trigger_check(mon, "quiet")
+
+    assert {:ok, %{status: :pending, consecutive_failures: 2}} =
+             Monitor.status(mon, "quiet")
+
+    # Only reaching the threshold changes the status.
+    Clock.advance(5_000)
+    trigger_check(mon, "quiet")
+
+    assert {:ok, %{status: :down, consecutive_failures: 3}} =
+             Monitor.status(mon, "quiet")
+  end
+
+  test "sub-threshold failures leave an already :up service exactly :up", %{mon: mon} do
+    CheckFn.set_result("healthy", :ok)
+    Monitor.register(mon, "healthy", CheckFn.build("healthy"), 5_000, 3)
+
+    Clock.advance(5_000)
+    trigger_check(mon, "healthy")
+    assert {:ok, %{status: :up}} = Monitor.status(mon, "healthy")
+
+    CheckFn.set_result("healthy", {:error, :blip})
+
+    Clock.advance(5_000)
+    trigger_check(mon, "healthy")
+
+    assert {:ok, %{status: :up, consecutive_failures: 1}} =
+             Monitor.status(mon, "healthy")
+
+    Clock.advance(5_000)
+    trigger_check(mon, "healthy")
+
+    assert {:ok, %{status: :up, consecutive_failures: 2}} =
+             Monitor.status(mon, "healthy")
+  end
+
+  # -------------------------------------------------------
+  # :notify defaults to no notification
+  # -------------------------------------------------------
+
+  test "a monitor started without :notify survives a down-transition", %{mon: _mon} do
+    {:ok, silent} = Monitor.start_link(clock: &Clock.now/0)
+
+    CheckFn.set_result("silent", {:error, :unreachable})
+    assert :ok = Monitor.register(silent, "silent", CheckFn.build("silent"), 5_000)
+
+    # Crossing the threshold with no :notify configured must simply skip the
+    # notification instead of crashing the server.
+    for _ <- 1..3 do
+      Clock.advance(5_000)
+      trigger_check(silent, "silent")
+    end
+
+    assert {:ok, %{status: :down, consecutive_failures: 3}} =
+             Monitor.status(silent, "silent")
+
+    assert Notifications.count() == 0
+
+    # The server is still alive and serving calls after the transition, and
+    # keeps counting further failures without notifying.
+    Clock.advance(5_000)
+    trigger_check(silent, "silent")
+
+    assert {:ok, %{status: :down, consecutive_failures: 4}} =
+             Monitor.status(silent, "silent")
+
+    assert Notifications.count() == 0
+  end
 end
 ```

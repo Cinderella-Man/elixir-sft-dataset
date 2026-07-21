@@ -27,6 +27,22 @@ defmodule CoalescingPaymentsTest do
     def count, do: Agent.get(__MODULE__, & &1)
   end
 
+  # A clock that reports a frozen time and counts how many times it was read.
+  # Since every TTL comparison must go through the injected clock, a read that
+  # happens while nobody is calling the server can only come from the server's
+  # own periodic cleanup.
+  defmodule TickClock do
+    use Agent
+
+    def start_link(_ \\ nil), do: Agent.start_link(fn -> {0, 0} end, name: __MODULE__)
+
+    def now do
+      Agent.get_and_update(__MODULE__, fn {time, reads} -> {time, {time, reads + 1}} end)
+    end
+
+    def reads, do: Agent.get(__MODULE__, fn {_time, reads} -> reads end)
+  end
+
   @valid %{amount: 5000, currency: "USD", recipient: "merchant_42"}
 
   setup do
@@ -341,6 +357,96 @@ defmodule CoalescingPaymentsTest do
     assert r1.id == "pay_1"
     assert r2.id == "pay_2"
     assert Enum.map(CoalescingPayments.get_payments(pid), & &1.id) == ["pay_1", "pay_2"]
+  end
+
+  test "in_flight_count counts nil-key requests still awaiting their worker" do
+    test_pid = self()
+
+    processor = fn _params ->
+      send(test_pid, {:worker, self()})
+
+      receive do
+        :release -> :ok
+      end
+    end
+
+    {:ok, pid} =
+      CoalescingPayments.start_link(
+        clock: &Clock.now/0,
+        ttl_ms: 10_000,
+        cleanup_interval_ms: :infinity,
+        processor: processor
+      )
+
+    for _ <- 1..2 do
+      spawn(fn ->
+        send(test_pid, {:res, CoalescingPayments.process_payment(pid, @valid)})
+      end)
+    end
+
+    assert_receive {:worker, first_worker}, 2000
+    assert_receive {:worker, second_worker}, 2000
+
+    # Both requests carry no idempotency key, so nothing is pending under a key:
+    # the count has to include nil-key requests awaiting their worker.
+    assert CoalescingPayments.in_flight_count(pid) == 2
+
+    send(first_worker, :release)
+    send(second_worker, :release)
+
+    assert_receive {:res, {:ok, _}}, 2000
+    assert_receive {:res, {:ok, _}}, 2000
+
+    assert CoalescingPayments.in_flight_count(pid) == 0
+    assert length(CoalescingPayments.get_payments(pid)) == 2
+  end
+
+  test "the server fires cleanup itself, repeatedly, on the configured interval" do
+    start_supervised!({TickClock, nil})
+
+    {:ok, pid} =
+      CoalescingPayments.start_link(
+        clock: &TickClock.now/0,
+        ttl_ms: 60_000,
+        cleanup_interval_ms: 25,
+        processor: fn _params -> :ok end
+      )
+
+    # One live (unexpired) completed entry: every cleanup pass has to compare its
+    # expiry against the current clock, and every such comparison goes through
+    # the injected clock function.
+    assert {:ok, _} = CoalescingPayments.process_payment(pid, @valid, "kept")
+
+    # From here on the test issues no calls, so any further clock read is the
+    # server's own timer firing. Two rounds show the timer is re-armed.
+    baseline = TickClock.reads()
+    await_clock_read_after(baseline, 2000)
+    after_first = TickClock.reads()
+    await_clock_read_after(after_first, 2000)
+
+    # The server kept serving across the automatic firings.
+    assert Process.alive?(pid)
+    assert {:ok, cached} = CoalescingPayments.process_payment(pid, @valid, "kept")
+    assert cached.id == "pay_1"
+    assert length(CoalescingPayments.get_payments(pid)) == 1
+  end
+
+  defp await_clock_read_after(count, timeout_ms) do
+    poll_clock_reads(count, System.monotonic_time(:millisecond) + timeout_ms)
+  end
+
+  defp poll_clock_reads(count, deadline) do
+    cond do
+      TickClock.reads() > count ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        flunk("the server never read the clock on its own: no automatic cleanup fired")
+
+      true ->
+        Process.sleep(5)
+        poll_clock_reads(count, deadline)
+    end
   end
 end
 ```

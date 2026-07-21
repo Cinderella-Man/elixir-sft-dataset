@@ -97,6 +97,29 @@ defmodule MutableDAGTest do
     assert {:error, :vertex_not_found} = MutableDAG.add_edge(dag, :a, :ghost)
   end
 
+  test "missing source vertex is rejected with the same error tuple" do
+    dag = MutableDAG.new() |> MutableDAG.add_vertex(:a)
+    assert {:error, :vertex_not_found} = MutableDAG.add_edge(dag, :ghost, :a)
+  end
+
+  test "missing source vertex is rejected in a populated graph" do
+    dag = build([:a, :b, :c], [{:a, :b}, {:b, :c}])
+    assert {:error, :vertex_not_found} = MutableDAG.add_edge(dag, :ghost, :c)
+    assert {:error, :vertex_not_found} = MutableDAG.add_edge(dag, :ghost, :a)
+
+    assert Enum.sort(MutableDAG.successors(dag, :a)) == [:b]
+    assert Enum.sort(MutableDAG.predecessors(dag, :c)) == [:b]
+    assert {:ok, [[:a], [:b], [:c]]} = MutableDAG.topological_layers(dag)
+  end
+
+  test "edge whose endpoints are both unknown is rejected" do
+    dag = build([:a, :b], [{:a, :b}])
+    assert {:error, :vertex_not_found} = MutableDAG.add_edge(dag, :ghost, :phantom)
+
+    {:ok, order} = MutableDAG.topological_sort(dag)
+    assert Enum.sort(order) == [:a, :b]
+  end
+
   # -------------------------------------------------------
   # Parallel layers
   # -------------------------------------------------------
@@ -180,5 +203,14 @@ defmodule MutableDAGTest do
     assert MutableDAG.successors(dag, :a) == []
     assert MutableDAG.predecessors(dag, :c) == []
     assert {:ok, [[:a, :b, :c]]} = MutableDAG.topological_layers(dag)
+  end
+
+  test "an edge from a removed vertex is rejected as a missing vertex" do
+    dag = build([:a, :b, :c], [{:a, :b}, {:b, :c}])
+    dag = MutableDAG.remove_vertex(dag, :b)
+
+    assert {:error, :vertex_not_found} = MutableDAG.add_edge(dag, :b, :c)
+    assert {:error, :vertex_not_found} = MutableDAG.add_edge(dag, :a, :b)
+    assert {:ok, _dag} = MutableDAG.add_edge(dag, :a, :c)
   end
 end

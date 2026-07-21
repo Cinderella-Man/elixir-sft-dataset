@@ -453,5 +453,35 @@ defmodule WebhookReceiverTest do
   test "POST to an unknown path returns 404", %{opts: opts} do
     # TODO
   end
+
+  # A non-POST method on the webhook path is a route miss like any other:
+  # the documented status is 404 exactly, never a method-specific 405.
+  test "non-POST methods on the webhook path return exactly 404, not 405", %{opts: opts} do
+    for method <- [:get, :put, :delete] do
+      conn = do_request(opts, method, "/api/webhooks/stripe", "")
+      assert conn.status == 404
+    end
+  end
+
+  # Route misses answer with a plain-text body, so the body must not be a
+  # JSON object and the response must not be advertised as JSON.
+  test "route misses respond with a plain-text body rather than JSON", %{opts: opts} do
+    conns = [
+      do_request(opts, :get, "/api/webhooks/stripe", ""),
+      do_request(opts, :post, "/api/webhooks/unrouted", build_event("evt_miss"))
+    ]
+
+    for conn <- conns do
+      assert conn.status == 404
+      assert is_binary(conn.resp_body)
+      assert conn.resp_body != ""
+
+      refute Enum.any?(get_resp_header(conn, "content-type"), fn value ->
+               String.contains?(value, "json")
+             end)
+
+      refute match?({:ok, %{}}, Jason.decode(conn.resp_body))
+    end
+  end
 end
 ```

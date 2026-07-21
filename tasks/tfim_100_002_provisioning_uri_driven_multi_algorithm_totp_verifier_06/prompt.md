@@ -396,6 +396,25 @@ defmodule AuthenticatorURITest do
     assert config.secret == @sha1_secret
   end
 
+  # QR payloads commonly group the secret into space-separated blocks; every
+  # space must disappear from the normalized secret, which then keys the HMAC.
+  test "parse strips spaces from a space-grouped secret" do
+    grouped = "GEZD GNBV GY3T QOJQ GEZD GNBV GY3T QOJQ"
+
+    assert {:ok, config} = AuthenticatorURI.parse(uri(secret: grouped))
+    assert config.secret == @sha1_secret
+    assert AuthenticatorURI.code_at(config, 59) == "287082"
+  end
+
+  # Tabs are whitespace too, and stripping happens alongside padding removal
+  # and upcasing rather than instead of them.
+  test "parse strips tabs alongside spaces, padding and lowercase" do
+    raw = "gezd\tgnbv gy3t qojq\tgezd gnbv gy3t qojq===="
+
+    assert {:ok, config} = AuthenticatorURI.parse(uri(secret: raw))
+    assert config.secret == @sha1_secret
+  end
+
   test "parse accepts each supported algorithm spelling case-insensitively" do
     assert config!(secret: @sha1_secret, algorithm: "sha1").algorithm == :sha1
     assert config!(secret: @sha256_secret, algorithm: "Sha256").algorithm == :sha256
@@ -454,6 +473,12 @@ defmodule AuthenticatorURITest do
   test "parse rejects a secret that normalizes to the empty string" do
     assert AuthenticatorURI.parse("otpauth://totp/Acme:alice?secret=%3D%3D%3D") ==
              {:error, :invalid_secret}
+  end
+
+  # Whitespace is removed before the emptiness check, so a blank secret is
+  # invalid rather than accepted as a literal run of spaces.
+  test "parse rejects a whitespace-only secret" do
+    assert AuthenticatorURI.parse(uri(secret: "  \t ")) == {:error, :invalid_secret}
   end
 
   test "parse rejects an issuer mismatch between label and query param" do
