@@ -39,21 +39,31 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
      local gates, all re-graded green post-land with cascades.
      045_002 = REAL prompt defect (module-level API signatures make
      the :name/:table_name promises unexercisable) → docs/19.
-   - **[IN FLIGHT] S6 freshness round 3** (pid: last line of
-     `logs/rescreen_round3.pid`): attempt 2 for 005_003 + 043_001,
-     attempt 1 for the just-landed 102_001 (its 4th machine attempt
-     showed 3 added + 18 pre-existing blind failures = weak solver;
-     hand-landed green 21/21, candidate molded under the
-     failure-double rule).
-   - **S6 GREEN (fully done): 022_003, 108_003.**
-   - **[WAITING ON KAMIL — the encoded two-key keep route, not
-     deferral] 5 keep packets after 2 red attempts each**: 020_002,
-     020_003, 022_002, 025_002, 045_003. Both attempts were
-     catastrophic solver failures on pre-existing basics (boot
-     failures/:noproc), every one judged ENTAILED. Review packets in
-     `logs/keep_review/<root>/`; approve per family:
-     `mix run scripts/keep_land.exs -- --approve <root>`.
-     **Push stays gate-blocked until approvals + remaining greens.**
+   - **S6 GREEN (fully done): 022_003, 108_003.** Round 3 done: all
+     red. **7 keep packets now stand after 2 red attempts each**
+     (020_002, 020_003, 022_002, 025_002, 045_003, 043_001, 102_001)
+     — reds are catastrophic solver attempts on pre-existing basics,
+     all ENTAILED. Packets: `logs/keep_review/<root>/`; approve:
+     `mix run scripts/keep_land.exs -- --approve <root>` (older
+     007_002 + 110_002 packets sit there too). **Push gate-blocked
+     until approvals.** 098_004 (hand-landed 2026-07-21, mold's
+     bitstring pin bug fixed by hand, 27/27) still needs its first
+     rescreen — batch it with the next LLM window.
+   - **005_003 rescreen verdict: NOT ENTAILED** — the judge says the
+     CURRENT prompt under-specifies its own pre-existing topic-drop
+     test → prompt-fix queue (verify the judge's reading by hand,
+     then: prompt sentence + re-screen).
+   - **DORMANT? hand-reads: 8/8 DONE, all FINE** (4 observe via
+     assert_receive; 2 observe positionally; adapt_006_002 +
+     adapt_023_004 specs explicitly FORBID timers — projection
+     artifacts). lint_harnesses now scopes adapt_ timer detection to
+     the new-spec section (6 false-positives cleared; remaining
+     DORMANT? = the 2 verified-fine 015_001 projections). Same
+     spec-scoping refinement owed to the S9 evaluator detector (lib
+     edit — land in the next between-campaigns window). **Remaining
+     G1a tail: enumerate the lint's 25 CONFIRMED dirs** (derivatives +
+     never-applied roots; no campaign-applied root can be dormant —
+     the S9 gate proved each apply).
    - **[ ] 8 solver-weak repeaters → hand-read** (005_003, 007_002,
      013_003, 020_004, 031_001, 032_001, 041_004, 074_002): repeated
      solver failures on PRE-EXISTING tests — decide hard-task

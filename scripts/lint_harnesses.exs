@@ -64,19 +64,35 @@ defmodule LintHarnesses do
   # snapshot of their root's harness at mint time and are never strengthened in
   # place — coverage-gap findings on them are permanent noise; their quality
   # rides on the root the cascade fixes.
+  defp contract_text(dir, prompt) do
+    with true <- String.starts_with?(Path.basename(dir), "adapt_"),
+         [_, spec] <- String.split(prompt, "## New specification", parts: 2) do
+      spec
+    else
+      _ -> prompt
+    end
+  end
+
   defp frozen_evidence?(dir) do
     String.starts_with?(Path.basename(dir), ["repair_", "dialog_", "style_"])
   end
 
   defp lint(dir, harness, prompt) do
+    # For adapt_ tasks only the NEW SPECIFICATION is the contract — the embedded
+    # starting-point code above it routinely carries timer machinery the spec
+    # then negates outright (adapt_006_002: "Do not use `Process.send_after`";
+    # adapt_023_004: "no periodic cleanup" — both hand-verified 2026-07-21).
+    # Timer promises are therefore read from the spec section alone.
+    timer_prompt = contract_text(dir, prompt)
+
     finding = %{
       dir: dir,
       infinity_keys: undocumented_infinity_keys(harness, prompt),
       trigger_atoms: undocumented_trigger_atoms(harness, prompt),
       dormant_timer_keys:
-        if(frozen_evidence?(dir), do: [], else: dormant_timer_keys(harness, prompt)),
+        if(frozen_evidence?(dir), do: [], else: dormant_timer_keys(harness, timer_prompt)),
       unconfigured_timer_keys:
-        if(frozen_evidence?(dir), do: [], else: unconfigured_timer_keys(harness, prompt)),
+        if(frozen_evidence?(dir), do: [], else: unconfigured_timer_keys(harness, timer_prompt)),
       sys_get_state: count(harness, ~r/:sys\.(get_state|replace_state)/),
       inspect_asserts: count(harness, ~r/assert\s+inspect\(/),
       exact_raise_msgs: count(harness, ~r/assert_raise\s+[\w.]+,\s*"/)
