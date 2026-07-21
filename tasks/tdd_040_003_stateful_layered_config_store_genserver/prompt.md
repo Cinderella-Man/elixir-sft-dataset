@@ -191,6 +191,17 @@ defmodule ConfigStoreTest do
     assert ConfigStore.get_config(s) == %{db: %{opts: %{ssl: false}}}
     assert ConfigStore.get(s, [:db, :opts, :password]) == nil
   end
+
+  test "a single layer cannot introduce a locked path when the base lacks its parent" do
+    # The wholesale-copy path: the base defines NOTHING, so the layer's whole
+    # subtree is introduced at once — the locked descendant must be stripped
+    # at every depth, not smuggled in with the copy.
+    s = start(base: %{}, locked: [[:db, :password]])
+    ConfigStore.put_layer(s, :env, %{db: %{password: "pwned", host: "h"}})
+
+    assert ConfigStore.get(s, [:db, :password]) == nil
+    assert ConfigStore.get(s, [:db, :host]) == "h"
+  end
 end
 ```
 

@@ -142,7 +142,13 @@ defmodule ConfigStore do
           Map.put(acc, k, Map.fetch!(base, k))
 
         not Map.has_key?(base, k) ->
-          Map.put(acc, k, Map.fetch!(over, k))
+          # An introduced subtree cannot smuggle in locked descendants: merging
+          # it into an empty base applies the locked-keeps-absence rule at
+          # every depth below this key.
+          case Map.fetch!(over, k) do
+            %{} = subtree -> Map.put(acc, k, do_merge(%{}, subtree, kpath, opts))
+            v -> Map.put(acc, k, v)
+          end
 
         true ->
           Map.put(acc, k, merge_value(Map.fetch!(base, k), Map.fetch!(over, k), kpath, opts))
@@ -385,6 +391,17 @@ defmodule ConfigStoreTest do
 
     assert ConfigStore.get_config(s) == %{db: %{opts: %{ssl: false}}}
     assert ConfigStore.get(s, [:db, :opts, :password]) == nil
+  end
+
+  test "a single layer cannot introduce a locked path when the base lacks its parent" do
+    # The wholesale-copy path: the base defines NOTHING, so the layer's whole
+    # subtree is introduced at once — the locked descendant must be stripped
+    # at every depth, not smuggled in with the copy.
+    s = start(base: %{}, locked: [[:db, :password]])
+    ConfigStore.put_layer(s, :env, %{db: %{password: "pwned", host: "h"}})
+
+    assert ConfigStore.get(s, [:db, :password]) == nil
+    assert ConfigStore.get(s, [:db, :host]) == "h"
   end
 end
 ```
