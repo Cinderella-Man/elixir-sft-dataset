@@ -334,6 +334,80 @@ end
 ## Test harness — implement the `# TODO` test
 
 ```elixir
+defmodule StateMachineTest.FailingInsertRepo do
+  @moduledoc """
+  Repo facade used to exercise the DB-write-failure branch.
+
+  Reads (`all/1,2`, `one/1,2`) are served by the real repo, so entity
+  hydration and history still work. Writes fail the way Ecto itself fails a
+  write: `insert/1,2` returns `{:error, changeset}` with an invalid changeset
+  carrying `action: :insert`, `insert!/1,2` raises
+  `Ecto.InvalidChangesetError`, and `transaction/1,2` over an `Ecto.Multi`
+  reports the failing insert operation as `{:error, name, changeset, %{}}`.
+  A `transaction/1,2` given a function runs against the real repo, so a
+  function that calls back into this module still observes the failing write
+  and `rollback/1` behaves normally.
+  """
+
+  def all(queryable), do: StateMachine.Repo.all(queryable)
+  def all(queryable, opts), do: StateMachine.Repo.all(queryable, opts)
+
+  def one(queryable), do: StateMachine.Repo.one(queryable)
+  def one(queryable, opts), do: StateMachine.Repo.one(queryable, opts)
+
+  def rollback(value), do: StateMachine.Repo.rollback(value)
+
+  def insert(struct_or_changeset, _opts \\ []) do
+    {:error, failed_changeset(struct_or_changeset)}
+  end
+
+  def insert!(struct_or_changeset, _opts \\ []) do
+    raise Ecto.InvalidChangesetError,
+      action: :insert,
+      changeset: failed_changeset(struct_or_changeset)
+  end
+
+  def transaction(multi_or_fun, opts \\ [])
+
+  def transaction(%Ecto.Multi{} = multi, _opts) do
+    {name, changeset} = failing_operation(multi)
+    {:error, name, changeset, %{}}
+  end
+
+  def transaction(fun, opts) when is_function(fun) do
+    StateMachine.Repo.transaction(fun, opts)
+  end
+
+  defp failing_operation(multi) do
+    Enum.find_value(Ecto.Multi.to_list(multi), {:insert, failed_changeset()}, fn
+      {name, {:changeset, %Ecto.Changeset{} = changeset, _op_opts}} ->
+        {name, failed_changeset(changeset)}
+
+      {name, {:insert, %Ecto.Changeset{} = changeset, _op_opts}} ->
+        {name, failed_changeset(changeset)}
+
+      _other ->
+        nil
+    end)
+  end
+
+  defp failed_changeset do
+    {%{}, %{entity_id: :string}}
+    |> Ecto.Changeset.cast(%{}, [:entity_id])
+    |> failed_changeset()
+  end
+
+  defp failed_changeset(%Ecto.Changeset{} = changeset) do
+    %{Ecto.Changeset.add_error(changeset, :entity_id, "is invalid") | action: :insert}
+  end
+
+  defp failed_changeset(struct) do
+    struct
+    |> Ecto.Changeset.change()
+    |> failed_changeset()
+  end
+end
+
 defmodule StateMachineTest do
   use ExUnit.Case, async: false
 
@@ -552,6 +626,52 @@ defmodule StateMachineTest do
 
     results = Task.await_many(tasks)
     assert Enum.all?(results, &match?({:ok, :confirmed}, &1))
+  end
+
+  # ---------------------------------------------------------------------------
+  # DB write failures
+  # ---------------------------------------------------------------------------
+
+  test "transition/3 reports a failed DB write as {:error, {:db_error, reason}}" do
+    {:ok, failing} = StateMachine.start_link(repo: StateMachineTest.FailingInsertRepo)
+    id = unique_entity_id("db-error")
+
+    assert {:ok, :pending} = StateMachine.start(failing, id)
+
+    assert {:error, {:db_error, _reason}} =
+             StateMachine.transition(failing, id, :confirm)
+  end
+
+  test "a failed DB write leaves the in-memory state at its previous value", %{sm: sm} do
+    id = unique_entity_id("db-error-state")
+
+    # Persist a real :confirmed state first, so the failing server hydrates to
+    # a non-initial state and any reset would be visible.
+    {:ok, :pending} = StateMachine.start(sm, id)
+    {:ok, :confirmed} = StateMachine.transition(sm, id, :confirm)
+
+    {:ok, failing} = StateMachine.start_link(repo: StateMachineTest.FailingInsertRepo)
+    assert {:ok, :confirmed} = StateMachine.start(failing, id)
+
+    assert {:error, {:db_error, _reason}} = StateMachine.transition(failing, id, :ship)
+
+    # The write failed, so :shipped must not have been applied in memory.
+    assert {:ok, :confirmed} = StateMachine.get_state(failing, id)
+  end
+
+  test "invalid transitions are rejected before any DB write is attempted" do
+    {:ok, failing} = StateMachine.start_link(repo: StateMachineTest.FailingInsertRepo)
+    id = unique_entity_id("db-error-invalid")
+
+    {:ok, :pending} = StateMachine.start(failing, id)
+
+    # :ship is not valid from :pending and writes nothing, so a repo whose
+    # every write fails cannot turn this into a :db_error.
+    assert {:error, :invalid_transition} = StateMachine.transition(failing, id, :ship)
+  end
+
+  defp unique_entity_id(prefix) do
+    "order:#{prefix}:#{System.pid()}:#{System.unique_integer([:positive])}"
   end
 end
 ```
