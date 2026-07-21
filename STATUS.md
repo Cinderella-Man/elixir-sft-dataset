@@ -65,15 +65,24 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
     the first rows), investigate the 134 unverified pairs, recover
     what's honestly recoverable.
 
-11. **[ ] Screen depth (G9, optional).** 3-solve consistency on the
-    ~50 keep/hard roots to sharpen difficulty metadata.
+11. **[ ] Screen depth (G9) — decide by probe.** Run 3-solve
+    consistency on 10 of the ~50 keep/hard roots; if the 3-solve
+    verdict diverges from the recorded single-solve verdict on ≥2 of
+    10, run all 50 and update the difficulty metadata; otherwise close
+    the item with the probe evidence.
 
-12. **[BLOCKED on Kamil] Extension headroom (G8).** More variations
-    per base idea — in-scope "extension" or already "new tasks"?
+12. **[ ] Extension headroom (G8) — DECIDED in scope** (the goal
+    literally says "extended"; deciding by probe, not by asking).
+    Probe first: 2 strong base families × 1 new variation each through
+    the full loop, then the SAME instruments that found this month's
+    debt (semantic_review on the new roots + a rubric spot-judge);
+    acceptance = zero triage-grade findings (the docs/12 §5.5 bar).
+    Pass → size and run the extension loop as the LAST activity before
+    the finish line (so new mints carry every gate from activities
+    2-7, incl. the varied register). Findings → fix the generator,
+    regenerate, re-probe. Probe earliest after activity 7.
 
 13. **[ ] Finish line.** Full sweeps (perfect + fim + mutants +
     decontam), export refresh, README — then this file becomes the
-    one-liner.
-
-**Also waiting on Kamil:** the docs/18 training run (any time — its
-measurements can reprioritize activities 5/7, but gold-first stands).
+    one-liner. (The docs/18 training-run handoff stays available to
+    Kamil at any time; gold-first proceeds regardless.)
