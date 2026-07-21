@@ -21,7 +21,9 @@ The backoff uses **decorrelated jitter** (AWS-style). Track `prev_delay` per exe
 
 Elapsed time is calculated by calling the injected `:clock` function and comparing to the timestamp recorded when the execution first started.
 
-Retries must be scheduled using `Process.send_after` so the GenServer doesn't block other callers while waiting.
+Each execution must run OFF the server's call path (e.g. a spawned worker that replies via `GenServer.reply/2`) so the GenServer never blocks other callers while an execution waits. Waits must not busy-spin: sleep in short bounded `receive ... after` ticks between clock checks, so a fake clock can drive the wait deterministically while a real clock never pegs a scheduler.
+
+The clock is read exactly once when an execution starts and exactly once after each failed attempt; that single post-attempt reading drives BOTH the budget check (`elapsed + capped_delay > budget_ms` → give up) and the wait target (`now + capped_delay`). The budget is never re-checked when the wait completes — the next reading happens after the next failed attempt.
 
 The GenServer should support multiple concurrent `execute` calls — each tracked independently so that one caller's retry schedule doesn't block another caller's work. Use `GenServer.reply/2` to respond asynchronously once a given execution completes or exhausts its budget.
 
