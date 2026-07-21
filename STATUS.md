@@ -31,12 +31,27 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
      — the whole "endpoint cluster" was this artifact. Fix in
      close_gaps.exs (describe-aware matching); the 13 flagged
      families re-partitioned deterministically from the ledger.
-   - **[ ] 10 GENUINE blind-ADDED families → per-family hand-read**
-     (020_002, 020_003, 022_002, 022_003, 025_002, 043_001, 045_002,
-     045_003, 102_001, 108_003). Each read decides: added test
-     over-pins (fix the test, e.g. 102_001's failure-double exception
-     type) vs promise not solver-salient (one clarifying prompt
-     sentence + anchored test land together).
+   - **Blind-ADDED hand-reads: 9 of 10 DONE 2026-07-21.** 8 landed by
+     hand (020_002, 020_003, 022_002, 022_003, 025_002, 043_001 —
+     initial over-pin call reversed on deeper read, 045_003, 108_003;
+     +005_003 re-sorted from solver-weak and landed) — every one pins
+     an explicit/verbatim prompt promise; candidates had passed all
+     local gates, all re-graded green post-land with cascades.
+     045_002 = REAL prompt defect (module-level API signatures make
+     the :name/:table_name promises unexercisable) → docs/19.
+   - **[IN FLIGHT] S6 freshness rescreens** for the 8 hand-landed
+     families (pre-push gate demands blind evidence for the new
+     harness content — correct). New `keep_land --rescreen` mode
+     (same machinery, current pair, S6 row either way): GREEN → fresh;
+     RED → triage judge → keep packet `pending_kamil` (the sanctioned
+     two-key route; early results: reds are single-attempt solver
+     variance on pre-existing basics, judged ENTAILED → packets).
+     Log `logs/rescreen7.log`; 005_003 + 043_001 need a second batch.
+     **Push is gate-blocked until greens/approvals** — commits are
+     local; packets for Kamil in `logs/keep_review/`.
+   - **[ ] 102_001 → one machine attempt** under the new
+     failure-double mold rule (its last attempt predates it), then
+     hand if it fails again.
    - **[ ] 8 solver-weak repeaters → hand-read** (005_003, 007_002,
      013_003, 020_004, 031_001, 032_001, 041_004, 074_002): repeated
      solver failures on PRE-EXISTING tests — decide hard-task

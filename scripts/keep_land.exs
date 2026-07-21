@@ -75,7 +75,8 @@ defmodule KeepLand do
           quarantine_sweep: :boolean,
           approve_quarantine: :string,
           only: :string,
-          self_test: :boolean
+          self_test: :boolean,
+          rescreen: :string
         ]
       )
 
@@ -84,10 +85,56 @@ defmodule KeepLand do
     cond do
       opts[:self_test] -> self_test()
       opts[:candidate] -> candidate(cfg, opts[:candidate], opts[:prompt])
+      opts[:rescreen] -> rescreen(cfg, opts[:rescreen])
       opts[:approve] -> approve(cfg, opts[:approve])
       opts[:quarantine_sweep] -> quarantine_sweep(cfg, opts[:only])
       opts[:approve_quarantine] -> approve_quarantine(cfg, opts[:approve_quarantine])
       true -> IO.puts("usage: see the header of scripts/keep_land.exs")
+    end
+  end
+
+  # ── rescreen flow (S6 freshness for a hand-strengthened harness) ────────────
+
+  # The candidate flow stages a NEW prompt; this stages nothing — the harness
+  # changed (e.g. a hand-landed close_gaps candidate whose blind gate was
+  # overruled by hand-read) and the current (prompt, harness) pair needs its
+  # OWN blind evidence row. GREEN appends the S6 row and nothing lands; RED
+  # goes through the same triage judge: entailed → keep packet (pending_kamil,
+  # the sanctioned exception route), not entailed → the current prompt itself
+  # under-specifies the failing demand — that family belongs in the prompt-fix
+  # queue.
+  defp rescreen(cfg, root) do
+    dir = Path.join(cfg.tasks_dir, root)
+    File.dir?(dir) || raise ArgumentError, "no such root: #{dir}"
+
+    current = read_triplet(dir)
+    prompt = current["prompt.md"]
+    key = row_key(root, current)
+
+    IO.puts("keep_land: #{root} — rescreen of the CURRENT pair (1 solver call)")
+
+    case GenTask.Variations.blind_solution(root, prompt, cfg, "keep_land_rescreen") do
+      {:error, reason} ->
+        record(cfg, key, "error", "blind call failed: #{inspect(reason)}")
+        IO.puts("  ERROR — blind call failed: #{inspect(reason)}")
+
+      {:ok, blind_src} ->
+        stage = Path.join(cfg.staging_dir, "keep_land_" <> root)
+        Evaluator.stage!(stage, Map.put(current, "solution.ex", blind_src))
+        grade = Evaluator.grade(stage, cfg)
+        row = Base.screen_row(root, prompt, current["test_harness.exs"], grade, cfg.model)
+        append_jsonl(Path.join(cfg.logs_dir, "screen_blind.jsonl"), row)
+
+        case row do
+          %{green: true} ->
+            record(cfg, key, "rescreen_green", "blind solve green vs the current harness")
+            IO.puts("  GREEN — S6 evidence row appended; nothing to land.")
+
+          _ ->
+            failing = row[:first_failure] || row["first_failure"] || "solver failed"
+            IO.puts("  RED — #{first_line(failing)}")
+            judge_and_packet(cfg, root, prompt, prompt, failing, key)
+        end
     end
   end
 

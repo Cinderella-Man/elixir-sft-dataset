@@ -9,6 +9,19 @@ reason), record the verdict here, land as its own commit with full cascade
 
 Total: 63 findings (11 high) across 52 families.
 
+## 045_002_multivariate_a_b_c_feature_flag_store_01 (added 2026-07-21, campaign hand-read)
+- [ ] **prompt_defect/high** (prompt.md): The `:name`/`:table_name` start_link
+  promises are UNEXERCISABLE as documented: every public function is
+  documented arity-1/2 with NO server argument (`FeatureFlags.enable(flag_name)`),
+  so writes cannot address a `name: nil` (unregistered) server and reads
+  cannot find a non-default `:table_name` table. The gold necessarily
+  carries undocumented addressing mechanics; blind solvers implementing the
+  documented signatures fail any test that exercises those options (the
+  close_gaps candidate's two tests confirmed this — double blind failure).
+  Fix-shape: read the gold's actual addressing mechanics, document them in
+  the prompt (e.g. optional server/table first argument), then land the
+  adjusted candidate tests + full re-screen + cascade.
+
 ## 013_003_budget_constrained_retry_worker_with_decorrelated_jitter_01
 - [ ] **gold_defect/high** (solution.ex): The prompt states "Retries must be scheduled using `Process.send_after` so the GenServer doesn't block other callers while waiting", but the gold never calls `Process.send_after` anywhere; it busy-spins on the clock in a `receive ... after 0` loop, which under the default real clock pegs a CPU core for the entire backoff delay (up to `max_delay_ms`, default 10_000).
   - evidence: `defp await_clock(target_time, clock_fn) do if clock_fn.() < target_time do receive do after 0 -> await_clock(target_time, clock_fn) end end end`
