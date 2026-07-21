@@ -33,10 +33,12 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
 - **CPU lane:** G2 re-measure riding (`validate --semantic-mutants`,
   pid in `logs/semantic_mutants_full.pid`, sha-resume; rebuilds the
   post-campaign tail for activity 5; 15-min monitor).
-- **In-session:** docs/19 (7/52 done: 035_001, 101_001, 074_001,
-  013_003, 040_003 fixed; 031_002, 095_003 refuted-stale). G4
-  pre-classification DONE: `logs/sleep_audit_worklist.jsonl` (179
-  harnesses, 142 bare-wait audit-first candidates).
+- **In-session:** docs/19 HIGHS (8/12 done: 035_001, 101_001,
+  074_001, 013_003, 040_003, 015_004 fixed; 031_002, 095_003
+  refuted-stale). Remaining highs: 019_004 (in progress), 040_001,
+  061_001, 045_002. G4 pre-classification DONE:
+  `logs/sleep_audit_worklist.jsonl` (179 harnesses, 142 bare-wait
+  audit-first candidates).
 - **Deliberately QUEUED (same-lane contention, not idleness):** G9
   probe + G5 sweep + rewrite_reachins all need the LLM lane — they
   queue behind rubric so the backbone finishes tonight; G8 gated by
