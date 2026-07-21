@@ -660,5 +660,61 @@ defmodule TeamRouterRoleTest do
   test "remove_member_safe returns not_member for absent user", %{store: store} do
     assert {:error, :not_member} = TeamStore.remove_member_safe(store, "team-1", "carol")
   end
+
+  # ---------------- router :store option is load-bearing ----------------
+
+  # `TeamRouter` accepts a `:store` option. These requests carry no other
+  # hint about which store to use, so the option alone must locate the
+  # `TeamStore` for both the bearer-token lookup and the endpoint handlers.
+
+  defp opts_only_get(store, team_id, token) do
+    :get
+    |> conn("/api/teams/#{team_id}/members")
+    |> maybe_auth(token)
+    |> TeamRouter.call(TeamRouter.init(store: store))
+  end
+
+  defp opts_only_post(store, team_id, user_id, token) do
+    :post
+    |> conn("/api/teams/#{team_id}/members", Jason.encode!(%{"user_id" => user_id}))
+    |> put_req_header("content-type", "application/json")
+    |> maybe_auth(token)
+    |> TeamRouter.call(TeamRouter.init(store: store))
+  end
+
+  defp opts_only_delete(store, team_id, target, token) do
+    :delete
+    |> conn("/api/teams/#{team_id}/members/#{target}")
+    |> maybe_auth(token)
+    |> TeamRouter.call(TeamRouter.init(store: store))
+  end
+
+  test "GET reads the roster with the store given only as the :store option", %{store: store} do
+    conn = opts_only_get(store, "team-1", "token-alice")
+    assert conn.status == 200
+    assert member(conn, "alice")["role"] == "owner"
+    assert member(conn, "bob")["role"] == "member"
+    assert member(conn, "dave")["role"] == "admin"
+  end
+
+  test "token lookup uses the store given only as the :store option", %{store: store} do
+    conn = opts_only_get(store, "team-1", "token-nobody")
+    assert conn.status == 401
+    assert json_body(conn)["error"] == "unauthorized"
+  end
+
+  test "POST adds a member with the store given only as the :store option", %{store: store} do
+    conn = opts_only_post(store, "team-1", "carol", "token-alice")
+    assert conn.status == 201
+    assert json_body(conn)["added"] == "carol"
+    assert {:ok, "member"} = TeamStore.role_of(store, "team-1", "carol")
+  end
+
+  test "DELETE removes a member with the store given only as the :store option", %{store: store} do
+    conn = opts_only_delete(store, "team-1", "bob", "token-alice")
+    assert conn.status == 200
+    assert json_body(conn)["removed"] == "bob"
+    refute TeamStore.is_member?(store, "team-1", "bob")
+  end
 end
 ```
