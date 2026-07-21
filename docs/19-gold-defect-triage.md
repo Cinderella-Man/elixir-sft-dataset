@@ -18,7 +18,8 @@ STALE (evidence absent — fixed by prior campaigns): 005_002, 011_004, 031_001,
 live medium-tier worklist.
 
 ## 045_002_multivariate_a_b_c_feature_flag_store_01 (added 2026-07-21, campaign hand-read)
-- [ ] **prompt_defect/high** (prompt.md): The `:name`/`:table_name` start_link
+- [x] **DONE 2026-07-22** (the gold's real addressing — :persistent_term routing, last-started instance serves the module-level API — documented in the prompt; candidate blind-verified GREEN FIRST TRY on a family that was 0-for-2; the two close_gaps tests (table_name routing, nil-name full API) then landed green 24/24 and the strengthened pair rescreened GREEN)
+- [ ] ~~**prompt_defect/high**~~ (prompt.md): The `:name`/`:table_name` start_link
   promises are UNEXERCISABLE as documented: every public function is
   documented arity-1/2 with NO server argument (`FeatureFlags.enable(flag_name)`),
   so writes cannot address a `name: nil` (unregistered) server and reads

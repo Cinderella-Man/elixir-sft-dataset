@@ -382,5 +382,77 @@ defmodule FeatureFlagsTest do
 
     assert FeatureFlags.variant_for(:neg, "u1") == :off
   end
+
+  test "default table_name holds written flags for direct reads by any process" do
+    FeatureFlags.enable(:dflt_on)
+    FeatureFlags.set_variants(:dflt_exp, [{:a, 100}])
+
+    # The default table is named :feature_flags, so an unrelated process can
+    # read the stored flags straight out of ETS.
+    assert :ets.lookup(:feature_flags, :dflt_on) != []
+    assert :ets.lookup(:feature_flags, :dflt_exp) != []
+
+    reader =
+      Task.async(fn ->
+        {:ets.lookup(:feature_flags, :dflt_on) != [], FeatureFlags.variant_for(:dflt_exp, "u1")}
+      end)
+
+    assert Task.await(reader) == {true, :a}
+  end
+
+  test "table_name option routes writes into that table instead of the default one" do
+    table = unique_name("ff_routed")
+
+    start_supervised!(
+      {FeatureFlags, [table_name: table, name: unique_name("ff_srv")]},
+      id: :routed_table_server
+    )
+
+    FeatureFlags.enable(:routed_on)
+    FeatureFlags.disable(:routed_off)
+    FeatureFlags.set_variants(:routed_exp, [{:a, 60}, {:b, 40}])
+
+    assert :ets.lookup(table, :routed_on) != []
+    assert :ets.lookup(table, :routed_off) != []
+    assert :ets.lookup(table, :routed_exp) != []
+
+    # The configured table backs the reads; the default table is not involved.
+    assert :ets.lookup(:feature_flags, :routed_on) == []
+    assert :ets.lookup(:feature_flags, :routed_exp) == []
+
+    assert FeatureFlags.enabled?(:routed_on)
+    assert FeatureFlags.variant_for(:routed_off, "u1") == :off
+
+    user = "u1"
+    bucket = :erlang.phash2({:routed_exp, user}, 100)
+    expected = if bucket < 60, do: :a, else: :b
+    assert FeatureFlags.variant_for(:routed_exp, user) == expected
+  end
+
+  test "unregistered server started with name nil still serves the whole public API" do
+    table = unique_name("ff_anon")
+
+    pid =
+      start_supervised!(
+        {FeatureFlags, [table_name: table, name: nil]},
+        id: :unregistered_server
+      )
+
+    assert Process.alive?(pid)
+    assert Process.info(pid, :registered_name) == {:registered_name, []}
+
+    FeatureFlags.enable(:anon_on)
+    assert FeatureFlags.enabled?(:anon_on)
+    assert FeatureFlags.variant_for(:anon_on, "u1") == :on
+
+    FeatureFlags.disable(:anon_on)
+    refute FeatureFlags.enabled?(:anon_on)
+    refute FeatureFlags.enabled_for?(:anon_on, "u1")
+
+    FeatureFlags.set_variants(:anon_exp, [{:a, 100}])
+    assert FeatureFlags.variant_for(:anon_exp, "u1") == :a
+    assert FeatureFlags.enabled_for?(:anon_exp, "u1")
+    assert :ets.lookup(table, :anon_exp) != []
+  end
 end
 ```

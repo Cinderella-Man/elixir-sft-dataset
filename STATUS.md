@@ -33,14 +33,14 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
 - **CPU lane:** G2 re-measure riding (`validate --semantic-mutants`,
   pid in `logs/semantic_mutants_full.pid`, sha-resume; rebuilds the
   post-campaign tail for activity 5; 15-min monitor).
-- **In-session:** docs/19 HIGHS 11/12 done (035_001, 101_001,
-  074_001, 013_003, 040_003, 015_004, 019_004, 061_001 FIXED;
-  031_002, 095_003, 040_001 refuted-stale). LAST high 045_002:
-  addressing-mechanics candidate prompt (persistent_term routing
-  documented from the gold) blind-verifying now. PLUS the mechanical
-  staleness sweep: 5 more mediums refuted (evidence absent — prior-
-  campaign fixes); live medium worklist = 34 findings. G4
-  pre-classification DONE: `logs/sleep_audit_worklist.jsonl`.
+- **In-session: docs/19 HIGHS 12/12 DONE 2026-07-22** (9 fixed:
+  035_001, 101_001, 074_001, 013_003, 040_003, 015_004, 019_004,
+  061_001, 045_002; 3 refuted-stale: 031_002, 095_003, 040_001).
+  045_002 closed the set: persistent_term routing documented →
+  blind-green first try → both close_gaps tests landed 24/24 →
+  rescreen green. Staleness sweep refuted 5 mediums; **NEXT: the 34
+  live medium findings** (docs/19). G4 pre-classification DONE:
+  `logs/sleep_audit_worklist.jsonl`.
 - **Deliberately QUEUED (same-lane contention, not idleness):** G9
   probe + G5 sweep + rewrite_reachins all need the LLM lane — they
   queue behind rubric so the backbone finishes tonight; G8 gated by
