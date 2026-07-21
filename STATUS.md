@@ -39,19 +39,18 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
      local gates, all re-graded green post-land with cascades.
      045_002 = REAL prompt defect (module-level API signatures make
      the :name/:table_name promises unexercisable) → docs/19.
-   - **[IN FLIGHT] S6 freshness rescreens** for the 8 hand-landed
-     families (pre-push gate demands blind evidence for the new
-     harness content — correct). New `keep_land --rescreen` mode
-     (same machinery, current pair, S6 row either way): GREEN → fresh;
-     RED → triage judge → keep packet `pending_kamil` (the sanctioned
-     two-key route; early results: reds are single-attempt solver
-     variance on pre-existing basics, judged ENTAILED → packets).
-     Log `logs/rescreen7.log`; 005_003 + 043_001 need a second batch.
-     **Push is gate-blocked until greens/approvals** — commits are
-     local; packets for Kamil in `logs/keep_review/`.
-   - **[ ] 102_001 → one machine attempt** under the new
-     failure-double mold rule (its last attempt predates it), then
-     hand if it fails again.
+   - **[IN FLIGHT] S6 freshness round 2** (pid: last line of
+     `logs/rescreen_round2.pid`, log `logs/rescreen_round2.log`).
+     Round 1: 022_003 GREEN (fully done); 6 RED — all catastrophic
+     single-attempt solver failures on pre-existing basics (boot
+     failures, :noproc), all judged ENTAILED → keep packets. Round 2
+     = ONE re-attempt each (both rows stay in the append-only screen
+     ledger; still-red after 2 attempts = the keep packet STANDS for
+     Kamil — no further re-rolls, that would be verdict shopping) +
+     first attempts for 005_003/043_001 + 102_001's single machine
+     attempt under the new failure-double mold rule. **Push stays
+     gate-blocked until greens/approvals**; packets in
+     `logs/keep_review/`. Relaunch: the pid line's command.
    - **[ ] 8 solver-weak repeaters → hand-read** (005_003, 007_002,
      013_003, 020_004, 031_001, 032_001, 041_004, 074_002): repeated
      solver failures on PRE-EXISTING tests — decide hard-task
