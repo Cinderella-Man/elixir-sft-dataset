@@ -431,5 +431,30 @@ defmodule FileUploadTest do
     assert {:ok, _dt, _} = DateTime.from_iso8601(b1["uploaded_at"])
     assert b1["uploaded_at"] == b2["uploaded_at"]
   end
+
+  test "download_url is exactly base_url <> /api/uploads/ <> hash", %{opts: opts} do
+    body = json_body(call_upload(opts, "url.csv", "u,v\n1,2\n"))
+    assert body["download_url"] == "http://localhost:4000/api/uploads/" <> body["id"]
+  end
+
+  test "download_url prefix follows the configured base_url option", _ctx do
+    opts =
+      FileUpload.Router.init(
+        store: :test_store,
+        upload_dir: @upload_dir,
+        base_url: "https://files.example.test"
+      )
+
+    body = json_body(call_upload(opts, "other-base.csv", "m,n\n7,8\n"))
+    assert body["download_url"] == "https://files.example.test/api/uploads/" <> body["id"]
+  end
+
+  test "413 body reports the max_bytes limit alongside the error", %{opts: opts} do
+    conn = call_upload(opts, "oversize.csv", String.duplicate("y", 5_242_881))
+    assert conn.status == 413
+    body = json_body(conn)
+    assert body["error"] == "File too large"
+    assert body["max_bytes"] == 5_242_880
+  end
 end
 ```
