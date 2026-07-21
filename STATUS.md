@@ -18,28 +18,22 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    tests). Campaign: 138/186 families, 314 tests, all gate-arbitrated;
    resync sweeps + pushes done after each batch.
 
-2. **[IN PROGRESS] Campaign follow-ups.**
-   - **Retry pass over the 44 rejects RUNNING** (19/44 done, 3 applied
-     so far — most blind-ADDED rejects repeat, as expected). Detached
-     pid: last line of `logs/close_gaps_full.pid`, log
-     `logs/close_gaps_full.log`, ledger `logs/close_gaps.jsonl`.
-     Idempotent relaunch: `scripts/run_detached.sh
-     logs/close_gaps_full.log mix run scripts/close_gaps.exs -- --go`.
-     After exit: resync sweep + commit + push, then partition the final
-     rejects.
-   - **Hand-checks DONE 2026-07-21** (commit 27744833f): 102_004 = the
-     candidate didn't compile (bare `failing?` as variable) — NOT a
-     gold defect; 102_001 = added test's failure double raised
-     RuntimeError where real Ecto raises Ecto.InvalidChangesetError —
-     blind gate correctly defended honest solvers; mold rule added
-     (failure doubles must fail exactly like the real dependency).
-   - **[ ] Double-blind-ADDED families → per-family hand-read** (6
-     confirmed so far, final list when the retry pass exits; clustered
-     in the 018-022 endpoint families). Each read decides: added test
-     over-pins (fix test approach) vs promise not solver-salient (one
-     clarifying prompt sentence + anchored test land together). NOT
-     auto-reclassified as prompt defects — evidence is correlated
-     (same solver model both attempts).
+2. **[IN PROGRESS] Campaign follow-ups. Standing: 153/182 families
+   applied (84%), 29 open.** Retry pass done 2026-07-21 (13 flipped,
+   incl. 102_004; commit e3ae5447d).
+   - **[RUNNING] Third pass over the 14 mechanical rejects** (scoped
+     `--only`, first run under the new failure-double mold rule).
+     Detached pid: last line of `logs/close_gaps_full.pid`, log
+     `logs/close_gaps_full.log`. Relaunch: same command as the pid
+     line. After exit: resync sweep + commit + push; families still
+     rejected after 3 attempts go to the hand queue with their reason.
+   - **[ ] 12 double-blind-ADDED families → per-family hand-read**
+     (018_001, 019_001, 020_002, 020_003, 022_002, 022_003, 025_002,
+     045_002, 045_003, 074_002, 102_001, 108_003). Each read decides:
+     added test over-pins (fix test approach, e.g. 102_001's
+     RuntimeError-vs-InvalidChangesetError double) vs promise not
+     solver-salient (one clarifying prompt sentence + anchored test
+     land together). NOT auto-reclassified as prompt defects.
    - **[ ] Hand-read the 8 DORMANT? timer dirs** (015-family +
      adapt_107_004 likely fine; adapt_023_004 + adapt_006_002 likely
      real).
