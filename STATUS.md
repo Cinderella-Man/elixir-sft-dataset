@@ -39,18 +39,21 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
      local gates, all re-graded green post-land with cascades.
      045_002 = REAL prompt defect (module-level API signatures make
      the :name/:table_name promises unexercisable) → docs/19.
-   - **[IN FLIGHT] S6 freshness round 2** (pid: last line of
-     `logs/rescreen_round2.pid`, log `logs/rescreen_round2.log`).
-     Round 1: 022_003 GREEN (fully done); 6 RED — all catastrophic
-     single-attempt solver failures on pre-existing basics (boot
-     failures, :noproc), all judged ENTAILED → keep packets. Round 2
-     = ONE re-attempt each (both rows stay in the append-only screen
-     ledger; still-red after 2 attempts = the keep packet STANDS for
-     Kamil — no further re-rolls, that would be verdict shopping) +
-     first attempts for 005_003/043_001 + 102_001's single machine
-     attempt under the new failure-double mold rule. **Push stays
-     gate-blocked until greens/approvals**; packets in
-     `logs/keep_review/`. Relaunch: the pid line's command.
+   - **[IN FLIGHT] S6 freshness round 3** (pid: last line of
+     `logs/rescreen_round3.pid`): attempt 2 for 005_003 + 043_001,
+     attempt 1 for the just-landed 102_001 (its 4th machine attempt
+     showed 3 added + 18 pre-existing blind failures = weak solver;
+     hand-landed green 21/21, candidate molded under the
+     failure-double rule).
+   - **S6 GREEN (fully done): 022_003, 108_003.**
+   - **[WAITING ON KAMIL — the encoded two-key keep route, not
+     deferral] 5 keep packets after 2 red attempts each**: 020_002,
+     020_003, 022_002, 025_002, 045_003. Both attempts were
+     catastrophic solver failures on pre-existing basics (boot
+     failures/:noproc), every one judged ENTAILED. Review packets in
+     `logs/keep_review/<root>/`; approve per family:
+     `mix run scripts/keep_land.exs -- --approve <root>`.
+     **Push stays gate-blocked until approvals + remaining greens.**
    - **[ ] 8 solver-weak repeaters → hand-read** (005_003, 007_002,
      013_003, 020_004, 031_001, 032_001, 041_004, 074_002): repeated
      solver failures on PRE-EXISTING tests — decide hard-task
