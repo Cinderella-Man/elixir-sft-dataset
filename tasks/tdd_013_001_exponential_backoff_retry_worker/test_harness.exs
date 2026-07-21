@@ -329,6 +329,38 @@ defmodule RetryWorkerTest do
     :ets.delete(:ts_jitter)
   end
 
+  # The wait actually realized by the timer is delay + jitter, not delay
+  # alone. Using the real default clock/timer with a 1ms base delay and a
+  # 300ms jitter, a scheduler that ignored the jitter would return almost
+  # instantly; the caller must instead block for roughly delay + jitter.
+  test "total scheduled wait includes jitter, not just the base delay", %{rw: _rw} do
+    {:ok, agent} = Agent.start_link(fn -> 0 end)
+
+    func = fn ->
+      n = Agent.get_and_update(agent, fn n -> {n + 1, n + 1} end)
+      if n <= 1, do: {:error, :fail}, else: {:ok, :done}
+    end
+
+    {:ok, rw2} = RetryWorker.start_link(random: fn _max -> 300 end)
+
+    started = System.monotonic_time(:millisecond)
+
+    assert {:ok, :done} =
+             RetryWorker.execute(rw2, func,
+               max_retries: 1,
+               base_delay_ms: 1,
+               max_delay_ms: 10_000
+             )
+
+    elapsed = System.monotonic_time(:millisecond) - started
+
+    # base delay is only 1ms; the single retry must wait out the 300ms
+    # jitter on top, so the blocked caller returns well after the delay.
+    assert elapsed >= 250
+
+    Agent.stop(agent)
+  end
+
   # -------------------------------------------------------
   # Concurrent executions are independent
   # -------------------------------------------------------
@@ -508,5 +540,27 @@ defmodule RetryWorkerTest do
     assert {:ok, pid} = RetryWorker.start_link()
     assert is_pid(pid)
     assert {:ok, :ready} = RetryWorker.execute(pid, fn -> {:ok, :ready} end)
+  end
+
+  # -------------------------------------------------------
+  # Named registration
+  # -------------------------------------------------------
+
+  # A server started with :name is registered under that name and can be
+  # driven through execute/3 by addressing it via the name alone.
+  test "a named server is addressable by name in execute/3", %{rw: _rw} do
+    name = :"retry_worker_#{System.pid()}_#{System.unique_integer([:positive])}"
+
+    assert {:ok, _pid} = RetryWorker.start_link(name: name)
+    assert {:ok, :named} = RetryWorker.execute(name, fn -> {:ok, :named} end)
+  end
+
+  # Starting a second process under a name already taken reports the
+  # existing process rather than starting a new one.
+  test "start_link with an already-taken name returns already_started", %{rw: _rw} do
+    name = :"retry_worker_#{System.pid()}_#{System.unique_integer([:positive])}"
+
+    assert {:ok, pid} = RetryWorker.start_link(name: name)
+    assert {:error, {:already_started, ^pid}} = RetryWorker.start_link(name: name)
   end
 end

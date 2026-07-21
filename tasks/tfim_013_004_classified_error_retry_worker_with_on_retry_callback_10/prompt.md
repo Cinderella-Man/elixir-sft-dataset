@@ -460,6 +460,32 @@ defmodule ClassifiedRetryWorkerTest do
     :ets.delete(:ts_cap_v3)
   end
 
+  # The computed delay the module hands to on_retry is capped at max_delay_ms
+  # once the doubling backoff would exceed it. Read straight off the callback's
+  # delay argument (jitter 0), so it does not depend on any advanced clock: a
+  # worker that ignores max_delay_ms would report 40 and 80 for the third and
+  # fourth retries instead of the capped 25.
+  test "on_retry delay is capped at max_delay_ms once backoff exceeds it" do
+    start_supervised!({RetryLog, []})
+
+    {:ok, rw2} =
+      ClassifiedRetryWorker.start_link(clock: &Clock.now/0, random: &ZeroRandom.rand/1)
+
+    func = fn -> {:error, :transient, :down} end
+    on_retry = fn a, r, d -> RetryLog.record(a, r, d) end
+
+    assert {:error, :retries_exhausted, :down} =
+             ClassifiedRetryWorker.execute(rw2, func,
+               max_retries: 4,
+               base_delay_ms: 10,
+               max_delay_ms: 25,
+               on_retry: on_retry
+             )
+
+    expected = [{1, :down, 10}, {2, :down, 20}, {3, :down, 25}, {4, :down, 25}]
+    assert RetryLog.entries() == expected
+  end
+
   # -------------------------------------------------------
   # Concurrent executions are independent
   # -------------------------------------------------------

@@ -846,5 +846,36 @@ defmodule CalendarSchedulerTest do
     {:ok, next} = CalendarScheduler.next_run(cs, "thrower")
     assert next == ~N[2025-03-01 00:00:00]
   end
+
+  # =======================================================
+  # Automatic periodic timer (Process.send_after driven by :tick_interval_ms)
+  # =======================================================
+
+  test "a due job fires on the automatic timer, with no hand-sent :tick" do
+    # A real, short interval exercises the promised Process.send_after path;
+    # the test never sends :tick itself.
+    interval = 25
+
+    {:ok, pid} =
+      CalendarScheduler.start_link(
+        clock: &Clock.now/0,
+        tick_interval_ms: interval
+      )
+
+    :ok =
+      CalendarScheduler.register(
+        pid,
+        "auto",
+        {:nth_day_of_month, 1, {0, 0}},
+        {JobSink, :ping, [self(), :auto_fired]}
+      )
+
+    # Registered at Jan 1 → next_run is Feb 1 00:00.  Move the clock just past
+    # it so the very next automatic tick finds the job due and executes it.
+    Clock.set(~N[2025-02-01 00:00:01])
+
+    # Only the timer can deliver a tick here; wait well beyond one interval.
+    assert_receive :auto_fired, 20 * interval
+  end
 end
 ```

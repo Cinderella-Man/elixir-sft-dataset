@@ -303,5 +303,61 @@ defmodule PasswordPolicyV2Test do
   test "raises when the context is missing the username" do
     # TODO
   end
+
+  test "a lowered :min_length accepts a password shorter than the default" do
+    # "Ab1!" is length 4: below the default minimum of 8, but valid once
+    # :min_length is overridden to 4, with every character class present.
+    report = PasswordPolicy.audit("Ab1!", %{username: "operator", min_length: 4})
+
+    assert report == %{status: :ok, errors: [], warnings: []}
+  end
+
+  test "a password longer than :max_length is a blocking :too_long error" do
+    # Length 8 clears the default minimum but exceeds the overridden maximum
+    # of 4, so the only violation is the blocking :too_long rule.
+    report = PasswordPolicy.audit("Ab1!wxyz", %{username: "operator", max_length: 4})
+
+    assert report == %{status: :error, errors: [:too_long], warnings: []}
+  end
+
+  test "a lowered :max_username_similarity suppresses the similarity warning" do
+    # Distance from the username is 2; with the threshold overridden to 1 the
+    # password is no longer "too similar", so no warning is raised.
+    report =
+      PasswordPolicy.audit("Xy9#Kw2$Lm", %{
+        username: "Xy9#Kw2$Zz",
+        max_username_similarity: 1
+      })
+
+    assert report == %{status: :ok, errors: [], warnings: []}
+  end
+
+  test "disabling uppercase, digit, and special requirements suppresses their warnings" do
+    # Lowercase-only password that would normally warn on the three missing
+    # classes; disabling each requirement clears every warning.
+    report =
+      PasswordPolicy.audit("abcdefgh", %{
+        username: "operator",
+        require_uppercase: false,
+        require_digit: false,
+        require_special: false
+      })
+
+    assert report == %{status: :ok, errors: [], warnings: []}
+  end
+
+  test "disabling the lowercase requirement suppresses its warning" do
+    # Uppercase-only password: with the lowercase, digit, and special
+    # requirements disabled, no warning remains.
+    report =
+      PasswordPolicy.audit("ABCDEFGH", %{
+        username: "operator",
+        require_lowercase: false,
+        require_digit: false,
+        require_special: false
+      })
+
+    assert report == %{status: :ok, errors: [], warnings: []}
+  end
 end
 ```

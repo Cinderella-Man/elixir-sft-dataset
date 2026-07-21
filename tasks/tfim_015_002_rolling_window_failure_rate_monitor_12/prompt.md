@@ -361,6 +361,23 @@ defmodule RateMonitorTest do
     _ = RateMonitor.status(mon, service_name)
   end
 
+  # Poll `fun` until it returns true or the deadline is exhausted. Used to
+  # observe an effect that surfaces only through the public API, without
+  # sizing a single fixed sleep to any interval.
+  defp poll_until(fun, deadline_ms) do
+    cond do
+      fun.() ->
+        :ok
+
+      deadline_ms <= 0 ->
+        :timeout
+
+      true ->
+        Process.sleep(5)
+        poll_until(fun, deadline_ms - 5)
+    end
+  end
+
   # -------------------------------------------------------
   # Registration
   # -------------------------------------------------------
@@ -384,6 +401,28 @@ defmodule RateMonitorTest do
 
   test "status returns :not_found for unregistered service", %{mon: mon} do
     assert {:error, :not_found} = RateMonitor.status(mon, "ghost")
+  end
+
+  # -------------------------------------------------------
+  # Automatic periodic scheduling
+  # -------------------------------------------------------
+
+  test "registered checks run automatically on the periodic timer", %{mon: mon} do
+    CheckFn.set_result("timer_svc", :ok)
+    RateMonitor.register(mon, "timer_svc", CheckFn.build("timer_svc"), 25)
+
+    # No manual {:check, _} is ever sent here; only the periodic timer can
+    # advance the window, so observing a completed check proves scheduling.
+    assert :ok =
+             poll_until(
+               fn ->
+                 case RateMonitor.status(mon, "timer_svc") do
+                   {:ok, %{checks_in_window: n}} -> n >= 1
+                   _ -> false
+                 end
+               end,
+               2_000
+             )
   end
 
   # -------------------------------------------------------
@@ -423,6 +462,21 @@ defmodule RateMonitorTest do
     assert {:ok, info} = RateMonitor.status(mon, "db")
     refute info.status == :down, "should not be :down before window is full"
     assert info.checks_in_window == 4
+  end
+
+  test "a failing check keeps a :pending service :pending before the window fills",
+       %{mon: mon} do
+    CheckFn.set_result("db2", {:error, :timeout})
+    RateMonitor.register(mon, "db2", CheckFn.build("db2"), 1_000, window_size: 5, threshold: 0.6)
+
+    # One failed check in a partial window: it cannot be :down, and because the
+    # single outcome is an error the service must stay :pending (not flip :up).
+    Clock.advance(1_000)
+    trigger_check(mon, "db2")
+
+    assert {:ok, info} = RateMonitor.status(mon, "db2")
+    assert info.status == :pending
+    assert info.checks_in_window == 1
   end
 
   test "service goes :down when failure rate >= threshold with full window", %{mon: mon} do
@@ -704,6 +758,26 @@ defmodule RateMonitorTest do
 
     assert {:ok, %{status: :down}} = RateMonitor.status(mon, "bad")
     assert {:ok, %{status: :up, failure_rate: +0.0}} = RateMonitor.status(mon, "good")
+  end
+
+  # -------------------------------------------------------
+  # Robustness — unexpected messages
+  # -------------------------------------------------------
+
+  test "unexpected messages are ignored and do not alter service state", %{mon: mon} do
+    CheckFn.set_result("web", :ok)
+    RateMonitor.register(mon, "web", CheckFn.build("web"), 5_000)
+
+    send(mon, :some_unexpected_message)
+    send(mon, {:not_a_check, "web"})
+
+    # A synchronous call after the sends is processed strictly after them, so
+    # it proves the process survived and no service state was disturbed.
+    assert {:ok, info} = RateMonitor.status(mon, "web")
+    assert info.status == :pending
+    assert info.checks_in_window == 0
+    assert info.last_check_at == nil
+    assert Process.alive?(mon)
   end
 
   # -------------------------------------------------------

@@ -276,6 +276,53 @@ defmodule FailFastMapTest do
     # TODO
   end
 
+  test "immediate index-0 failure starts at most the rest of the initial window" do
+    {:ok, counter} = ConcurrencyCounter.start_link([])
+
+    result =
+      FailFastMap.pmap(
+        1..30,
+        fn
+          1 ->
+            raise "boom"
+
+          _x ->
+            ConcurrencyCounter.increment(counter)
+            slow(:ok, 200)
+            ConcurrencyCounter.decrement(counter)
+        end,
+        3
+      )
+
+    assert {:error, {0, _}} = result
+    # Window is 3; the failing element never increments, so at most the two
+    # other seeded elements could have started. No queued element may start.
+    assert ConcurrencyCounter.started(counter) <= 2
+  end
+
+  test "sibling tasks are killed, not left running to completion, after a failure" do
+    test_pid = self()
+
+    result =
+      FailFastMap.pmap(
+        1..3,
+        fn
+          1 ->
+            raise "boom"
+
+          _x ->
+            slow(:ok, 100)
+            send(test_pid, :sibling_completed)
+        end,
+        3
+      )
+
+    assert {:error, {0, _}} = result
+    # A killed sibling never reaches its post-work side effect. If any sibling
+    # were left alive to completion, this message would arrive within the window.
+    refute_receive :sibling_completed, 800
+  end
+
   # -------------------------------------------------------
   # Concurrency limit enforcement
   # -------------------------------------------------------

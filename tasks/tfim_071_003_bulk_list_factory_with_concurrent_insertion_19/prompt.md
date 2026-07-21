@@ -340,6 +340,21 @@ defmodule FactoryTest do
     assert length(FakeRepo.all()) >= before + 2
   end
 
+  test "build(:post) with a user_id override keeps the id and skips the user insert" do
+    before = length(FakeRepo.all())
+    post = Factory.build(:post, user_id: 4242)
+    assert post.user_id == 4242
+    assert length(FakeRepo.all()) == before
+  end
+
+  test "insert(:post) with a user_id override persists only the post" do
+    before = length(FakeRepo.all())
+    post = Factory.insert(:post, user_id: 7777)
+    assert post.user_id == 7777
+    assert is_integer(post.id)
+    assert length(FakeRepo.all()) == before + 1
+  end
+
   # Sequences
 
   test "sequence/2 returns distinct consecutive values" do

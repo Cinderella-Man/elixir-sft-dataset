@@ -558,6 +558,24 @@ defmodule LogfmtValidatorTest do
   end
 
   # -------------------------------------------------------
+  # One field, several failing checks
+  # -------------------------------------------------------
+
+  test "one field failing both type and format reports both errors" do
+    schema = [%{name: "zip", type: :integer, format: ~r/^\d{5}$/}]
+    input = "zip=abc\n"
+
+    assert {:ok, [], errors} = LogfmtValidator.validate_string(input, schema)
+
+    zip_errors = Enum.filter(errors, fn {_r, f, _m} -> f == "zip" end)
+    assert length(zip_errors) == 2
+
+    messages = Enum.map(zip_errors, fn {_r, _f, m} -> m end)
+    assert Enum.any?(messages, &(&1 =~ "integer"))
+    assert Enum.any?(messages, &(&1 =~ "format"))
+  end
+
+  # -------------------------------------------------------
   # Line number correctness (blank lines skipped)
   # -------------------------------------------------------
 
@@ -658,6 +676,27 @@ defmodule LogfmtValidatorTest do
     input = "unrelated=stuff\n"
 
     assert {:ok, [_row], []} = LogfmtValidator.validate_string(input, schema)
+  end
+
+  # -------------------------------------------------------
+  # Schema key defaults (keys omitted entirely)
+  # -------------------------------------------------------
+
+  test "field with :required omitted defaults to required" do
+    schema = [%{name: "level"}]
+    input = "host=web01\n"
+
+    assert {:ok, [], errors} = LogfmtValidator.validate_string(input, schema)
+    assert {1, "level", msg} = hd(errors)
+    assert msg =~ "required"
+  end
+
+  test "field with :type omitted defaults to :string and accepts non-numeric value" do
+    schema = [%{name: "level"}]
+    input = "level=not-a-number\n"
+
+    assert {:ok, [row], []} = LogfmtValidator.validate_string(input, schema)
+    assert row["level"] == "not-a-number"
   end
 
   # -------------------------------------------------------

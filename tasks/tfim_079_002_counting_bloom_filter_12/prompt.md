@@ -419,5 +419,44 @@ defmodule CountingBloomFilterTest do
     assert CountingBloomFilter.member?(merged, "shared")
     assert CountingBloomFilter.count(merged) == 400
   end
+
+  test "add/2 holds a saturated counter at the ceiling across further adds" do
+    empty = CountingBloomFilter.new(50, 0.01)
+
+    saturated =
+      Enum.reduce(1..400, empty, fn _i, f -> CountingBloomFilter.add(f, "hot") end)
+
+    ceiling = saturated.counters
+    assert Enum.max(Tuple.to_list(ceiling)) == 255
+
+    # Once a counter has saturated, further inserts of the same item cannot push
+    # it past the ceiling: the counters stay exactly where they already were.
+    more =
+      Enum.reduce(1..50, saturated, fn _i, f -> CountingBloomFilter.add(f, "hot") end)
+
+    assert more.counters == ceiling
+    assert Enum.max(Tuple.to_list(more.counters)) == 255
+    assert CountingBloomFilter.member?(more, "hot")
+  end
+
+  test "merge/2 clamps at 255 when one operand is already saturated" do
+    saturated =
+      Enum.reduce(1..300, CountingBloomFilter.new(50, 0.01), fn _i, f ->
+        CountingBloomFilter.add(f, "shared")
+      end)
+
+    assert Enum.max(Tuple.to_list(saturated.counters)) == 255
+
+    other = CountingBloomFilter.new(50, 0.01) |> CountingBloomFilter.add("shared")
+
+    merged = CountingBloomFilter.merge(saturated, other)
+    counters = Tuple.to_list(merged.counters)
+
+    # The shared slots sum 255 + 1 = 256; that must clamp to the ceiling, not wrap.
+    assert Enum.all?(counters, fn c -> c <= 255 end)
+    assert Enum.max(counters) == 255
+    assert CountingBloomFilter.member?(merged, "shared")
+    assert CountingBloomFilter.count(merged) == 301
+  end
 end
 ```

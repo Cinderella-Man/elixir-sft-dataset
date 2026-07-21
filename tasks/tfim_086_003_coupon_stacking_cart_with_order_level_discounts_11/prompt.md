@@ -373,5 +373,31 @@ defmodule CartTest do
     assert_in_delta totals.tax, 0.0, 0.001
     assert_in_delta totals.grand_total, 20.0, 0.001
   end
+
+  test "update_quantity with a positive quantity sets, not increments or ignores, the value" do
+    cart = Cart.new(tax_rate: 0.0)
+    {:ok, cart} = Cart.add_item(cart, "p", 2, 10.0)
+
+    {:ok, cart} = Cart.update_quantity(cart, "p", 5)
+
+    [item] = Cart.calculate_totals(cart).items
+    # set -> 5 (increment would be 7, ignore would leave 2)
+    assert item.quantity == 5
+    assert item.discount_rate == 0.0
+    assert_in_delta item.line_total, 50.0, 0.001
+  end
+
+  test "update_quantity can raise a line across the bulk-discount threshold" do
+    cart = Cart.new(tax_rate: 0.0)
+    {:ok, cart} = Cart.add_item(cart, "p", 3, 10.0)
+
+    {:ok, cart} = Cart.update_quantity(cart, "p", 10)
+
+    [item] = Cart.calculate_totals(cart).items
+    assert item.quantity == 10
+    # quantity >= 10 earns the 10% per-item discount: 10 * 10.0 * 0.9 = 90.0
+    assert item.discount_rate == 0.1
+    assert_in_delta item.line_total, 90.0, 0.001
+  end
 end
 ```

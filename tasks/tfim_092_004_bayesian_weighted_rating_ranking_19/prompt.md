@@ -295,5 +295,40 @@ defmodule RankingTest do
     assert Ranking.score(it, mean: 3, min_votes: 0) === 3.0
     assert is_float(Ranking.score(item(rating: 4, vote_count: 10), mean: 3, min_votes: 0))
   end
+
+  # -------------------------------------------------------
+  # rank/2 — caller-supplied :mean is used verbatim, not recomputed
+  # -------------------------------------------------------
+
+  test "rank uses a caller-supplied :mean verbatim rather than the corpus mean" do
+    a = item(id: :a, rating: 9.0, vote_count: 100)
+    b = item(id: :b, rating: 9.5, vote_count: 3)
+
+    # Corpus mean = (9.0 + 9.5) / 2 = 9.25; scoring against 9.25 would place the
+    # 3-vote item first ([:b, :a]). With C = 5.0 supplied verbatim the low-vote
+    # item is dragged well below the high-vote one, so the order flips:
+    #   a -> (100/125)*9.0 + (25/125)*5.0 = 8.2
+    #   b -> (3/28)*9.5    + (25/28)*5.0  = 5.4821...  => a outranks b.
+    assert ids(Ranking.rank([a, b], mean: 5.0)) == [:a, :b]
+    assert ids(Ranking.rank([b, a], mean: 5.0)) == [:a, :b]
+  end
+
+  test "rank threads a large non-default :min_votes that reorders the result" do
+    p = item(id: :p, rating: 10.0, vote_count: 100)
+    q = item(id: :q, rating: 8.5, vote_count: 300)
+
+    # With C = 5.0 supplied verbatim and the default m = 25 the high-rating item
+    # leads:
+    #   p -> (100/125)*10.0 + (25/125)*5.0 = 9.0
+    #   q -> (300/325)*8.5  + (25/325)*5.0 = 8.2307...  => p ahead of q.
+    assert ids(Ranking.rank([p, q], mean: 5.0)) == [:p, :q]
+
+    # A large m = 300 pulls the lower-vote item toward the mean much harder,
+    # flipping the order:
+    #   p -> (100/400)*10.0 + (300/400)*5.0 = 6.25
+    #   q -> (300/600)*8.5  + (300/600)*5.0 = 6.75   => q ahead of p.
+    assert ids(Ranking.rank([p, q], mean: 5.0, min_votes: 300)) == [:q, :p]
+    assert ids(Ranking.rank([q, p], mean: 5.0, min_votes: 300)) == [:q, :p]
+  end
 end
 ```

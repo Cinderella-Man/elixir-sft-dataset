@@ -961,5 +961,54 @@ defmodule SchedulerTest do
     assert {:error, :invalid_cron} =
              Scheduler.register(s, "bad", "1-2-3 * * * *", {IO, :puts, ["hi"]})
   end
+
+  # -------------------------------------------------------
+  # Automatic ticking (Process.send_after driven by :tick_interval_ms)
+  #
+  # With a real, short interval the GenServer must check for due jobs on its
+  # own — no manually injected :tick — and reschedule itself after each check.
+  # -------------------------------------------------------
+
+  # Block until `fun` returns true or the millisecond deadline passes, returning
+  # the final truthiness. Polls for the effect rather than sleeping a fixed span,
+  # so it observes an automatic firing as soon as it lands.
+  defp wait_until(fun, timeout_ms) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    poll_until(fun, deadline)
+  end
+
+  defp poll_until(fun, deadline) do
+    cond do
+      fun.() ->
+        true
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        false
+
+      true ->
+        Process.sleep(5)
+        poll_until(fun, deadline)
+    end
+  end
+
+  test "automatic ticking fires due jobs on the configured interval and reschedules" do
+    interval = 25
+
+    {:ok, pid} =
+      Scheduler.start_link(clock: &Clock.now/0, tick_interval_ms: interval)
+
+    on_exit(fn -> if Process.alive?(pid), do: GenServer.stop(pid) end)
+
+    :ok = Scheduler.register(pid, "auto", "* * * * *", {JobTracker, :record, ["auto"]})
+
+    # Make the job due; an automatic tick must fire it with no manual :tick sent.
+    Clock.set(~N[2026-01-05 10:01:00])
+    assert wait_until(fn -> JobTracker.count("auto") >= 1 end, interval * 20)
+
+    # A one-shot timer would stop after the first firing. Advance the clock and
+    # confirm a later automatic tick fires again — the timer reschedules itself.
+    Clock.set(~N[2026-01-05 10:02:00])
+    assert wait_until(fn -> JobTracker.count("auto") >= 2 end, interval * 20)
+  end
 end
 ```

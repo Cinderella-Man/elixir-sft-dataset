@@ -540,5 +540,90 @@ defmodule LeaseBucketTest do
     assert {:ok, 0} = LeaseBucket.active_leases(lb, "gone")
     assert {:ok, _, 0} = LeaseBucket.acquire_lease(lb, "gone", 2, 10.0, 2, 100)
   end
+
+  # -------------------------------------------------------
+  # Public-head contract: out-of-contract arguments raise
+  # -------------------------------------------------------
+
+  test "acquire_lease raises FunctionClauseError on out-of-contract arguments", %{lb: lb} do
+    # capacity must be a positive integer
+    assert_raise FunctionClauseError, fn ->
+      LeaseBucket.acquire_lease(lb, "k", 0, 1.0, 1, 60_000)
+    end
+
+    # tokens must be a positive integer
+    assert_raise FunctionClauseError, fn ->
+      LeaseBucket.acquire_lease(lb, "k", 5, 1.0, 0, 60_000)
+    end
+
+    # refill_rate must be a positive number
+    assert_raise FunctionClauseError, fn ->
+      LeaseBucket.acquire_lease(lb, "k", 5, 0.0, 1, 60_000)
+    end
+
+    # lease_timeout_ms must be a positive integer
+    assert_raise FunctionClauseError, fn ->
+      LeaseBucket.acquire_lease(lb, "k", 5, 1.0, 1, 0)
+    end
+
+    # tokens must not exceed capacity
+    assert_raise FunctionClauseError, fn ->
+      LeaseBucket.acquire_lease(lb, "k", 5, 1.0, 6, 60_000)
+    end
+  end
+
+  # -------------------------------------------------------
+  # retry_after_ms is a real backoff estimate, not a placeholder
+  # -------------------------------------------------------
+
+  test "retry_after_ms estimates the milliseconds until the deficit refills", %{lb: lb} do
+    # Capacity 5, reserve 3 → 2 tokens free.
+    assert {:ok, _, 2} = LeaseBucket.acquire_lease(lb, "k", 5, 1.0, 3, 60_000)
+
+    # A second 3-token request has a 1-token deficit; at 1.0 token/sec that
+    # is 1000 ms until enough tokens refill.
+    assert {:error, :empty, 1000} =
+             LeaseBucket.acquire_lease(lb, "k", 5, 1.0, 3, 60_000)
+  end
+
+  # -------------------------------------------------------
+  # Periodic cleanup fires on its own timer (no external trigger)
+  # -------------------------------------------------------
+
+  test "periodic cleanup fires automatically on a real interval" do
+    # A real, short interval means the sweep runs on its own timer, driven by
+    # the default wall-clock. The lease deadline passes on its own, and an
+    # automatic sweep returns the bucket to fresh behaviour.
+    server = start_supervised!({LeaseBucket, cleanup_interval_ms: 25})
+
+    {:ok, _lease, 0} = LeaseBucket.acquire_lease(server, "k", 2, 1000.0, 2, 20)
+
+    # Poll a generous window (well over 20× the interval) for the automatic
+    # outcome, never sending :cleanup ourselves.
+    deadline = System.monotonic_time(:millisecond) + 1_000
+
+    assert :ok =
+             wait_until(
+               fn -> LeaseBucket.active_leases(server, "k") == {:ok, 0} end,
+               deadline
+             )
+
+    # Back to fresh: a full-capacity reservation succeeds again.
+    assert {:ok, _, 0} = LeaseBucket.acquire_lease(server, "k", 2, 1000.0, 2, 20)
+  end
+
+  defp wait_until(fun, deadline) do
+    cond do
+      fun.() ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        :timeout
+
+      true ->
+        Process.sleep(5)
+        wait_until(fun, deadline)
+    end
+  end
 end
 ```

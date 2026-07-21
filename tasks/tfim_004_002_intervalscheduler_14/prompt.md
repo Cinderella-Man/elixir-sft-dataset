@@ -581,5 +581,40 @@ defmodule IntervalSchedulerTest do
     assert %NaiveDateTime{} = next
     assert NaiveDateTime.compare(next, NaiveDateTime.add(@t0, 10, :second)) == :eq
   end
+
+  # -------------------------------------------------------
+  # Automatic periodic ticking (default timer, no manual :tick)
+  # -------------------------------------------------------
+
+  # A scheduler started with a real :tick_interval_ms must check for and run
+  # due jobs on its own periodic timer, and must keep rescheduling that timer
+  # after each firing — with no manually injected :tick messages. The clock is
+  # advanced (making the job due) and the effect is observed twice through the
+  # public job callback within a window many times the tick interval.
+  test "automatic ticking fires due jobs on a real interval and keeps rescheduling" do
+    {:ok, auto} =
+      IntervalScheduler.start_link(
+        clock: &Clock.now/0,
+        tick_interval_ms: 25
+      )
+
+    :ok =
+      IntervalScheduler.register(
+        auto,
+        "auto",
+        {:every, 1, :seconds},
+        {JobSink, :ping, [self(), :auto_fired]}
+      )
+
+    # First automatic firing: make the job due and let the 25ms timer pick it
+    # up. Deadline is far larger than the interval to stay non-flaky.
+    Clock.set(NaiveDateTime.add(@t0, 1, :second))
+    assert_receive :auto_fired, 1_000
+
+    # Second automatic firing proves the periodic timer rescheduled itself
+    # after handling the first tick.
+    Clock.set(NaiveDateTime.add(@t0, 2, :second))
+    assert_receive :auto_fired, 1_000
+  end
 end
 ```

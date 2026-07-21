@@ -790,5 +790,47 @@ defmodule TolerantReconcilerTest do
     assert TolerantReconciler.compile(key_fields: [:id], compare_fields: :name) ==
              {:error, :invalid_compare_fields}
   end
+
+  # ---------------------------------------------------------------------------
+  # Duplicate-key last-wins tie-break (sharper)
+  # ---------------------------------------------------------------------------
+
+  test "duplicate keys on both sides each resolve to the last record with that key" do
+    config = config!(key_fields: [:id])
+
+    # Both lists repeat id 1. The pair must be built from the last record on each
+    # side, so keeping the first record or emitting both would produce a different
+    # diff or an extra matched entry.
+    left = [%{id: 1, v: "l-first"}, %{id: 1, v: "l-last"}]
+    right = [%{id: 1, v: "r-first"}, %{id: 1, v: "r-last"}]
+
+    report = TolerantReconciler.run(config, left, right)
+
+    assert [entry] = report.matched
+    assert entry.left == %{id: 1, v: "l-last"}
+    assert entry.right == %{id: 1, v: "r-last"}
+    assert entry.differences == %{v: %{left: "l-last", right: "r-last", rule: :exact}}
+    assert report.only_in_left == []
+    assert report.only_in_right == []
+  end
+
+  # ---------------------------------------------------------------------------
+  # Absent key field treated as nil (sharper)
+  # ---------------------------------------------------------------------------
+
+  test "two records each missing the same key field share the nil key and match" do
+    config = config!(key_fields: [:id])
+
+    # Neither record carries :id, so each is keyed as nil and the two pair with
+    # one another; the compared field :a still differs.
+    report = TolerantReconciler.run(config, [%{a: 1}], [%{a: 2}])
+
+    assert [entry] = report.matched
+    assert entry.left == %{a: 1}
+    assert entry.right == %{a: 2}
+    assert entry.differences == %{a: %{left: 1, right: 2, rule: :exact}}
+    assert report.only_in_left == []
+    assert report.only_in_right == []
+  end
 end
 ```

@@ -273,6 +273,32 @@ defmodule CacheLayerNegTest do
   end
 
   # -------------------------------------------------------
+  # Success reads bypass the GenServer (ETS fast path)
+  #
+  # A cached success is documented to be readable directly from ETS with no
+  # GenServer round-trip. Suspending the server halts all call handling; a
+  # cached success must still be served, whereas a read that went through the
+  # GenServer would block. This pins the fast path against a solution that
+  # routes every read through `GenServer.call`.
+  # -------------------------------------------------------
+
+  test "a cached success is served from ETS while the server cannot handle calls" do
+    cl = start_cache([])
+    Tracker.set({:ok, :cached})
+
+    assert {:ok, :cached} = CacheLayer.fetch(cl, :users, "u:1", &Tracker.fallback/0)
+    assert Tracker.count() == 1
+
+    :sys.suspend(cl)
+
+    assert {:ok, :cached} = CacheLayer.fetch(cl, :users, "u:1", &Tracker.fallback/0)
+
+    :sys.resume(cl)
+
+    assert Tracker.count() == 1
+  end
+
+  # -------------------------------------------------------
   # Failure path — negative caching disabled
   # -------------------------------------------------------
 
@@ -291,6 +317,25 @@ defmodule CacheLayerNegTest do
 
   test "a cached failure is served for exactly negative_hits reads then retried" do
     # TODO
+  end
+
+  test "negative_hits defaults to 3 cached serves before a retry" do
+    cl = start_cache([])
+    Tracker.set({:error, :db_down})
+
+    # miss -> calls fallback, caches the error under the default budget
+    assert {:error, :db_down} = CacheLayer.fetch(cl, :users, "u:1", &Tracker.fallback/0)
+    assert Tracker.count() == 1
+
+    # three cached serves under the default budget, no fallback calls
+    assert {:error, :db_down} = CacheLayer.fetch(cl, :users, "u:1", &Tracker.fallback/0)
+    assert {:error, :db_down} = CacheLayer.fetch(cl, :users, "u:1", &Tracker.fallback/0)
+    assert {:error, :db_down} = CacheLayer.fetch(cl, :users, "u:1", &Tracker.fallback/0)
+    assert Tracker.count() == 1
+
+    # budget exhausted -> next fetch retries the backend
+    assert {:error, :db_down} = CacheLayer.fetch(cl, :users, "u:1", &Tracker.fallback/0)
+    assert Tracker.count() == 2
   end
 
   test "a negatively cached key can recover to a success" do

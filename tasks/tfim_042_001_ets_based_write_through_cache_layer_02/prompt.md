@@ -297,6 +297,33 @@ defmodule CacheLayerTest do
   end
 
   # -------------------------------------------------------
+  # Single-flight guarantee under concurrent misses
+  # -------------------------------------------------------
+
+  test "concurrent misses on one key invoke the fallback at most once", %{cl: cl} do
+    # Fire many simultaneous fetches at a single cold key. Without serialisation
+    # every caller that observes the empty cache would run the fallback; a
+    # correct cache runs it exactly once while every caller still gets the value.
+    tasks =
+      for _ <- 1..100 do
+        Task.async(fn ->
+          receive do
+            :go -> :ok
+          end
+
+          CacheLayer.fetch(cl, :concurrent, "shared-key", &CallTracker.fallback/0)
+        end)
+      end
+
+    for %Task{pid: pid} <- tasks, do: send(pid, :go)
+
+    results = Task.await_many(tasks, 5000)
+
+    assert Enum.all?(results, &(&1 == {:ok, :db_value}))
+    assert CallTracker.call_count() == 1
+  end
+
+  # -------------------------------------------------------
   # Invalidate single key
   # -------------------------------------------------------
 

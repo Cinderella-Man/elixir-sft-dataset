@@ -355,6 +355,22 @@ defmodule RadixTrieTest do
     # TODO
   end
 
+  test "inserting a word that is a proper prefix of an existing edge splits it" do
+    t =
+      RadixTrie.new()
+      |> RadixTrie.insert("card")
+      |> RadixTrie.insert("car")
+
+    # the shorter word becomes a terminal mid-node; the longer word survives
+    assert RadixTrie.member?(t, "car") == true
+    assert RadixTrie.member?(t, "card") == true
+    assert RadixTrie.member?(t, "ca") == false
+    assert RadixTrie.size(t) == 2
+    assert RadixTrie.search(t, "car") == ["car", "card"]
+    # "card" edge splits into a terminal "car" node re-hanging the "d" suffix
+    assert RadixTrie.node_count(t) == 3
+  end
+
   # -------------------------------------------------------
   # Prefix search
   # -------------------------------------------------------

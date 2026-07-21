@@ -346,6 +346,44 @@ defmodule WorkStealQueueTest do
            "Expected work stealing to cause unequal distribution, got: #{inspect(counts_by_worker)}"
   end
 
+  test "a thief steals the back half of a busy queue and leaves the front" do
+    # Items partition contiguously into {1,2,3} for one worker and {4,5,6}
+    # for the other. The 4..6 worker returns instantly, empties its queue,
+    # and steals from the slow 1..3 worker. A steal takes the back half
+    # rounded down and leaves the front half: item 3 is carried off by the
+    # thief, while items 1 and 2 stay with and are processed by the original
+    # owner. Once that owner is down to a single remaining item it is never
+    # robbed, so item 2 always belongs to the owner, not the thief.
+    items = Enum.to_list(1..6)
+
+    results =
+      WorkStealQueue.run(items, 2, fn x ->
+        if x <= 3, do: Process.sleep(120)
+        x
+      end)
+
+    assert length(results) == 6
+    assert Enum.sort(processed_items(results)) == items
+
+    for %{item: item, result: result} <- results do
+      assert result == {:ok, item}
+    end
+
+    by_worker = Map.new(results, fn r -> {r.item, r.worker_id} end)
+
+    # The fast worker processes its own partition {4,5,6}.
+    assert by_worker[4] == by_worker[5]
+    assert by_worker[5] == by_worker[6]
+
+    # It then steals the back half of the slow queue, so item 3 moves to it.
+    assert by_worker[3] == by_worker[6]
+
+    # The slow worker keeps and processes the front half; item 2 is never
+    # stolen because a one-item victim is left alone.
+    assert by_worker[1] == by_worker[2]
+    assert by_worker[1] != by_worker[6]
+  end
+
   test "single worker processes all items without stealing" do
     items = Enum.to_list(1..10)
     results = WorkStealQueue.run(items, 1, fn x -> x + 1 end)

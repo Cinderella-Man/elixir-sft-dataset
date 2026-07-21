@@ -312,6 +312,25 @@ defmodule PriorityWorkerPoolTest do
     send(worker_pid, :proceed)
   end
 
+  defp poll_until(fun, deadline_ms, interval \\ 25) do
+    deadline = System.monotonic_time(:millisecond) + deadline_ms
+    poll_loop(fun, deadline, interval)
+  end
+
+  defp poll_loop(fun, deadline, interval) do
+    cond do
+      fun.() ->
+        true
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        false
+
+      true ->
+        Process.sleep(interval)
+        poll_loop(fun, deadline, interval)
+    end
+  end
+
   setup do
     pool =
       start_supervised!(
@@ -702,6 +721,38 @@ defmodule PriorityWorkerPoolTest do
     Enum.each(blocked, &release/1)
   end
 
+  test "omitting :promote_after_ms still promotes a stale task on its own", _context do
+    name = :"pool_default_promote_#{System.pid()}_#{System.unique_integer([:positive])}"
+    pool = start_supervised!({PriorityWorkerPool, name: name}, id: :default_promote)
+
+    gate = self()
+
+    # Default pool of three workers: three blockers leave nothing idle, so the
+    # low task can only wait in the queue and age.
+    blocked =
+      for _ <- 1..3 do
+        {:ok, _} = PriorityWorkerPool.submit(pool, blocking_task(gate))
+        assert_receive {:ready, w}, 1_000
+        w
+      end
+
+    {:ok, _} = PriorityWorkerPool.submit(pool, quick_task(:stale), :low)
+    assert PriorityWorkerPool.status(pool).queue_low == 1
+
+    # No one sends the promotion trigger: with the default interval the
+    # periodic check must still fire unaided and lift the aged task out of
+    # :low while it remains queued (total unchanged).
+    assert poll_until(
+             fn ->
+               s = PriorityWorkerPool.status(pool)
+               s.queue_low == 0 and s.total_queue_length == 1
+             end,
+             12_000
+           )
+
+    Enum.each(blocked, &release/1)
+  end
+
   # -------------------------------------------------------
   # Edge cases
   # -------------------------------------------------------
@@ -818,6 +869,43 @@ defmodule PriorityWorkerPoolTest do
     assert is_reference(r1)
     assert is_reference(r2)
     assert r1 != r2
+  end
+
+  # -------------------------------------------------------
+  # Automatic promotion (observed through the public status API)
+  # -------------------------------------------------------
+
+  test "a stale low task is automatically promoted out of :low on the periodic check",
+       _context do
+    name = :"pool_auto_promote_#{System.pid()}_#{System.unique_integer([:positive])}"
+
+    pool =
+      start_supervised!(
+        {PriorityWorkerPool, pool_size: 1, max_queue: 5, promote_after_ms: 25, name: name},
+        id: :auto_promote
+      )
+
+    gate = self()
+
+    # Keep the only worker busy so the low task must wait in the queue and age.
+    {:ok, _} = PriorityWorkerPool.submit(pool, blocking_task(gate))
+    assert_receive {:ready, worker}, 1_000
+
+    {:ok, _} = PriorityWorkerPool.submit(pool, quick_task(:stale), :low)
+    assert PriorityWorkerPool.status(pool).queue_low == 1
+
+    # No one sends the promotion trigger: the periodic check must fire on its
+    # own and lift the waiting task to a higher priority level while it stays
+    # queued (total unchanged, but no longer counted as low).
+    assert poll_until(
+             fn ->
+               s = PriorityWorkerPool.status(pool)
+               s.queue_low == 0 and s.total_queue_length == 1
+             end,
+             2_000
+           )
+
+    release(worker)
   end
 end
 ```

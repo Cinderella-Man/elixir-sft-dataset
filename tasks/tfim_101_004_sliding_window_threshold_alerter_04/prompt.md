@@ -214,6 +214,20 @@ defmodule SlidingAlerterTest do
     def set(ms), do: Agent.update(__MODULE__, fn _ -> ms end)
   end
 
+  # A clock that counts every read. The server reads the clock on each public
+  # call and once per cleanup pass, so with no public calls in flight the read
+  # count equals the number of cleanup passes that have run.
+  defmodule TickClock do
+    use Agent
+
+    def start_link(_opts \\ []) do
+      Agent.start_link(fn -> 0 end, name: __MODULE__)
+    end
+
+    def now, do: Agent.get_and_update(__MODULE__, fn n -> {n, n + 1} end)
+    def ticks, do: Agent.get(__MODULE__, & &1)
+  end
+
   setup do
     start_supervised!({Clock, 0})
 
@@ -302,6 +316,46 @@ defmodule SlidingAlerterTest do
 
     # The count call is handled after :cleanup, confirming the live key remains.
     assert 1 = SlidingAlerter.count(sc, "active")
+  end
+
+  test "cleanup fires automatically on the configured interval" do
+    start_supervised!(TickClock)
+
+    start_supervised!(
+      {SlidingAlerter,
+       [
+         clock: &TickClock.now/0,
+         bucket_ms: 100,
+         threshold: 3,
+         window_ms: 1_000,
+         cleanup_interval_ms: 25
+       ]}
+    )
+
+    # No public call is made against this server, so the only reader of the
+    # injected clock is the periodic cleanup. Observing two clock reads shows
+    # cleanup fired and re-scheduled itself on its own, well inside a deadline
+    # many times the 25ms interval. The test never sends :cleanup itself.
+    deadline = System.monotonic_time(:millisecond) + 2_000
+    assert wait_for_ticks(2, deadline)
+  end
+
+  defp wait_for_ticks(min, deadline) do
+    cond do
+      TickClock.ticks() >= min ->
+        true
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        false
+
+      true ->
+        receive do
+        after
+          5 -> :ok
+        end
+
+        wait_for_ticks(min, deadline)
+    end
   end
 end
 ```

@@ -419,6 +419,22 @@ defmodule AsyncMonitorTest do
     _ = AsyncMonitor.status(mon, service_name)
   end
 
+  # Helper: poll a predicate until it holds or the wall-clock deadline passes,
+  # observing only through the public API. Returns whether it became true.
+  defp wait_until(deadline, fun) do
+    cond do
+      fun.() ->
+        true
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        false
+
+      true ->
+        Process.sleep(5)
+        wait_until(deadline, fun)
+    end
+  end
+
   # -------------------------------------------------------
   # Registration
   # -------------------------------------------------------
@@ -461,6 +477,32 @@ defmodule AsyncMonitorTest do
     assert info.consecutive_failures == 0
     assert info.last_check_at == 5_000
     assert info.check_in_flight == false
+  end
+
+  # -------------------------------------------------------
+  # Self-armed periodic timer
+  # -------------------------------------------------------
+
+  test "monitor arms its own periodic timer without a manual trigger", %{mon: mon} do
+    # A failing check with a short but real interval. The monitor must arm its
+    # own {:schedule_check, name} timer at registration and re-arm it after each
+    # concluded check. We never send the trigger ourselves; reaching two
+    # consecutive failures proves the first check ran and was rescheduled.
+    CheckFn.set_result("auto", {:error, :down})
+    check = CheckFn.build("auto")
+    AsyncMonitor.register(mon, "auto", check, 25, max_failures: 100)
+
+    deadline = System.monotonic_time(:millisecond) + 600
+
+    reached? =
+      wait_until(deadline, fn ->
+        case AsyncMonitor.status(mon, "auto") do
+          {:ok, %{consecutive_failures: n}} -> n >= 2
+          _ -> false
+        end
+      end)
+
+    assert reached?, "expected at least two self-scheduled checks to run automatically"
   end
 
   # -------------------------------------------------------
@@ -662,6 +704,52 @@ defmodule AsyncMonitorTest do
     assert :ok = AsyncMonitor.register(mon, "web", check, 1_000)
 
     assert {:ok, %{status: :pending}} = AsyncMonitor.status(mon, "web")
+  end
+
+  # -------------------------------------------------------
+  # Stale-reference discarding (task_ref match is contract)
+  # -------------------------------------------------------
+
+  test "a check_result whose task_ref does not match is discarded", %{mon: mon} do
+    CheckFn.set_result("svc", :ok)
+    check = CheckFn.build("svc")
+    AsyncMonitor.register(mon, "svc", check, 5_000, max_failures: 1)
+
+    Clock.advance(1_000)
+    trigger_check(mon, "svc")
+    assert {:ok, %{status: :up, consecutive_failures: 0}} = AsyncMonitor.status(mon, "svc")
+
+    # A result or timeout bearing a reference the service does not expect must
+    # change nothing; applying either would count a failure and, at
+    # max_failures: 1, force this healthy service to :down.
+    send(mon, {:check_result, "svc", make_ref(), {:error, :stale}})
+    send(mon, {:check_timeout, "svc", make_ref()})
+    _ = AsyncMonitor.status(mon, "svc")
+
+    assert {:ok, %{status: :up, consecutive_failures: 0, check_in_flight: false}} =
+             AsyncMonitor.status(mon, "svc")
+
+    assert Notifications.count() == 0
+  end
+
+  test "leftover references from a prior registration cannot drive the new one",
+       %{mon: mon} do
+    check = CheckFn.build("web")
+    AsyncMonitor.register(mon, "web", check, 5_000, max_failures: 1)
+    AsyncMonitor.deregister(mon, "web")
+    assert :ok = AsyncMonitor.register(mon, "web", check, 5_000, max_failures: 1)
+
+    # Messages keyed to the old registration carry references the fresh
+    # registration does not expect; they must not fail or down it, and must
+    # not resurrect any state.
+    send(mon, {:check_result, "web", make_ref(), {:error, :old}})
+    send(mon, {:check_timeout, "web", make_ref()})
+    _ = AsyncMonitor.status(mon, "web")
+
+    assert {:ok, %{status: :pending, consecutive_failures: 0, check_in_flight: false}} =
+             AsyncMonitor.status(mon, "web")
+
+    assert Notifications.count() == 0
   end
 
   # -------------------------------------------------------
