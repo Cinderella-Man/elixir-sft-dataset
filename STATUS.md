@@ -18,22 +18,27 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    tests). Campaign: 138/186 families, 314 tests, all gate-arbitrated;
    resync sweeps + pushes done after each batch.
 
-2. **[IN PROGRESS] Campaign follow-ups. Standing: 153/182 families
-   applied (84%), 29 open.** Retry pass done 2026-07-21 (13 flipped,
-   incl. 102_004; commit e3ae5447d).
-   - **[RUNNING] Third pass over the 14 mechanical rejects** (scoped
-     `--only`, first run under the new failure-double mold rule).
-     Detached pid: last line of `logs/close_gaps_full.pid`, log
-     `logs/close_gaps_full.log`. Relaunch: same command as the pid
-     line. After exit: resync sweep + commit + push; families still
-     rejected after 3 attempts go to the hand queue with their reason.
-   - **[ ] 12 double-blind-ADDED families → per-family hand-read**
-     (018_001, 019_001, 020_002, 020_003, 022_002, 022_003, 025_002,
+2. **[IN PROGRESS] Campaign follow-ups. MACHINE PHASE FINAL:
+   159/182 families applied (87%), 23 open — all with human-shaped
+   reasons.** (Passes 1-3 done; commit cc50ffd51.)
+   - **[RUNNING] Last mini-pass over the 3 mechanical stragglers**
+     (098_004, 100_003, 100_004). Pid: last line of
+     `logs/close_gaps_full.pid`, log `logs/close_gaps_full.log`;
+     relaunch = the pid line's command. Whatever rejects here joins
+     the hand queue — no fourth machine pass. After exit: resync
+     sweep + commit + push.
+   - **[ ] 13 blind-fail families → per-family hand-read** (018_001,
+     019_001, 020_002, 020_003, 022_002, 022_003, 025_002, 043_001,
      045_002, 045_003, 074_002, 102_001, 108_003). Each read decides:
-     added test over-pins (fix test approach, e.g. 102_001's
+     added test over-pins (fix the test, e.g. 102_001's
      RuntimeError-vs-InvalidChangesetError double) vs promise not
      solver-salient (one clarifying prompt sentence + anchored test
      land together). NOT auto-reclassified as prompt defects.
+   - **[ ] 7 solver-weak repeaters → hand-read** (005_003, 007_002,
+     013_003, 020_004, 031_001, 032_001, 041_004): 2-3 independent
+     solver attempts failed PRE-EXISTING tests — decide hard-task
+     (document, feeds G9 difficulty metadata) vs pre-existing
+     promise-salience gap (prompt sentence + test).
    - **[ ] Hand-read the 8 DORMANT? timer dirs** (015-family +
      adapt_107_004 likely fine; adapt_023_004 + adapt_006_002 likely
      real).
