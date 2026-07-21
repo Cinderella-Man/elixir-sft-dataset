@@ -282,6 +282,16 @@ defmodule CloseGaps do
       the interval) — bounded `assert_receive`, or a poll-until-deadline loop
       when the effect is poll-only. Never a fixed sleep sized to the interval;
       the test must never send the trigger message itself.
+    - A failure-injecting test double must fail EXACTLY the way the real
+      dependency fails: same return shapes AND same exception types (an Ecto
+      repo double raises `Ecto.InvalidChangesetError`, never a bare
+      `RuntimeError`), and its passthrough semantics must match the real
+      module (`transaction(fun)` wraps in `{:ok, _}`, etc.). The blind gate
+      runs an honest prompt-only solver against your tests — a double that
+      fails with types the prompt's sanctioned implementations would not
+      anticipate rejects the whole family. (Learned from 102_001, 2026-07-21:
+      two honest solvers crashed on a RuntimeError their documented
+      `rescue Ecto.InvalidChangesetError` could never catch.)
     - Comments must describe BEHAVIOR, never the process that produced the
       test: no review citations, no `--- added` banners, no repair markers.
     - Same conventions as the existing harness (`use ExUnit.Case, async: false`,
