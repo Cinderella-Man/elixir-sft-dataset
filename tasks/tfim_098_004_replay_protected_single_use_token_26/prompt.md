@@ -518,6 +518,50 @@ defmodule SingleUseTokenTest do
     assert {:error, :invalid_signature} = SingleUseToken.redeem(server, tampered)
   end
 
+  test "no byte of the signed region can be rewritten without rejection",
+       %{server: server} do
+    # The signed region is everything ahead of the trailing 32-byte MAC: the
+    # nonce, the issue and expiry timestamps, any length prefix and the payload
+    # bytes. Rewriting any one of those bytes must be caught either by the
+    # structural parse (:malformed) or by HMAC verification
+    # (:invalid_signature) — and, because HMAC verification runs before the
+    # expiry check, never by expiry and never by acceptance. In particular a
+    # rewritten expiry timestamp cannot buy an attacker extra lifetime.
+    token = SingleUseToken.issue(server, %{role: "user"}, 100)
+    {:ok, raw} = Base.url_decode64(token, padding: false)
+    signed_size = byte_size(raw) - 32
+    assert signed_size > 0
+
+    for index <- 0..(signed_size - 1), value <- rewrites(:binary.at(raw, index)) do
+      mutated = Base.url_encode64(put_byte(raw, index, value), padding: false)
+      assert {:error, reason} = SingleUseToken.redeem(server, mutated)
+      assert reason in [:malformed, :invalid_signature]
+    end
+
+    # None of those rejected redemptions consumed anything, so the pristine
+    # token is still redeemable exactly once.
+    assert {:ok, %{role: "user"}} = SingleUseToken.redeem(server, token)
+    assert {:error, :replayed} = SingleUseToken.redeem(server, token)
+  end
+
+  test "no byte of the trailing MAC can be rewritten without rejection",
+       %{server: server} do
+    # Rewriting a MAC byte leaves the header consistent with the remaining
+    # bytes, so the structure still parses cleanly and the failure is
+    # attributed to the signature rather than to decoding.
+    token = SingleUseToken.issue(server, %{role: "user"}, 100)
+    {:ok, raw} = Base.url_decode64(token, padding: false)
+    signed_size = byte_size(raw) - 32
+    assert signed_size > 0
+
+    for index <- signed_size..(byte_size(raw) - 1), value <- rewrites(:binary.at(raw, index)) do
+      mutated = Base.url_encode64(put_byte(raw, index, value), padding: false)
+      assert {:error, :invalid_signature} = SingleUseToken.redeem(server, mutated)
+    end
+
+    assert {:ok, %{role: "user"}} = SingleUseToken.redeem(server, token)
+  end
+
   # -------------------------------------------------------
   # Malformed input
   # -------------------------------------------------------
@@ -566,6 +610,23 @@ defmodule SingleUseTokenTest do
 
   test "supports deeply nested map payload", %{server: server} do
     # TODO
+  end
+
+  # --- Byte-rewriting helpers ---
+
+  # Replacement values for one byte, chosen so that whichever way a timestamp
+  # field is laid out, at least one rewrite pushes it far into the future while
+  # others clear or invert it. Values equal to the original byte are dropped so
+  # every rewrite really changes the token.
+  defp rewrites(byte) do
+    [:erlang.bxor(byte, 0xFF), 0x00, 0x7F, 0xFF]
+    |> Enum.uniq()
+    |> Enum.reject(&(&1 == byte))
+  end
+
+  defp put_byte(raw, index, value) do
+    <<prefix::binary-size(^index), _old, rest::binary>> = raw
+    prefix <> <<value>> <> rest
   end
 end
 ```
