@@ -64,12 +64,28 @@ defmodule LintHarnesses do
   # snapshot of their root's harness at mint time and are never strengthened in
   # place — coverage-gap findings on them are permanent noise; their quality
   # rides on the root the cascade fixes.
+  # The contract portion of a prompt, per shape: embedded code/module listings
+  # carry timer machinery (Process.send_after + interval options) that is NOT a
+  # promise of the derived task's contract. adapt_ contracts are the new spec;
+  # wt_/dedoc_ contracts are everything BEFORE the embedded module.
   defp contract_text(dir, prompt) do
-    with true <- String.starts_with?(Path.basename(dir), "adapt_"),
-         [_, spec] <- String.split(prompt, "## New specification", parts: 2) do
-      spec
-    else
-      _ -> prompt
+    base = Path.basename(dir)
+
+    cond do
+      String.starts_with?(base, "adapt_") ->
+        case String.split(prompt, "## New specification", parts: 2) do
+          [_, spec] -> spec
+          _ -> prompt
+        end
+
+      String.starts_with?(base, "wt_") ->
+        prompt |> String.split("## Module under test", parts: 2) |> hd()
+
+      String.starts_with?(base, "dedoc_") ->
+        prompt |> String.split("## The module", parts: 2) |> hd()
+
+      true ->
+        prompt
     end
   end
 
