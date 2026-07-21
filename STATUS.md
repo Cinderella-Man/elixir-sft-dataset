@@ -18,17 +18,31 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    tests). Campaign: 138/186 families, 314 tests, all gate-arbitrated;
    resync sweeps + pushes done after each batch.
 
-**NIGHT RUN 2026-07-21/22 — lanes:** rubric_judge FULL PASS (320
-roots × 2 judges) riding as pid in `logs/rubric_judge_full.pid`,
-monitor armed (activity 4 executing). rescreen6 (timer families)
-riding; rescreen_sw8 batch queued behind it (6 solver-weak entailment
-runs + 100_003/100_004 S6). G1a CLOSED (dormant count 25→0; 6
-reviewer-missed roots hand-closed with pilot-pattern tests; lint now
-shape-aware for adapt_/wt_/dedoc_). G7 CLOSED (all 134 unverified
-pairs are bad_green — no behavioral defect; style route already
-harvested). 100_003 closed with locally-computed RFC vectors;
-100_004 hand-landed. Next in-session: docs/19 hand-triage (activity
-3), HIGHs first.
+**NIGHT RUN 2026-07-21/22 — full lane map (parallelism audit
+2026-07-21 23:35):**
+- **LLM lane 1:** rubric_judge FULL PASS riding (pid in
+  `logs/rubric_judge_full.pid`, ~22/320 at 23:30, monitor armed).
+- **LLM lane 2 (short jobs):** 020_004 salience candidate verifying
+  via keep_land (the prompt-fix batch COLLAPSED to this one — hand
+  checks overturned the judge's NOT-ENTAILED on 005_003 (line 46
+  documents topic-drop verbatim) and 074_002 (line 5 documents
+  missing-element listing), and my own shallow 041_004 read (line 53
+  'derive ETS table names' entails per-instance tables): all three =
+  entailed-hard, G9 seeds, no prompt churn. Judge scorecard on
+  NOT-ENTAILED verdicts: 1 right, 3 wrong — hand-verify always.)
+- **CPU lane:** G2 re-measure riding (`validate --semantic-mutants`,
+  pid in `logs/semantic_mutants_full.pid`, sha-resume; rebuilds the
+  post-campaign tail for activity 5; 15-min monitor).
+- **In-session:** docs/19 (7/52 done: 035_001, 101_001, 074_001,
+  013_003, 040_003 fixed; 031_002, 095_003 refuted-stale). G4
+  pre-classification DONE: `logs/sleep_audit_worklist.jsonl` (179
+  harnesses, 142 bare-wait audit-first candidates).
+- **Deliberately QUEUED (same-lane contention, not idleness):** G9
+  probe + G5 sweep + rewrite_reachins all need the LLM lane — they
+  queue behind rubric so the backbone finishes tonight; G8 gated by
+  G3 by design; G3 rotation + G6 reads are hand-work behind docs/19.
+- CLOSED tonight: G1a (dormant 25→0), G7 (full accounting), all 3
+  stragglers, CI adapt-drift (family-wide resync rule memorized).
 
 2. **[IN PROGRESS] Campaign follow-ups. MACHINE PHASE FINAL:
    159/182 families applied (87%), 23 open — all with human-shaped
