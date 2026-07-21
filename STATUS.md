@@ -37,15 +37,17 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
      over-pins (fix the test, e.g. 102_001's failure-double exception
      type) vs promise not solver-salient (one clarifying prompt
      sentence + anchored test land together).
-   - **[ ] 10 solver-weak repeaters → hand-read** (005_003, 007_002,
-     013_003, 018_001, 019_001, 020_004, 031_001, 032_001, 041_004,
-     074_002): repeated solver failures on PRE-EXISTING tests —
-     decide hard-task (document, feeds G9 difficulty metadata) vs a
-     wiring trap punishing honest solvers. Open hypothesis for the
-     018-020 endpoint members: router-only Plug.Test dispatch +
-     map-body posts means a solver who adds `Plug.Parsers, [:json]`
-     hits UnsupportedMediaTypeError on Plug.Test's multipart/mixed
-     map-posts — verify on 018_001 first.
+   - **[ ] 8 solver-weak repeaters → hand-read** (005_003, 007_002,
+     013_003, 020_004, 031_001, 032_001, 041_004, 074_002): repeated
+     solver failures on PRE-EXISTING tests — decide hard-task
+     (document, feeds G9 difficulty metadata) vs a genuine trap.
+     **Plug.Parsers hypothesis REFUTED by A/B experiment 2026-07-21**
+     (gold ± `Plug.Parsers [:json]` both 31/31 green — Parsers no-ops
+     on Plug.Test's pre-fetched map-posts; no wiring trap exists).
+     018_001 + 019_001 dispositioned: hard multifile Phoenix families,
+     solver variance — they seed the G9 3-solve probe set (activity
+     11). NOTE for reads: reject details truncated failing names at 4
+     (now fixed to carry counts) — do not assume only 4 tests failed.
    - **[ ] 3 systematic stragglers → hand-fix** (098_004 write the
      harness fix by hand; 100_003/100_004 investigate why this
      family's content blows the solver).

@@ -527,7 +527,8 @@ defmodule CloseGaps do
             added == [] and pre_existing != [] ->
               {:error,
                "INCONCLUSIVE: blind solver failed only PRE-EXISTING tests " <>
-                 "(#{Enum.join(Enum.take(pre_existing, 3), "; ")}) — solver-weak this " <>
+                 "(#{length(pre_existing)} failing, first: " <>
+                 "#{Enum.join(Enum.take(pre_existing, 3), "; ")}) — solver-weak this " <>
                  "attempt; retry the family"}
 
             true ->
@@ -535,7 +536,8 @@ defmodule CloseGaps do
                "blind solver fails ADDED test(s) — either the added test pins more than " <>
                  "the prompt states (the gap finding may be wrong) or the solver slipped " <>
                  "on documented behavior (rule 10 — hand-check before retrying). " <>
-                 "Failing: " <> Enum.join(Enum.take(added, 4), "; ")}
+                 "#{length(added)} added + #{length(pre_existing)} pre-existing failing; " <>
+                 "added: " <> Enum.join(Enum.take(added, 4), "; ")}
           end
         end
 
