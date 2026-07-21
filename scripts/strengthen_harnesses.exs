@@ -42,7 +42,7 @@ defmodule StrengthenHarnesses do
 
   @measured "logs/semantic_mutants.jsonl"
   @ledger "logs/strengthen_harnesses.jsonl"
-  @floor 0.5
+  @floor 0.6
   @sm_limit 40
 
   def main(argv) do

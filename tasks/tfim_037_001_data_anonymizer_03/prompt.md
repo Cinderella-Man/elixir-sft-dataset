@@ -202,7 +202,7 @@ end
 
 ```elixir
 defmodule AnonymizerTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   # -------------------------------------------------------
   # Helpers
@@ -382,6 +382,44 @@ defmodule AnonymizerTest do
       [r] = result
       assert r.name == "A***e"
       refute Map.has_key?(r, :email)
+    end
+  end
+
+  # -------------------------------------------------------
+  # Mask length coverage beyond the 1- and 2-character cases
+  # -------------------------------------------------------
+
+  describe ":mask length coverage" do
+    # Only strings of exactly 1 or 2 characters get special treatment; from
+    # 3 characters upward every character between the first and the last is
+    # replaced by an asterisk.
+    test "strings longer than two characters keep only their outer characters" do
+      records = [%{name: "Ann"}, %{name: "Jose"}]
+      [three, four] = Anonymizer.anonymize(records, %{name: :mask})
+
+      assert three.name == "A*n"
+      assert four.name == "J**e"
+    end
+  end
+
+  # -------------------------------------------------------
+  # Fake generation across a wide range of inputs
+  # -------------------------------------------------------
+
+  describe "{:fake, seed} over many distinct values" do
+    # Every value handed to the fake rule must come back as a fabricated
+    # string, whatever the value happens to be — no input may fail to
+    # produce one.
+    test "every input value yields a non-empty fake string" do
+      records = for i <- 1..200, do: %{name: "user-#{i}"}
+      results = Anonymizer.anonymize(records, %{name: {:fake, "wide-range"}})
+
+      assert length(results) == length(records)
+
+      Enum.each(results, fn %{name: fake} ->
+        assert is_binary(fake)
+        assert String.trim(fake) != ""
+      end)
     end
   end
 end
