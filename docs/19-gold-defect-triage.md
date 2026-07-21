@@ -9,6 +9,14 @@ reason), record the verdict here, land as its own commit with full cascade
 
 Total: 63 findings (11 high) across 52 families.
 
+## STALE-FINDING SWEEP 2026-07-22 (deterministic evidence-existence check)
+After three hand-confirmed reviewer hallucinations (031_002, 095_003, 040_001 — all
+T2.2-T-era fixes re-reported with pre-fix evidence), every remaining gold/prompt
+finding was checked mechanically: quoted evidence vs the current file. Five more
+STALE (evidence absent — fixed by prior campaigns): 005_002, 011_004, 031_001,
+032_004, 110_004. All marked refuted; the 34 evidence-present findings remain the
+live medium-tier worklist.
+
 ## 045_002_multivariate_a_b_c_feature_flag_store_01 (added 2026-07-21, campaign hand-read)
 - [ ] **prompt_defect/high** (prompt.md): The `:name`/`:table_name` start_link
   promises are UNEXERCISABLE as documented: every public function is
@@ -43,14 +51,16 @@ Total: 63 findings (11 high) across 52 families.
 - [ ] ~~**gold_defect/high**~~ (solution.ex): The documented example contradicts the code: `250` floors to bucket `200`, not `0`, so the real result is `[{0, 1.0}, {200, 2.0}, {400, nil}, {600, 3.0}]`. The doc teaches the exact off-by-one bucketing error (lumping 250 into bucket 0) that the module's own flooring rule forbids.
   - evidence: `iex> data = [{100, 1.0}, {250, 2.0}, {600, 3.0}] iex> TimeSeriesResampler.resample(data, 200, agg: :mean, fill: :nil) [{0, 1.5}, {200, nil}, {400, nil}, {600, 3.0}]`
 ## 040_001_configuration_merger_with_override_rules_01
-- [ ] **prompt_defect/high** (prompt.md): The prompt calls key paths "tuples" and shows a literal tuple `{:servers, :hosts}`, then declares the convention is "a list of atoms"; worse, the `:locked` example `[:database, :password]` is a single flat list even though the option is "a list of key-path tuples" (which under the list convention would be `[[:database, :password]]`, exactly what the gold and every test require). A solver that follows the tuple example, or reads `locked: [:database, :password]` as one path, produces a module that fails the harness on a load-bearing detail the harness silently pins to nested lists (`locked: [[:secret]]`, `list_strategies: %{[:tags] => :append}`).
+- [x] **REFUTED 2026-07-22 (already fixed — commit e7e36b00d 'prompt contradiction + lying lock comment fixed'; review saw the FIXED sha b059f1d0 and quoted pre-fix text; zero tuple-syntax matches on disk). THIRD stale-hallucination — all three are T2.2-T-era famous fixes.**
+- [ ] ~~**prompt_defect/high**~~ (prompt.md): The prompt calls key paths "tuples" and shows a literal tuple `{:servers, :hosts}`, then declares the convention is "a list of atoms"; worse, the `:locked` example `[:database, :password]` is a single flat list even though the option is "a list of key-path tuples" (which under the list convention would be `[[:database, :password]]`, exactly what the gold and every test require). A solver that follows the tuple example, or reads `locked: [:database, :password]` as one path, produces a module that fails the harness on a load-bearing detail the harness silently pins to nested lists (`locked: [[:secret]]`, `list_strategies: %{[:tags] => :append}`).
   - evidence: `- **Per-key list strategy**: the `:list_strategies` option accepts a map where keys are key-path tuples (e.g. `{:servers, :hosts}` for a nested key) and values are `:replace` or `:append`. - **Locked `
 ## 040_003_stateful_layered_config_store_genserver_01
 - [x] **DONE 2026-07-21** (the absent-parent wholesale-copy hole closed: introduced subtrees now merge into an empty base so locked descendants are stripped at every depth; anchor test added — adjacent tests 165/174 pinned only the top-level and defined-parent cases; rescreened GREEN)
 - [ ] ~~**gold_defect/high**~~ (solution.ex): When the base lacks the *parent* of a locked path, the layer's subtree is copied in wholesale without any per-key `locked?` check, so a locked path is introduced anyway — e.g. `base: %{}, locked: [[:db, :password]]` plus `put_layer(s, :env, %{db: %{password: "pwned"}})` yields `get(s, [:db, :password]) == "pwned"`, directly contradicting the prompt's "If the base does not define a locked path, no layer may introduce it — the effective value there stays absent".
   - evidence: `not Map.has_key?(base, k) -> Map.put(acc, k, Map.fetch!(over, k))`
 ## 061_001_parallel_map_with_concurrency_limit_01
-- [ ] **gold_defect/high** (solution.ex): The prompt explicitly requires "implement the scheduling logic yourself using `Task.async` / `Task.yield`", and the gold not only ignores that constraint but documents the deviation; the reference answer contradicts a stated, load-bearing implementation requirement.
+- [x] **DONE 2026-07-22** (gold rewritten to the prompt's REQUIRED Task.async/Task.yield_many scheduling: trap_exit for the run's duration + sliding-window yield_many harvest loop; all crash semantics preserved — raise/abnormal-exit/throw/external-kill each yield {:error, reason} per item, order kept, as-they-finish refill. 19/19 zero-warning green. Four fim children re-derived: collect/pmap to their new spans, await_one/spawn_task reassigned to flush_exit_messages/start_task — no-duplicate audit green. S6 untouched: prompt + harness byte-identical.)
+- [ ] ~~**gold_defect/high**~~ (solution.ex): The prompt explicitly requires "implement the scheduling logic yourself using `Task.async` / `Task.yield`", and the gold not only ignores that constraint but documents the deviation; the reference answer contradicts a stated, load-bearing implementation requirement.
   - evidence: `Scheduling is implemented with `spawn_monitor` rather than `Task.async` so that task crashes never propagate as exit signals to the caller — only a `:DOWN` monitor message is delivered.`
 ## 074_001_custom_exunit_assertion_helpers_01
 - [x] **DONE 2026-07-21** (started_at threaded through __poll__/5; elapsed = now - started_at; the max/0 clamp deleted — it existed only to hide the broken formula's negatives)

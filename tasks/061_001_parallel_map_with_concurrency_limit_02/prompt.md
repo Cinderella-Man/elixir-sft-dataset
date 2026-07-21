@@ -100,9 +100,11 @@ defmodule ParallelMap do
   result is `{:error, reason}`; all other in-flight tasks continue
   unaffected.
 
-  Scheduling is implemented with `spawn_monitor` rather than `Task.async`
-  so that task crashes never propagate as exit signals to the caller —
-  only a `:DOWN` monitor message is delivered.
+  Scheduling is implemented with `Task.async`/`Task.yield_many` over a
+  sliding window of at most `max_concurrency` tasks. `Task.async` links the
+  task to the caller, so exits are trapped for the duration of the run (and
+  restored afterwards): a crashing task then surfaces as a harmless
+  `{:exit, reason}` yield result instead of killing the caller.
   """
 
   @doc """
@@ -129,25 +131,25 @@ defmodule ParallelMap do
     if total == 0 do
       []
     else
-      parent = self()
-      {seed, queue} = Enum.split(indexed, max_concurrency)
+      # `Task.async` links each task to this process; trap exits so an
+      # abnormally exiting task delivers a message instead of killing us,
+      # then restore the flag and drain those messages before returning.
+      was_trapping? = Process.flag(:trap_exit, true)
 
-      # running: %{our_ref => {monitor_ref, original_index}}
-      #
-      # We use our own `make_ref()` as the primary key because it is the
-      # value embedded in the result message that the spawned process sends
-      # back.  The monitor ref is kept alongside so we can demonitor cleanly
-      # after receiving the result.
-      running =
-        Map.new(seed, fn {elem, idx} ->
-          {our_ref, mon_ref} = spawn_task(parent, func, elem)
-          {our_ref, {mon_ref, idx}}
-        end)
+      try do
+        {seed, queue} = Enum.split(indexed, max_concurrency)
 
-      raw = collect(running, queue, func, parent, _results = %{})
+        # running: %{%Task{} => original_index}
+        running = Map.new(seed, fn {elem, idx} -> {start_task(func, elem), idx} end)
 
-      # Reassemble in original order.
-      Enum.map(0..(total - 1), fn i -> Map.fetch!(raw, i) end)
+        raw = collect(running, queue, func, _results = %{})
+
+        # Reassemble in original order.
+        Enum.map(0..(total - 1), fn i -> Map.fetch!(raw, i) end)
+      after
+        Process.flag(:trap_exit, was_trapping?)
+        flush_exit_messages()
+      end
     end
   end
 
@@ -155,78 +157,19 @@ defmodule ParallelMap do
   # Private helpers
   # ---------------------------------------------------------------------------
 
-  # Spawns a monitored (but NOT linked) process that runs `func.(elem)`.
-  #
-  # All exceptions and exits are caught inside the spawned process and
-  # converted into a tagged result message sent to `parent`.  This means
-  # the process always exits with reason `:normal`, so the `:DOWN` message
-  # we will eventually receive is harmless and can simply be flushed.
-  #
-  # Returns `{our_ref, monitor_ref}`.
-  defp spawn_task(parent, func, elem) do
-    our_ref = make_ref()
+  defp start_task(func, elem), do: Task.async(fn -> func.(elem) end)
 
-    {_pid, mon_ref} =
-      spawn_monitor(fn ->
-        result =
-          try do
-            {:ok, func.(elem)}
-          rescue
-            e -> {:error, {e, __STACKTRACE__}}
-          catch
-            :exit, r -> {:error, r}
-            :throw, t -> {:error, {:throw, t}}
-          end
-
-        send(parent, {our_ref, result})
-      end)
-
-    {our_ref, mon_ref}
-  end
-
-  # The recursive scheduling loop. Awaits one finished task at a time,
-  # records its outcome by original index, frees its slot, and refills that
-  # slot from the queue until nothing is running and nothing is queued.
-  defp collect(running, queue, func, parent, results) do
+  defp collect(running, [] = _queue, _func, results) when map_size(running) == 0 do
     # TODO
   end
 
-  # Blocks until a message arrives from one of our running tasks.
-  #
-  # Two cases:
-  #   1. `{our_ref, result}` — the task completed (normally or via our
-  #      try/catch wrapper) and reported its outcome.  We demonitor with
-  #      `:flush` to discard the subsequent `:normal` DOWN message.
-  #
-  #   2. `{:DOWN, mon_ref, …, reason}` — the process was killed externally
-  #      (e.g. a brutal `Process.exit(pid, :kill)`) before it could send a
-  #      result message.  We locate the entry by monitor ref and wrap the
-  #      reason in `{:error, …}`.
-  #
-  # Any unrelated message is left to fall through and we recurse.
-  defp await_one(running) do
+  # Trapped exits from finished/crashed tasks land in our mailbox; drain them
+  # so pmap leaves the caller's mailbox exactly as it found it.
+  defp flush_exit_messages do
     receive do
-      {our_ref, result} when is_map_key(running, our_ref) ->
-        {mon_ref, idx} = Map.fetch!(running, our_ref)
-        Process.demonitor(mon_ref, [:flush])
-
-        outcome =
-          case result do
-            {:ok, value} -> value
-            {:error, reason} -> {:error, reason}
-          end
-
-        {our_ref, idx, outcome}
-
-      {:DOWN, mon_ref, :process, _pid, reason} ->
-        # Unexpected external kill — locate the task by its monitor ref.
-        case Enum.find(running, fn {_ref, {mon, _idx}} -> mon == mon_ref end) do
-          {our_ref, {_mon, idx}} -> {our_ref, idx, {:error, reason}}
-          nil -> await_one(running)
-        end
-
-      _other ->
-        await_one(running)
+      {:EXIT, _pid, _reason} -> flush_exit_messages()
+    after
+      0 -> :ok
     end
   end
 end
