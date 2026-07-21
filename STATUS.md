@@ -14,27 +14,19 @@ detached+monitored jobs, one solved item = one commit).
 ## Task-B gates LANDED (docs/15); gate_sha is now STABLE for the whole
 ## campaign — no lib/gen_task edits until it ends, rule 7 corollary.)
 
-- **close_gaps CAMPAIGN batch 1 — HIGH families (`--high-only`).**
-  Pilot DONE 2026-07-20 (001_001 applied + hand-reviewed; first attempt
-  was REJECTED by the new S9 gate because the mold prompt said to SKIP
-  wall-clock timer gaps — mold fixed: standing S9 lints of the current
-  harness are injected as MUST-CLOSE items, unclearable-add-only
-  families refuse BEFORE the paid call; commit 6ae07168d). Campaign
-  list: 183 families total. Batch log `logs/close_gaps_full.log`, pid
-  in `logs/close_gaps_full.pid`, ledger `logs/close_gaps.jsonl`
-  (resume: gaps_sha + harness_sha_after + gate_sha keyed — the 07-14
-  phantom-todo warning in the tool header predates the gaps_sha fix and
-  the 6 hand-closed families legitimately re-enter under NEW findings).
-  After EVERY batch (pre-push drift gates enforce this — learned on the
-  pilot: dedoc_ AND tdd_ embeds drifted): the UNSCOPED resync sweep
-  over all projection families — every `scripts/resync_*_embeds.exs`
-  (adapt, bugfix, bundlefim, dedoc, specfim, tdd, tfim) + check
-  `resync_sfim_specs.exs` — with `--apply`, then commit + push. Then:
-  review a sample of applied diffs in detail, aggregate the
-  pre-flight-refused (reach-in debt → G4 interlock list), launch the
-  remainder (unscoped `--go`; resume skips done). Idempotent relaunch:
-  `scripts/run_detached.sh logs/close_gaps_full.log mix run
-  scripts/close_gaps.exs -- --go --high-only`
+- **close_gaps CAMPAIGN — remainder batch (unscoped `--go`, ~156
+  families).** Batch 1 (HIGH) DONE 2026-07-21 03:34: 27/31 applied (61
+  tests), 4 honest rejects auto-retried by this run — if 102_001
+  rejects on its ADDED test again, hand-check it (blind failure:
+  "failed DB write reports {:error, {:db_error, reason}}…" may
+  over-pin). Log `logs/close_gaps_full.log`, pid last line of
+  `logs/close_gaps_full.pid`, ledger `logs/close_gaps.jsonl`. After the
+  batch: UNSCOPED resync sweep (all `resync_*_embeds.exs` + sfim_specs,
+  --apply), commit+push, sample-review applied diffs, aggregate
+  pre-flight refusals (reach-in debt → G4 interlock), aggregate
+  remaining INCONCLUSIVE/rejects into the retry/hand list. Idempotent
+  relaunch: `scripts/run_detached.sh logs/close_gaps_full.log mix run
+  scripts/close_gaps.exs -- --go`
 
 ## NEW from the 2026-07-20 nightly (6 fails, triaged)
 
