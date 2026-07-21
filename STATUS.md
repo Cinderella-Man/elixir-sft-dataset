@@ -30,9 +30,15 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
   'derive ETS table names' entails per-instance tables): all three =
   entailed-hard, G9 seeds, no prompt churn. Judge scorecard on
   NOT-ENTAILED verdicts: 1 right, 3 wrong — hand-verify always.)
-- **CPU lane:** G2 re-measure riding (`validate --semantic-mutants`,
-  pid in `logs/semantic_mutants_full.pid`, sha-resume; rebuilds the
-  post-campaign tail for activity 5; 15-min monitor).
+- **CPU lane → LLM: G2 re-measure DONE 2026-07-22 01:01** — corpus
+  kill 83.5% (was 82.4% pre-campaign), mean 0.85, sub-0.6 tail
+  SHRANK 27→18 (9 true roots + 9 repair_ mint-copies).
+  `strengthen_harnesses` batch over the 9 roots RIDING (pid in
+  `logs/strengthen_tail.pid`, ~2 calls/family, monitor armed). NEW
+  sub-item: repair_ dirs (074_003/101_002/101_003/102_003 pairs)
+  carry mint-time harness copies — refresh from the strengthened
+  parents + re-verify each pair (fix green AND broken non-green),
+  after the parents' strengthen lands.
 - **In-session: docs/19 HIGHS 12/12 DONE 2026-07-22** (9 fixed:
   035_001, 101_001, 074_001, 013_003, 040_003, 015_004, 019_004,
   061_001, 045_002; 3 refuted-stale: 031_002, 095_003, 040_001).
