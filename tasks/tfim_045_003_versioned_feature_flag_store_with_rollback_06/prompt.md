@@ -290,6 +290,28 @@ defmodule FeatureFlagsTest do
     assert List.last(FeatureFlags.history(:f)) == {3, {:percentage, 10}}
   end
 
+  test "rolled-back percentage decides enabled_for? at the restored threshold" do
+    FeatureFlags.enable_for_percentage(:pct, 10)
+    FeatureFlags.enable_for_percentage(:pct, 50)
+    assert :ok = FeatureFlags.rollback(:pct)
+
+    users = for i <- 1..200, do: "u#{i}"
+
+    for user <- users do
+      assert FeatureFlags.enabled_for?(:pct, user) ==
+               :erlang.phash2({:pct, user}, 100) < 10
+    end
+
+    # Some user falls between the two thresholds, so the assertions above
+    # would fail if the superseded 50% state still drove the decision.
+    assert Enum.any?(users, fn user ->
+             bucket = :erlang.phash2({:pct, user}, 100)
+             bucket >= 10 and bucket < 50
+           end)
+
+    refute FeatureFlags.enabled?(:pct)
+  end
+
   test "rollback fails when there is no previous version" do
     FeatureFlags.enable(:f)
     assert {:error, :no_previous_version} = FeatureFlags.rollback(:f)
