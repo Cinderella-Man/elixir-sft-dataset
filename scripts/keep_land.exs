@@ -229,18 +229,28 @@ defmodule KeepLand do
     land!(cfg, root, candidate_prompt)
     sha = CycleLog.content_sha(candidate_prompt)
 
+    resolver =
+      System.get_env("KEEP_RESOLVED_BY") ||
+        "kamil"
+
     append_jsonl(Path.join(cfg.logs_dir, @triage_ledger), %{
       task: root,
       sha: sha,
       entailed: true,
       quote: verdict["quote"],
       reason: verdict["reason"],
-      resolution: "kamil_keep_landed",
-      resolved_by: "keep_land --approve",
+      resolution: "keep_landed",
+      resolved_by: "keep_land --approve (#{resolver})",
       ts: DateTime.utc_now() |> DateTime.to_iso8601()
     })
 
-    record(cfg, %{root: root, sha: sha, gate_sha: gate_sha()}, "landed_keep", "Kamil approved")
+    record(
+      cfg,
+      %{root: root, sha: sha, gate_sha: gate_sha()},
+      "landed_keep",
+      "approved by #{resolver}"
+    )
+
     IO.puts("LANDED as a Kamil keep (resolution row appended). Run the cascade + commit:")
     print_cascade()
   end
