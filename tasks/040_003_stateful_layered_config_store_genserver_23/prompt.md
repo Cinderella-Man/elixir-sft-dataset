@@ -183,7 +183,13 @@ defmodule ConfigStore do
           Map.put(acc, k, Map.fetch!(base, k))
 
         not Map.has_key?(base, k) ->
-          Map.put(acc, k, Map.fetch!(over, k))
+          # An introduced subtree cannot smuggle in locked descendants: merging
+          # it into an empty base applies the locked-keeps-absence rule at
+          # every depth below this key.
+          case Map.fetch!(over, k) do
+            %{} = subtree -> Map.put(acc, k, do_merge(%{}, subtree, kpath, opts))
+            v -> Map.put(acc, k, v)
+          end
 
         true ->
           Map.put(acc, k, merge_value(Map.fetch!(base, k), Map.fetch!(over, k), kpath, opts))
