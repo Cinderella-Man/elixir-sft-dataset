@@ -38,7 +38,7 @@ The router accepts these options via `plug FileUpload.Router, opts`:
 
 - `start_link(opts)` accepts a `:name` option.
 - `create(server, metadata)` generates a UUID v4 `:id`, adds `:uploaded_at` (ISO 8601 UTC) and `:status` of `:pending`, stores and returns `{:ok, record}`.
-- `update_status(server, id, status, extra)` merges `extra` (a map) into the record and sets its `:status`; returns `:ok` (or `{:error, :not_found}`).
+- `update_status(server, id, status, extra)` merges `extra` (a map) into the record and sets its `:status`; returns `:ok`. For an unknown `id` it returns `{:error, :not_found}` — it must not crash and must not report `:ok`.
 - `get(server, id)` → `{:ok, record}` | `{:error, :not_found}`.
 - `list(server)` → all records.
 
