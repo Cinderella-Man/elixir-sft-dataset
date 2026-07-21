@@ -520,5 +520,56 @@ defmodule CursorLongPollTest do
     # Publishing after the subscriber died must still succeed.
     assert {:ok, 1} = Notifications.publish(server, "user:1", %{"n" => 1})
   end
+
+  # -------------------------------------------------------
+  # Subscribe-before-buffer-check ordering
+  # -------------------------------------------------------
+
+  # Busy work used to vary where a concurrent publish lands relative to the
+  # start of a poll. It is jitter only — no assertion depends on its duration.
+  defp burn(0), do: :ok
+  defp burn(n), do: burn(n - 1)
+
+  test "a poll answered from the buffer has still subscribed the caller",
+       %{server: server, opts: opts} do
+    assert {:ok, 1} = Notifications.publish(server, "user:order", %{"n" => 1})
+
+    conn = poll(opts, "user:order", 0)
+    assert conn.status == 200
+    assert decode(conn) == %{"cursor" => 1, "events" => [%{"n" => 1}]}
+
+    # Subscription precedes the buffer check, so the polling process is a live
+    # subscriber even though its response came straight from the buffer.
+    assert {:ok, 2} = Notifications.publish(server, "user:order", %{"n" => 2})
+    assert_receive {:notification, 2, %{"n" => 2}}, 500
+  end
+
+  test "an event published concurrently with the start of a poll is never lost" do
+    server = :"notifications_#{System.unique_integer([:positive])}"
+    start_supervised!({Notifications, name: server, buffer_size: 5_000})
+    opts = [notifications_server: server, timeout_ms: 1_000]
+    user = "user:race"
+
+    # A deep buffer of already-consumed history: every buffer check has real
+    # work to do, so a publish has a genuine chance of landing between the
+    # poller's subscribe and its buffer check.
+    for n <- 1..2_000, do: Notifications.publish(server, user, %{"warm" => n})
+
+    Enum.each(1..40, fn i ->
+      since = 1_999 + i
+      task = Task.async(fn -> poll(opts, user, since) end)
+      burn(i * 500)
+
+      assert {:ok, seq} = Notifications.publish(server, user, %{"race" => i})
+      assert seq == since + 1
+
+      # Whether the event lands before, during, or after the poll's setup, the
+      # client must see it rather than a 204 that silently drops it.
+      conn = Task.await(task, 5_000)
+      assert conn.status == 200
+      assert decode(conn) == %{"cursor" => seq, "events" => [%{"race" => i}]}
+      assert cursor_header(conn) == [Integer.to_string(seq)]
+    end)
+  end
 end
 ```
