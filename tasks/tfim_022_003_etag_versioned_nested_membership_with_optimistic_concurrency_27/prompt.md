@@ -771,5 +771,34 @@ defmodule TeamRouterOptimisticTest do
   test "TeamStore.get_user_by_token returns error for unknown token", %{store: store} do
     assert :error = TeamStore.get_user_by_token(store, "bogus")
   end
+
+  # -------------------------------------------------------
+  # Seeding a member who is already present is a no-op
+  # -------------------------------------------------------
+
+  test "re-adding a present member leaves the version and members unchanged", %{store: store} do
+    v = version(store, "team-1")
+    {:ok, members} = TeamStore.list_members(store, "team-1")
+
+    assert :ok = TeamStore.add_member(store, "team-1", "alice")
+
+    assert version(store, "team-1") == v
+    assert {:ok, ^members} = TeamStore.list_members(store, "team-1")
+  end
+
+  test "re-seeding a present member keeps a held version valid for a write", %{store: store} do
+    read = get_members(store, "team-1", "token-alice")
+    held = etag(read)
+
+    :ok = TeamStore.add_member(store, "team-1", "bob")
+
+    reread = get_members(store, "team-1", "token-alice")
+    assert json_body(reread)["version"] == json_body(read)["version"]
+    assert etag(reread) == held
+
+    write = post_member(store, "team-1", "carol", "token-alice", held)
+    assert write.status == 201
+    assert json_body(write)["added"] == "carol"
+  end
 end
 ```
