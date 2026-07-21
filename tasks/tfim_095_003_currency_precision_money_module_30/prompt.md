@@ -368,5 +368,13 @@ defmodule MoneyTest do
   test "Money struct exposes exactly the amount and currency fields" do
     # TODO
   end
+
+  test "split/2 sums back for negative amounts" do
+    # floor_div/mod distribution: -1000 JPY over 3 -> [-333, -333, -334].
+    parts = Money.split(Money.new(-1000, :JPY), 3)
+    amounts = Enum.map(parts, & &1.amount)
+    assert Enum.sum(amounts) == -1000
+    assert Enum.sort(amounts) == [-334, -333, -333]
+  end
 end
 ```
