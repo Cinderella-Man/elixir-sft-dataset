@@ -691,5 +691,85 @@ defmodule ReplayEventBusTest do
       ReplayEventBus.set_history_size(bus, "t", -1)
     end
   end
+
+  # -------------------------------------------------------
+  # Process registration via :name
+  # -------------------------------------------------------
+
+  test "the :name option registers the bus and the whole API works through it" do
+    name = :"replay_bus_#{System.pid()}_#{System.unique_integer([:positive])}"
+
+    {:ok, pid} =
+      ReplayEventBus.start_link(
+        name: name,
+        clock: &Clock.now/0,
+        default_history_size: 10,
+        history_ttl_ms: 10_000,
+        cleanup_interval_ms: :infinity
+      )
+
+    # The name must be a real process registration, not merely an init arg.
+    assert Process.whereis(name) == pid
+
+    # Every public function accepts the registered name as the server.
+    assert :ok = ReplayEventBus.publish(name, "t", :a)
+    {:ok, ref} = ReplayEventBus.subscribe(name, "t", self(), replay: :all)
+    assert [:a] = drain("t")
+
+    assert :ok = ReplayEventBus.publish(name, "t", :b)
+    assert [:b] = drain("t")
+    assert [:a, :b] = ReplayEventBus.history(name, "t")
+
+    assert :ok = ReplayEventBus.set_history_size(name, "t", 1)
+    assert [:b] = ReplayEventBus.history(name, "t")
+
+    assert :ok = ReplayEventBus.unsubscribe(name, "t", ref)
+    assert :ok = ReplayEventBus.publish(name, "t", :c)
+    assert [] = drain("t")
+  end
+
+  # -------------------------------------------------------
+  # Automatic periodic sweep
+  # -------------------------------------------------------
+
+  # A topic whose retained events have all aged past the TTL and that has no
+  # subscribers is dropped by the periodic sweep, becoming indistinguishable
+  # from a never-seen topic: its per-topic size override is gone and the
+  # bus-wide default governs again. Probing for that transition is the only
+  # public-API signal that a sweep ran without anyone triggering it.
+  defp swept_before?(bus, topic, deadline) do
+    ReplayEventBus.publish(bus, topic, 1)
+    ReplayEventBus.publish(bus, topic, 2)
+    swept? = ReplayEventBus.history(bus, topic) == [1, 2]
+
+    # Age the probe's own events so a later sweep can drop the topic again.
+    Clock.advance(15_000)
+
+    cond do
+      swept? -> true
+      System.monotonic_time(:millisecond) >= deadline -> false
+      true -> swept_before?(bus, topic, deadline)
+    end
+  end
+
+  test "periodic sweep fires on its own at the configured interval" do
+    {:ok, bus} =
+      ReplayEventBus.start_link(
+        clock: &Clock.now/0,
+        default_history_size: 10,
+        history_ttl_ms: 10_000,
+        cleanup_interval_ms: 25
+      )
+
+    # Per-topic override of 1 keeps history at [2] after two publishes; once a
+    # sweep drops the topic, the bus-wide default of 10 keeps both events.
+    :ok = ReplayEventBus.set_history_size(bus, "auto", 1)
+    ReplayEventBus.publish(bus, "auto", :seed)
+    Clock.advance(15_000)
+
+    # Generous bounded deadline: 80x the 25 ms interval.
+    deadline = System.monotonic_time(:millisecond) + 2_000
+    assert swept_before?(bus, "auto", deadline)
+  end
 end
 ```

@@ -331,6 +331,80 @@ defmodule LeaderboardTest do
 
     assert length(Leaderboard.top(board, 10)) == 3
   end
+
+  # -------------------------------------------------------
+  # Fractional scores (a score is any number, not just an integer)
+  # -------------------------------------------------------
+
+  test "a float score is accepted on first submission and read back", %{board: board} do
+    # The very first submission for a player is the insertion path; it must
+    # accept a fractional score and return it unchanged from both readers.
+    assert :ok = Leaderboard.submit_score(board, "alice", 12.5)
+
+    assert [{"alice", 12.5}] = Leaderboard.top(board, 1)
+    assert {:ok, 1, 12.5} = Leaderboard.rank(board, "alice")
+  end
+
+  test "personal best over float scores keeps only the highest", %{board: board} do
+    # The overwrite path must compare fractional scores numerically: a higher
+    # float replaces the stored one, a lower float is a no-op.
+    Leaderboard.submit_score(board, "alice", 10.25)
+    Leaderboard.submit_score(board, "alice", 10.75)
+    Leaderboard.submit_score(board, "alice", 10.5)
+
+    assert {:ok, 1, 10.75} = Leaderboard.rank(board, "alice")
+    assert [{"alice", 10.75}] = Leaderboard.top(board, 1)
+  end
+
+  test "float and integer scores overwrite each other by numeric value", %{board: board} do
+    # Mixing representations must not break the highest-score rule in either
+    # direction: a float beats a smaller integer and vice versa.
+    Leaderboard.submit_score(board, "alice", 10)
+    Leaderboard.submit_score(board, "alice", 10.5)
+    assert {:ok, 1, 10.5} = Leaderboard.rank(board, "alice")
+
+    Leaderboard.submit_score(board, "alice", 11)
+    assert {:ok, 1, 11} = Leaderboard.rank(board, "alice")
+
+    # A float below the stored integer best leaves it untouched.
+    Leaderboard.submit_score(board, "alice", 10.9)
+    assert {:ok, 1, 11} = Leaderboard.rank(board, "alice")
+  end
+
+  test "top and rank order mixed float and integer scores numerically", %{board: board} do
+    Leaderboard.submit_score(board, "carol", 11.25)
+    Leaderboard.submit_score(board, "alice", 10.5)
+    Leaderboard.submit_score(board, "bob", 10)
+    Leaderboard.submit_score(board, "dave", -0.5)
+
+    assert [{"carol", 11.25}, {"alice", 10.5}, {"bob", 10}, {"dave", -0.5}] =
+             Leaderboard.top(board, 4)
+
+    assert {:ok, 1, 11.25} = Leaderboard.rank(board, "carol")
+    assert {:ok, 2, 10.5} = Leaderboard.rank(board, "alice")
+    assert {:ok, 3, 10} = Leaderboard.rank(board, "bob")
+    assert {:ok, 4, -0.5} = Leaderboard.rank(board, "dave")
+  end
+
+  test "racing float submits for one player keep the all-time highest", %{board: board} do
+    # The atomic highest-score rule must hold for fractional scores too, not
+    # only for the integer case.
+    scores = for i <- 1..100, do: i * 0.5
+
+    for _writer <- 1..4 do
+      Task.async(fn ->
+        for score <- Enum.shuffle(scores) do
+          Leaderboard.submit_score(board, "float_racer", score)
+        end
+
+        :done
+      end)
+    end
+    |> Enum.each(fn task -> assert :done = Task.await(task, 60_000) end)
+
+    assert {:ok, 1, 50.0} = Leaderboard.rank(board, "float_racer")
+    assert [{"float_racer", 50.0}] = Leaderboard.top(board, 1)
+  end
 end
 ```
 
