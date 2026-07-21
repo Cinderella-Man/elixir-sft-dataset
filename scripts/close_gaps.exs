@@ -509,7 +509,16 @@ defmodule CloseGaps do
             |> Enum.map(&normalize_test_name(&1["test"]))
             |> Enum.reject(&(&1 == ""))
 
-          {pre_existing, added} = Enum.split_with(failing, &MapSet.member?(original, &1))
+          # ExUnit reports describe-nested tests as "<describe> <name>" while
+          # test_names/1 extracts the bare quoted name — match on either, or
+          # every pre-existing failure inside a describe block reads as ADDED
+          # (the 2026-07-21 misclassification: the whole "endpoint cluster" of
+          # blind-ADDED rejects was this artifact).
+          {pre_existing, added} =
+            Enum.split_with(failing, fn f ->
+              MapSet.member?(original, f) or
+                Enum.any?(original, fn o -> String.ends_with?(f, " " <> o) end)
+            end)
 
           cond do
             json["compiled"] != true ->

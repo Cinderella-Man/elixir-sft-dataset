@@ -21,24 +21,34 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
 2. **[IN PROGRESS] Campaign follow-ups. MACHINE PHASE FINAL:
    159/182 families applied (87%), 23 open — all with human-shaped
    reasons.** (Passes 1-3 done; commit cc50ffd51.)
-   - **[RUNNING] Last mini-pass over the 3 mechanical stragglers**
-     (098_004, 100_003, 100_004). Pid: last line of
-     `logs/close_gaps_full.pid`, log `logs/close_gaps_full.log`;
-     relaunch = the pid line's command. Whatever rejects here joins
-     the hand queue — no fourth machine pass. After exit: resync
-     sweep + commit + push.
-   - **[ ] 13 blind-fail families → per-family hand-read** (018_001,
-     019_001, 020_002, 020_003, 022_002, 022_003, 025_002, 043_001,
-     045_002, 045_003, 074_002, 102_001, 108_003). Each read decides:
-     added test over-pins (fix the test, e.g. 102_001's
-     RuntimeError-vs-InvalidChangesetError double) vs promise not
-     solver-salient (one clarifying prompt sentence + anchored test
-     land together). NOT auto-reclassified as prompt defects.
-   - **[ ] 7 solver-weak repeaters → hand-read** (005_003, 007_002,
-     013_003, 020_004, 031_001, 032_001, 041_004): 2-3 independent
-     solver attempts failed PRE-EXISTING tests — decide hard-task
-     (document, feeds G9 difficulty metadata) vs pre-existing
-     promise-salience gap (prompt sentence + test).
+   - Mini-pass DONE: all 3 stragglers rejected with their SAME
+     systematic reasons → hand queue (098_004 mold bitstring-pin bug,
+     100_003 max_turns, 100_004 solver no-compile).
+   - **Classifier bug FOUND + FIXED 2026-07-21** during the 018_001
+     read: blind_gate matched bare `test "..."` names against
+     ExUnit's describe-prefixed failure names, so every pre-existing
+     failure inside a `describe` block read as "fails ADDED test(s)"
+     — the whole "endpoint cluster" was this artifact. Fix in
+     close_gaps.exs (describe-aware matching); the 13 flagged
+     families re-partitioned deterministically from the ledger.
+   - **[ ] 10 GENUINE blind-ADDED families → per-family hand-read**
+     (020_002, 020_003, 022_002, 022_003, 025_002, 043_001, 045_002,
+     045_003, 102_001, 108_003). Each read decides: added test
+     over-pins (fix the test, e.g. 102_001's failure-double exception
+     type) vs promise not solver-salient (one clarifying prompt
+     sentence + anchored test land together).
+   - **[ ] 10 solver-weak repeaters → hand-read** (005_003, 007_002,
+     013_003, 018_001, 019_001, 020_004, 031_001, 032_001, 041_004,
+     074_002): repeated solver failures on PRE-EXISTING tests —
+     decide hard-task (document, feeds G9 difficulty metadata) vs a
+     wiring trap punishing honest solvers. Open hypothesis for the
+     018-020 endpoint members: router-only Plug.Test dispatch +
+     map-body posts means a solver who adds `Plug.Parsers, [:json]`
+     hits UnsupportedMediaTypeError on Plug.Test's multipart/mixed
+     map-posts — verify on 018_001 first.
+   - **[ ] 3 systematic stragglers → hand-fix** (098_004 write the
+     harness fix by hand; 100_003/100_004 investigate why this
+     family's content blows the solver).
    - **[ ] Hand-read the 8 DORMANT? timer dirs** (015-family +
      adapt_107_004 likely fine; adapt_023_004 + adapt_006_002 likely
      real).
