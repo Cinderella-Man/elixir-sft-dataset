@@ -135,10 +135,11 @@ defmodule ManagedMonitor do
         consecutive_failures: 0,
         notified_down: false,
         maintenance_ends_at: nil,
-        maintenance_timer: nil
+        maintenance_timer: nil,
+        check_timer: nil
       }
 
-      schedule_check(name, interval_ms)
+      service = %{service | check_timer: schedule_check(name, interval_ms)}
 
       {:reply, :ok, put_in(state.services[name], service)}
     end
@@ -157,6 +158,23 @@ defmodule ManagedMonitor do
   end
 
   def handle_call({:deregister, name}, _from, state) do
+    case Map.fetch(state.services, name) do
+      {:ok, service} ->
+        # Kill the whole check chain: the armed timer AND any {:check, name}
+        # already sitting in the mailbox — the prompt's rule is that the old
+        # registration's leftover timers must not drive a re-registration.
+        if service.check_timer, do: Process.cancel_timer(service.check_timer)
+
+        receive do
+          {:check, ^name} -> :ok
+        after
+          0 -> :ok
+        end
+
+      :error ->
+        :ok
+    end
+
     {:reply, :ok, %{state | services: Map.delete(state.services, name)}}
   end
 
@@ -229,17 +247,15 @@ defmodule ManagedMonitor do
         {:noreply, state}
 
       {:ok, %{mode: :paused} = service} ->
-        # Paused: skip the check but keep scheduling.
-        schedule_check(name, service.interval_ms)
-        {:noreply, state}
+        # Paused: skip the check but keep scheduling (one chain, fresh ref).
+        service = rearm(service, name)
+        {:noreply, put_in(state.services[name], service)}
 
       {:ok, %{mode: :maintenance} = service} ->
         now = state.clock.()
         result = service.check_func.()
 
-        new_service = apply_maintenance_check(service, result, now)
-
-        schedule_check(name, service.interval_ms)
+        new_service = rearm(apply_maintenance_check(service, result, now), name)
 
         {:noreply, put_in(state.services[name], new_service)}
 
@@ -248,8 +264,7 @@ defmodule ManagedMonitor do
         result = service.check_func.()
 
         {new_service, events} = apply_active_check(service, result, now)
-
-        schedule_check(name, service.interval_ms)
+        new_service = rearm(new_service, name)
 
         new_state = put_in(state.services[name], new_service)
 
@@ -369,6 +384,14 @@ defmodule ManagedMonitor do
 
   defp schedule_check(name, interval_ms) do
     Process.send_after(self(), {:check, name}, interval_ms)
+  end
+
+  # One chain per service, always: cancel whatever is armed before arming the
+  # next timer, so neither a manual {:check, name} trigger nor a stale chain
+  # can multiply the check rate.
+  defp rearm(service, name) do
+    if service.check_timer, do: Process.cancel_timer(service.check_timer)
+    %{service | check_timer: schedule_check(name, service.interval_ms)}
   end
 
   # Compute the reported status from the internal health + mode.
@@ -1037,6 +1060,31 @@ defmodule ManagedMonitorTest do
 
     assert {:ok, %{status: :pending, maintenance_ends_at: nil}} =
              ManagedMonitor.status(mon, "auto_maint")
+  end
+
+  test "a deregistered service's timer chain cannot drive a re-registration", %{mon: mon} do
+    test_pid = self()
+
+    # Arm a SHORT chain, then deregister before it fires: the armed timer (and
+    # any queued {:check, "web"}) must die with the registration.
+    ManagedMonitor.register(mon, "web", fn -> :ok end, 80)
+    assert :ok = ManagedMonitor.deregister(mon, "web")
+
+    # Re-register far out of firing range. Only a leftover 80ms chain could
+    # possibly run this check within the observation window.
+    ManagedMonitor.register(
+      mon,
+      "web",
+      fn ->
+        send(test_pid, :stale_chain_fired)
+        :ok
+      end,
+      60_000
+    )
+
+    refute_receive :stale_chain_fired, 400
+    {:ok, info} = ManagedMonitor.status(mon, "web")
+    assert info.status == :pending
   end
 end
 ```

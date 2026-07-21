@@ -647,4 +647,29 @@ defmodule ManagedMonitorTest do
     assert {:ok, %{status: :pending, maintenance_ends_at: nil}} =
              ManagedMonitor.status(mon, "auto_maint")
   end
+
+  test "a deregistered service's timer chain cannot drive a re-registration", %{mon: mon} do
+    test_pid = self()
+
+    # Arm a SHORT chain, then deregister before it fires: the armed timer (and
+    # any queued {:check, "web"}) must die with the registration.
+    ManagedMonitor.register(mon, "web", fn -> :ok end, 80)
+    assert :ok = ManagedMonitor.deregister(mon, "web")
+
+    # Re-register far out of firing range. Only a leftover 80ms chain could
+    # possibly run this check within the observation window.
+    ManagedMonitor.register(
+      mon,
+      "web",
+      fn ->
+        send(test_pid, :stale_chain_fired)
+        :ok
+      end,
+      60_000
+    )
+
+    refute_receive :stale_chain_fired, 400
+    {:ok, info} = ManagedMonitor.status(mon, "web")
+    assert info.status == :pending
+  end
 end
