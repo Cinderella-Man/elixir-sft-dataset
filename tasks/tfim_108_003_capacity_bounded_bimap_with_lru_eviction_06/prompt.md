@@ -246,6 +246,52 @@ defmodule BoundedBiMapTest do
   end
 
   # -------------------------------------------------------
+  # Every put refreshes recency, overwrites included
+  # -------------------------------------------------------
+
+  @tag capacity: 3
+  test "overwriting a key makes it MRU and shifts the next eviction victim", %{bm: bm} do
+    BoundedBiMap.put(bm, :a, 1)
+    BoundedBiMap.put(bm, :b, 2)
+    BoundedBiMap.put(bm, :c, 3)
+
+    # :a is the LRU until its value is overwritten; the overwrite refreshes it.
+    BoundedBiMap.put(bm, :a, 9)
+
+    assert [:b, :c, :a] == BoundedBiMap.keys_by_recency(bm)
+
+    # A brand-new key at capacity now evicts :b, not the freshly written :a.
+    BoundedBiMap.put(bm, :d, 4)
+
+    assert :error = BoundedBiMap.get_by_key(bm, :b)
+    assert :error = BoundedBiMap.get_by_value(bm, 2)
+    assert {:ok, 9} = BoundedBiMap.get_by_key(bm, :a)
+    assert {:ok, :a} = BoundedBiMap.get_by_value(bm, 9)
+    assert {:ok, 3} = BoundedBiMap.get_by_key(bm, :c)
+    assert {:ok, 4} = BoundedBiMap.get_by_key(bm, :d)
+    assert BoundedBiMap.size(bm) == 3
+  end
+
+  @tag capacity: 3
+  test "re-putting an unchanged pair refreshes recency and shifts the victim", %{bm: bm} do
+    BoundedBiMap.put(bm, :a, 1)
+    BoundedBiMap.put(bm, :b, 2)
+    BoundedBiMap.put(bm, :c, 3)
+
+    # Writing the identical pair still counts as using it.
+    BoundedBiMap.put(bm, :a, 1)
+
+    assert [:b, :c, :a] == BoundedBiMap.keys_by_recency(bm)
+
+    BoundedBiMap.put(bm, :d, 4)
+
+    assert :error = BoundedBiMap.get_by_key(bm, :b)
+    assert {:ok, 1} = BoundedBiMap.get_by_key(bm, :a)
+    assert {:ok, :a} = BoundedBiMap.get_by_value(bm, 1)
+    assert BoundedBiMap.size(bm) == 3
+  end
+
+  # -------------------------------------------------------
   # Value collision frees a slot instead of LRU-evicting
   # -------------------------------------------------------
 
