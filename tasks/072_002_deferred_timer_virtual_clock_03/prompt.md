@@ -46,7 +46,10 @@ defmodule Clock do
   @doc "Dispatches `now/0` to the correct implementation."
   @spec now(module() | GenServer.server()) :: DateTime.t()
   def now(clock) when is_atom(clock) do
-    if function_exported?(clock, :now, 0) do
+    # ensure_loaded?/1 first: function_exported?/3 deliberately does NOT load
+    # the module, so under lazy loading a real clock module's first use would
+    # fall through to the Fake branch and exit :noproc.
+    if Code.ensure_loaded?(clock) and function_exported?(clock, :now, 0) do
       clock.now()
     else
       Clock.Fake.now(clock)
@@ -136,7 +139,9 @@ defmodule Clock.Fake do
   @impl GenServer
   def init(%DateTime{} = initial), do: {:ok, %__MODULE__{time: initial}}
 
-  # TODO: implement the five handle_call/3 clauses described above.
+  def handle_call(:now, _from, state) do
+    # TODO
+  end
 
   # ---------------------------------------------------------------------------
   # Private helpers

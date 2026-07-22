@@ -32,7 +32,10 @@ defmodule Clock do
   @doc "Dispatches `now/0` to the correct implementation."
   @spec now(module() | GenServer.server()) :: DateTime.t()
   def now(clock) when is_atom(clock) do
-    if function_exported?(clock, :now, 0) do
+    # ensure_loaded?/1 first: function_exported?/3 deliberately does NOT load
+    # the module, so under lazy loading a real clock module's first use would
+    # fall through to the Fake branch and exit :noproc.
+    if Code.ensure_loaded?(clock) and function_exported?(clock, :now, 0) do
       clock.now()
     else
       Clock.Fake.now(clock)
@@ -180,6 +183,7 @@ defmodule Clock.Fake do
 
   # Convert the whole duration to seconds, then apply once — robust across
   # Elixir versions regardless of which units DateTime.add/3 supports natively.
+
   defp apply_duration(datetime, duration) do
     # TODO
   end
