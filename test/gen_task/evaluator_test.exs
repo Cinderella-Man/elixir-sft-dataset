@@ -286,6 +286,32 @@ defmodule GenTask.EvaluatorTest do
 
       assert sf("test \"x\" do\n  assert Foo.bar() == :ok\nend", prompt) == nil
     end
+
+    test "adapt_-shaped prompt: timers promised only by the EMBEDDED BASE do not flag" do
+      # The base section (above the marker) carries the timer contract; the
+      # new specification does not — the derived task makes no timer promise.
+      prompt =
+        "Base task: re-arm via Process.send_after every :cleanup_interval_ms.\n" <>
+          "## New specification\nPure transformation, no timers."
+
+      assert sf("test \"x\" do\n  assert Foo.bar() == :ok\nend", prompt) == nil
+    end
+
+    test "adapt_-shaped prompt: timers promised by the NEW SPEC itself still flag" do
+      prompt =
+        "Base task: something else entirely.\n" <>
+          "## New specification\nRe-arm via Process.send_after every :cleanup_interval_ms."
+
+      assert sf("test \"x\" do\n  assert Foo.bar() == :ok\nend", prompt) =~ "rides the default"
+    end
+
+    test "wt_-shaped prompt: timer text inside the embedded module does not flag" do
+      prompt =
+        "Write tests for the module below.\n## Module under test\n" <>
+          "defmodule X do\n  # Process.send_after(self(), :tick, cleanup_interval_ms)\nend"
+
+      assert sf("test \"x\" do\n  assert Foo.bar() == :ok\nend", prompt) == nil
+    end
   end
 
   describe "compile_warnings/1 (docs/12 item 1)" do

@@ -602,7 +602,33 @@ defmodule GenTask.Evaluator do
   # in a test that observes an automatic firing. Key shape is interval/period-only
   # so `window_ms`-style per-call arguments never flag; an atom the prompt uses as
   # an ERROR REASON (`{:error, :invalid_interval}`) is not a timer option either.
-  defp promised_timer_keys(prompt) do
+  # The CONTRACT portion of a prompt, shape-detected from its own structure
+  # (the accept path has no dir name yet): adapt_ prompts embed the base
+  # task's full prompt+gold ABOVE "## New specification" — timer machinery
+  # mentioned there is the base's contract, not the derived task's; wt_ and
+  # dedoc_ prompts embed the module listing BELOW their marker — everything
+  # after it is code, not promise. Ported 1:1 from scripts/lint_harnesses.exs
+  # (the 2026-07-21 adapt_ false-positive fix), content-keyed instead of
+  # dir-keyed.
+  defp contract_text(prompt) do
+    cond do
+      String.contains?(prompt, "## New specification") ->
+        prompt |> String.split("## New specification", parts: 2) |> List.last()
+
+      String.contains?(prompt, "## Module under test") ->
+        prompt |> String.split("## Module under test", parts: 2) |> hd()
+
+      String.contains?(prompt, "## The module") ->
+        prompt |> String.split("## The module", parts: 2) |> hd()
+
+      true ->
+        prompt
+    end
+  end
+
+  defp promised_timer_keys(full_prompt) do
+    prompt = contract_text(full_prompt)
+
     if String.contains?(prompt, "Process.send_after") do
       ~r/:(\w*(?:interval|period)\w*)\b/
       |> Regex.scan(prompt, capture: :all_but_first)
