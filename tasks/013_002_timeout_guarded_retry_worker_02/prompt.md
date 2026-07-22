@@ -26,6 +26,12 @@ defmodule TimeoutRetryWorker do
   Each attempt runs inside a supervised, unlinked Task so that an abnormal
   exit in the user function cannot bring down the worker; such an exit is
   surfaced as a retryable `{:task_crashed, reason}` failure.
+
+  The per-attempt timeout is enforced INSIDE the attempt task by a nested
+  `Task.yield/2` + `Task.shutdown/2` pair, and outcomes come back as plain
+  task messages routed through per-execution records keyed by task ref —
+  the server itself never blocks, so no caller's slow attempt or backoff
+  wait delays another caller's reply.
   """
 
   use GenServer
@@ -60,7 +66,9 @@ defmodule TimeoutRetryWorker do
 
   @impl true
   def handle_call({:execute, func, opts}, from, state) do
-    state = launch_attempt(func, 0, opts, from, state)
+    # Attempt 0 launches from handle_info exactly like every retry — the
+    # contract pins "spawned from within the GenServer's handle_info".
+    send(self(), {:retry, func, 0, opts, from})
     {:noreply, state}
   end
 

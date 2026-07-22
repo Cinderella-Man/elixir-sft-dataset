@@ -84,6 +84,12 @@ defmodule TimeoutRetryWorker do
   Each attempt runs inside a supervised, unlinked Task so that an abnormal
   exit in the user function cannot bring down the worker; such an exit is
   surfaced as a retryable `{:task_crashed, reason}` failure.
+
+  The per-attempt timeout is enforced INSIDE the attempt task by a nested
+  `Task.yield/2` + `Task.shutdown/2` pair, and outcomes come back as plain
+  task messages routed through per-execution records keyed by task ref —
+  the server itself never blocks, so no caller's slow attempt or backoff
+  wait delays another caller's reply.
   """
 
   use GenServer
@@ -118,7 +124,9 @@ defmodule TimeoutRetryWorker do
 
   @impl true
   def handle_call({:execute, func, opts}, from, state) do
-    state = launch_attempt(func, 0, opts, from, state)
+    # Attempt 0 launches from handle_info exactly like every retry — the
+    # contract pins "spawned from within the GenServer's handle_info".
+    send(self(), {:retry, func, 0, opts, from})
     {:noreply, state}
   end
 
@@ -131,23 +139,27 @@ defmodule TimeoutRetryWorker do
   defp launch_attempt(func, attempt, opts, from, state) do
     timeout = Keyword.get(opts, :attempt_timeout_ms, 5_000)
 
-    task = Task.Supervisor.async_nolink(state.supervisor, fn -> func.() end)
+    # The timeout runs INSIDE the wrapper task, which owns the inner task
+    # and may therefore yield to and shut it down; the server never blocks.
+    # A crash in `func` kills the linked wrapper with the same reason, so
+    # it surfaces at the server as this task's :DOWN — the
+    # `{:task_crashed, reason}` path.
+    task =
+      Task.Supervisor.async_nolink(state.supervisor, fn ->
+        inner = Task.async(fn -> func.() end)
 
-    outcome =
-      case Task.yield(task, timeout) do
-        {:ok, result} ->
-          result
+        case Task.yield(inner, timeout) do
+          {:ok, result} ->
+            result
 
-        {:exit, reason} ->
-          {:error, {:task_crashed, reason}}
+          nil ->
+            _ = Task.shutdown(inner, :brutal_kill)
+            {:error, :timeout}
+        end
+      end)
 
-        nil ->
-          _ = Task.shutdown(task, :brutal_kill)
-          {:error, :timeout}
-      end
-
-    {_, state} = handle_task_result_sync(outcome, func, attempt, opts, from, state)
-    state
+    record = %{from: from, func: func, attempt: attempt, opts: opts}
+    %{state | tasks: Map.put(state.tasks, task.ref, record)}
   end
 
   defp handle_task_result_sync(result, func, attempt, opts, from, state) do

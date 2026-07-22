@@ -484,4 +484,90 @@ defmodule TimeoutRetryWorkerTest do
     assert waited_ms >= 100
     assert waited_ms <= 560
   end
+
+  test "abnormal task exit yields task_crashed reason on the final exhausted attempt", %{rw: rw} do
+    func = fn -> exit(:kaboom) end
+
+    assert {:error, :max_retries_exceeded, {:task_crashed, :kaboom}} =
+             TimeoutRetryWorker.execute(rw, func,
+               max_retries: 0,
+               attempt_timeout_ms: 1_000
+             )
+  end
+
+  test "abnormal task exit is retryable so a later attempt can still succeed", %{rw: rw} do
+    {:ok, agent} = Agent.start_link(fn -> 0 end)
+
+    func = fn ->
+      n = Agent.get_and_update(agent, fn n -> {n + 1, n + 1} end)
+      if n == 1, do: exit(:kaboom), else: {:ok, :recovered}
+    end
+
+    assert {:ok, :recovered} =
+             TimeoutRetryWorker.execute(rw, func,
+               max_retries: 3,
+               base_delay_ms: 0,
+               max_delay_ms: 0,
+               attempt_timeout_ms: 1_000
+             )
+
+    Agent.stop(agent)
+  end
+
+  test "registers under the :name option and serves calls addressed by that name" do
+    {:ok, _pid} =
+      TimeoutRetryWorker.start_link(
+        name: :trw_named_worker,
+        random: &ZeroRandom.rand/1
+      )
+
+    assert {:ok, :via_name} =
+             TimeoutRetryWorker.execute(:trw_named_worker, fn -> {:ok, :via_name} end,
+               max_retries: 0
+             )
+  end
+
+  test "start_link with no arguments starts a usable worker" do
+    assert {:ok, pid} = TimeoutRetryWorker.start_link()
+
+    assert {:ok, :no_arg} =
+             TimeoutRetryWorker.execute(pid, fn -> {:ok, :no_arg} end, max_retries: 0)
+  end
+
+  test "execute called with only server and func uses the default option set", %{rw: rw} do
+    assert {:ok, :two_arg} = TimeoutRetryWorker.execute(rw, fn -> {:ok, :two_arg} end)
+  end
+
+  test "re-running execute on the same server restarts attempt counting from zero", %{rw: rw} do
+    {:ok, agent} = Agent.start_link(fn -> 0 end)
+
+    func = fn ->
+      Agent.update(agent, &(&1 + 1))
+      {:error, :boom}
+    end
+
+    assert {:error, :max_retries_exceeded, :boom} =
+             TimeoutRetryWorker.execute(rw, func,
+               max_retries: 2,
+               base_delay_ms: 0,
+               max_delay_ms: 0,
+               attempt_timeout_ms: 1_000
+             )
+
+    assert Agent.get(agent, & &1) == 3
+
+    Agent.update(agent, fn _ -> 0 end)
+
+    assert {:error, :max_retries_exceeded, :boom} =
+             TimeoutRetryWorker.execute(rw, func,
+               max_retries: 2,
+               base_delay_ms: 0,
+               max_delay_ms: 0,
+               attempt_timeout_ms: 1_000
+             )
+
+    assert Agent.get(agent, & &1) == 3
+
+    Agent.stop(agent)
+  end
 end

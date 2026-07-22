@@ -38,6 +38,7 @@ Please make the following observable details exact, since I want to depend on th
 - `opts` is a keyword list and should default to `[]`, so `start_link()` works with no arguments.
 - Return whatever `GenServer.start_link/3` returns (`{:ok, pid}` etc.).
 - When `:name` is present, register under that name; when absent, start unregistered. Passing `:name` must not break anything else — the rest of `opts` is just configuration.
+- The module must double as a supervisable child: starting it as `{TimeoutRetryWorker, opts}` (for example via `start_supervised!/1` or under any supervisor) must launch the worker, handing `opts` straight through to `start_link/1`. Using `use GenServer` gives you this child spec for free.
 - `:clock` and `:random` are resolved once at init and held for the lifetime of the process. `:random` is the only source of jitter: whenever jitter is applied, it is obtained by calling the injected function, never by calling `:rand` directly. `:clock` is accepted, defaulted, and retained, but must not be used to implement the retry delay itself (`Process.send_after` does the waiting).
 - Any other keys in `opts` are ignored.
 

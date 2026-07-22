@@ -22,6 +22,10 @@ defmodule TimeoutRetryWorker do
   @moduledoc """
   A GenServer that executes functions with exponential backoff, jitter,
   and per-attempt timeouts enforced via Task.yield/Task.shutdown.
+
+  Each attempt runs inside a supervised, unlinked Task so that an abnormal
+  exit in the user function cannot bring down the worker; such an exit is
+  surfaced as a retryable `{:task_crashed, reason}` failure.
   """
 
   use GenServer
@@ -29,6 +33,7 @@ defmodule TimeoutRetryWorker do
 
   # --- Public API ---
 
+  @doc "Starts the worker. Accepts `:name`, `:clock`, and `:random` options."
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
     name = Keyword.get(opts, :name)
@@ -36,6 +41,7 @@ defmodule TimeoutRetryWorker do
     GenServer.start_link(__MODULE__, opts, gen_opts)
   end
 
+  @doc "Runs `func`, retrying on failure until the timeout in `opts`. Returns the result."
   @spec execute(GenServer.server(), (-> any()), keyword()) ::
           {:ok, any()} | {:error, :max_retries_exceeded, any()}
   def execute(server, func, opts \\ []) do
@@ -48,7 +54,8 @@ defmodule TimeoutRetryWorker do
   def init(opts) do
     clock = Keyword.get(opts, :clock, fn -> System.monotonic_time(:millisecond) end)
     random = Keyword.get(opts, :random, fn max -> :rand.uniform(max) - 1 end)
-    {:ok, %{clock: clock, random: random, tasks: %{}}}
+    {:ok, supervisor} = Task.Supervisor.start_link()
+    {:ok, %{clock: clock, random: random, supervisor: supervisor, tasks: %{}}}
   end
 
   @impl true
@@ -64,7 +71,7 @@ defmodule TimeoutRetryWorker do
   end
 
   def handle_info({ref, result}, state) when is_reference(ref) do
-    # Task completed normally — flush the :DOWN message
+    # Defensive: a stray result for an execution we no longer track is ignored.
     Process.demonitor(ref, [:flush])
 
     case Map.pop(state.tasks, ref) do
