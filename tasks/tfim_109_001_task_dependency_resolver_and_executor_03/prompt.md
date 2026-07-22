@@ -148,8 +148,11 @@ defmodule TaskRunner do
 
     case ready do
       [] ->
-        # No task with all dependencies resolved => remaining tasks form/feed a cycle.
-        {:error, {:cycle, Map.keys(in_degree)}}
+        # No task with all dependencies resolved: the remaining tasks form or
+        # feed a cycle. Report only the PARTICIPANTS — iteratively trim nodes
+        # that nothing in the stuck set depends on; those merely sit
+        # downstream of a cycle and are not part of one.
+        {:error, {:cycle, cycle_members(in_degree, dependents)}}
 
       _ ->
         remaining = Map.drop(in_degree, ready)
@@ -167,6 +170,26 @@ defmodule TaskRunner do
           end)
 
         build_layers(remaining, dependents, [ready | layers])
+    end
+  end
+
+  # A stuck node that nothing in the stuck set depends on cannot be part of
+  # any cycle (every cycle member has a dependent inside the cycle) — it only
+  # feeds on one. Trimming such nodes to a fixed point leaves exactly the
+  # cycle participants.
+  defp cycle_members(in_degree, dependents) do
+    trim_feeders(MapSet.new(Map.keys(in_degree)), dependents)
+  end
+
+  defp trim_feeders(stuck, dependents) do
+    feeders =
+      Enum.filter(stuck, fn id ->
+        dependents |> Map.get(id, []) |> Enum.all?(&(not MapSet.member?(stuck, &1)))
+      end)
+
+    case feeders do
+      [] -> stuck |> MapSet.to_list() |> Enum.sort()
+      _ -> trim_feeders(MapSet.difference(stuck, MapSet.new(feeders)), dependents)
     end
   end
 
@@ -363,6 +386,17 @@ defmodule TaskRunnerTest do
     assert {:error, {:cycle, involved}} = TaskRunner.run_all(:runner)
     assert :a in involved
     assert :b in involved
+  end
+
+  test "a task that merely depends on a cycle is not reported as involved" do
+    TaskRunner.submit(:runner, :a, depends_on: [:b], func: task(:a))
+    TaskRunner.submit(:runner, :b, depends_on: [:a], func: task(:b))
+    TaskRunner.submit(:runner, :c, depends_on: [:a], func: task(:c))
+
+    assert {:error, {:cycle, involved}} = TaskRunner.run_all(:runner)
+    assert :a in involved
+    assert :b in involved
+    refute :c in involved
   end
 
   test "detects a larger cycle" do

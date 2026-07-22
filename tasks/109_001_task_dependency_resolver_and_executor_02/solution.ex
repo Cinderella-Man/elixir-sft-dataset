@@ -7,8 +7,11 @@
 
     case ready do
       [] ->
-        # No task with all dependencies resolved => remaining tasks form/feed a cycle.
-        {:error, {:cycle, Map.keys(in_degree)}}
+        # No task with all dependencies resolved: the remaining tasks form or
+        # feed a cycle. Report only the PARTICIPANTS — iteratively trim nodes
+        # that nothing in the stuck set depends on; those merely sit
+        # downstream of a cycle and are not part of one.
+        {:error, {:cycle, cycle_members(in_degree, dependents)}}
 
       _ ->
         remaining = Map.drop(in_degree, ready)
