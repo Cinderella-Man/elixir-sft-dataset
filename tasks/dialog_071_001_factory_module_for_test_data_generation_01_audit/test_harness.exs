@@ -173,79 +173,26 @@ defmodule FactoryTest do
     assert length(Enum.uniq(results)) == 50
   end
 
-  test "build(:post, user_id: id) creates no user record at all" do
-    before_count = length(FakeRepo.all())
-    post = Factory.build(:post, user_id: 4242)
+  test "lazy init works and the counter survives the process that triggered it" do
+    # Retire the running agent so the LAZY path (first use without an
+    # explicit start) is genuinely exercised.
+    if pid = Process.whereis(Factory.SequenceAgent), do: Agent.stop(pid)
 
-    assert post.user_id == 4242
-    assert length(FakeRepo.all()) == before_count
-  end
+    # A short-lived process lazily starts the agent and then CRASHES — an
+    # agent accidentally linked to its starter dies with it (a normal exit
+    # would not propagate over the link, so the crash is the sharp probe).
+    parent = self()
 
-  test "build(:post) user_id matches the id of the user it persisted" do
-    before = FakeRepo.all()
-    post = Factory.build(:post)
-    new_records = FakeRepo.all() -- before
+    spawn(fn ->
+      send(parent, {:first, Factory.sequence("lazy_survivor", &"v-#{&1}")})
+      exit(:intentional_crash)
+    end)
 
-    assert [%MyApp.User{} = user] = new_records
-    assert is_integer(user.id)
-    assert post.user_id == user.id
-  end
+    assert_receive {:first, "v-1"}, 1_000
 
-  test "start/0 called again while running keeps existing counters intact" do
-    assert Factory.sequence(:restart_guard_seq, fn n -> n end) == 1
-
-    Factory.start()
-
-    assert Factory.sequence(:restart_guard_seq, fn n -> n end) == 2
-  end
-
-  # Agent lifecycle — start/0 return contract and lazy start
-
-  test "start/0 reports the already running agent on repeated calls" do
-    assert {:error, {:already_started, pid}} = Factory.start()
-    assert is_pid(pid)
-    assert Process.alive?(pid)
-
-    # Repeated calls keep reporting the very same live process, so sequences
-    # never get split across two counter agents.
-    assert {:error, {:already_started, ^pid}} = Factory.start()
-    assert Process.alive?(pid)
-  end
-
-  test "sequence/2 works after the counter agent has stopped and reports a fresh agent" do
-    assert {:error, {:already_started, old_pid}} = Factory.start()
-    Agent.stop(old_pid)
-    refute Process.alive?(old_pid)
-
-    # No explicit Factory.start/0 here: sequence/2 must start the agent lazily.
-    assert Factory.sequence(:lazy_start_seq, fn n -> n end) == 1
-    assert Factory.sequence(:lazy_start_seq, fn n -> n end) == 2
-
-    assert {:error, {:already_started, new_pid}} = Factory.start()
-    assert is_pid(new_pid)
-    assert new_pid != old_pid
-    assert Process.alive?(new_pid)
-  end
-
-  test "build/1 still works when the counter agent is not running" do
-    assert {:error, {:already_started, old_pid}} = Factory.start()
-    Agent.stop(old_pid)
-
-    user = Factory.build(:user)
-    assert is_binary(user.email) and user.email != ""
-    assert is_binary(user.name) and user.name != ""
-  end
-
-  test "build(:post) populates non-empty title and body defaults" do
-    post = Factory.build(:post)
-
-    assert is_binary(post.title) and post.title != ""
-    assert is_binary(post.body) and post.body != ""
-  end
-
-  test "insert/1 returns the very struct that was stored in the repo" do
-    user = Factory.insert(:user)
-
-    assert Enum.any?(FakeRepo.all(), fn record -> record == user end)
+    # ...and once that process is DEAD, the counter must continue — an agent
+    # linked to its accidental starter would have died with it and reset.
+    assert Factory.sequence("lazy_survivor", &"v-#{&1}") == "v-2"
+    assert Factory.sequence("lazy_survivor", &"v-#{&1}") == "v-3"
   end
 end

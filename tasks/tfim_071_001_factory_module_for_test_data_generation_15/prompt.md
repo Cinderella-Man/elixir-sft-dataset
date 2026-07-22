@@ -364,5 +364,28 @@ defmodule FactoryTest do
   test "sequences are safe under concurrent access" do
     # TODO
   end
+
+  test "lazy init works and the counter survives the process that triggered it" do
+    # Retire the running agent so the LAZY path (first use without an
+    # explicit start) is genuinely exercised.
+    if pid = Process.whereis(Factory.SequenceAgent), do: Agent.stop(pid)
+
+    # A short-lived process lazily starts the agent and then CRASHES — an
+    # agent accidentally linked to its starter dies with it (a normal exit
+    # would not propagate over the link, so the crash is the sharp probe).
+    parent = self()
+
+    spawn(fn ->
+      send(parent, {:first, Factory.sequence("lazy_survivor", &"v-#{&1}")})
+      exit(:intentional_crash)
+    end)
+
+    assert_receive {:first, "v-1"}, 1_000
+
+    # ...and once that process is DEAD, the counter must continue — an agent
+    # linked to its accidental starter would have died with it and reset.
+    assert Factory.sequence("lazy_survivor", &"v-#{&1}") == "v-2"
+    assert Factory.sequence("lazy_survivor", &"v-#{&1}") == "v-3"
+  end
 end
 ```

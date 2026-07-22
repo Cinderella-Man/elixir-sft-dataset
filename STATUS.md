@@ -18,12 +18,29 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    re-grade, hypotheses verified against artifacts (docs/14 rule 10).**
    (Judge-error scoped re-run DONE 2026-07-22: 4 roots re-judged, NO
    new triage; 032_002's sonnet judge hit error_max_turns again —
-   re-judge it once AFTER its prompt fix lands, not before. 015_002
-   DONE — see commit.)
-   - Rubric triage (sha-current, both judges ≤3): 013_002, 045_001,
-     032_004, 096_001, 015_004 (2 axes); 041_002, 011_004, 003_003,
-     064_001, 110_004 (1 axis). Note 015_004/032_004/011_004/110_004/
-     041_002 overlap docs/19 — one visit covers both signals.
+   re-judge it once AFTER its prompt fix lands, not before. DONE so
+   far — see commits: 015_002, 013_002 (keep landed, 2 solver-error
+   reds), 045_001, 015_004 (maintenance-timer sibling hole), 096_001
+   (4 findings; NOTE its changes rode inside commit 2a7cdb327 whose
+   message says 015_004 — full 096_001 story in docs/15). Also done:
+   005_002 (sweep's refutation was WRONG — per-finding evidence
+   checks now mandatory), 004_003 refuted-stale.)
+   - Rubric triage remaining: **064_001** ONLY (worker_count refusal
+     unpinned + find_victim hot-loops on 1-item peers; do together
+     with its G2 hand-tail strengthening — one visit).
+   - DONE additionally: 032_004 (4 findings), 013_003 medium
+     (candidate landed), 041_002, 110_004 (both sweep-refutations
+     WRONG — per-finding evidence checks are now the rule), 011_004
+     (stale-timeout ref match + dead timers map removed + pool_size-0
+     range fix + await documented), 003_003 (pure query + 3 anchors;
+     refund CAP proven unobservable — at-ceiling, recorded).
+   - 031_001 finding 2 is LIVE (dead schema_by_name computation —
+     the wholesale sweep refutation covered only finding 1).
+   - Recurring catch to keep checking on EVERY family visit: bugfix
+     children lagging their parent gold (013_003, 5 families today)
+     and repair_/dialog_ harness copies lagging (refresh + verify
+     both sides; replace gold with parent only when the old gold
+     fails the refreshed harness).
    - docs/19 live mediums (unchecked boxes in the doc; refuted-stale
      already excluded): 004_003, 013_003(med), 022_001, 022_004(×2),
      031_002(med), 031_003, 032_001, 032_002, 035_002, 038_001,
