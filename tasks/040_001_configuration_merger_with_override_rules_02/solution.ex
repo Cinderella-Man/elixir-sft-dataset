@@ -19,9 +19,18 @@
             :error -> acc
           end
 
-        # Key only exists in base-less territory and is not locked — take it.
+        # Key only exists in the override and is not itself locked. A MAP
+        # value cannot be copied wholesale: locked paths nested beneath it
+        # must still be stripped — merge it into an empty base so every
+        # depth gets its locked? check.
         not Map.has_key?(base, key) ->
-          Map.put(acc, key, Map.fetch!(override, key))
+          value = Map.fetch!(override, key)
+
+          if is_map(value) do
+            Map.put(acc, key, do_merge(%{}, value, key_path, opts))
+          else
+            Map.put(acc, key, value)
+          end
 
         # Both maps have the key and it is not locked — merge the values.
         true ->
