@@ -50,8 +50,14 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    masking a missing clock advance);
    (b) tfim_107_002 stability-3 hard fail (reproduce under parallel
    load, fix or document the timing contract);
-   (c) S9 evaluator timer-detection spec-scoping for adapt_ (lib
-   edit — no ledgered tool in flight, the window is open).
+   (c) DONE 2026-07-22: S9 evaluator timer-detection spec-scoping
+   landed (content-keyed contract_text; 3 unit tests; 415 green).
+   [IN FLIGHT] the gate-sha flip invalidated the semantic ledger by
+   design — full re-measure riding: pid 479337, log
+   logs/semantic_full3.log; when it exits, commit the refreshed
+   ledger (the weekly CI floor gate depends on it being sha-current).
+   Relaunch: scripts/run_detached.sh logs/semantic_full3.log elixir
+   scripts/validate.exs --semantic-mutants.
 
 5. **[ ] Prompt-register variety (G3).** Template rotation for the
    six templated shapes (deterministic, no LLM), then LLM register
