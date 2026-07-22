@@ -342,6 +342,11 @@ defmodule ManagedMonitor do
           0 -> :ok
         end
 
+        # The maintenance-expiry timer is a leftover timer too: cancelled and
+        # drained the same way, or it would end a re-registration's NEW
+        # maintenance window at the old registration's deadline.
+        _ = cancel_maintenance_timer(service, name)
+
       :error ->
         :ok
     end
@@ -595,7 +600,7 @@ end
 ## Failing test report
 
 ```
-30 of 30 test(s) failed:
+35 of 35 test(s) failed:
 
   * test newly registered service starts in :pending status
       no match of right hand side value:
@@ -641,5 +646,5 @@ end
            }}
       
 
-  (…26 more)
+  (…31 more)
 ```

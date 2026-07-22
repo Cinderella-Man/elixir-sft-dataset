@@ -684,6 +684,29 @@ defmodule ManagedMonitorTest do
     {:ok, info} = ManagedMonitor.status(mon, "web")
     assert info.status == :pending
   end
+
+  test "a deregistered registration's maintenance expiry cannot end a re-registration's window",
+       %{mon: mon} do
+    check = CheckFn.build("web")
+    ManagedMonitor.register(mon, "web", check, 60_000)
+
+    # Arm a SHORT maintenance expiry, then deregister: the armed expiry (and
+    # any queued {:maintenance_end, "web"}) must die with the registration.
+    ManagedMonitor.maintenance(mon, "web", 60)
+    assert :ok = ManagedMonitor.deregister(mon, "web")
+
+    # Re-register and open a LONG window. Only the dead registration's 60ms
+    # expiry could possibly end it inside the observation window.
+    ManagedMonitor.register(mon, "web", check, 60_000)
+    ManagedMonitor.maintenance(mon, "web", 60_000)
+
+    Process.sleep(250)
+
+    # The status call synchronizes: a stale expiry queued by the old timer
+    # would have been processed by now — the window must still be open.
+    assert {:ok, %{status: :maintenance}} = ManagedMonitor.status(mon, "web")
+    assert Notifications.count_event(:maintenance_ended) == 0
+  end
 end
 ```
 

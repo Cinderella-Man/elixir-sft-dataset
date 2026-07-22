@@ -26,7 +26,7 @@ I need these functions in the public API:
   - Return the sanitized string.
 
 - `Sanitizer.sql_identifier(input)` which ensures a string is safe for interpolation as a SQL identifier (e.g. a table or column name). Rules:
-  - Strip or replace any character that is not alphanumeric or an underscore.
+  - Remove (strip out) any character that is not alphanumeric or an underscore — dropped characters are deleted, not replaced with a placeholder.
   - If the result is empty, return `{:error, :empty}`.
   - If the result starts with a digit, prepend an underscore.
   - Return `{:ok, sanitized}` on success.
@@ -116,8 +116,11 @@ defmodule Sanitizer do
 
   # Uses a case-insensitive, dotall regex so multiline script blocks are caught.
   @raw_tag_pattern Enum.join(@raw_content_tags, "|")
+  # The closing tag may be missing entirely (`<script>alert(1)` at the end of
+  # the input): the alternation with `\z` drops such unterminated raw content
+  # to the end of the string, honouring "entire inner content is dropped".
   @raw_tag_re Regex.compile!(
-                "<(#{@raw_tag_pattern})(\\s[^>]*)?>.*?<\\/\\1>",
+                "<(#{@raw_tag_pattern})(\\s[^>]*)?>.*?(<\\/\\1>|\\z)",
                 [:caseless, :dotall]
               )
 
@@ -255,8 +258,18 @@ defmodule Sanitizer do
       m = Regex.run(~r/\bhref\s*=\s*'([^']*)'/i, attrs_raw, capture: :all_but_first) ->
         hd(m)
 
-      m = Regex.run(~r/\bhref\s*=\s*([^\s>\/]+)/i, attrs_raw, capture: :all_but_first) ->
-        hd(m)
+      m = Regex.run(~r/\bhref\s*=\s*([^\s>]+)/i, attrs_raw, capture: :all_but_first) ->
+        # Unquoted values may contain slashes (https://…). Only a trailing
+        # "/" that is simultaneously the tag's own self-closing marker (the
+        # very end of the attribute string) is not part of the value.
+        value = hd(m)
+        trimmed = String.trim_trailing(attrs_raw)
+
+        if String.ends_with?(value, "/") and String.ends_with?(trimmed, value) do
+          String.slice(value, 0..-2//1)
+        else
+          value
+        end
 
       true ->
         nil

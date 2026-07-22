@@ -161,10 +161,11 @@ defmodule ManagedMonitor do
         consecutive_failures: 0,
         notified_down: false,
         maintenance_ends_at: nil,
-        maintenance_timer: nil
+        maintenance_timer: nil,
+        check_timer: nil
       }
 
-      schedule_check(name, interval_ms)
+      service = %{service | check_timer: schedule_check(name, interval_ms)}
 
       {:reply, :ok, put_in(state.services[name], service)}
     end
@@ -183,6 +184,23 @@ defmodule ManagedMonitor do
   end
 
   def handle_call({:deregister, name}, _from, state) do
+    case Map.fetch(state.services, name) do
+      {:ok, service} ->
+        # Kill the whole check chain: the armed timer AND any {:check, name}
+        # already sitting in the mailbox — the prompt's rule is that the old
+        # registration's leftover timers must not drive a re-registration.
+        if service.check_timer, do: Process.cancel_timer(service.check_timer)
+
+        receive do
+          {:check, ^name} -> :ok
+        after
+          0 -> :ok
+        end
+
+      :error ->
+        :ok
+    end
+
     {:reply, :ok, %{state | services: Map.delete(state.services, name)}}
   end
 
@@ -251,6 +269,28 @@ defmodule ManagedMonitor do
   def handle_info({:check, name}, state) do
     # TODO
   end
+
+  def handle_info({:maintenance_end, name}, state) do
+    case Map.fetch(state.services, name) do
+      :error ->
+        # Service was deregistered; discard.
+        {:noreply, state}
+
+      {:ok, %{mode: :maintenance} = service} ->
+        new_service = %{service | mode: :active, maintenance_ends_at: nil, maintenance_timer: nil}
+
+        fire_notify(state.notify, name, :maintenance_ended, nil)
+
+        {:noreply, put_in(state.services[name], new_service)}
+
+      {:ok, _service} ->
+        # Service is no longer in maintenance (e.g., was resumed manually).
+        # Stale timer — discard.
+        {:noreply, state}
+    end
+  end
+
+  def handle_info(_msg, state), do: {:noreply, state}
 
   # ---------------------------------------------------------------------------
   # Private helpers
@@ -338,6 +378,14 @@ defmodule ManagedMonitor do
 
   defp schedule_check(name, interval_ms) do
     Process.send_after(self(), {:check, name}, interval_ms)
+  end
+
+  # One chain per service, always: cancel whatever is armed before arming the
+  # next timer, so neither a manual {:check, name} trigger nor a stale chain
+  # can multiply the check rate.
+  defp rearm(service, name) do
+    if service.check_timer, do: Process.cancel_timer(service.check_timer)
+    %{service | check_timer: schedule_check(name, service.interval_ms)}
   end
 
   # Compute the reported status from the internal health + mode.

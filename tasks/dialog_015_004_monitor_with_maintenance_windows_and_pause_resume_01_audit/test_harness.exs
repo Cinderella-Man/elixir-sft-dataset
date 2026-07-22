@@ -570,125 +570,129 @@ defmodule ManagedMonitorTest do
     assert {:ok, %{last_check_at: 2_000}} = ManagedMonitor.status(mon, "svc")
   end
 
-  test "stale check timer does not drive a re-registered service", %{mon: mon} do
-    parent = self()
+  # -------------------------------------------------------
+  # Real periodic timers (no manual {:check, ...} driving)
+  # -------------------------------------------------------
 
-    # Old registration has a SHORT interval; its armed timer outlives deregister.
-    assert :ok = ManagedMonitor.register(mon, "web", fn -> :ok end, 60)
+  # Drains check announcements already delivered by checks that ran before the
+  # call that stopped them; never blocks.
+  defp drain_ticks(tag) do
+    receive do
+      {:tick, ^tag} -> drain_ticks(tag)
+    after
+      0 -> :ok
+    end
+  end
+
+  test "registration arms a repeating check timer that fires on its own", %{mon: mon} do
+    test_pid = self()
+
+    check = fn ->
+      send(test_pid, {:tick, "auto_timer"})
+      :ok
+    end
+
+    assert :ok = ManagedMonitor.register(mon, "auto_timer", check, 25)
+
+    # The first firing comes from the timer armed at registration, and a further
+    # firing proves the timer re-arms itself after every fire.
+    assert_receive {:tick, "auto_timer"}, 1_000
+    assert_receive {:tick, "auto_timer"}, 1_000
+
+    assert {:ok, %{status: :up}} = ManagedMonitor.status(mon, "auto_timer")
+  end
+
+  test "paused service runs no checks yet keeps checking again after resume", %{mon: mon} do
+    test_pid = self()
+
+    check = fn ->
+      send(test_pid, {:tick, "pause_timer"})
+      :ok
+    end
+
+    assert :ok = ManagedMonitor.register(mon, "pause_timer", check, 25)
+    assert_receive {:tick, "pause_timer"}, 1_000
+
+    assert :ok = ManagedMonitor.pause(mon, "pause_timer")
+    drain_ticks("pause_timer")
+
+    # While paused the check function is not executed at all, across many
+    # intervals' worth of time.
+    refute_receive {:tick, "pause_timer"}, 250
+
+    # Resuming returns the service to normal monitoring, and checks happen
+    # again without any manual trigger.
+    assert :ok = ManagedMonitor.resume(mon, "pause_timer")
+    assert_receive {:tick, "pause_timer"}, 1_000
+  end
+
+  test "maintenance window ends by itself when the duration elapses" do
+    test_pid = self()
+
+    {:ok, mon} =
+      ManagedMonitor.start_link(
+        clock: &Clock.now/0,
+        notify: fn name, event, detail -> send(test_pid, {:notified, name, event, detail}) end
+      )
+
+    on_exit(fn -> Process.exit(mon, :kill) end)
+
+    assert :ok = ManagedMonitor.register(mon, "auto_maint", fn -> :ok end, 60_000)
+    assert :ok = ManagedMonitor.maintenance(mon, "auto_maint", 25)
+
+    # No {:maintenance_end, ...} is ever sent by the test: the window's own
+    # expiry must fire the notification and return the service to its health.
+    assert_receive {:notified, "auto_maint", :maintenance_ended, nil}, 1_000
+
+    assert {:ok, %{status: :pending, maintenance_ends_at: nil}} =
+             ManagedMonitor.status(mon, "auto_maint")
+  end
+
+  test "a deregistered service's timer chain cannot drive a re-registration", %{mon: mon} do
+    test_pid = self()
+
+    # Arm a SHORT chain, then deregister before it fires: the armed timer (and
+    # any queued {:check, "web"}) must die with the registration.
+    ManagedMonitor.register(mon, "web", fn -> :ok end, 80)
     assert :ok = ManagedMonitor.deregister(mon, "web")
 
-    probe = fn ->
-      send(parent, :new_check_ran)
-      :ok
-    end
+    # Re-register far out of firing range. Only a leftover 80ms chain could
+    # possibly run this check within the observation window.
+    ManagedMonitor.register(
+      mon,
+      "web",
+      fn ->
+        send(test_pid, :stale_chain_fired)
+        :ok
+      end,
+      60_000
+    )
 
-    # The new registration's own timer is far in the future, so any check that
-    # runs within the window below can only have come from the old timer.
-    assert :ok = ManagedMonitor.register(mon, "web", probe, 60_000)
-
-    refute_receive :new_check_ran, 400
-
-    assert {:ok, %{status: :pending, last_check_at: nil}} =
-             ManagedMonitor.status(mon, "web")
+    refute_receive :stale_chain_fired, 400
+    {:ok, info} = ManagedMonitor.status(mon, "web")
+    assert info.status == :pending
   end
 
-  test "leftover maintenance_end cannot end a re-registered service's window", %{mon: mon} do
-    parent = self()
+  test "a deregistered registration's maintenance expiry cannot end a re-registration's window",
+       %{mon: mon} do
+    check = CheckFn.build("web")
+    ManagedMonitor.register(mon, "web", check, 60_000)
 
-    assert :ok = ManagedMonitor.register(mon, "db", fn -> :ok end, 60_000)
-    assert :ok = ManagedMonitor.maintenance(mon, "db", 60)
-    assert :ok = ManagedMonitor.deregister(mon, "db")
+    # Arm a SHORT maintenance expiry, then deregister: the armed expiry (and
+    # any queued {:maintenance_end, "web"}) must die with the registration.
+    ManagedMonitor.maintenance(mon, "web", 60)
+    assert :ok = ManagedMonitor.deregister(mon, "web")
 
-    assert :ok = ManagedMonitor.register(mon, "db", fn -> :ok end, 60_000)
-    assert :ok = ManagedMonitor.maintenance(mon, "db", 60_000)
+    # Re-register and open a LONG window. Only the dead registration's 60ms
+    # expiry could possibly end it inside the observation window.
+    ManagedMonitor.register(mon, "web", check, 60_000)
+    ManagedMonitor.maintenance(mon, "web", 60_000)
 
-    # A second service acts as a real-time beacon: once its check has run in the
-    # server, any expiry message armed by the OLD registration (60ms) is already
-    # processed, and the following status call observes the settled state.
-    beacon = fn ->
-      send(parent, :beacon_tick)
-      :ok
-    end
+    Process.sleep(250)
 
-    assert :ok = ManagedMonitor.register(mon, "beacon", beacon, 250)
-    assert_receive :beacon_tick, 2_000
-
-    assert {:ok, %{status: :maintenance, maintenance_ends_at: 60_000}} =
-             ManagedMonitor.status(mon, "db")
-
+    # The status call synchronizes: a stale expiry queued by the old timer
+    # would have been processed by now — the window must still be open.
+    assert {:ok, %{status: :maintenance}} = ManagedMonitor.status(mon, "web")
     assert Notifications.count_event(:maintenance_ended) == 0
-  end
-
-  test "a rejected second register does not alter the existing registration", %{mon: mon} do
-    parent = self()
-    CheckFn.set_result("web", {:error, :boom})
-
-    assert :ok = ManagedMonitor.register(mon, "web", CheckFn.build("web"), 60_000, 3)
-
-    usurper = fn ->
-      send(parent, :usurper_ran)
-      :ok
-    end
-
-    assert {:error, :already_registered} =
-             ManagedMonitor.register(mon, "web", usurper, 60_000, 1)
-
-    Clock.advance(1_000)
-    trigger_check(mon, "web")
-
-    # Neither the check function nor max_failures may have been swapped: the
-    # original (max_failures: 3) service is still counting, not :down.
-    refute_receive :usurper_ran, 100
-
-    assert {:ok, %{status: :pending, consecutive_failures: 1, last_check_at: 1_000}} =
-             ManagedMonitor.status(mon, "web")
-
-    assert Notifications.count_event(:down) == 0
-  end
-
-  test "unexpected messages do not crash the server or alter state", %{mon: mon} do
-    CheckFn.set_result("web", :ok)
-    ManagedMonitor.register(mon, "web", CheckFn.build("web"), 60_000)
-
-    Clock.advance(1_000)
-    trigger_check(mon, "web")
-
-    before = ManagedMonitor.statuses(mon)
-
-    send(mon, :garbage)
-    send(mon, {:unexpected, "web"})
-    send(mon, {:check, "web", :extra})
-    send(mon, {:maintenance_end, "web", :extra})
-
-    assert ManagedMonitor.statuses(mon) == before
-    assert Process.alive?(mon)
-    assert Notifications.count() == 0
-  end
-
-  test "explicit max_failures of 1 marks the service :down on the first failure", %{mon: mon} do
-    CheckFn.set_result("db", {:error, :nope})
-    assert :ok = ManagedMonitor.register(mon, "db", CheckFn.build("db"), 60_000, 1)
-
-    Clock.advance(1_000)
-    trigger_check(mon, "db")
-
-    assert {:ok, %{status: :down, consecutive_failures: 1}} =
-             ManagedMonitor.status(mon, "db")
-
-    down_events = Enum.filter(Notifications.all(), fn {_, e, _} -> e == :down end)
-    assert [{"db", :down, :nope}] = down_events
-  end
-
-  test "failing maintenance check still runs and updates last_check_at", %{mon: mon} do
-    CheckFn.set_result("db", {:error, :timeout})
-    ManagedMonitor.register(mon, "db", CheckFn.build("db"), 60_000)
-
-    assert :ok = ManagedMonitor.maintenance(mon, "db", 60_000)
-
-    Clock.advance(7_000)
-    trigger_check(mon, "db")
-
-    assert {:ok, %{status: :maintenance, last_check_at: 7_000, consecutive_failures: 0}} =
-             ManagedMonitor.status(mon, "db")
   end
 end

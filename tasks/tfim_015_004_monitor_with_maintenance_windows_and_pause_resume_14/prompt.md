@@ -171,6 +171,11 @@ defmodule ManagedMonitor do
           0 -> :ok
         end
 
+        # The maintenance-expiry timer is a leftover timer too: cancelled and
+        # drained the same way, or it would end a re-registration's NEW
+        # maintenance window at the old registration's deadline.
+        _ = cancel_maintenance_timer(service, name)
+
       :error ->
         :ok
     end
@@ -1093,6 +1098,29 @@ defmodule ManagedMonitorTest do
     refute_receive :stale_chain_fired, 400
     {:ok, info} = ManagedMonitor.status(mon, "web")
     assert info.status == :pending
+  end
+
+  test "a deregistered registration's maintenance expiry cannot end a re-registration's window",
+       %{mon: mon} do
+    check = CheckFn.build("web")
+    ManagedMonitor.register(mon, "web", check, 60_000)
+
+    # Arm a SHORT maintenance expiry, then deregister: the armed expiry (and
+    # any queued {:maintenance_end, "web"}) must die with the registration.
+    ManagedMonitor.maintenance(mon, "web", 60)
+    assert :ok = ManagedMonitor.deregister(mon, "web")
+
+    # Re-register and open a LONG window. Only the dead registration's 60ms
+    # expiry could possibly end it inside the observation window.
+    ManagedMonitor.register(mon, "web", check, 60_000)
+    ManagedMonitor.maintenance(mon, "web", 60_000)
+
+    Process.sleep(250)
+
+    # The status call synchronizes: a stale expiry queued by the old timer
+    # would have been processed by now — the window must still be open.
+    assert {:ok, %{status: :maintenance}} = ManagedMonitor.status(mon, "web")
+    assert Notifications.count_event(:maintenance_ended) == 0
   end
 end
 ```
