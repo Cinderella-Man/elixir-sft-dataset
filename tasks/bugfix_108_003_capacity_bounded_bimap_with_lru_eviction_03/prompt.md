@@ -13,7 +13,7 @@ Write me an Elixir GenServer module called `BoundedBiMap` that maintains a **bid
 
 ## Public API
 
-- `BoundedBiMap.start_link(opts)` — starts the process. It must accept a `:name` option used to register the process and a required `:capacity` option (a positive integer, the maximum number of pairs). All other functions take the name (or any valid GenServer server reference) as their first argument. Return the usual `{:ok, pid}`.
+- `BoundedBiMap.start_link(opts)` — starts the process. It must accept a `:name` option used to register the process and a required `:capacity` option (a positive integer, the maximum number of pairs). `start_link` must REFUSE any capacity that is not a positive integer — the guarded `init/1` has no clause for it, so the start fails rather than booting a broken map. All other functions take the name (or any valid GenServer server reference) as their first argument. Return the usual `{:ok, pid}`.
 
 - `BoundedBiMap.put(name, key, value)` — inserts or updates the association between `key` and `value`, preserving the bijection. Always returns `:ok`. A `put` counts as **using** the pair (it refreshes recency). Eviction rules:
   - If `key` already maps to a different value, the old value's reverse mapping is removed (standard bijection maintenance) — this is an *update*, not a new key, so it never triggers LRU eviction.
