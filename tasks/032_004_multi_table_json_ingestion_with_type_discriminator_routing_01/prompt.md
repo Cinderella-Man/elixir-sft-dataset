@@ -52,14 +52,18 @@ The module must handle these error conditions gracefully — never raise:
   `{:error, :not_a_list}`
 - A record has no `"type"` field → count as `:missing_type`, skip it
 - A record's `"type"` value is not in the routing map → count as
-  `:unroutable`, skip it
+  `:unroutable`, skip it. The discriminator can be ANY JSON value — a map
+  or list value must not crash the skip-log line or the ingest.
+- An array element that is not a JSON object has no `"type"` field at all —
+  count it as `:missing_type` and skip it (a bare string/number/null/array
+  must never crash the ingest)
 - A batch `insert_all` call fails → log the error, add the batch size to
   that schema's `:failed` count, and continue with remaining batches
 
 Use `File.read/1` + `Jason.decode/1` for I/O and parsing. Use
 `Enum.chunk_every/2` for batching. Use `require Logger` and emit a
 `Logger.info/1` line after every batch with the schema name and running
-totals.
+totals — after failed batches too; the error log does not replace it.
 
 Give me the complete module in a single file. Assume Jason and Ecto are
 available as dependencies; do not add anything else.

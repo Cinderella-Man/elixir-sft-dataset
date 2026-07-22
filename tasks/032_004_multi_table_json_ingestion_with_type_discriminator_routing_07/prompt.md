@@ -63,14 +63,18 @@ The module must handle these error conditions gracefully — never raise:
   `{:error, :not_a_list}`
 - A record has no `"type"` field → count as `:missing_type`, skip it
 - A record's `"type"` value is not in the routing map → count as
-  `:unroutable`, skip it
+  `:unroutable`, skip it. The discriminator can be ANY JSON value — a map
+  or list value must not crash the skip-log line or the ingest.
+- An array element that is not a JSON object has no `"type"` field at all —
+  count it as `:missing_type` and skip it (a bare string/number/null/array
+  must never crash the ingest)
 - A batch `insert_all` call fails → log the error, add the batch size to
   that schema's `:failed` count, and continue with remaining batches
 
 Use `File.read/1` + `Jason.decode/1` for I/O and parsing. Use
 `Enum.chunk_every/2` for batching. Use `require Logger` and emit a
 `Logger.info/1` line after every batch with the schema name and running
-totals.
+totals — after failed batches too; the error log does not replace it.
 
 Give me the complete module in a single file. Assume Jason and Ecto are
 available as dependencies; do not add anything else.
@@ -206,33 +210,32 @@ defmodule MultiSchemaIngestion do
     total = length(records)
     type_field = cfg.type_field
 
-    # Classify each record, preserving original order.
-    {groups, unroutable, missing_type} =
-      Enum.reduce(records, {%{}, 0, 0}, fn record, {groups, unr, miss} ->
-        case Map.fetch(record, type_field) do
-          :error ->
-            Logger.warning("[Ingestion] record missing '#{type_field}', skipping")
-            {groups, unr, miss + 1}
+    # Classify each record, preserving original order — and remember each
+    # schema's FIRST appearance (reversed here), because a plain map cannot:
+    # groups must later be processed in first-appearance order, not the
+    # unspecified term order map iteration would give.
+    {groups, order_rev, unroutable, missing_type} =
+      Enum.reduce(records, {%{}, [], 0, 0}, fn record, {groups, order, unr, miss} ->
+        case classify(record, type_field, routing) do
+          :missing_type ->
+            {groups, order, unr, miss + 1}
 
-          {:ok, type_value} ->
-            case Map.fetch(routing, type_value) do
-              :error ->
-                Logger.warning("[MultiSchemaIngestion] Unknown type '#{type_value}', skipping")
-                {groups, unr + 1, miss}
+          :unroutable ->
+            {groups, order, unr + 1, miss}
 
-              {:ok, schema} ->
-                # Append to the group, maintaining insertion order.
-                updated = Map.update(groups, schema, [record], &(&1 ++ [record]))
-                {updated, unr, miss}
-            end
+          {:ok, schema} ->
+            order = if Map.has_key?(groups, schema), do: order, else: [schema | order]
+            # Append to the group, maintaining insertion order.
+            {Map.update(groups, schema, [record], &(&1 ++ [record])), order, unr, miss}
         end
       end)
 
-    # Process each schema group.
+    # Process each schema group, in the order the groups first appeared.
     by_schema =
-      groups
-      |> Enum.reduce(%{}, fn {schema, schema_records}, acc ->
-        schema_stats = insert_schema_group(repo, schema, schema_records, cfg)
+      order_rev
+      |> Enum.reverse()
+      |> Enum.reduce(%{}, fn schema, acc ->
+        schema_stats = insert_schema_group(repo, schema, Map.fetch!(groups, schema), cfg)
         Map.put(acc, schema, schema_stats)
       end)
 
@@ -251,6 +254,38 @@ defmodule MultiSchemaIngestion do
       unroutable: unroutable,
       missing_type: missing_type
     }
+  end
+
+  # Classify one array element. Guards keep the never-raise promise: a
+  # non-object element has no type field at all (:missing_type), and an
+  # unroutable discriminator may be ANY JSON value — inspect/1 it, string
+  # interpolation would raise on maps and lists.
+  @spec classify(term(), String.t(), routing()) :: {:ok, schema()} | :missing_type | :unroutable
+  defp classify(record, type_field, routing) when is_map(record) do
+    case Map.fetch(record, type_field) do
+      :error ->
+        Logger.warning("[Ingestion] record missing '#{type_field}', skipping")
+        :missing_type
+
+      {:ok, type_value} ->
+        case Map.fetch(routing, type_value) do
+          :error ->
+            Logger.warning("[MultiSchemaIngestion] Unknown type #{inspect(type_value)}, skipping")
+            :unroutable
+
+          {:ok, schema} ->
+            {:ok, schema}
+        end
+    end
+  end
+
+  defp classify(record, type_field, _routing) do
+    Logger.warning(
+      "[Ingestion] non-object record #{inspect(record, limit: 3)} " <>
+        "has no '#{type_field}', skipping"
+    )
+
+    :missing_type
   end
 
   # ---------------------------------------------------------------------------
@@ -296,7 +331,7 @@ defmodule MultiSchemaIngestion do
               Exception.format(:error, error, __STACKTRACE__)
           )
 
-          %{acc | failed: acc.failed + batch_size}
+          batch_info_after_failure(schema, batch_size, %{acc | failed: acc.failed + batch_size})
       catch
         kind, reason ->
           Logger.error(
@@ -304,9 +339,23 @@ defmodule MultiSchemaIngestion do
               "with #{kind} (#{batch_size} records skipped): #{inspect(reason)}"
           )
 
-          %{acc | failed: acc.failed + batch_size}
+          batch_info_after_failure(schema, batch_size, %{acc | failed: acc.failed + batch_size})
       end
     end)
+  end
+
+  # The per-batch info line is unconditional — "after every batch" includes
+  # failed ones; the error log above does not replace it.
+  @spec batch_info_after_failure(schema(), pos_integer(), per_schema_stats()) ::
+          per_schema_stats()
+  defp batch_info_after_failure(schema, batch_size, acc) do
+    Logger.info(
+      "[MultiSchemaIngestion] #{inspect(schema)} batch done (failed) — " <>
+        "size: #{batch_size}, inserted: 0. " <>
+        "Running totals — inserted=#{acc.inserted} failed=#{acc.failed}"
+    )
+
+    acc
   end
 
   # ---------------------------------------------------------------------------

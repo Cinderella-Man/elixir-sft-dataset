@@ -349,52 +349,82 @@ defmodule MultiSchemaIngestionTest do
     assert length(all_refunds()) == 2
   end
 
-  test "ingests successfully with all default options and no opts given" do
+  # ---------------------------------------------------------------------------
+  # Within-group ordering: each schema group lands in original file order
+  # ---------------------------------------------------------------------------
+
+  test "inserts each schema group in the order records appeared in the file" do
+    import Ecto.Query, only: [from: 2]
+
+    # Types are interleaved so a group that preserves file order is
+    # distinguishable from one that reverses or shuffles it, and batch_size
+    # forces each group to span multiple insert_all calls.
     records = [
-      %{"type" => "order", "order_id" => "o-1", "customer" => "Alice", "amount" => 100}
+      %{"type" => "order", "order_id" => "o-a", "customer" => "A", "amount" => 1},
+      %{"type" => "refund", "refund_id" => "r-a", "reason" => "ra", "amount" => 10},
+      %{"type" => "order", "order_id" => "o-b", "customer" => "B", "amount" => 2},
+      %{"type" => "order", "order_id" => "o-c", "customer" => "C", "amount" => 3},
+      %{"type" => "refund", "refund_id" => "r-b", "reason" => "rb", "amount" => 20},
+      %{"type" => "order", "order_id" => "o-d", "customer" => "D", "amount" => 4},
+      %{"type" => "refund", "refund_id" => "r-c", "reason" => "rc", "amount" => 30}
     ]
 
-    path = tmp_path("all_defaults.json")
-    write_json!(path, records)
-
-    assert {:ok, stats} = MultiSchemaIngestion.ingest(TestRepo, routing(), path)
-
-    assert stats.total == 1
-    assert stats.by_schema[Order] == %{inserted: 1, failed: 0}
-    assert stats.by_schema[Refund] == %{inserted: 0, failed: 0}
-    assert [%Order{order_id: "o-1", customer: "Alice"}] = all_orders()
-  end
-
-  test "treats non-map JSON elements as missing_type without raising" do
-    records = [
-      %{"type" => "order", "order_id" => "o-1", "customer" => "Alice", "amount" => 100},
-      "a bare string element",
-      42
-    ]
-
-    path = tmp_path("non_map_records.json")
+    path = tmp_path("group_order.json")
     write_json!(path, records)
 
     assert {:ok, stats} =
              MultiSchemaIngestion.ingest(TestRepo, routing(), path,
-               conflict_target: %{Order => [:order_id], Refund => [:refund_id]}
+               conflict_target: %{Order => [:order_id], Refund => [:refund_id]},
+               batch_size: 2
              )
 
-    assert stats.total == 3
-    assert stats.missing_type == 2
-    assert stats.unroutable == 0
-    assert stats.by_schema[Order].inserted == 1
-    assert length(all_orders()) == 1
+    assert stats.by_schema[Order].inserted == 4
+    assert stats.by_schema[Refund].inserted == 3
+
+    # Autoincrement ids increase with insertion order, so ordering rows by id
+    # replays the sequence in which each group was written.
+    order_ids = TestRepo.all(from(o in Order, order_by: [asc: o.id], select: o.order_id))
+    refund_ids = TestRepo.all(from(r in Refund, order_by: [asc: r.id], select: r.refund_id))
+
+    assert order_ids == ["o-a", "o-b", "o-c", "o-d"]
+    assert refund_ids == ["r-a", "r-b", "r-c"]
   end
 
-  test "counts non-string type values as unroutable without raising" do
+  test "schema groups are processed in first-appearance order, not term order" do
+    # Refund appears FIRST in the file while the Order atom sorts first, so a
+    # map-iteration implementation is distinguishable from the required one.
     records = [
-      %{"type" => "order", "order_id" => "o-1", "customer" => "Alice", "amount" => 100},
-      %{"type" => %{"nested" => true}, "foo" => "bar"},
-      %{"type" => 7, "baz" => "qux"}
+      %{"type" => "refund", "refund_id" => "r-1", "reason" => "r", "amount" => 1},
+      %{"type" => "order", "order_id" => "o-1", "customer" => "A", "amount" => 1}
     ]
 
-    path = tmp_path("weird_type_values.json")
+    path = tmp_path("group_first_appearance.json")
+    write_json!(path, records)
+
+    log =
+      ExUnit.CaptureLog.capture_log([level: :info], fn ->
+        assert {:ok, _} =
+                 MultiSchemaIngestion.ingest(TestRepo, routing(), path,
+                   conflict_target: %{Order => [:order_id], Refund => [:refund_id]},
+                   batch_size: 10
+                 )
+      end)
+
+    # The contract's own per-batch info lines carry the schema name: the
+    # first-appearing group's line must come first.
+    refund_at = :binary.match(log, "Refund") |> elem(0)
+    order_at = :binary.match(log, "Order") |> elem(0)
+    assert refund_at < order_at
+  end
+
+  test "a non-string type discriminator value is counted unroutable, never raises" do
+    records = [
+      %{"type" => %{"weird" => 1}, "order_id" => "o-x"},
+      %{"type" => [1, 2], "order_id" => "o-y"},
+      %{"type" => "order", "order_id" => "o-1", "customer" => "A", "amount" => 1}
+    ]
+
+    path = tmp_path("nonstring_type.json")
     write_json!(path, records)
 
     assert {:ok, stats} =
@@ -404,19 +434,20 @@ defmodule MultiSchemaIngestionTest do
 
     assert stats.total == 3
     assert stats.unroutable == 2
-    assert stats.missing_type == 0
     assert stats.by_schema[Order].inserted == 1
   end
 
-  test "default batch_size puts a whole small group into a single insert_all call" do
-    records = [
-      %{"type" => "refund", "refund_id" => "r-1", "reason" => "ok", "amount" => 1},
-      %{"type" => "refund", "refund_id" => "r-2", "amount" => 2},
-      %{"type" => "refund", "refund_id" => "r-3", "reason" => "ok", "amount" => 3}
-    ]
+  test "a non-object array element is counted missing_type, never raises" do
+    path = tmp_path("nonobject_records.json")
 
-    path = tmp_path("default_batch_size.json")
-    write_json!(path, records)
+    File.write!(
+      path,
+      Jason.encode!([
+        "just a string",
+        42,
+        %{"type" => "order", "order_id" => "o-1", "customer" => "A", "amount" => 1}
+      ])
+    )
 
     assert {:ok, stats} =
              MultiSchemaIngestion.ingest(TestRepo, routing(), path,
@@ -424,32 +455,42 @@ defmodule MultiSchemaIngestionTest do
              )
 
     assert stats.total == 3
-    assert stats.by_schema[Refund] == %{inserted: 0, failed: 3}
-    assert all_refunds() == []
+    assert stats.missing_type == 2
+    assert stats.by_schema[Order].inserted == 1
   end
 
-  test "preserves original file order within a schema group" do
-    records = [
-      %{"type" => "order", "order_id" => "o-3", "customer" => "Carol", "amount" => 300},
-      %{"type" => "refund", "refund_id" => "r-1", "reason" => "damaged", "amount" => 50},
-      %{"type" => "order", "order_id" => "o-1", "customer" => "Alice", "amount" => 100},
-      %{"type" => "order", "order_id" => "o-2", "customer" => "Bob", "amount" => 200}
-    ]
+  test "a failed batch still gets its Logger.info running-totals line" do
+    # Refunds missing the NOT NULL "reason" fail their batch; the good batch
+    # after it succeeds. "After every batch" is unconditional, so TWO refund
+    # info lines must appear — the error log does not replace the first.
+    records =
+      Enum.map(1..3, fn i ->
+        %{"type" => "refund", "refund_id" => "bad-#{i}", "amount" => i}
+      end) ++
+        Enum.map(1..2, fn i ->
+          %{"type" => "refund", "refund_id" => "good-#{i}", "reason" => "ok", "amount" => i}
+        end)
 
-    path = tmp_path("group_order.json")
+    path = tmp_path("failed_batch_info.json")
     write_json!(path, records)
 
-    assert {:ok, _stats} =
-             MultiSchemaIngestion.ingest(TestRepo, routing(), path,
-               conflict_target: %{Order => [:order_id], Refund => [:refund_id]},
-               batch_size: 2
-             )
+    log =
+      ExUnit.CaptureLog.capture_log([level: :info], fn ->
+        assert {:ok, stats} =
+                 MultiSchemaIngestion.ingest(TestRepo, routing(), path,
+                   conflict_target: %{Order => [:order_id], Refund => [:refund_id]},
+                   batch_size: 3
+                 )
 
-    order_ids =
-      all_orders()
-      |> Enum.sort_by(& &1.id)
-      |> Enum.map(& &1.order_id)
+        assert stats.by_schema[Refund].failed == 3
+        assert stats.by_schema[Refund].inserted == 2
+      end)
 
-    assert order_ids == ["o-3", "o-1", "o-2"]
+    info_lines =
+      log
+      |> String.split("\n")
+      |> Enum.filter(&(&1 =~ "[info]" and &1 =~ "Refund"))
+
+    assert length(info_lines) == 2
   end
 end

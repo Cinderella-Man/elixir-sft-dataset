@@ -36,7 +36,7 @@
               Exception.format(:error, error, __STACKTRACE__)
           )
 
-          %{acc | failed: acc.failed + batch_size}
+          batch_info_after_failure(schema, batch_size, %{acc | failed: acc.failed + batch_size})
       catch
         kind, reason ->
           Logger.error(
@@ -44,7 +44,7 @@
               "with #{kind} (#{batch_size} records skipped): #{inspect(reason)}"
           )
 
-          %{acc | failed: acc.failed + batch_size}
+          batch_info_after_failure(schema, batch_size, %{acc | failed: acc.failed + batch_size})
       end
     end)
   end

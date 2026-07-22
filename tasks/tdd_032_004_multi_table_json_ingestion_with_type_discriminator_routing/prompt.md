@@ -401,6 +401,110 @@ defmodule MultiSchemaIngestionTest do
     assert order_ids == ["o-a", "o-b", "o-c", "o-d"]
     assert refund_ids == ["r-a", "r-b", "r-c"]
   end
+
+  test "schema groups are processed in first-appearance order, not term order" do
+    # Refund appears FIRST in the file while the Order atom sorts first, so a
+    # map-iteration implementation is distinguishable from the required one.
+    records = [
+      %{"type" => "refund", "refund_id" => "r-1", "reason" => "r", "amount" => 1},
+      %{"type" => "order", "order_id" => "o-1", "customer" => "A", "amount" => 1}
+    ]
+
+    path = tmp_path("group_first_appearance.json")
+    write_json!(path, records)
+
+    log =
+      ExUnit.CaptureLog.capture_log([level: :info], fn ->
+        assert {:ok, _} =
+                 MultiSchemaIngestion.ingest(TestRepo, routing(), path,
+                   conflict_target: %{Order => [:order_id], Refund => [:refund_id]},
+                   batch_size: 10
+                 )
+      end)
+
+    # The contract's own per-batch info lines carry the schema name: the
+    # first-appearing group's line must come first.
+    refund_at = :binary.match(log, "Refund") |> elem(0)
+    order_at = :binary.match(log, "Order") |> elem(0)
+    assert refund_at < order_at
+  end
+
+  test "a non-string type discriminator value is counted unroutable, never raises" do
+    records = [
+      %{"type" => %{"weird" => 1}, "order_id" => "o-x"},
+      %{"type" => [1, 2], "order_id" => "o-y"},
+      %{"type" => "order", "order_id" => "o-1", "customer" => "A", "amount" => 1}
+    ]
+
+    path = tmp_path("nonstring_type.json")
+    write_json!(path, records)
+
+    assert {:ok, stats} =
+             MultiSchemaIngestion.ingest(TestRepo, routing(), path,
+               conflict_target: %{Order => [:order_id], Refund => [:refund_id]}
+             )
+
+    assert stats.total == 3
+    assert stats.unroutable == 2
+    assert stats.by_schema[Order].inserted == 1
+  end
+
+  test "a non-object array element is counted missing_type, never raises" do
+    path = tmp_path("nonobject_records.json")
+
+    File.write!(
+      path,
+      Jason.encode!([
+        "just a string",
+        42,
+        %{"type" => "order", "order_id" => "o-1", "customer" => "A", "amount" => 1}
+      ])
+    )
+
+    assert {:ok, stats} =
+             MultiSchemaIngestion.ingest(TestRepo, routing(), path,
+               conflict_target: %{Order => [:order_id], Refund => [:refund_id]}
+             )
+
+    assert stats.total == 3
+    assert stats.missing_type == 2
+    assert stats.by_schema[Order].inserted == 1
+  end
+
+  test "a failed batch still gets its Logger.info running-totals line" do
+    # Refunds missing the NOT NULL "reason" fail their batch; the good batch
+    # after it succeeds. "After every batch" is unconditional, so TWO refund
+    # info lines must appear — the error log does not replace the first.
+    records =
+      Enum.map(1..3, fn i ->
+        %{"type" => "refund", "refund_id" => "bad-#{i}", "amount" => i}
+      end) ++
+        Enum.map(1..2, fn i ->
+          %{"type" => "refund", "refund_id" => "good-#{i}", "reason" => "ok", "amount" => i}
+        end)
+
+    path = tmp_path("failed_batch_info.json")
+    write_json!(path, records)
+
+    log =
+      ExUnit.CaptureLog.capture_log([level: :info], fn ->
+        assert {:ok, stats} =
+                 MultiSchemaIngestion.ingest(TestRepo, routing(), path,
+                   conflict_target: %{Order => [:order_id], Refund => [:refund_id]},
+                   batch_size: 3
+                 )
+
+        assert stats.by_schema[Refund].failed == 3
+        assert stats.by_schema[Refund].inserted == 2
+      end)
+
+    info_lines =
+      log
+      |> String.split("\n")
+      |> Enum.filter(&(&1 =~ "[info]" and &1 =~ "Refund"))
+
+    assert length(info_lines) == 2
+  end
 end
 ```
 

@@ -1,0 +1,1 @@
+  @spec classify(term(), String.t(), routing()) :: {:ok, schema()} | :missing_type | :unroutable

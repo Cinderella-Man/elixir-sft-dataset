@@ -135,33 +135,32 @@ defmodule MultiSchemaIngestion do
     total = length(records)
     type_field = cfg.type_field
 
-    # Classify each record, preserving original order.
-    {groups, unroutable, missing_type} =
-      Enum.reduce(records, {%{}, 0, 0}, fn record, {groups, unr, miss} ->
-        case Map.fetch(record, type_field) do
-          :error ->
-            Logger.warning("[Ingestion] record missing '#{type_field}', skipping")
-            {groups, unr, miss + 1}
+    # Classify each record, preserving original order — and remember each
+    # schema's FIRST appearance (reversed here), because a plain map cannot:
+    # groups must later be processed in first-appearance order, not the
+    # unspecified term order map iteration would give.
+    {groups, order_rev, unroutable, missing_type} =
+      Enum.reduce(records, {%{}, [], 0, 0}, fn record, {groups, order, unr, miss} ->
+        case classify(record, type_field, routing) do
+          :missing_type ->
+            {groups, order, unr, miss + 1}
 
-          {:ok, type_value} ->
-            case Map.fetch(routing, type_value) do
-              :error ->
-                Logger.warning("[MultiSchemaIngestion] Unknown type '#{type_value}', skipping")
-                {groups, unr + 1, miss}
+          :unroutable ->
+            {groups, order, unr + 1, miss}
 
-              {:ok, schema} ->
-                # Append to the group, maintaining insertion order.
-                updated = Map.update(groups, schema, [record], &(&1 ++ [record]))
-                {updated, unr, miss}
-            end
+          {:ok, schema} ->
+            order = if Map.has_key?(groups, schema), do: order, else: [schema | order]
+            # Append to the group, maintaining insertion order.
+            {Map.update(groups, schema, [record], &(&1 ++ [record])), order, unr, miss}
         end
       end)
 
-    # Process each schema group.
+    # Process each schema group, in the order the groups first appeared.
     by_schema =
-      groups
-      |> Enum.reduce(%{}, fn {schema, schema_records}, acc ->
-        schema_stats = insert_schema_group(repo, schema, schema_records, cfg)
+      order_rev
+      |> Enum.reverse()
+      |> Enum.reduce(%{}, fn schema, acc ->
+        schema_stats = insert_schema_group(repo, schema, Map.fetch!(groups, schema), cfg)
         Map.put(acc, schema, schema_stats)
       end)
 
@@ -180,6 +179,38 @@ defmodule MultiSchemaIngestion do
       unroutable: unroutable,
       missing_type: missing_type
     }
+  end
+
+  # Classify one array element. Guards keep the never-raise promise: a
+  # non-object element has no type field at all (:missing_type), and an
+  # unroutable discriminator may be ANY JSON value — inspect/1 it, string
+  # interpolation would raise on maps and lists.
+  @spec classify(term(), String.t(), routing()) :: {:ok, schema()} | :missing_type | :unroutable
+  defp classify(record, type_field, routing) when is_map(record) do
+    case Map.fetch(record, type_field) do
+      :error ->
+        Logger.warning("[Ingestion] record missing '#{type_field}', skipping")
+        :missing_type
+
+      {:ok, type_value} ->
+        case Map.fetch(routing, type_value) do
+          :error ->
+            Logger.warning("[MultiSchemaIngestion] Unknown type #{inspect(type_value)}, skipping")
+            :unroutable
+
+          {:ok, schema} ->
+            {:ok, schema}
+        end
+    end
+  end
+
+  defp classify(record, type_field, _routing) do
+    Logger.warning(
+      "[Ingestion] non-object record #{inspect(record, limit: 3)} " <>
+        "has no '#{type_field}', skipping"
+    )
+
+    :missing_type
   end
 
   # ---------------------------------------------------------------------------
@@ -225,7 +256,7 @@ defmodule MultiSchemaIngestion do
               Exception.format(:error, error, __STACKTRACE__)
           )
 
-          %{acc | failed: acc.failed + batch_size}
+          batch_info_after_failure(schema, batch_size, %{acc | failed: acc.failed + batch_size})
       catch
         kind, reason ->
           Logger.error(
@@ -233,9 +264,23 @@ defmodule MultiSchemaIngestion do
               "with #{kind} (#{batch_size} records skipped): #{inspect(reason)}"
           )
 
-          %{acc | failed: acc.failed + batch_size}
+          batch_info_after_failure(schema, batch_size, %{acc | failed: acc.failed + batch_size})
       end
     end)
+  end
+
+  # The per-batch info line is unconditional — "after every batch" includes
+  # failed ones; the error log above does not replace it.
+  @spec batch_info_after_failure(schema(), pos_integer(), per_schema_stats()) ::
+          per_schema_stats()
+  defp batch_info_after_failure(schema, batch_size, acc) do
+    Logger.info(
+      "[MultiSchemaIngestion] #{inspect(schema)} batch done (failed) — " <>
+        "size: #{batch_size}, inserted: 0. " <>
+        "Running totals — inserted=#{acc.inserted} failed=#{acc.failed}"
+    )
+
+    acc
   end
 
   # ---------------------------------------------------------------------------
@@ -677,6 +722,110 @@ defmodule MultiSchemaIngestionTest do
 
     assert order_ids == ["o-a", "o-b", "o-c", "o-d"]
     assert refund_ids == ["r-a", "r-b", "r-c"]
+  end
+
+  test "schema groups are processed in first-appearance order, not term order" do
+    # Refund appears FIRST in the file while the Order atom sorts first, so a
+    # map-iteration implementation is distinguishable from the required one.
+    records = [
+      %{"type" => "refund", "refund_id" => "r-1", "reason" => "r", "amount" => 1},
+      %{"type" => "order", "order_id" => "o-1", "customer" => "A", "amount" => 1}
+    ]
+
+    path = tmp_path("group_first_appearance.json")
+    write_json!(path, records)
+
+    log =
+      ExUnit.CaptureLog.capture_log([level: :info], fn ->
+        assert {:ok, _} =
+                 MultiSchemaIngestion.ingest(TestRepo, routing(), path,
+                   conflict_target: %{Order => [:order_id], Refund => [:refund_id]},
+                   batch_size: 10
+                 )
+      end)
+
+    # The contract's own per-batch info lines carry the schema name: the
+    # first-appearing group's line must come first.
+    refund_at = :binary.match(log, "Refund") |> elem(0)
+    order_at = :binary.match(log, "Order") |> elem(0)
+    assert refund_at < order_at
+  end
+
+  test "a non-string type discriminator value is counted unroutable, never raises" do
+    records = [
+      %{"type" => %{"weird" => 1}, "order_id" => "o-x"},
+      %{"type" => [1, 2], "order_id" => "o-y"},
+      %{"type" => "order", "order_id" => "o-1", "customer" => "A", "amount" => 1}
+    ]
+
+    path = tmp_path("nonstring_type.json")
+    write_json!(path, records)
+
+    assert {:ok, stats} =
+             MultiSchemaIngestion.ingest(TestRepo, routing(), path,
+               conflict_target: %{Order => [:order_id], Refund => [:refund_id]}
+             )
+
+    assert stats.total == 3
+    assert stats.unroutable == 2
+    assert stats.by_schema[Order].inserted == 1
+  end
+
+  test "a non-object array element is counted missing_type, never raises" do
+    path = tmp_path("nonobject_records.json")
+
+    File.write!(
+      path,
+      Jason.encode!([
+        "just a string",
+        42,
+        %{"type" => "order", "order_id" => "o-1", "customer" => "A", "amount" => 1}
+      ])
+    )
+
+    assert {:ok, stats} =
+             MultiSchemaIngestion.ingest(TestRepo, routing(), path,
+               conflict_target: %{Order => [:order_id], Refund => [:refund_id]}
+             )
+
+    assert stats.total == 3
+    assert stats.missing_type == 2
+    assert stats.by_schema[Order].inserted == 1
+  end
+
+  test "a failed batch still gets its Logger.info running-totals line" do
+    # Refunds missing the NOT NULL "reason" fail their batch; the good batch
+    # after it succeeds. "After every batch" is unconditional, so TWO refund
+    # info lines must appear — the error log does not replace the first.
+    records =
+      Enum.map(1..3, fn i ->
+        %{"type" => "refund", "refund_id" => "bad-#{i}", "amount" => i}
+      end) ++
+        Enum.map(1..2, fn i ->
+          %{"type" => "refund", "refund_id" => "good-#{i}", "reason" => "ok", "amount" => i}
+        end)
+
+    path = tmp_path("failed_batch_info.json")
+    write_json!(path, records)
+
+    log =
+      ExUnit.CaptureLog.capture_log([level: :info], fn ->
+        assert {:ok, stats} =
+                 MultiSchemaIngestion.ingest(TestRepo, routing(), path,
+                   conflict_target: %{Order => [:order_id], Refund => [:refund_id]},
+                   batch_size: 3
+                 )
+
+        assert stats.by_schema[Refund].failed == 3
+        assert stats.by_schema[Refund].inserted == 2
+      end)
+
+    info_lines =
+      log
+      |> String.split("\n")
+      |> Enum.filter(&(&1 =~ "[info]" and &1 =~ "Refund"))
+
+    assert length(info_lines) == 2
   end
 end
 ```

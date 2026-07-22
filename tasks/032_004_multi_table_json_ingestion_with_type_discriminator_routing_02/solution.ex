@@ -3,33 +3,32 @@
     total = length(records)
     type_field = cfg.type_field
 
-    # Classify each record, preserving original order.
-    {groups, unroutable, missing_type} =
-      Enum.reduce(records, {%{}, 0, 0}, fn record, {groups, unr, miss} ->
-        case Map.fetch(record, type_field) do
-          :error ->
-            Logger.warning("[Ingestion] record missing '#{type_field}', skipping")
-            {groups, unr, miss + 1}
+    # Classify each record, preserving original order — and remember each
+    # schema's FIRST appearance (reversed here), because a plain map cannot:
+    # groups must later be processed in first-appearance order, not the
+    # unspecified term order map iteration would give.
+    {groups, order_rev, unroutable, missing_type} =
+      Enum.reduce(records, {%{}, [], 0, 0}, fn record, {groups, order, unr, miss} ->
+        case classify(record, type_field, routing) do
+          :missing_type ->
+            {groups, order, unr, miss + 1}
 
-          {:ok, type_value} ->
-            case Map.fetch(routing, type_value) do
-              :error ->
-                Logger.warning("[MultiSchemaIngestion] Unknown type '#{type_value}', skipping")
-                {groups, unr + 1, miss}
+          :unroutable ->
+            {groups, order, unr + 1, miss}
 
-              {:ok, schema} ->
-                # Append to the group, maintaining insertion order.
-                updated = Map.update(groups, schema, [record], &(&1 ++ [record]))
-                {updated, unr, miss}
-            end
+          {:ok, schema} ->
+            order = if Map.has_key?(groups, schema), do: order, else: [schema | order]
+            # Append to the group, maintaining insertion order.
+            {Map.update(groups, schema, [record], &(&1 ++ [record])), order, unr, miss}
         end
       end)
 
-    # Process each schema group.
+    # Process each schema group, in the order the groups first appeared.
     by_schema =
-      groups
-      |> Enum.reduce(%{}, fn {schema, schema_records}, acc ->
-        schema_stats = insert_schema_group(repo, schema, schema_records, cfg)
+      order_rev
+      |> Enum.reverse()
+      |> Enum.reduce(%{}, fn schema, acc ->
+        schema_stats = insert_schema_group(repo, schema, Map.fetch!(groups, schema), cfg)
         Map.put(acc, schema, schema_stats)
       end)
 

@@ -121,20 +121,38 @@ defmodule MultiSchemaIngestion do
   # Record classification and grouping
   # ---------------------------------------------------------------------------
 
-  @spec process_records(repo(), routing(), [term()], map()) :: stats()
+  @spec process_records(repo(), routing(), [map()], map()) :: stats()
   defp process_records(repo, routing, records, cfg) do
     total = length(records)
+    type_field = cfg.type_field
 
-    # Classify each record, preserving original order.
-    {groups, unroutable, missing_type} =
-      Enum.reduce(records, {%{}, 0, 0}, fn record, acc ->
-        classify(record, routing, cfg.type_field, acc)
+    # Classify each record, preserving original order — and remember each
+    # schema's FIRST appearance (reversed here), because a plain map cannot:
+    # groups must later be processed in first-appearance order, not the
+    # unspecified term order map iteration would give.
+    {groups, order_rev, unroutable, missing_type} =
+      Enum.reduce(records, {%{}, [], 0, 0}, fn record, {groups, order, unr, miss} ->
+        case classify(record, type_field, routing) do
+          :missing_type ->
+            {groups, order, unr, miss + 1}
+
+          :unroutable ->
+            {groups, order, unr + 1, miss}
+
+          {:ok, schema} ->
+            order = if Map.has_key?(groups, schema), do: order, else: [schema | order]
+            # Append to the group, maintaining insertion order.
+            {Map.update(groups, schema, [record], &(&1 ++ [record])), order, unr, miss}
+        end
       end)
 
-    # Process each schema group.
+    # Process each schema group, in the order the groups first appeared.
     by_schema =
-      Enum.reduce(groups, %{}, fn {schema, schema_records}, acc ->
-        Map.put(acc, schema, insert_schema_group(repo, schema, schema_records, cfg))
+      order_rev
+      |> Enum.reverse()
+      |> Enum.reduce(%{}, fn schema, acc ->
+        schema_stats = insert_schema_group(repo, schema, Map.fetch!(groups, schema), cfg)
+        Map.put(acc, schema, schema_stats)
       end)
 
     # Include schemas from routing that had zero records.
@@ -154,47 +172,36 @@ defmodule MultiSchemaIngestion do
     }
   end
 
-  # Non-map JSON elements (strings, numbers, lists, null) can never carry a
-  # discriminator, so they are counted as `missing_type` rather than raising.
-  @spec classify(term(), routing(), String.t(), {map(), integer(), integer()}) ::
-          {map(), integer(), integer()}
-  defp classify(record, routing, type_field, {groups, unr, miss}) when is_map(record) do
+  # Classify one array element. Guards keep the never-raise promise: a
+  # non-object element has no type field at all (:missing_type), and an
+  # unroutable discriminator may be ANY JSON value — inspect/1 it, string
+  # interpolation would raise on maps and lists.
+  @spec classify(term(), String.t(), routing()) :: {:ok, schema()} | :missing_type | :unroutable
+  defp classify(record, type_field, routing) when is_map(record) do
     case Map.fetch(record, type_field) do
       :error ->
         Logger.warning("[Ingestion] record missing '#{type_field}', skipping")
-        {groups, unr, miss + 1}
+        :missing_type
 
       {:ok, type_value} ->
-        route(record, routing, type_value, {groups, unr, miss})
+        case Map.fetch(routing, type_value) do
+          :error ->
+            Logger.warning("[MultiSchemaIngestion] Unknown type #{inspect(type_value)}, skipping")
+            :unroutable
+
+          {:ok, schema} ->
+            {:ok, schema}
+        end
     end
   end
 
-  defp classify(record, _routing, type_field, {groups, unr, miss}) do
+  defp classify(record, type_field, _routing) do
     Logger.warning(
-      "[Ingestion] non-map record cannot carry '#{type_field}', skipping: " <>
-        inspect(record, limit: 5)
+      "[Ingestion] non-object record #{inspect(record, limit: 3)} " <>
+        "has no '#{type_field}', skipping"
     )
 
-    {groups, unr, miss + 1}
-  end
-
-  # `type_value` may be any JSON term (number, map, list, ...); only values that
-  # match a routing key are routable, everything else counts as unroutable.
-  @spec route(map(), routing(), term(), {map(), integer(), integer()}) ::
-          {map(), integer(), integer()}
-  defp route(record, routing, type_value, {groups, unr, miss}) do
-    case Map.fetch(routing, type_value) do
-      :error ->
-        Logger.warning(
-          "[MultiSchemaIngestion] Unknown type #{inspect(type_value, limit: 5)}, skipping"
-        )
-
-        {groups, unr + 1, miss}
-
-      {:ok, schema} ->
-        # Prepend for O(1) appends; groups are reversed before insertion.
-        {Map.update(groups, schema, [record], &[record | &1]), unr, miss}
-    end
+    :missing_type
   end
 
   # ---------------------------------------------------------------------------
@@ -202,70 +209,69 @@ defmodule MultiSchemaIngestion do
   # ---------------------------------------------------------------------------
 
   @spec insert_schema_group(repo(), schema(), [map()], map()) :: per_schema_stats()
-  defp insert_schema_group(repo, schema, reversed_records, cfg) do
+  defp insert_schema_group(repo, schema, records, cfg) do
     schema_keys = schema_field_set(schema)
     now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
-    insert_opts = build_insert_opts(cfg, schema)
+    conflict_target = resolve_conflict_target(cfg.conflict_target, schema)
+
+    insert_opts = [
+      on_conflict: cfg.on_conflict,
+      conflict_target: conflict_target
+    ]
 
     initial = %{inserted: 0, failed: 0}
 
-    reversed_records
-    |> Enum.reverse()
+    records
     |> Enum.map(&prepare_row(&1, schema_keys, cfg.type_field, now))
     |> Enum.chunk_every(cfg.batch_size)
     |> Enum.reduce(initial, fn batch, acc ->
-      insert_batch(repo, schema, batch, insert_opts, acc)
+      batch_size = length(batch)
+
+      try do
+        {count, _} = repo.insert_all(schema, batch, insert_opts)
+
+        new_acc = %{acc | inserted: acc.inserted + count}
+
+        Logger.info(
+          "[MultiSchemaIngestion] #{inspect(schema)} batch done — " <>
+            "size: #{batch_size}, inserted: #{count}. " <>
+            "Running totals — inserted=#{new_acc.inserted} failed=#{new_acc.failed}"
+        )
+
+        new_acc
+      rescue
+        error ->
+          Logger.error(
+            "[MultiSchemaIngestion] #{inspect(schema)} batch failed " <>
+              "(#{batch_size} records skipped): " <>
+              Exception.format(:error, error, __STACKTRACE__)
+          )
+
+          batch_info_after_failure(schema, batch_size, %{acc | failed: acc.failed + batch_size})
+      catch
+        kind, reason ->
+          Logger.error(
+            "[MultiSchemaIngestion] #{inspect(schema)} batch failed " <>
+              "with #{kind} (#{batch_size} records skipped): #{inspect(reason)}"
+          )
+
+          batch_info_after_failure(schema, batch_size, %{acc | failed: acc.failed + batch_size})
+      end
     end)
   end
 
-  @spec insert_batch(repo(), schema(), [map()], keyword(), per_schema_stats()) ::
+  # The per-batch info line is unconditional — "after every batch" includes
+  # failed ones; the error log above does not replace it.
+  @spec batch_info_after_failure(schema(), pos_integer(), per_schema_stats()) ::
           per_schema_stats()
-  defp insert_batch(repo, schema, batch, insert_opts, acc) do
-    batch_size = length(batch)
-
-    try do
-      {count, _} = repo.insert_all(schema, batch, insert_opts)
-
-      new_acc = %{acc | inserted: acc.inserted + count}
-
-      Logger.info(
-        "[MultiSchemaIngestion] #{inspect(schema)} batch done — " <>
-          "size: #{batch_size}, inserted: #{count}. " <>
-          "Running totals — inserted=#{new_acc.inserted} failed=#{new_acc.failed}"
-      )
-
-      new_acc
-    rescue
-      error ->
-        Logger.error(
-          "[MultiSchemaIngestion] #{inspect(schema)} batch failed " <>
-            "(#{batch_size} records skipped): " <>
-            Exception.format(:error, error, __STACKTRACE__)
-        )
-
-        failed_acc(acc, schema, batch_size)
-    catch
-      kind, reason ->
-        Logger.error(
-          "[MultiSchemaIngestion] #{inspect(schema)} batch failed " <>
-            "with #{kind} (#{batch_size} records skipped): #{inspect(reason)}"
-        )
-
-        failed_acc(acc, schema, batch_size)
-    end
-  end
-
-  @spec failed_acc(per_schema_stats(), schema(), non_neg_integer()) :: per_schema_stats()
-  defp failed_acc(acc, schema, batch_size) do
-    new_acc = %{acc | failed: acc.failed + batch_size}
-
+  defp batch_info_after_failure(schema, batch_size, acc) do
     Logger.info(
-      "[MultiSchemaIngestion] #{inspect(schema)} batch done — " <>
+      "[MultiSchemaIngestion] #{inspect(schema)} batch done (failed) — " <>
         "size: #{batch_size}, inserted: 0. " <>
-        "Running totals — inserted=#{new_acc.inserted} failed=#{new_acc.failed}"
+        "Running totals — inserted=#{acc.inserted} failed=#{acc.failed}"
     )
 
-    new_acc
+    acc
   end
 
   # ---------------------------------------------------------------------------
@@ -284,7 +290,7 @@ defmodule MultiSchemaIngestion do
     base =
       row
       |> Map.delete(type_field)
-      |> Enum.filter(fn {k, _v} -> is_binary(k) and MapSet.member?(schema_keys, k) end)
+      |> Enum.filter(fn {k, _v} -> MapSet.member?(schema_keys, k) end)
       |> Enum.map(fn {k, v} -> {String.to_existing_atom(k), v} end)
       |> Map.new()
 
@@ -304,17 +310,6 @@ defmodule MultiSchemaIngestion do
   # ---------------------------------------------------------------------------
   # Conflict target resolution
   # ---------------------------------------------------------------------------
-
-  # `:nothing` is the "no conflict target" sentinel: it is not a real column, so
-  # the option is omitted entirely rather than handed to Ecto.
-  @spec build_insert_opts(map(), schema()) :: keyword()
-  defp build_insert_opts(cfg, schema) do
-    case resolve_conflict_target(cfg.conflict_target, schema) do
-      :nothing -> [on_conflict: cfg.on_conflict]
-      [] -> [on_conflict: cfg.on_conflict]
-      target -> [on_conflict: cfg.on_conflict, conflict_target: target]
-    end
-  end
 
   @spec resolve_conflict_target(atom() | [atom()] | map(), schema()) :: atom() | [atom()]
   defp resolve_conflict_target(target, _schema) when is_atom(target), do: target

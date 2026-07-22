@@ -162,6 +162,38 @@ defmodule MultiSchemaIngestion do
     # TODO
   end
 
+  # Classify one array element. Guards keep the never-raise promise: a
+  # non-object element has no type field at all (:missing_type), and an
+  # unroutable discriminator may be ANY JSON value — inspect/1 it, string
+  # interpolation would raise on maps and lists.
+  @spec classify(term(), String.t(), routing()) :: {:ok, schema()} | :missing_type | :unroutable
+  defp classify(record, type_field, routing) when is_map(record) do
+    case Map.fetch(record, type_field) do
+      :error ->
+        Logger.warning("[Ingestion] record missing '#{type_field}', skipping")
+        :missing_type
+
+      {:ok, type_value} ->
+        case Map.fetch(routing, type_value) do
+          :error ->
+            Logger.warning("[MultiSchemaIngestion] Unknown type #{inspect(type_value)}, skipping")
+            :unroutable
+
+          {:ok, schema} ->
+            {:ok, schema}
+        end
+    end
+  end
+
+  defp classify(record, type_field, _routing) do
+    Logger.warning(
+      "[Ingestion] non-object record #{inspect(record, limit: 3)} " <>
+        "has no '#{type_field}', skipping"
+    )
+
+    :missing_type
+  end
+
   # ---------------------------------------------------------------------------
   # Per-schema batch insertion
   # ---------------------------------------------------------------------------
@@ -205,7 +237,7 @@ defmodule MultiSchemaIngestion do
               Exception.format(:error, error, __STACKTRACE__)
           )
 
-          %{acc | failed: acc.failed + batch_size}
+          batch_info_after_failure(schema, batch_size, %{acc | failed: acc.failed + batch_size})
       catch
         kind, reason ->
           Logger.error(
@@ -213,9 +245,23 @@ defmodule MultiSchemaIngestion do
               "with #{kind} (#{batch_size} records skipped): #{inspect(reason)}"
           )
 
-          %{acc | failed: acc.failed + batch_size}
+          batch_info_after_failure(schema, batch_size, %{acc | failed: acc.failed + batch_size})
       end
     end)
+  end
+
+  # The per-batch info line is unconditional — "after every batch" includes
+  # failed ones; the error log above does not replace it.
+  @spec batch_info_after_failure(schema(), pos_integer(), per_schema_stats()) ::
+          per_schema_stats()
+  defp batch_info_after_failure(schema, batch_size, acc) do
+    Logger.info(
+      "[MultiSchemaIngestion] #{inspect(schema)} batch done (failed) — " <>
+        "size: #{batch_size}, inserted: 0. " <>
+        "Running totals — inserted=#{acc.inserted} failed=#{acc.failed}"
+    )
+
+    acc
   end
 
   # ---------------------------------------------------------------------------
