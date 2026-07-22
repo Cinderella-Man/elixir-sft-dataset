@@ -27,14 +27,14 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    checks now mandatory), 004_003 refuted-stale.)
    - Rubric triage: ALL 11 ROOTS DONE (064_001 closed the set; its
      G2 hand-tail + 071_001's done with it — see commits).
-   - [IN FLIGHT] corpus-wide semantic re-measure for the G2 floor
-     promotion: pid 4113769, log logs/semantic_full2.log. Expected:
-     sub-0.6 tail = only at-ceiling families. Relaunch:
-     scripts/run_detached.sh logs/semantic_full2.log elixir
-     scripts/validate.exs --semantic-mutants. When it lands: design
-     the floor gate (observable-kill semantics per docs/14 §5.1.2,
-     at-ceiling waivers), wire into validate.exs + CI (G2 item c);
-     plus Task-B rider: strengthen_harnesses candidate archiving.
+   - Semantic re-measure LANDED (logs/semantic_full2.log): 0 families
+     below 0.5; sub-0.6 tail = ONLY 037_001 (18/36) + 037_002 (21/37)
+     (+ their wt twins, which mirror parents by construction). Their
+     survivors are anonymization arithmetic (rem->div, digit tweaks)
+     — classify/fuzz per docs/14 §5.3/§6.11 BEFORE calling them gaps;
+     then design the floor gate (observable-kill semantics, at-ceiling
+     waivers) and wire into validate.exs + CI (G2 item c); plus
+     Task-B rider: strengthen_harnesses candidate archiving.
    - DONE additionally: 032_004 (4 findings), 013_003 medium
      (candidate landed), 041_002, 110_004 (both sweep-refutations
      WRONG — per-finding evidence checks are now the rule), 011_004
@@ -44,18 +44,21 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    - 031_001 finding 2 is LIVE (dead schema_by_name computation —
      the wholesale sweep refutation covered only finding 1).
    - Recurring catch to keep checking on EVERY family visit: bugfix
-     children lagging their parent gold (013_003, 5 families today)
+     children lagging their parent gold (nearly every gold edit today;
+     the pre-push perfect sweep catches it when I forget)
      and repair_/dialog_ harness copies lagging (refresh + verify
      both sides; replace gold with parent only when the old gold
      fails the refreshed harness).
-   - docs/19 live mediums (unchecked boxes in the doc; refuted-stale
-     already excluded): 004_003, 013_003(med), 022_001, 022_004(×2),
-     031_002(med), 031_003, 032_001, 032_002, 035_002, 038_001,
-     040_001(×2 med), 041_002, 043_001, 043_003, 044_001(×3),
-     061_001(med), 063_001, 063_002, 065_003, 071_001, 072_002,
-     075_001(×2), 079_001, 080_001, 089_003, 091_003, 095_003(med),
-     097_001, 103_003, 103_004, 107_002, 109_001, 110_002.
-   - 095_003 + 032_002 only after the re-run exits (item 1).
+   - docs/19 REMAINING (everything else in the doc is DONE or
+     refuted-stale as of 2026-07-22 late): 022_001, 022_004(x2) —
+     Plug-order reads; 038_001 (duplicate_ids not in type/doc/prompt
+     — needs a fix-shape decision); and the LLM candidate lane:
+     032_001 + 032_002 (conflict_target :nothing default breaks
+     default-opts ingest — prompt fix, then re-judge 032_002's
+     errored rubric row), 044_001 (2 prompt findings: negative
+     amount pinned unpromised; table name/concurrency pinned),
+     095_003 (example commentary), 110_002 (p=1.0 rule vs algorithm
+     block).
 
 3. **[ ] Weak-assertion tail (G2) — hand phase + floor promotion.**
    Machine phase closed (7/9). Remaining: (a) hand-write strengthening
