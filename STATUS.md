@@ -20,8 +20,15 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
 
 **NIGHT RUN 2026-07-21/22 — full lane map (parallelism audit
 2026-07-21 23:35):**
-- **LLM lane 1:** rubric_judge FULL PASS riding (pid in
-  `logs/rubric_judge_full.pid`, ~22/320 at 23:30, monitor armed).
+- **RUBRIC FULL PASS COMPLETE 2026-07-22 13:14 (activity 4 DONE):**
+  334 roots × 2 judges, agreement 314-321/330 per axis (95-97%),
+  planted control flags correctly. TRIAGE LIST (all sha-CURRENT,
+  hypotheses per docs/14 rule 10 — artifact-read each): 015_002 (all
+  3 axes), 013_002, 045_001, 032_004, 096_001, 015_004 (2 axes
+  each), 041_002, 011_004, 003_003, 064_001, 110_004 (1 axis). 4
+  judge-error rows to re-run scoped. Merge with the 26 remaining
+  docs/19 mediums — one visit per overlapping family (041_002 in
+  both).
 - **LLM lane 2 (short jobs):** 020_004 salience candidate verifying
   via keep_land (the prompt-fix batch COLLAPSED to this one — hand
   checks overturned the judge's NOT-ENTAILED on 005_003 (line 46
