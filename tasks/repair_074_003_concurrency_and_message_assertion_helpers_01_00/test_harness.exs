@@ -212,4 +212,214 @@ defmodule AssertHelpersTest do
       assert AssertHelpers.no_message(80) == :ok
     end
   end
+
+  # The prompt pins `assert_next_message(expected, timeout_ms \\ 1000)` and
+  # requires the timeout failure to show how long it waited, so with no
+  # timeout argument the failure must report the default of 1000.
+  test "assert_next_message waits the documented default of 1000ms and reports it" do
+    result =
+      try do
+        assert_next_message(:never)
+        :no_failure
+      rescue
+        e in ExUnit.AssertionError -> e.message
+      end
+
+    refute result == :no_failure
+    assert result =~ "1000"
+  end
+
+  # The prompt pins `assert_process_exits(pid, timeout_ms \\ 1000)` and
+  # requires the failure to show how long it waited, so with no timeout
+  # argument the failure must report the default of 1000.
+  test "assert_process_exits waits the documented default of 1000ms and reports it" do
+    pid = spawn(fn -> Process.sleep(:infinity) end)
+
+    result =
+      try do
+        assert_process_exits(pid)
+        :no_failure
+      rescue
+        e in ExUnit.AssertionError -> e.message
+      end
+
+    Process.exit(pid, :kill)
+
+    refute result == :no_failure
+    assert result =~ inspect(pid)
+    # Check the reported wait outside the pid text so a pid that happens to
+    # contain the digits 1000 cannot satisfy the assertion.
+    assert String.replace(result, inspect(pid), "") =~ "1000"
+  end
+
+  # The prompt pins `next_message(expected, timeout_ms \\ 1000)` and requires
+  # the timeout failure message to contain the phrase "timed out" and the
+  # `timeout_ms` value, so a bare next_message/1 call that times out must
+  # report the default of 1000.
+  test "next_message waits the documented default of 1000ms and reports it" do
+    error =
+      assert_raise ExUnit.AssertionError, fn ->
+        AssertHelpers.next_message(:never_sent)
+      end
+
+    assert error.message =~ "timed out"
+    assert error.message =~ "1000"
+  end
+
+  # The prompt pins `no_message(within_ms \\ 100)` and only allows `:ok` once
+  # no message has arrived within the window, so a bare no_message/0 call on
+  # an empty mailbox must watch the mailbox for at least the default 100ms
+  # before returning :ok. Lower bound only — an upper bound would be flaky.
+  # BEAM guarantees a receive timeout never fires early, so taking the
+  # minimum over a few runs sharpens the measurement without ever failing a
+  # correct implementation.
+  test "no_message watches the mailbox for at least the documented default of 100ms" do
+    min_elapsed_us =
+      1..5
+      |> Enum.map(fn _ ->
+        started = System.monotonic_time(:microsecond)
+        assert AssertHelpers.no_message() == :ok
+        System.monotonic_time(:microsecond) - started
+      end)
+      |> Enum.min()
+
+    assert min_elapsed_us >= 100_000
+  end
+
+  # The prompt pins `assert_no_message(within_ms \\ 100)` and the macro
+  # asserts that NO message arrives within `within_ms`, so a bare
+  # assert_no_message() on an empty mailbox must watch the mailbox for at
+  # least the default 100ms before passing. (Lower bound only, as above.)
+  test "assert_no_message watches the mailbox for at least the documented default of 100ms" do
+    min_elapsed_us =
+      1..5
+      |> Enum.map(fn _ ->
+        started = System.monotonic_time(:microsecond)
+        assert_no_message()
+        System.monotonic_time(:microsecond) - started
+      end)
+      |> Enum.min()
+
+    assert min_elapsed_us >= 100_000
+  end
+
+  # The prompt pins `process_exits(pid, timeout_ms \\ 1000)` and requires the
+  # timeout failure message to include the phrase "did not terminate", the
+  # pid, the liveness boolean and how long it waited (the `timeout_ms` value),
+  # so a bare process_exits/1 call must report the default of 1000.
+  test "process_exits waits the documented default of 1000ms and reports it" do
+    pid = spawn(fn -> Process.sleep(:infinity) end)
+
+    error =
+      assert_raise ExUnit.AssertionError, fn ->
+        AssertHelpers.process_exits(pid)
+      end
+
+    Process.exit(pid, :kill)
+
+    assert error.message =~ "did not terminate"
+    assert error.message =~ inspect(pid)
+    # Check the reported wait outside the pid text so a pid that happens to
+    # contain the digits 1000 cannot satisfy the assertion.
+    assert String.replace(error.message, inspect(pid), "") =~ "1000"
+  end
+
+  # The prompt requires no_message's failure message, when a message IS
+  # caught, to state the window it was watching — the `within_ms` value — so
+  # a bare no_message/0 that catches a message must report the default of
+  # 100. Zero timing dependence: the message is pre-sent.
+  test "no_message reports the default 100ms window when it catches a message" do
+    send(self(), :unexpected)
+
+    error =
+      assert_raise ExUnit.AssertionError, fn ->
+        AssertHelpers.no_message()
+      end
+
+    assert error.message =~ "100"
+    assert error.message =~ ":unexpected"
+  end
+
+  # Same contract through the macro: a bare assert_no_message() that catches
+  # a message must report the default window of 100ms.
+  test "assert_no_message reports the default 100ms window when it catches a message" do
+    send(self(), :unexpected)
+
+    error =
+      assert_raise ExUnit.AssertionError, fn ->
+        assert_no_message()
+      end
+
+    assert error.message =~ "100"
+    assert error.message =~ ":unexpected"
+  end
+
+  test "assert_next_message timeout failure shows the expected term and the wait" do
+    result =
+      try do
+        assert_next_message(:never_arrives, 50)
+        :no_failure
+      rescue
+        e in ExUnit.AssertionError -> e.message
+      end
+
+    refute result == :no_failure
+    assert result =~ ":never_arrives"
+    assert result =~ "50"
+  end
+
+  test "assert_process_exits failure shows the pid, its liveness and the wait" do
+    pid = spawn(fn -> Process.sleep(:infinity) end)
+
+    result =
+      try do
+        assert_process_exits(pid, 50)
+        :no_failure
+      rescue
+        e in ExUnit.AssertionError -> e.message
+      end
+
+    Process.exit(pid, :kill)
+
+    refute result == :no_failure
+    assert result =~ inspect(pid)
+    # Strip the pid text so its digits cannot satisfy the wait/liveness checks.
+    without_pid = String.replace(result, inspect(pid), "")
+    assert without_pid =~ "true"
+    assert without_pid =~ "50"
+  end
+
+  test "assert_next_message consumes the message it matched" do
+    send(self(), :consumed_by_macro)
+    assert_next_message(:consumed_by_macro, 200)
+    # If the matched message were left behind, this window would catch it.
+    assert_no_message(50)
+  end
+
+  test "the three assertion entry points are macros at both documented arities" do
+    assert macro_exported?(AssertHelpers, :assert_next_message, 1)
+    assert macro_exported?(AssertHelpers, :assert_next_message, 2)
+    assert macro_exported?(AssertHelpers, :assert_no_message, 0)
+    assert macro_exported?(AssertHelpers, :assert_no_message, 1)
+    assert macro_exported?(AssertHelpers, :assert_process_exits, 1)
+    assert macro_exported?(AssertHelpers, :assert_process_exits, 2)
+
+    refute function_exported?(AssertHelpers, :assert_next_message, 2)
+    refute function_exported?(AssertHelpers, :assert_no_message, 1)
+    refute function_exported?(AssertHelpers, :assert_process_exits, 2)
+  end
+
+  test "next_message/1 returns :ok for an already queued matching message" do
+    send(self(), {:queued, 7})
+    assert AssertHelpers.next_message({:queued, 7}) == :ok
+  end
+
+  test "process_exits/1 returns :ok for a process that has already terminated" do
+    pid = spawn(fn -> :ok end)
+    ref = Process.monitor(pid)
+    assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 500
+    refute Process.alive?(pid)
+
+    assert AssertHelpers.process_exits(pid) == :ok
+  end
 end
