@@ -61,8 +61,14 @@ defmodule QuorumFetcher do
         if Map.has_key?(acc, ref) do
           acc
         else
-          Task.shutdown(Map.fetch!(ref_to_task, ref), :brutal_kill)
-          Map.put(acc, ref, fill_result)
+          # A task that completed just before the kill has its reply in
+          # Task.shutdown's return — that source "had already succeeded"
+          # (or failed) and must be reported with its REAL outcome, not
+          # blanket-cancelled.
+          case Task.shutdown(Map.fetch!(ref_to_task, ref), :brutal_kill) do
+            {:ok, real_outcome} -> Map.put(acc, ref, real_outcome)
+            _ -> Map.put(acc, ref, fill_result)
+          end
         end
       end)
 
@@ -390,6 +396,19 @@ defmodule QuorumFetcherTest do
     assert reason != :timeout
     assert reason != :cancelled
     assert result[:slow] == {:error, :timeout}
+  end
+
+  test "sources that finished before the kill report their real outcome" do
+    # Fifty instant sources with a quorum of one: dozens complete before the
+    # post-quorum shutdown sweep, and each such reply is sitting in the
+    # mailbox — those sources "had already succeeded" and may not be
+    # blanket-cancelled.
+    sources = for i <- 1..50, do: {:"s#{i}", fn -> {:ok, i} end}
+
+    results = QuorumFetcher.fetch_first(sources, 1, 5_000)
+
+    ok_count = Enum.count(results, fn {_name, r} -> match?({:ok, _}, r) end)
+    assert ok_count >= 2
   end
 end
 ```

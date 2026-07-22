@@ -64,8 +64,14 @@ defmodule QuorumFetcher do
         if Map.has_key?(acc, ref) do
           acc
         else
-          Task.shutdown(Map.fetch!(ref_to_task, ref), :brutal_kill)
-          Map.put(acc, ref, fill_result)
+          # A task that completed just before the kill has its reply in
+          # Task.shutdown's return — that source "had already succeeded"
+          # (or failed) and must be reported with its REAL outcome, not
+          # blanket-cancelled.
+          case Task.shutdown(Map.fetch!(ref_to_task, ref), :brutal_kill) do
+            {:ok, real_outcome} -> Map.put(acc, ref, real_outcome)
+            _ -> Map.put(acc, ref, fill_result)
+          end
         end
       end)
 
@@ -126,6 +132,7 @@ defmodule QuorumFetcher do
 
   # Normalises any exception, throw, exit, or unexpected return into a tagged
   # `{:ok, _} | {:error, _}` tuple so a fetch can never crash the caller.
+
   defp safe_call(fetch_fn) do
     # TODO
   end
