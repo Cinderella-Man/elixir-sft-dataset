@@ -13,52 +13,15 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
 
 ## NEXT ACTIVITIES (in order)
 
-1. **[ ] MERGED HAND QUEUE (activities 3+4): rubric triage + docs/19
-   mediums — one visit per family, one commit each, full cascade +
-   re-grade, hypotheses verified against artifacts (docs/14 rule 10).**
-   (Judge-error scoped re-run DONE 2026-07-22: 4 roots re-judged, NO
-   new triage; 032_002's sonnet judge hit error_max_turns again —
-   re-judge it once AFTER its prompt fix lands, not before. DONE so
-   far — see commits: 015_002, 013_002 (keep landed, 2 solver-error
-   reds), 045_001, 015_004 (maintenance-timer sibling hole), 096_001
-   (4 findings; NOTE its changes rode inside commit 2a7cdb327 whose
-   message says 015_004 — full 096_001 story in docs/15). Also done:
-   005_002 (sweep's refutation was WRONG — per-finding evidence
-   checks now mandatory), 004_003 refuted-stale.)
-   - Rubric triage: ALL 11 ROOTS DONE (064_001 closed the set; its
-     G2 hand-tail + 071_001's done with it — see commits).
-   - Semantic re-measure LANDED (logs/semantic_full2.log): 0 families
-     below 0.5; sub-0.6 tail = ONLY 037_001 (18/36) + 037_002 (21/37)
-     (+ their wt twins, which mirror parents by construction). Their
-     survivors are anonymization arithmetic (rem->div, digit tweaks)
-     — classify/fuzz per docs/14 §5.3/§6.11 BEFORE calling them gaps;
-     then design the floor gate (observable-kill semantics, at-ceiling
-     waivers) and wire into validate.exs + CI (G2 item c); plus
-     Task-B rider: strengthen_harnesses candidate archiving.
-   - DONE additionally: 032_004 (4 findings), 013_003 medium
-     (candidate landed), 041_002, 110_004 (both sweep-refutations
-     WRONG — per-finding evidence checks are now the rule), 011_004
-     (stale-timeout ref match + dead timers map removed + pool_size-0
-     range fix + await documented), 003_003 (pure query + 3 anchors;
-     refund CAP proven unobservable — at-ceiling, recorded).
-   - 031_001 finding 2 is LIVE (dead schema_by_name computation —
-     the wholesale sweep refutation covered only finding 1).
-   - Recurring catch to keep checking on EVERY family visit: bugfix
-     children lagging their parent gold (nearly every gold edit today;
-     the pre-push perfect sweep catches it when I forget)
-     and repair_/dialog_ harness copies lagging (refresh + verify
-     both sides; replace gold with parent only when the old gold
-     fails the refreshed harness).
-   - docs/19 REMAINING (everything else in the doc is DONE or
-     refuted-stale as of 2026-07-22 late): 022_001, 022_004(x2) —
-     Plug-order reads; 038_001 (duplicate_ids not in type/doc/prompt
-     — needs a fix-shape decision); and the LLM candidate lane:
-     032_001 + 032_002 (conflict_target :nothing default breaks
-     default-opts ingest — prompt fix, then re-judge 032_002's
-     errored rubric row), 044_001 (2 prompt findings: negative
-     amount pinned unpromised; table name/concurrency pinned),
-     095_003 (example commentary), 110_002 (p=1.0 rule vs algorithm
-     block).
+1. **[DONE 2026-07-22] MERGED HAND QUEUE (activities 3+4) — CLOSED.**
+   All 11 rubric triage roots fixed; every docs/19 finding DONE or
+   refuted with artifact evidence; 032_002 re-judged clean on its
+   fixed sha (4/4/4, 4/5/5 — the errored row superseded). Full record
+   in docs/15 + the commit chain. Standing lessons now in force:
+   per-finding evidence checks on any sweep refutation; bugfix
+   children + repair_/dialog_ copies checked on EVERY gold edit (the
+   pre-push perfect sweep is the backstop); stage with git add of the
+   tasks tree, never bare multi-globs.
 
 3. **[ ] Weak-assertion tail (G2) — hand phase + floor promotion.**
    Machine phase closed (7/9). Remaining: (a) hand-write strengthening

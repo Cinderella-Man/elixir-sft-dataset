@@ -9,6 +9,32 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-22 (day+evening) — THE MERGED HAND QUEUE (STATUS activities
+  3+4) CLOSED: all 11 rubric-triage roots + every docs/19 finding.**
+  One session, ~30 family visits, each landed with bite-proven anchors,
+  full cascades, re-mints and S6 evidence (commit chain 95f76d4ef →
+  b6f56e604). Highlights: 015_002/015_004 timer-lifecycle holes (the
+  015-family pattern completed), 013_002 async redesign (records now
+  route results; nothing blocks the server), 045_001+096_001+032_004
+  multi-finding fixes with candidate prompts landing blind-GREEN,
+  011_004 stale-timeout identity + pool_size-0 range fix, 003_003
+  pure-query + boundary anchors (refund cap proven UNOBSERVABLE — 
+  at-ceiling, recorded), 064_001 hot-loop fix + G2 tail (0.55→0.82),
+  071_001 lazy-init crash-probe anchor (0.67), 061_001 selective
+  pid-flush with the judge-drafted mailbox-safety contract landed as
+  a candidate, 032_002 empty-conflict-target omission (default-opts
+  ingest finally inserts; re-judged 4/4/4+4/5/5), 13-family doc-truth
+  batch, and SIX findings refuted-stale on artifact reads after the
+  mechanical sweep's substring matches kept them alive (per-finding
+  evidence checks are now the refutation rule). Also closed en route:
+  the embed-drift remediation (53 fences; pre-push gained the missing
+  check_embeds gate — a red-CI push class killed), derive_family's
+  seed-map bug, four checker↔resyncer fence deadlocks, G2's repair_-
+  dir refresh (nine pairs, both sides), and the corpus-wide semantic
+  re-measure (0 families <0.5; tail = the two 037 anonymizer families
+  pending classify/fuzz before the floor gate).
+
+
 - **2026-07-21/22 (night run + day) — the STATUS activities 1, 2 and 4
   CLOSED; G2 machine phase closed; docs/19 HIGHs 12/12 + first 8
   mediums done.** Full detail in the commit messages (b2cb46a0e →
