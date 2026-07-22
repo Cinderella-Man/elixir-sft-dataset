@@ -22,7 +22,7 @@ I need these functions in the public API:
 
   The opts keyword list must support: `:max_retries` (integer, default 3), `:base_delay_ms` (integer, default 100), `:max_delay_ms` (integer, default 10_000), and `:on_retry` — an optional 3-arity callback function `fn attempt, reason, delay -> ... end` that is called inside the GenServer before each retry is scheduled. The `attempt` is the upcoming attempt number (1-indexed, so the first retry is attempt 1), `reason` is the error reason from the failed attempt, and `delay` is the computed total delay (including jitter). If `:on_retry` is not provided, no callback is invoked.
 
-The backoff delay for the Nth retry (1-indexed, so the first retry is N=1) should be calculated as `min(base_delay_ms * 2^(N-1), max_delay_ms)` — so with the default `base_delay_ms` of 100 the first retry's base delay is 100, the second is 200, the third is 400, and so on. Then add random jitter in the range `0..delay-1` on top, so the actual wait is `delay + jitter` where `jitter` is obtained by calling the injected `:random` function with this capped `delay` as the argument. Retries must be scheduled using `Process.send_after` so the GenServer doesn't block other callers while waiting.
+The backoff delay for the Nth retry (1-indexed, so the first retry is N=1) should be calculated as `min(base_delay_ms * 2^(N-1), max_delay_ms)` — so with the default `base_delay_ms` of 100 the first retry's base delay is 100, the second is 200, the third is 400, and so on. Then add random jitter in the range `0..delay-1` on top, so the actual wait is `delay + jitter` where `jitter` is obtained by calling the injected `:random` function with this capped `delay` as the argument. The wait itself is MEASURED AGAINST the injected `:clock`: schedule short ticks to yourself with `Process.send_after` (so the GenServer never blocks other callers) and run the retry once the clock reaches `scheduled_at + total_wait` — a fake clock therefore drives retries deterministically, and a retry must NOT fire while the clock still reads below its target.
 
 When all retries are exhausted on transient errors, return `{:error, :retries_exhausted, reason}` where reason is the last transient error reason.
 
@@ -62,6 +62,9 @@ defmodule ClassifiedRetryWorker do
 
   # --- GenServer Callbacks ---
 
+  # Real-clock granularity of the tick-gated retry wait.
+  @tick_ms 1
+
   @impl true
   def init(opts) do
     clock = Keyword.get(opts, :clock, fn -> System.monotonic_time(:millisecond) end)
@@ -76,8 +79,16 @@ defmodule ClassifiedRetryWorker do
   end
 
   @impl true
-  def handle_info({:retry, func, attempt, opts, from}, state) do
-    do_execute(func, attempt, opts, from, state)
+  def handle_info({:retry_at, func, attempt, opts, from, target}, state) do
+    # Tick-gated wait: re-tick until the injected clock reaches the target,
+    # so a fake clock drives retries deterministically while the server keeps
+    # serving other callers between ticks.
+    if state.clock.() >= target do
+      do_execute(func, attempt, opts, from, state)
+    else
+      Process.send_after(self(), {:retry_at, func, attempt, opts, from, target}, @tick_ms)
+    end
+
     {:noreply, state}
   end
 
@@ -117,7 +128,8 @@ defmodule ClassifiedRetryWorker do
     # Invoke on_retry callback if provided
     if on_retry, do: on_retry.(next_attempt, reason, total_wait)
 
-    Process.send_after(self(), {:retry, func, next_attempt, opts, from}, total_wait)
+    target = state.clock.() + total_wait
+    Process.send_after(self(), {:retry_at, func, next_attempt, opts, from, target}, @tick_ms)
   end
 end
 ```

@@ -37,6 +37,9 @@ defmodule ClassifiedRetryWorker do
 
   # --- GenServer Callbacks ---
 
+  # Real-clock granularity of the tick-gated retry wait.
+  @tick_ms 1
+
   @impl true
   def init(opts) do
     clock = Keyword.get(opts, :clock, fn -> System.monotonic_time(:millisecond) end)
@@ -51,8 +54,16 @@ defmodule ClassifiedRetryWorker do
   end
 
   @impl true
-  def handle_info({:retry, func, attempt, opts, from}, state) do
-    do_execute(func, attempt, opts, from, state)
+  def handle_info({:retry_at, func, attempt, opts, from, target}, state) do
+    # Tick-gated wait: re-tick until the injected clock reaches the target,
+    # so a fake clock drives retries deterministically while the server keeps
+    # serving other callers between ticks.
+    if state.clock.() >= target do
+      do_execute(func, attempt, opts, from, state)
+    else
+      Process.send_after(self(), {:retry_at, func, attempt, opts, from, target}, @tick_ms)
+    end
+
     {:noreply, state}
   end
 
@@ -92,7 +103,8 @@ defmodule ClassifiedRetryWorker do
     # Invoke on_retry callback if provided
     if on_retry, do: on_retry.(next_attempt, reason, total_wait)
 
-    Process.send_after(self(), {:retry, func, next_attempt, opts, from}, total_wait)
+    target = state.clock.() + total_wait
+    Process.send_after(self(), {:retry_at, func, next_attempt, opts, from, target}, @tick_ms)
   end
 end
 ```
@@ -157,11 +169,11 @@ defmodule ClassifiedRetryWorkerTest do
   setup do
     start_supervised!({Clock, 0})
 
-    {:ok, pid} =
-      ClassifiedRetryWorker.start_link(
-        clock: &Clock.now/0,
-        random: &ZeroRandom.rand/1
-      )
+    # The shared worker runs on the REAL default clock: tests that do not
+    # exercise timing use tiny base delays and must not depend on anyone
+    # advancing the fake clock. The sharp timing tests below start their own
+    # workers with the injected fake clock.
+    {:ok, pid} = ClassifiedRetryWorker.start_link(random: &ZeroRandom.rand/1)
 
     %{rw: pid}
   end
@@ -410,18 +422,33 @@ defmodule ClassifiedRetryWorkerTest do
 
     task =
       Task.async(fn ->
-        ClassifiedRetryWorker.execute(rw2, func, max_retries: 4, base_delay_ms: 1)
+        ClassifiedRetryWorker.execute(rw2, func, max_retries: 4, base_delay_ms: 100)
       end)
 
     assert_receive {:attempt_done, 1}
-    Clock.advance(100)
-    assert_receive {:attempt_done, 2}
-    Clock.advance(200)
-    assert_receive {:attempt_done, 3}
-    Clock.advance(400)
-    assert_receive {:attempt_done, 4}
-    Clock.advance(800)
-    assert_receive {:attempt_done, 5}
+
+    # Sharp fake-clock discipline: one tick BELOW the scheduled delay must
+    # not fire the retry; the final tick must. A worker with wrong backoff
+    # (constant, linear, off-by-one) fails one of these gates.
+    Clock.advance(99)
+    refute_receive {:attempt_done, 2}, 30
+    Clock.advance(1)
+    assert_receive {:attempt_done, 2}, 500
+
+    Clock.advance(199)
+    refute_receive {:attempt_done, 3}, 30
+    Clock.advance(1)
+    assert_receive {:attempt_done, 3}, 500
+
+    Clock.advance(399)
+    refute_receive {:attempt_done, 4}, 30
+    Clock.advance(1)
+    assert_receive {:attempt_done, 4}, 500
+
+    Clock.advance(799)
+    refute_receive {:attempt_done, 5}, 30
+    Clock.advance(1)
+    assert_receive {:attempt_done, 5}, 500
 
     assert {:ok, :done} = Task.await(task)
 
@@ -462,18 +489,20 @@ defmodule ClassifiedRetryWorkerTest do
       Task.async(fn ->
         ClassifiedRetryWorker.execute(rw2, func,
           max_retries: 5,
-          base_delay_ms: 1,
+          base_delay_ms: 100,
           max_delay_ms: 300
         )
       end)
 
     assert_receive {:attempt_done, 1}
 
-    logical_delays = [100, 200, 300, 300, 300]
-
-    for {delay, attempt_num} <- Enum.with_index(logical_delays, 2) do
-      Clock.advance(delay)
-      assert_receive {:attempt_done, ^attempt_num}
+    # base 100 doubles to 200, then the 400/800/1600 raw values are capped at
+    # 300 — the sharp below-threshold refute proves the cap is what fires.
+    for {delay, attempt_num} <- Enum.with_index([100, 200, 300, 300, 300], 2) do
+      Clock.advance(delay - 1)
+      refute_receive {:attempt_done, ^attempt_num}, 30
+      Clock.advance(1)
+      assert_receive {:attempt_done, ^attempt_num}, 500
     end
 
     assert {:ok, :done} = Task.await(task, 5_000)
@@ -499,7 +528,7 @@ defmodule ClassifiedRetryWorkerTest do
     start_supervised!({RetryLog, []})
 
     {:ok, rw2} =
-      ClassifiedRetryWorker.start_link(clock: &Clock.now/0, random: &ZeroRandom.rand/1)
+      ClassifiedRetryWorker.start_link(random: &ZeroRandom.rand/1)
 
     func = fn -> {:error, :transient, :down} end
     on_retry = fn a, r, d -> RetryLog.record(a, r, d) end
@@ -588,7 +617,7 @@ defmodule ClassifiedRetryWorkerTest do
     start_supervised!({RetryLog, []})
 
     {:ok, rw2} =
-      ClassifiedRetryWorker.start_link(clock: &Clock.now/0, random: fn _max -> 7 end)
+      ClassifiedRetryWorker.start_link(random: fn _max -> 7 end)
 
     func = fn ->
       attempt = Counter.increment_and_get()
@@ -612,7 +641,6 @@ defmodule ClassifiedRetryWorkerTest do
 
     {:ok, rw2} =
       ClassifiedRetryWorker.start_link(
-        clock: &Clock.now/0,
         random: fn max ->
           send(test_pid, {:rand_arg, max})
           0

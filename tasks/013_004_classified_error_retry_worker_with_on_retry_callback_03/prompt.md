@@ -38,6 +38,7 @@ defmodule ClassifiedRetryWorker do
     GenServer.start_link(__MODULE__, opts, gen_opts)
   end
 
+  @doc "Runs `func`, retrying classified errors per `opts`. Returns the result."
   @spec execute(GenServer.server(), (-> any()), keyword()) ::
           {:ok, any()}
           | {:error, :permanent, any()}
@@ -47,6 +48,9 @@ defmodule ClassifiedRetryWorker do
   end
 
   # --- GenServer Callbacks ---
+
+  # Real-clock granularity of the tick-gated retry wait.
+  @tick_ms 1
 
   @impl true
   def init(opts) do
@@ -62,8 +66,16 @@ defmodule ClassifiedRetryWorker do
   end
 
   @impl true
-  def handle_info({:retry, func, attempt, opts, from}, state) do
-    do_execute(func, attempt, opts, from, state)
+  def handle_info({:retry_at, func, attempt, opts, from, target}, state) do
+    # Tick-gated wait: re-tick until the injected clock reaches the target,
+    # so a fake clock drives retries deterministically while the server keeps
+    # serving other callers between ticks.
+    if state.clock.() >= target do
+      do_execute(func, attempt, opts, from, state)
+    else
+      Process.send_after(self(), {:retry_at, func, attempt, opts, from, target}, @tick_ms)
+    end
+
     {:noreply, state}
   end
 
@@ -88,7 +100,8 @@ defmodule ClassifiedRetryWorker do
     # Invoke on_retry callback if provided
     if on_retry, do: on_retry.(next_attempt, reason, total_wait)
 
-    Process.send_after(self(), {:retry, func, next_attempt, opts, from}, total_wait)
+    target = state.clock.() + total_wait
+    Process.send_after(self(), {:retry_at, func, next_attempt, opts, from, target}, @tick_ms)
   end
 end
 ```
