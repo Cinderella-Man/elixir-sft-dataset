@@ -14,10 +14,11 @@
         status: :pending,
         last_check_at: nil,
         history: [],
-        notified_down: false
+        notified_down: false,
+        check_timer: nil
       }
 
-      schedule_check(name, interval_ms)
+      service = %{service | check_timer: schedule_check(name, interval_ms)}
 
       {:reply, :ok, put_in(state.services[name], service)}
     end
@@ -36,5 +37,22 @@
   end
 
   def handle_call({:deregister, name}, _from, state) do
+    case Map.fetch(state.services, name) do
+      {:ok, service} ->
+        # Kill the whole check chain: the armed timer AND any {:check, name}
+        # already sitting in the mailbox — the old registration's leftover
+        # timers must not drive a later re-registration of the same name.
+        if service.check_timer, do: Process.cancel_timer(service.check_timer)
+
+        receive do
+          {:check, ^name} -> :ok
+        after
+          0 -> :ok
+        end
+
+      :error ->
+        :ok
+    end
+
     {:reply, :ok, %{state | services: Map.delete(state.services, name)}}
   end

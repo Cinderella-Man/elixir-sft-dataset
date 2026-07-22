@@ -83,10 +83,11 @@ defmodule RateMonitor do
         status: :pending,
         last_check_at: nil,
         history: [],
-        notified_down: false
+        notified_down: false,
+        check_timer: nil
       }
 
-      schedule_check(name, interval_ms)
+      service = %{service | check_timer: schedule_check(name, interval_ms)}
 
       {:reply, :ok, put_in(state.services[name], service)}
     end
@@ -105,6 +106,23 @@ defmodule RateMonitor do
   end
 
   def handle_call({:deregister, name}, _from, state) do
+    case Map.fetch(state.services, name) do
+      {:ok, service} ->
+        # Kill the whole check chain: the armed timer AND any {:check, name}
+        # already sitting in the mailbox — the old registration's leftover
+        # timers must not drive a later re-registration of the same name.
+        if service.check_timer, do: Process.cancel_timer(service.check_timer)
+
+        receive do
+          {:check, ^name} -> :ok
+        after
+          0 -> :ok
+        end
+
+      :error ->
+        :ok
+    end
+
     {:reply, :ok, %{state | services: Map.delete(state.services, name)}}
   end
 
@@ -120,8 +138,7 @@ defmodule RateMonitor do
         result = service.check_func.()
 
         {new_service, notify?} = apply_check_result(service, result, now)
-
-        schedule_check(name, service.interval_ms)
+        new_service = rearm(new_service, name)
 
         new_state = put_in(state.services[name], new_service)
 
@@ -200,6 +217,14 @@ defmodule RateMonitor do
 
   defp schedule_check(name, interval_ms) do
     Process.send_after(self(), {:check, name}, interval_ms)
+  end
+
+  # One chain per service, always: cancel whatever is armed before arming the
+  # successor, so a manual {:check, name} reschedules the cadence instead of
+  # spawning a second timer chain alongside the periodic one.
+  defp rearm(service, name) do
+    if service.check_timer, do: Process.cancel_timer(service.check_timer)
+    %{service | check_timer: schedule_check(name, service.interval_ms)}
   end
 
   defp to_status_info(service) do

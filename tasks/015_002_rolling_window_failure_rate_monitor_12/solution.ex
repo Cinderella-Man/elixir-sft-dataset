@@ -10,8 +10,7 @@
         result = service.check_func.()
 
         {new_service, notify?} = apply_check_result(service, result, now)
-
-        schedule_check(name, service.interval_ms)
+        new_service = rearm(new_service, name)
 
         new_state = put_in(state.services[name], new_service)
 

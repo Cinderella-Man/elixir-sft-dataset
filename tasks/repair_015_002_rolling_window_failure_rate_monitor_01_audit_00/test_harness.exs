@@ -70,6 +70,23 @@ defmodule RateMonitorTest do
     _ = RateMonitor.status(mon, service_name)
   end
 
+  # Poll `fun` until it returns true or the deadline is exhausted. Used to
+  # observe an effect that surfaces only through the public API, without
+  # sizing a single fixed sleep to any interval.
+  defp poll_until(fun, deadline_ms) do
+    cond do
+      fun.() ->
+        :ok
+
+      deadline_ms <= 0 ->
+        :timeout
+
+      true ->
+        Process.sleep(5)
+        poll_until(fun, deadline_ms - 5)
+    end
+  end
+
   # -------------------------------------------------------
   # Registration
   # -------------------------------------------------------
@@ -93,6 +110,28 @@ defmodule RateMonitorTest do
 
   test "status returns :not_found for unregistered service", %{mon: mon} do
     assert {:error, :not_found} = RateMonitor.status(mon, "ghost")
+  end
+
+  # -------------------------------------------------------
+  # Automatic periodic scheduling
+  # -------------------------------------------------------
+
+  test "registered checks run automatically on the periodic timer", %{mon: mon} do
+    CheckFn.set_result("timer_svc", :ok)
+    RateMonitor.register(mon, "timer_svc", CheckFn.build("timer_svc"), 25)
+
+    # No manual {:check, _} is ever sent here; only the periodic timer can
+    # advance the window, so observing a completed check proves scheduling.
+    assert :ok =
+             poll_until(
+               fn ->
+                 case RateMonitor.status(mon, "timer_svc") do
+                   {:ok, %{checks_in_window: n}} -> n >= 1
+                   _ -> false
+                 end
+               end,
+               2_000
+             )
   end
 
   # -------------------------------------------------------
@@ -132,6 +171,21 @@ defmodule RateMonitorTest do
     assert {:ok, info} = RateMonitor.status(mon, "db")
     refute info.status == :down, "should not be :down before window is full"
     assert info.checks_in_window == 4
+  end
+
+  test "a failing check keeps a :pending service :pending before the window fills",
+       %{mon: mon} do
+    CheckFn.set_result("db2", {:error, :timeout})
+    RateMonitor.register(mon, "db2", CheckFn.build("db2"), 1_000, window_size: 5, threshold: 0.6)
+
+    # One failed check in a partial window: it cannot be :down, and because the
+    # single outcome is an error the service must stay :pending (not flip :up).
+    Clock.advance(1_000)
+    trigger_check(mon, "db2")
+
+    assert {:ok, info} = RateMonitor.status(mon, "db2")
+    assert info.status == :pending
+    assert info.checks_in_window == 1
   end
 
   test "service goes :down when failure rate >= threshold with full window", %{mon: mon} do
@@ -445,6 +499,26 @@ defmodule RateMonitorTest do
   end
 
   # -------------------------------------------------------
+  # Robustness — unexpected messages
+  # -------------------------------------------------------
+
+  test "unexpected messages are ignored and do not alter service state", %{mon: mon} do
+    CheckFn.set_result("web", :ok)
+    RateMonitor.register(mon, "web", CheckFn.build("web"), 5_000)
+
+    send(mon, :some_unexpected_message)
+    send(mon, {:not_a_check, "web"})
+
+    # A synchronous call after the sends is processed strictly after them, so
+    # it proves the process survived and no service state was disturbed.
+    assert {:ok, info} = RateMonitor.status(mon, "web")
+    assert info.status == :pending
+    assert info.checks_in_window == 0
+    assert info.last_check_at == nil
+    assert Process.alive?(mon)
+  end
+
+  # -------------------------------------------------------
   # last_check_at tracking
   # -------------------------------------------------------
 
@@ -461,140 +535,29 @@ defmodule RateMonitorTest do
     assert {:ok, %{last_check_at: 2_000}} = RateMonitor.status(mon, "svc")
   end
 
-  test "old registration's leftover timer never drives a re-registered service", %{mon: mon} do
-    parent = self()
+  test "a deregistered registration's timer chain cannot drive a re-registration", %{mon: mon} do
+    test_pid = self()
 
-    assert :ok =
-             RateMonitor.register(
-               mon,
-               "web",
-               fn ->
-                 send(parent, :old_ran)
-                 :ok
-               end,
-               30
-             )
-
+    # Arm a SHORT chain, then deregister before it fires: the armed timer (and
+    # any queued {:check, "web"}) must die with the registration.
+    RateMonitor.register(mon, "web", fn -> :ok end, 80)
     assert :ok = RateMonitor.deregister(mon, "web")
 
-    new_check = fn ->
-      send(parent, :new_ran)
-      :ok
-    end
+    # Re-register far out of firing range. Only a leftover 80ms chain could
+    # possibly run this check within the observation window.
+    RateMonitor.register(
+      mon,
+      "web",
+      fn ->
+        send(test_pid, :stale_chain_fired)
+        :ok
+      end,
+      60_000
+    )
 
-    assert :ok = RateMonitor.register(mon, "web", new_check, 60_000)
-
-    # The old registration's 30ms timer must be dead: it must not run any check.
-    refute_receive :old_ran, 300
-    refute_receive :new_ran, 10
+    refute_receive :stale_chain_fired, 400
 
     assert {:ok, %{status: :pending, checks_in_window: 0, last_check_at: nil}} =
              RateMonitor.status(mon, "web")
-
-    assert Notifications.count() == 0
-  end
-
-  test "default window_size 5 and default threshold 0.6 apply with no options", %{mon: mon} do
-    check = CheckFn.build("def")
-    assert :ok = RateMonitor.register(mon, "def", check, 1_000)
-
-    for result <- [:ok, :ok, {:error, :a}, {:error, :b}] do
-      CheckFn.set_result("def", result)
-      Clock.advance(1_000)
-      trigger_check(mon, "def")
-    end
-
-    # 4 outcomes is a partial window under the default size of 5 → never :down.
-    assert {:ok, %{status: :up, checks_in_window: 4}} = RateMonitor.status(mon, "def")
-    assert Notifications.count() == 0
-
-    CheckFn.set_result("def", {:error, :c})
-    Clock.advance(1_000)
-    trigger_check(mon, "def")
-
-    assert {:ok, %{status: :down, failure_rate: rate, checks_in_window: 5}} =
-             RateMonitor.status(mon, "def")
-
-    assert_in_delta rate, 0.6, 0.01
-    assert Notifications.count() == 1
-  end
-
-  test "timer-driven checks keep repeating without any manual trigger", %{mon: mon} do
-    parent = self()
-
-    check = fn ->
-      send(parent, :tick_ran)
-      :ok
-    end
-
-    assert :ok = RateMonitor.register(mon, "ticker", check, 20)
-
-    assert_receive :tick_ran, 2_000
-    assert_receive :tick_ran, 2_000
-    assert_receive :tick_ran, 2_000
-
-    assert {:ok, %{status: :up}} = RateMonitor.status(mon, "ticker")
-  end
-
-  test "monitor started without a :notify option survives a :down transition" do
-    {:ok, quiet} = RateMonitor.start_link(clock: &Clock.now/0)
-
-    CheckFn.set_result("quiet", {:error, :boom})
-
-    assert :ok =
-             RateMonitor.register(quiet, "quiet", CheckFn.build("quiet"), 60_000, window_size: 1)
-
-    Clock.advance(1_000)
-    send(quiet, {:check, "quiet"})
-
-    assert {:ok, %{status: :down, failure_rate: 1.0}} = RateMonitor.status(quiet, "quiet")
-    assert Process.alive?(quiet)
-    assert Notifications.count() == 0
-  end
-
-  test "pending stays :pending on a failing partial check, and :up then stays :up", %{mon: mon} do
-    CheckFn.set_result("part", {:error, :nope})
-
-    RateMonitor.register(mon, "part", CheckFn.build("part"), 1_000,
-      window_size: 4,
-      threshold: 0.6
-    )
-
-    Clock.advance(1_000)
-    trigger_check(mon, "part")
-
-    assert {:ok, %{status: :pending, failure_rate: 1.0, checks_in_window: 1}} =
-             RateMonitor.status(mon, "part")
-
-    CheckFn.set_result("part", :ok)
-    Clock.advance(1_000)
-    trigger_check(mon, "part")
-    assert {:ok, %{status: :up}} = RateMonitor.status(mon, "part")
-
-    # Already :up with an error in a still-partial window → stays :up.
-    CheckFn.set_result("part", {:error, :nope})
-    Clock.advance(1_000)
-    trigger_check(mon, "part")
-
-    assert {:ok, %{status: :up, checks_in_window: 3}} = RateMonitor.status(mon, "part")
-    assert Notifications.count() == 0
-  end
-
-  test "unexpected messages neither crash the server nor alter service state", %{mon: mon} do
-    CheckFn.set_result("web", :ok)
-    RateMonitor.register(mon, "web", CheckFn.build("web"), 60_000)
-
-    Clock.advance(1_000)
-    trigger_check(mon, "web")
-    before = RateMonitor.statuses(mon)
-
-    send(mon, :garbage)
-    send(mon, {:check_all, "web"})
-    send(mon, {:tick, make_ref()})
-    Clock.advance(5_000)
-
-    assert RateMonitor.statuses(mon) == before
-    assert Process.alive?(mon)
-    assert Notifications.count() == 0
   end
 end

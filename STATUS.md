@@ -13,24 +13,17 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
 
 ## NEXT ACTIVITIES (in order)
 
-1. **[IN FLIGHT] rubric judge-error scoped re-run** — pid 3573398,
-   log `logs/rubric_errfix.log`. Expected: the 4 judge-error rows
-   (095_003, 032_002, 131_001, 131_002) re-judged clean; check the
-   report tail for any NEW triage flags. Idempotent relaunch:
-   `scripts/run_detached.sh logs/rubric_errfix.log mix run
-   scripts/rubric_judge.exs -- --go --sample 400 --only
-   "095_003*,032_002*,131_001*,131_002*"`. Do NOT edit those 4
-   families' files while it rides (rows would be written on pre-edit
-   shas).
-
-2. **[ ] MERGED HAND QUEUE (activities 3+4): rubric triage + docs/19
+1. **[ ] MERGED HAND QUEUE (activities 3+4): rubric triage + docs/19
    mediums — one visit per family, one commit each, full cascade +
    re-grade, hypotheses verified against artifacts (docs/14 rule 10).**
-   - Rubric triage (sha-current, both judges ≤3): **015_002 (all 3
-     axes)**; 013_002, 045_001, 032_004, 096_001, 015_004 (2 axes);
-     041_002, 011_004, 003_003, 064_001, 110_004 (1 axis). Note
-     015_004/032_004/011_004/110_004/041_002 overlap docs/19 — one
-     visit covers both signals.
+   (Judge-error scoped re-run DONE 2026-07-22: 4 roots re-judged, NO
+   new triage; 032_002's sonnet judge hit error_max_turns again —
+   re-judge it once AFTER its prompt fix lands, not before. 015_002
+   DONE — see commit.)
+   - Rubric triage (sha-current, both judges ≤3): 013_002, 045_001,
+     032_004, 096_001, 015_004 (2 axes); 041_002, 011_004, 003_003,
+     064_001, 110_004 (1 axis). Note 015_004/032_004/011_004/110_004/
+     041_002 overlap docs/19 — one visit covers both signals.
    - docs/19 live mediums (unchecked boxes in the doc; refuted-stale
      already excluded): 004_003, 013_003(med), 022_001, 022_004(×2),
      031_002(med), 031_003, 032_001, 032_002, 035_002, 038_001,

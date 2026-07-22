@@ -1,0 +1,1 @@
+  @spec rearm(service(), service_name()) :: service()
