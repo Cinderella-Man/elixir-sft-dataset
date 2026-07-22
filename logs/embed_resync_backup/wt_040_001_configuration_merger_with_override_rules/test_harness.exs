@@ -280,4 +280,89 @@ defmodule ConfigMergerTest do
 
     assert result == override
   end
+
+  test "locked path is not injectable by override when base lacks the key" do
+    base = %{db: %{host: "localhost"}}
+    override = %{db: %{host: "evil.host", password: "pwned"}}
+
+    result = ConfigMerger.merge(base, override, locked: [[:db, :password]])
+
+    assert result.db.host == "evil.host"
+    refute Map.has_key?(result.db, :password)
+  end
+
+  test "per-key :replace takes precedence over global :append strategy" do
+    base = %{tags: ["a", "b"], plugins: ["core"]}
+    override = %{tags: ["c"], plugins: ["extra"]}
+
+    result =
+      ConfigMerger.merge(base, override,
+        list_strategy: :append,
+        list_strategies: %{[:tags] => :replace}
+      )
+
+    assert result.tags == ["c"]
+    assert result.plugins == ["core", "extra"]
+  end
+
+  test "locked path pointing at a map preserves the entire base subtree" do
+    base = %{db: %{host: "localhost", port: 5432}, app: %{name: "MyApp"}}
+    override = %{db: %{host: "evil.host", port: 6666, extra: true}, app: %{name: "EvilApp"}}
+
+    result = ConfigMerger.merge(base, override, locked: [[:db]])
+
+    assert result.db == %{host: "localhost", port: 5432}
+    assert result.app.name == "EvilApp"
+  end
+
+  test "locked top-level key does not protect the same key nested deeper" do
+    base = %{token: "root_token", db: %{token: "nested_token"}}
+    override = %{token: "new_root", db: %{token: "new_nested"}}
+
+    result = ConfigMerger.merge(base, override, locked: [[:token]])
+
+    assert result.token == "root_token"
+    assert result.db.token == "new_nested"
+  end
+
+  test "atom and boolean scalars are replaced including false values" do
+    base = %{mode: :production, debug: true, verbose: false}
+    override = %{mode: :staging, debug: false, verbose: true}
+
+    result = ConfigMerger.merge(base, override)
+
+    assert result.mode == :staging
+    assert result.debug == false
+    assert result.verbose == true
+  end
+
+  test ":append with empty lists on either side yields the other list" do
+    result_empty_override =
+      ConfigMerger.merge(%{tags: ["a"]}, %{tags: []}, list_strategy: :append)
+
+    result_empty_base = ConfigMerger.merge(%{tags: []}, %{tags: ["b"]}, list_strategy: :append)
+
+    assert result_empty_override.tags == ["a"]
+    assert result_empty_base.tags == ["b"]
+  end
+
+  test "locked top-level key absent from base is not injected by override" do
+    base = %{other: "base"}
+    override = %{secret: "injected", other: "overridden"}
+
+    result = ConfigMerger.merge(base, override, locked: [[:secret]])
+
+    refute Map.has_key?(result, :secret)
+    assert result.other == "overridden"
+  end
+
+  test "locked key absent from base is not injected even when override value is a map" do
+    base = %{db: %{host: "localhost"}}
+    override = %{db: %{host: "evil.host", credentials: %{user: "root", password: "pwned"}}}
+
+    result = ConfigMerger.merge(base, override, locked: [[:db, :credentials]])
+
+    refute Map.has_key?(result.db, :credentials)
+    assert result.db.host == "evil.host"
+  end
 end

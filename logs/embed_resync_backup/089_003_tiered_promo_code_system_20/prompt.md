@@ -310,6 +310,7 @@ defmodule TieredPromoCodes do
   defp total_uses(state, cs) do
     # TODO
   end
+
   defp user_uses(state, cs, uid), do: Map.get(state.user_uses, {cs, uid}, 0)
 
   defp record_use(state, cs, user_id) do
@@ -323,6 +324,6 @@ defmodule TieredPromoCodes do
 end
 ```
 
-Give me only the complete implementation of `total_uses` (including the
-`@doc`/`@spec`/`@impl` lines shown above it in the module, if any) — the
+Give me only the complete implementation of `total_uses` (including any
+`@doc`/`@spec`/`@impl` lines that belong directly above it) — the
 function alone, not the whole module.

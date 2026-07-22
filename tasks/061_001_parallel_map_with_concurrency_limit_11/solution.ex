@@ -18,13 +18,18 @@
         # running: %{%Task{} => original_index}
         running = Map.new(seed, fn {elem, idx} -> {start_task(func, elem), idx} end)
 
-        raw = collect(running, queue, func, _results = %{})
+        pids = Map.new(Map.keys(running), &{&1.pid, true})
+        {raw, pids} = collect(running, queue, func, _results = %{}, pids)
 
         # Reassemble in original order.
-        Enum.map(0..(total - 1), fn i -> Map.fetch!(raw, i) end)
+        result = Enum.map(0..(total - 1), fn i -> Map.fetch!(raw, i) end)
+        Process.flag(:trap_exit, was_trapping?)
+        # Drain ONLY our own tasks' exits: a trapping caller may hold
+        # unrelated {:EXIT, ...} mail of its own that pmap must not eat.
+        flush_exit_messages(pids)
+        result
       after
         Process.flag(:trap_exit, was_trapping?)
-        flush_exit_messages()
       end
     end
   end

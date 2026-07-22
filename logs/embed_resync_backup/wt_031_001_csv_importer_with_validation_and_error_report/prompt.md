@@ -19,7 +19,7 @@ Write me an Elixir module called `CsvImporter` that reads a CSV file, validates 
 
 I need these functions in the public API:
 
-- `CsvImporter.import_file(file_path, schema)` which reads the CSV file at the given path and validates every data row against the schema. It should return `{:ok, valid_rows, error_report}` where `valid_rows` is a list of maps (field name => string value) for rows that passed all validations, and `error_report` is a list of `{row_number, field_name, error_message}` tuples describing every validation failure. Row numbers should be 1-based counting only data rows (the header row is row 0 / not counted). If the file doesn't exist, return `{:error, :file_not_found}`. If the file is empty (zero bytes), return `{:error, :empty_file}`.
+- `CsvImporter.import_file(file_path, schema)` which reads the CSV file at the given path and validates every data row against the schema. It should return `{:ok, valid_rows, error_report}` where `valid_rows` is a list of maps (field name => string value) for rows that passed all validations — each map contains **only the schema fields that appear in the CSV headers** (header columns not defined in the schema are dropped, and schema fields absent from the headers are omitted) — and `error_report` is a list of `{row_number, field_name, error_message}` tuples describing every validation failure. Row numbers should be 1-based counting only data rows (the header row is row 0 / not counted). If the file doesn't exist, return `{:error, :file_not_found}`. If the file is empty (zero bytes), return `{:error, :empty_file}`.
 
 - `CsvImporter.import_string(csv_string, schema)` which does the same thing but accepts the CSV content as a binary string instead of a file path. This is useful for testing.
 

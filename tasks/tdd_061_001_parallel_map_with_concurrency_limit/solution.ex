@@ -109,13 +109,18 @@ defmodule ParallelMap do
         # running: %{%Task{} => original_index}
         running = Map.new(seed, fn {elem, idx} -> {start_task(func, elem), idx} end)
 
-        raw = collect(running, queue, func, _results = %{})
+        pids = Map.new(Map.keys(running), &{&1.pid, true})
+        {raw, pids} = collect(running, queue, func, _results = %{}, pids)
 
         # Reassemble in original order.
-        Enum.map(0..(total - 1), fn i -> Map.fetch!(raw, i) end)
+        result = Enum.map(0..(total - 1), fn i -> Map.fetch!(raw, i) end)
+        Process.flag(:trap_exit, was_trapping?)
+        # Drain ONLY our own tasks' exits: a trapping caller may hold
+        # unrelated {:EXIT, ...} mail of its own that pmap must not eat.
+        flush_exit_messages(pids)
+        result
       after
         Process.flag(:trap_exit, was_trapping?)
-        flush_exit_messages()
       end
     end
   end
@@ -127,14 +132,14 @@ defmodule ParallelMap do
   defp start_task(func, elem), do: Task.async(fn -> func.(elem) end)
 
   # Base case: nothing running and nothing queued.
-  defp collect(running, [] = _queue, _func, results) when map_size(running) == 0,
-    do: results
+  defp collect(running, [] = _queue, _func, results, pids) when map_size(running) == 0,
+    do: {results, pids}
 
   # The as-they-finish loop: harvest whatever `Task.yield_many/2` reports in
   # this tick — a normal reply (`{:ok, value}`) or a crash (`{:exit, reason}`,
   # covering raises, abnormal exits, throws and external kills alike) — then
   # refill the freed slots from the queue and go again.
-  defp collect(running, queue, func, results) do
+  defp collect(running, queue, func, results, pids) do
     finished =
       running
       |> Map.keys()
@@ -143,10 +148,11 @@ defmodule ParallelMap do
 
     case finished do
       [] ->
-        collect(running, queue, func, results)
+        collect(running, queue, func, results, pids)
 
       finished ->
-        Enum.reduce(finished, {running, queue, results}, fn {task, res}, {run, q, acc} ->
+        finished
+        |> Enum.reduce({running, queue, results, pids}, fn {task, res}, {run, q, acc, ps} ->
           idx = Map.fetch!(run, task)
 
           outcome =
@@ -160,21 +166,24 @@ defmodule ParallelMap do
 
           case q do
             [] ->
-              {run, [], acc}
+              {run, [], acc, ps}
 
             [{elem, next_idx} | rest] ->
-              {Map.put(run, start_task(func, elem), next_idx), rest, acc}
+              refill = start_task(func, elem)
+              {Map.put(run, refill, next_idx), rest, acc, Map.put(ps, refill.pid, true)}
           end
         end)
-        |> then(fn {run, q, acc} -> collect(run, q, func, acc) end)
+        |> then(fn {run, q, acc, ps} -> collect(run, q, func, acc, ps) end)
     end
   end
 
-  # Trapped exits from finished/crashed tasks land in our mailbox; drain them
-  # so pmap leaves the caller's mailbox exactly as it found it.
-  defp flush_exit_messages do
+  # Trapped exits from finished/crashed tasks land in our mailbox; drain
+  # exactly THOSE (matched by task pid) so pmap leaves the caller's mailbox
+  # as it found it — including any unrelated {:EXIT, ...} a trapping caller
+  # was already holding.
+  defp flush_exit_messages(pids) do
     receive do
-      {:EXIT, _pid, _reason} -> flush_exit_messages()
+      {:EXIT, pid, _reason} when is_map_key(pids, pid) -> flush_exit_messages(pids)
     after
       0 -> :ok
     end

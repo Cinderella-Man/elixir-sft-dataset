@@ -34,6 +34,12 @@ file. It must expose:
 `ConcurrencyCounter` is intended for use in tests to verify the concurrency limit is
 actually respected at runtime — your `pmap` implementation itself does not need to use it.
 
+`pmap` must be mailbox-safe for the calling process: consume only messages that
+belong to the tasks it spawned. If the caller is trapping exits, any unrelated
+`{:EXIT, pid, reason}` messages it held (or receives while `pmap` runs) must still
+be in its mailbox when `pmap` returns, and the caller's `:trap_exit` flag must be
+left exactly as `pmap` found it.
+
 Give me the complete implementation in a single file. Use only OTP and the standard
 library — no external dependencies. Do not use `Task.async_stream`; implement the
 scheduling logic yourself using `Task.async` / `Task.yield`.

@@ -1,12 +1,12 @@
   # Base case: nothing running and nothing queued.
-  defp collect(running, [] = _queue, _func, results) when map_size(running) == 0,
-    do: results
+  defp collect(running, [] = _queue, _func, results, pids) when map_size(running) == 0,
+    do: {results, pids}
 
   # The as-they-finish loop: harvest whatever `Task.yield_many/2` reports in
   # this tick — a normal reply (`{:ok, value}`) or a crash (`{:exit, reason}`,
   # covering raises, abnormal exits, throws and external kills alike) — then
   # refill the freed slots from the queue and go again.
-  defp collect(running, queue, func, results) do
+  defp collect(running, queue, func, results, pids) do
     finished =
       running
       |> Map.keys()
@@ -15,10 +15,11 @@
 
     case finished do
       [] ->
-        collect(running, queue, func, results)
+        collect(running, queue, func, results, pids)
 
       finished ->
-        Enum.reduce(finished, {running, queue, results}, fn {task, res}, {run, q, acc} ->
+        finished
+        |> Enum.reduce({running, queue, results, pids}, fn {task, res}, {run, q, acc, ps} ->
           idx = Map.fetch!(run, task)
 
           outcome =
@@ -32,12 +33,13 @@
 
           case q do
             [] ->
-              {run, [], acc}
+              {run, [], acc, ps}
 
             [{elem, next_idx} | rest] ->
-              {Map.put(run, start_task(func, elem), next_idx), rest, acc}
+              refill = start_task(func, elem)
+              {Map.put(run, refill, next_idx), rest, acc, Map.put(ps, refill.pid, true)}
           end
         end)
-        |> then(fn {run, q, acc} -> collect(run, q, func, acc) end)
+        |> then(fn {run, q, acc, ps} -> collect(run, q, func, acc, ps) end)
     end
   end

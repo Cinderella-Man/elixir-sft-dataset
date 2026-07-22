@@ -242,6 +242,7 @@ defmodule BloomFilter do
   defp word_index(bit_index) do
     # TODO
   end
+
   defp bit_offset(bit_index), do: rem(bit_index, 64)
 
   defp set_bit(bits, bit_index) do
@@ -260,6 +261,6 @@ defmodule BloomFilter do
 end
 ```
 
-Give me only the complete implementation of `word_index` (including the
-`@doc`/`@spec`/`@impl` lines shown above it in the module, if any) — the
+Give me only the complete implementation of `word_index` (including any
+`@doc`/`@spec`/`@impl` lines that belong directly above it) — the
 function alone, not the whole module.
