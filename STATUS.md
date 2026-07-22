@@ -66,6 +66,20 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    six templated shapes (deterministic, no LLM), then LLM register
    rewrites of monotone seed prompts, each with a mandatory blind
    re-screen. Wire rotation into the generator templates too.
+   DESIGN CONSTRAINTS (verified 2026-07-23 before implementing):
+   (a) the machinery PARSES structural markers inside these prompts —
+   "## New specification" (adapt: resync + lint + evaluator
+   contract_text), "## Module under test" (wt), "## The module"
+   (dedoc), "## The task" — rotation must vary the PROSE around
+   markers and NEVER the marker lines themselves, or shape detection
+   breaks corpus-wide; (b) variant selection must be DETERMINISTIC
+   from the unit id (id-hash mod N) so resyncs reproduce bytes;
+   (c) generator template modules and the resync tools must share ONE
+   source of truth per shape (the template modules in lib/gen_task/),
+   so rotation lands there and both paths inherit it; (d) fim/tfim
+   "# TODO" blank markers and the fence layout are carver contracts —
+   frozen; (e) after rotation, the full resync battery regenerates
+   derivative prompts and check_embeds/format gates must stay 0/0.
 
 6. **[ ] @doc prose truth on existing golds (G5).** Sweep @doc claims
    vs prompt contract; un-promised claims get prompt sentences +
