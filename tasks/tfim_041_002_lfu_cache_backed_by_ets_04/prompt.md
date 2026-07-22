@@ -98,7 +98,14 @@ defmodule LFUCache do
   @impl true
   def init(opts) do
     name = Keyword.fetch!(opts, :name)
-    max_size = Keyword.fetch!(opts, :max_size)
+
+    # A missing :max_size fails like an invalid one — ArgumentError, not the
+    # KeyError a fetch! would raise (the contract reserves that for :name).
+    max_size =
+      case Keyword.fetch(opts, :max_size) do
+        {:ok, value} -> value
+        :error -> raise ArgumentError, ":max_size is required"
+      end
 
     unless is_integer(max_size) and max_size > 0 do
       raise ArgumentError, ":max_size must be a positive integer, got: #{inspect(max_size)}"
@@ -489,6 +496,34 @@ defmodule LFUCacheTest do
     # re-inserting :b does not remember the frequency it had before eviction
     LFUCache.put(c, :b, 20)
     assert [{:b, {20, 1, _seq}}] = :ets.lookup(data, :b)
+  end
+
+  test "start_link fails with ArgumentError when :max_size is missing entirely" do
+    Process.flag(:trap_exit, true)
+    name = :"lfu_missing_#{System.pid()}_#{System.unique_integer([:positive])}"
+
+    assert {:error, {%ArgumentError{}, _stack}} = LFUCache.start_link(name: name)
+  end
+
+  test "a miss creates nothing and disturbs no eviction state" do
+    name = :"lfu_miss_#{System.pid()}_#{System.unique_integer([:positive])}"
+    {:ok, _} = LFUCache.start_link(name: name, max_size: 2)
+    data = :"#{name}_data"
+
+    LFUCache.put(name, :a, 1)
+    LFUCache.put(name, :b, 2)
+
+    # Hammer a missing key: still :miss every time, and the documented
+    # entry-count channel shows no entry was ever created for it.
+    for _ <- 1..10, do: assert(:miss = LFUCache.get(name, :nope))
+    assert :ets.info(data, :size) == 2
+
+    # Frequencies were not disturbed either: one real access makes :a the
+    # survivor, and inserting :c evicts :b exactly as if no miss happened.
+    assert {:ok, 1} = LFUCache.get(name, :a)
+    LFUCache.put(name, :c, 3)
+    assert :miss = LFUCache.get(name, :b)
+    assert {:ok, 1} = LFUCache.get(name, :a)
   end
 end
 ```

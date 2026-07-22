@@ -237,12 +237,13 @@ defmodule LFUCache do
   end
 
   defp data_table_name(name), do: :"#{name}_data"
+
   defp order_table_name(name) do
     # TODO
   end
 end
 ```
 
-Give me only the complete implementation of `order_table_name` (including the
-`@doc`/`@spec`/`@impl` lines shown above it in the module, if any) — the
+Give me only the complete implementation of `order_table_name` (including any
+`@doc`/`@spec`/`@impl` lines that belong directly above it) — the
 function alone, not the whole module.

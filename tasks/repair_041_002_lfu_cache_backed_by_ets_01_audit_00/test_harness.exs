@@ -242,87 +242,94 @@ defmodule LFUCacheTest do
     assert {:ok, 3} = LFUCache.get(c, :c)
   end
 
+  # -------------------------------------------------------
+  # On-disk row shape: callers may read data rows directly
+  # -------------------------------------------------------
+
+  test "a data row is {key, {value, frequency, seq}} with the triple nested, not flattened" do
+    c = start_cache(3)
+    data = :"#{c}_data"
+
+    # a brand-new entry is stored at frequency 1 alongside its recency stamp
+    LFUCache.put(c, :a, :v1)
+    assert [{:a, {:v1, 1, seq1}}] = :ets.lookup(data, :a)
+    assert is_integer(seq1)
+
+    # a hit raises the frequency in place and draws a strictly larger stamp
+    assert {:ok, :v1} = LFUCache.get(c, :a)
+    assert [{:a, {:v1, 2, seq2}}] = :ets.lookup(data, :a)
+    assert is_integer(seq2)
+    assert seq2 > seq1
+
+    # an update rewrites the value inside the same nested triple
+    LFUCache.put(c, :a, :v2)
+    assert [{:a, {:v2, 3, seq3}}] = :ets.lookup(data, :a)
+    assert is_integer(seq3)
+    assert seq3 > seq2
+  end
+
+  test "each live entry holds a unique recency stamp that grows with insertion order" do
+    c = start_cache(4)
+    data = :"#{c}_data"
+
+    for k <- [:a, :b, :c, :d], do: LFUCache.put(c, k, k)
+
+    stamps =
+      for k <- [:a, :b, :c, :d] do
+        assert [{^k, {^k, 1, seq}}] = :ets.lookup(data, k)
+        assert is_integer(seq)
+        seq
+      end
+
+    # no two live entries share a stamp, and every insert drew a larger one
+    assert length(Enum.uniq(stamps)) == 4
+    assert stamps == Enum.sort(stamps)
+  end
+
+  test "an evicted key leaves no row behind and restarts at frequency 1 when re-put" do
+    c = start_cache(2)
+    data = :"#{c}_data"
+
+    # :a reaches frequency 4, :b reaches frequency 3
+    LFUCache.put(c, :a, 1)
+    for _ <- 1..3, do: LFUCache.get(c, :a)
+    LFUCache.put(c, :b, 2)
+    for _ <- 1..2, do: LFUCache.get(c, :b)
+
+    # :b is the least frequently used, so inserting :c removes its row entirely
+    LFUCache.put(c, :c, 3)
+    assert :ets.lookup(data, :b) == []
+
+    # re-inserting :b does not remember the frequency it had before eviction
+    LFUCache.put(c, :b, 20)
+    assert [{:b, {20, 1, _seq}}] = :ets.lookup(data, :b)
+  end
+
   test "start_link fails with ArgumentError when :max_size is missing entirely" do
     Process.flag(:trap_exit, true)
-    name = :"lfu_nomax_#{System.unique_integer([:positive])}"
+    name = :"lfu_missing_#{System.pid()}_#{System.unique_integer([:positive])}"
 
     assert {:error, {%ArgumentError{}, _stack}} = LFUCache.start_link(name: name)
   end
 
-  test "start_link raises the KeyError from Keyword.fetch!/2 when :name is missing" do
-    assert_raise KeyError, fn -> LFUCache.start_link(max_size: 2) end
-  end
+  test "a miss creates nothing and disturbs no eviction state" do
+    name = :"lfu_miss_#{System.pid()}_#{System.unique_integer([:positive])}"
+    {:ok, _} = LFUCache.start_link(name: name, max_size: 2)
+    data = :"#{name}_data"
 
-  test "an evicted key that is put again restarts at frequency 1" do
-    c = start_cache(4)
+    LFUCache.put(name, :a, 1)
+    LFUCache.put(name, :b, 2)
 
-    LFUCache.put(c, :g, 1)
-    for _ <- 1..5, do: LFUCache.get(c, :g)
-    LFUCache.put(c, :h, 2)
-    for _ <- 1..5, do: LFUCache.get(c, :h)
-    LFUCache.put(c, :k, 3)
-    for _ <- 1..3, do: LFUCache.get(c, :k)
-    LFUCache.put(c, :b, 4)
-    for _ <- 1..2, do: LFUCache.get(c, :b)
-
-    # cache is full (4 entries): :b has the lowest frequency (3) and is evicted
-    LFUCache.put(c, :n, 5)
-    assert :miss = LFUCache.get(c, :b)
-
-    # re-putting :b evicts :n (frequency 1) and restarts :b at frequency 1
-    LFUCache.put(c, :b, 6)
-    assert :miss = LFUCache.get(c, :n)
-    assert {:ok, 6} = LFUCache.get(c, :b)
-
-    # :b is now at frequency 2 — below :k (frequency 4) — so :b loses, not :k
-    LFUCache.put(c, :m, 7)
-    assert :miss = LFUCache.get(c, :b)
-    assert {:ok, 3} = LFUCache.get(c, :k)
-    assert {:ok, 7} = LFUCache.get(c, :m)
-  end
-
-  test "repeated misses create nothing and leave the eviction victim unchanged" do
-    c = start_cache(2)
-    data = :"#{c}_data"
-
-    LFUCache.put(c, :a, 1)
-    LFUCache.put(c, :b, 2)
-
-    for _ <- 1..5, do: assert(:miss = LFUCache.get(c, :ghost))
+    # Hammer a missing key: still :miss every time, and the documented
+    # entry-count channel shows no entry was ever created for it.
+    for _ <- 1..10, do: assert(:miss = LFUCache.get(name, :nope))
     assert :ets.info(data, :size) == 2
 
-    # the misses drew no seq and created no entry: :a is still the LRU victim
-    LFUCache.put(c, :c, 3)
-    assert :ets.info(data, :size) == 2
-    assert :miss = LFUCache.get(c, :a)
-    assert {:ok, 2} = LFUCache.get(c, :b)
-    assert {:ok, 3} = LFUCache.get(c, :c)
-  end
-
-  test "the named order table holds exactly one live entry per data key" do
-    c = start_cache(3)
-    data = :"#{c}_data"
-    order = :"#{c}_order"
-
-    LFUCache.put(c, :a, 1)
-    LFUCache.put(c, :b, 2)
-    # update (touch), get (touch), then an insert that evicts
-    LFUCache.put(c, :a, 11)
-    assert {:ok, 11} = LFUCache.get(c, :a)
-    LFUCache.put(c, :c, 3)
-    LFUCache.put(c, :d, 4)
-
-    assert :ets.info(data, :size) == 3
-    assert :ets.info(order, :size) == 3
-  end
-
-  test "the data table can be read directly from a process other than the owner" do
-    c = start_cache(2)
-    data = :"#{c}_data"
-
-    LFUCache.put(c, :a, 1)
-
-    task = Task.async(fn -> :ets.lookup(data, :a) end)
-    assert [{:a, _entry}] = Task.await(task)
+    # Frequencies were not disturbed either: one real access makes :a the
+    # survivor, and inserting :c evicts :b exactly as if no miss happened.
+    assert {:ok, 1} = LFUCache.get(name, :a)
+    LFUCache.put(name, :c, 3)
+    assert :miss = LFUCache.get(name, :b)
+    assert {:ok, 1} = LFUCache.get(name, :a)
   end
 end

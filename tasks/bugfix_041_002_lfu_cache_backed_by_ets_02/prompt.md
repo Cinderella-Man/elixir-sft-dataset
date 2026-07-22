@@ -153,7 +153,14 @@ defmodule LFUCache do
   @impl true
   def init(opts) do
     name = Keyword.fetch!(opts, :name)
-    max_size = Keyword.fetch!(opts, :max_size)
+
+    # A missing :max_size fails like an invalid one — ArgumentError, not the
+    # KeyError a fetch! would raise (the contract reserves that for :name).
+    max_size =
+      case Keyword.fetch(opts, :max_size) do
+        {:ok, value} -> value
+        :error -> raise ArgumentError, ":max_size is required"
+      end
 
     unless is_integer(max_size) and max_size > 0 do
       raise ArgumentError, ":max_size must be a positive integer, got: #{inspect(max_size)}"
@@ -181,7 +188,7 @@ defmodule LFUCache do
       counter: 0
     }
 
-    {:error, state}
+    {:ok, state}
   end
 
   @impl true
@@ -190,7 +197,7 @@ defmodule LFUCache do
       [{^key, {value, freq, seq}}] ->
         {new_seq, state} = next_counter(state)
         :ets.delete(state.order_table, {freq, seq})
-        :ets.insert(state.order_table, {{freq + 1, new_seq}, key})
+        :ets.insert(state.order_table, {{freq - 1, new_seq}, key})
         :ets.insert(state.data_table, {key, {value, freq + 1, new_seq}})
         {:reply, :ok, state}
 
@@ -242,23 +249,43 @@ end
 ## Failing test report
 
 ```
-11 of 11 test(s) failed:
+5 of 20 test(s) failed:
 
-  * test get returns :miss for unknown key
-      failed to start child with the spec {LFUCache, [name: :lfu_3977, max_size: 3]}.
-      Reason: %{max_size: 3, counter: 0, data_table: :lfu_3977_data, order_table: :lfu_3977_order}
+  * test least frequently used entry is evicted, not least recently used
+      
+      
+      match (=) failed
+      code:  assert {:ok, 1} = LFUCache.get(c, :a)
+      left:  {:ok, 1}
+      right: :miss
+      
 
-  * test put and get round-trip
-      failed to start child with the spec {LFUCache, [name: :lfu_4041, max_size: 3]}.
-      Reason: %{max_size: 3, counter: 0, data_table: :lfu_4041_data, order_table: :lfu_4041_order}
+  * test repeated gets protect a hot key across several evictions
+      
+      
+      match (=) failed
+      code:  assert :miss = LFUCache.get(c, :b)
+      left:  :miss
+      right: {:ok, 2}
+      
 
-  * test put overwrites an existing key
-      failed to start child with the spec {LFUCache, [name: :lfu_4105, max_size: 3]}.
-      Reason: %{max_size: 3, counter: 0, data_table: :lfu_4105_data, order_table: :lfu_4105_order}
+  * test a get bumps frequency by exactly one, so a twice-read key outranks a once-read key
+      
+      
+      match (=) failed
+      code:  assert {:ok, 1} = LFUCache.get(c, :a)
+      left:  {:ok, 1}
+      right: :miss
+      
 
-  * test multiple distinct keys coexist
-      failed to start child with the spec {LFUCache, [name: :lfu_4169, max_size: 5]}.
-      Reason: %{max_size: 5, counter: 0, data_table: :lfu_4169_data, order_table: :lfu_4169_order}
+  * test an evicted key leaves no row behind and restarts at frequency 1 when re-put
+      
+      
+      Assertion with == failed
+      code:  assert :ets.lookup(data, :b) == []
+      left:  [b: {2, 3, 7}]
+      right: []
+      
 
-  (…7 more)
+  (…1 more)
 ```

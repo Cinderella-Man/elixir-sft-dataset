@@ -153,9 +153,16 @@ defmodule LFUCache do
   @impl true
   def init(opts) do
     name = Keyword.fetch!(opts, :name)
-    max_size = Keyword.fetch!(opts, :max_size)
 
-    unless is_integer(max_size) and max_size > 0 do
+    # A missing :max_size fails like an invalid one — ArgumentError, not the
+    # KeyError a fetch! would raise (the contract reserves that for :name).
+    max_size =
+      case Keyword.fetch(opts, :max_size) do
+        {:ok, value} -> value
+        :error -> raise ArgumentError, ":max_size is required"
+      end
+
+    unless is_integer(max_size) and max_size >= 0 do
       raise ArgumentError, ":max_size must be a positive integer, got: #{inspect(max_size)}"
     end
 
@@ -223,7 +230,7 @@ defmodule LFUCache do
   defp next_counter(%{counter: c} = state), do: {c + 1, %{state | counter: c + 1}}
 
   defp maybe_evict(state) do
-    if :ets.info(state.data_table, :size) > state.max_size do
+    if :ets.info(state.data_table, :size) >= state.max_size do
       # Smallest composite key = lowest frequency, LRU tie-break.
       victim_composite = :ets.first(state.order_table)
       [{^victim_composite, victim_key}] = :ets.lookup(state.order_table, victim_composite)
@@ -242,43 +249,13 @@ end
 ## Failing test report
 
 ```
-5 of 11 test(s) failed:
+1 of 20 test(s) failed:
 
-  * test least frequently used entry is evicted, not least recently used
+  * test start_link fails with ArgumentError unless :max_size is a positive integer
       
       
       match (=) failed
-      code:  assert :miss = LFUCache.get(c, :b)
-      left:  :miss
-      right: {:ok, 2}
-      
-
-  * test put-update counts as an access and raises frequency
-      
-      
-      match (=) failed
-      code:  assert :miss = LFUCache.get(c, :b)
-      left:  :miss
-      right: {:ok, 2}
-      
-
-  * test repeated gets protect a hot key across several evictions
-      
-      
-      match (=) failed
-      code:  assert :miss = LFUCache.get(c, :b)
-      left:  :miss
-      right: {:ok, 2}
-      
-
-  * test ties on frequency are broken by least recently used
-      
-      
-      match (=) failed
-      code:  assert :miss = LFUCache.get(c, :a)
-      left:  :miss
-      right: {:ok, 1}
-      
-
-  (…1 more)
+      code:  assert {:error, {%ArgumentError{}, _stack}} = LFUCache.start_link(name: name, max_size: bad)
+      left:  {:error, {%ArgumentError{}, _stack}}
+      right: {:ok, #PID<0.242.0>}
 ```

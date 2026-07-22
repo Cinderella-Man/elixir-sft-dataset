@@ -51,6 +51,7 @@ defmodule DecayPercentile do
     GenServer.start_link(__MODULE__, opts, name: name)
   end
 
+  @doc "Records `value` into the time-decay rolling percentile for `name`. Returns `:ok`."
   @spec record(term, number) :: :ok
   def record(name, value) when is_number(value) do
     GenServer.call(@default_name, {:record, name, value})
@@ -123,7 +124,15 @@ defmodule DecayPercentile do
   end
 
   defp weighted_rank(weighted, percentile) do
-    sorted = Enum.sort_by(weighted, fn {v, _w} -> v end)
+    # A sample whose weight has underflowed to exactly 0.0 contributes nothing
+    # and must not be selectable — the same absence rule that makes an
+    # all-underflowed series {:error, :empty} (a zero-weight sample would
+    # otherwise win percentile 0.0, since 0.0 >= a target of 0.0).
+    sorted =
+      weighted
+      |> Enum.reject(fn {_v, w} -> w == 0.0 end)
+      |> Enum.sort_by(fn {v, _w} -> v end)
+
     total = Enum.reduce(sorted, 0.0, fn {_v, w}, acc -> acc + w end)
 
     if sorted == [] or total == 0.0 do
@@ -146,7 +155,7 @@ defmodule DecayPercentile do
     end
   end
 
-  defp enforce_max(samples, max) do
+  defp enforce_max(samples, nil) do
     # TODO
   end
 
