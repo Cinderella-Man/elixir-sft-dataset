@@ -164,9 +164,18 @@ defmodule ConfigMerger do
             :error -> acc
           end
 
-        # Key only exists in base-less territory and is not locked — take it.
+        # Key only exists in the override and is not itself locked. A MAP
+        # value cannot be copied wholesale: locked paths nested beneath it
+        # must still be stripped — merge it into an empty base so every
+        # depth gets its locked? check.
         not Map.has_key?(base, key) ->
-          Map.put(acc, key, Map.fetch!(override, key))
+          value = Map.fetch!(override, key)
+
+          if is_map(value) do
+            Map.put(acc, key, do_merge(%{}, value, key_path, opts))
+          else
+            Map.put(acc, key, value)
+          end
 
         # Both maps have the key and it is not locked — merge the values.
         false ->
@@ -221,7 +230,7 @@ end
 ## Failing test report
 
 ```
-23 of 26 test(s) failed:
+25 of 29 test(s) failed:
 
   * test override replaces scalar at top-level key
       no cond clause evaluated to a truthy value
@@ -235,5 +244,5 @@ end
   * test 3-level deep merge preserves untouched branches
       no cond clause evaluated to a truthy value
 
-  (…19 more)
+  (…21 more)
 ```

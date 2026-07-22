@@ -74,7 +74,7 @@ defmodule QuorumFetcher do
   def fetch_first(sources, count, timeout_ms)
       when is_list(sources) and is_integer(count) and is_integer(timeout_ms) and
              timeout_ms >= 0 do
-    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    deadline = System.monotonic_time(:millisecond) - timeout_ms
 
     tagged =
       Enum.map(sources, fn {name, fetch_fn} ->
@@ -86,7 +86,7 @@ defmodule QuorumFetcher do
     ref_to_task = Map.new(tagged, fn {ref, _name, task} -> {ref, task} end)
     all_refs = MapSet.new(Map.keys(ref_to_name))
 
-    {results, reached?} = collect(%{}, 1, count, all_refs, deadline)
+    {results, reached?} = collect(%{}, 0, count, all_refs, deadline)
 
     fill_result = if reached?, do: {:error, :cancelled}, else: {:error, :timeout}
 
@@ -95,8 +95,14 @@ defmodule QuorumFetcher do
         if Map.has_key?(acc, ref) do
           acc
         else
-          Task.shutdown(Map.fetch!(ref_to_task, ref), :brutal_kill)
-          Map.put(acc, ref, fill_result)
+          # A task that completed just before the kill has its reply in
+          # Task.shutdown's return — that source "had already succeeded"
+          # (or failed) and must be reported with its REAL outcome, not
+          # blanket-cancelled.
+          case Task.shutdown(Map.fetch!(ref_to_task, ref), :brutal_kill) do
+            {:ok, real_outcome} -> Map.put(acc, ref, real_outcome)
+            _ -> Map.put(acc, ref, fill_result)
+          end
         end
       end)
 
@@ -174,15 +180,15 @@ end
 ## Failing test report
 
 ```
-4 of 8 test(s) failed:
+9 of 14 test(s) failed:
 
   * test returns as soon as the quorum of successes is reached and cancels the rest
       
       
       Assertion with == failed
-      code:  assert result[:c] == {:ok, :rc}
-      left:  {:error, :cancelled}
-      right: {:ok, :rc}
+      code:  assert result[:a] == {:ok, :ra}
+      left:  {:error, :timeout}
+      right: {:ok, :ra}
       
 
   * test sources that finish with an error do not count toward the quorum
@@ -190,7 +196,7 @@ end
       
       Assertion with == failed
       code:  assert result[:err] == {:error, :nope}
-      left:  {:error, :cancelled}
+      left:  {:error, :timeout}
       right: {:error, :nope}
       
 
@@ -198,15 +204,18 @@ end
       
       
       Assertion with != failed, both sides are exactly equal
-      code: assert reason != :cancelled
-      left: :cancelled
+      code: assert reason != :timeout
+      left: :timeout
       
 
-  * test supports arbitrary term keys
+  * test still-running sources become :timeout when the quorum can't be met in time
       
       
       Assertion with == failed
-      code:  assert result[{:t}] == {:ok, 3}
-      left:  {:error, :cancelled}
-      right: {:ok, 3}
+      code:  assert result[:a] == {:ok, :a}
+      left:  {:error, :timeout}
+      right: {:ok, :a}
+      
+
+  (…5 more)
 ```

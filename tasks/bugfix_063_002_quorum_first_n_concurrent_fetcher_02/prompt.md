@@ -95,8 +95,14 @@ defmodule QuorumFetcher do
         if Map.has_key?(acc, ref) do
           acc
         else
-          Task.shutdown(Map.fetch!(ref_to_task, ref), :brutal_kill)
-          Map.put(acc, ref, fill_result)
+          # A task that completed just before the kill has its reply in
+          # Task.shutdown's return — that source "had already succeeded"
+          # (or failed) and must be reported with its REAL outcome, not
+          # blanket-cancelled.
+          case Task.shutdown(Map.fetch!(ref_to_task, ref), :brutal_kill) do
+            {:ok, real_outcome} -> Map.put(acc, ref, real_outcome)
+            _ -> Map.put(acc, ref, fill_result)
+          end
         end
       end)
 
@@ -174,13 +180,31 @@ end
 ## Failing test report
 
 ```
-1 of 8 test(s) failed:
+3 of 14 test(s) failed:
 
   * test returns as soon as the quorum of successes is reached and cancels the rest
       
       
       Assertion with == failed
       code:  assert result[:d] == {:error, :cancelled}
+      left:  {:error, :timeout}
+      right: {:error, :cancelled}
+      
+
+  * test every source has started before any of them is allowed to complete
+      
+      
+      Assertion with == failed
+      code:  assert result[:b] == {:error, :cancelled}
+      left:  {:error, :timeout}
+      right: {:error, :cancelled}
+      
+
+  * test a cancelled source's fetch function is interrupted before it can finish its work
+      
+      
+      Assertion with == failed
+      code:  assert result[:slow] == {:error, :cancelled}
       left:  {:error, :timeout}
       right: {:error, :cancelled}
 ```

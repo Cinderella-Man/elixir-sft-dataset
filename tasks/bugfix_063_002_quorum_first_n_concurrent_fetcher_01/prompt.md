@@ -95,8 +95,14 @@ defmodule QuorumFetcher do
         if Map.has_key?(acc, ref) do
           acc
         else
-          Task.shutdown(Map.fetch!(ref_to_task, ref), :brutal_kill)
-          Map.put(acc, ref, fill_result)
+          # A task that completed just before the kill has its reply in
+          # Task.shutdown's return — that source "had already succeeded"
+          # (or failed) and must be reported with its REAL outcome, not
+          # blanket-cancelled.
+          case Task.shutdown(Map.fetch!(ref_to_task, ref), :brutal_kill) do
+            {:ok, real_outcome} -> Map.put(acc, ref, real_outcome)
+            _ -> Map.put(acc, ref, fill_result)
+          end
         end
       end)
 
@@ -174,13 +180,25 @@ end
 ## Failing test report
 
 ```
-1 of 8 test(s) failed:
+2 of 14 test(s) failed:
 
   * test a non-positive quorum cancels every source without running it
       
       
       Assertion with == failed
       code:  assert result == %{a: {:error, :cancelled}, b: {:error, :cancelled}}
-      left:  %{b: {:ok, :cancelled}, a: {:ok, :cancelled}}
-      right: %{b: {:error, :cancelled}, a: {:error, :cancelled}}
+      left:  %{a: {:ok, :cancelled}, b: {:ok, :cancelled}}
+      right: %{a: {:error, :cancelled}, b: {:error, :cancelled}}
+      
+
+  * test a non-positive quorum never invokes any fetch function
+      
+      
+      Assertion with == failed
+      code:  assert QuorumFetcher.fetch_first(sources, -1, 1000) == %{
+                    a: {:error, :cancelled},
+                    b: {:error, :cancelled}
+                  }
+      left:  %{a: {:ok, :cancelled}, b: {:ok, :cancelled}}
+      right: %{a: {:error, :cancelled}, b: {:error, :cancelled}}
 ```
