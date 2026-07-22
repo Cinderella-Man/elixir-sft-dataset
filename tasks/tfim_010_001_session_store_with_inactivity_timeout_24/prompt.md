@@ -54,7 +54,7 @@ defmodule SessionStore do
   @type state :: %{
           sessions: %{session_id() => session()},
           timeout_ms: non_neg_integer(),
-          cleanup_interval_ms: non_neg_integer(),
+          cleanup_interval_ms: non_neg_integer() | :infinity,
           clock: (-> integer())
         }
 
