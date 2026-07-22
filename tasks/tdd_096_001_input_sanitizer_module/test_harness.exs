@@ -165,6 +165,23 @@ defmodule SanitizerTest do
   # Helpers
   # -------------------------------------------------------
 
+  test "unquoted href values keep their slashes" do
+    assert Sanitizer.html("<a href=https://example.com/path>link</a>") ==
+             ~s[<a href="https://example.com/path">link</a>]
+  end
+
+  test "an unterminated raw-content tag drops its entire inner content" do
+    assert Sanitizer.html("safe<script>alert(1)") == "safe"
+  end
+
+  test "a legitimate dotfile name loses its leading dot" do
+    assert {:ok, "gitignore"} = Sanitizer.filename(".gitignore")
+  end
+
+  test "consecutive dots collapse to exactly one dot, positively" do
+    assert {:ok, "file.txt"} = Sanitizer.filename("file...txt")
+  end
+
   # Used to unwrap an {:ok, val} and call a transform on val
   defp strip_dots_ok({:ok, val}), do: {:ok, String.replace(val, ".", "_")}
   defp strip_dots_ok(other), do: other

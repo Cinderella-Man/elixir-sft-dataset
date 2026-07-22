@@ -14,7 +14,7 @@ I need these functions in the public API:
 - `Sanitizer.html(input, opts \\ [])` which strips all HTML tags except those in an allowlist. The default allowlist is `["b", "i", "em", "strong", "a"]`. The allowlist is configurable via an `:allow` option (e.g., `allow: ["b", "span"]`). Rules:
   - All attributes are stripped from every tag **except** `href` on `<a>` tags.
   - Any `href` value that starts with `javascript:` (case-insensitive, ignoring whitespace) must be removed entirely — replace the `<a>` with just its inner text content.
-  - Tags not in the allowlist are stripped but their inner text content is preserved — **except** raw-content tags (`<script>`, `<style>`, `<noscript>`, `<iframe>`), whose entire inner content is dropped along with the tag (e.g. `<script>alert(1)</script>` sanitizes to `""`).
+  - Tags not in the allowlist are stripped but their inner text content is preserved — **except** raw-content tags (`<script>`, `<style>`, `<noscript>`, `<iframe>`), whose entire inner content is dropped along with the tag (e.g. `<script>alert(1)</script>` sanitizes to `""`). This holds even when the closing tag is missing entirely: the raw content is dropped to the END of the input (`safe<script>alert(1)` sanitizes to `"safe"`).
   - Return the sanitized string.
 
 - `Sanitizer.sql_identifier(input)` which ensures a string is safe for interpolation as a SQL identifier (e.g. a table or column name). Rules:
@@ -28,6 +28,7 @@ I need these functions in the public API:
   - Strip path traversal sequences: `..`, `/`, `\`.
   - Strip or replace any character outside of alphanumerics, underscores, hyphens, and dots.
   - Collapse multiple consecutive dots into a single dot.
+  - After collapsing, strip any leading and trailing dots — a traversal remnant like `.etcpasswd` becomes `etcpasswd`, and a legitimate dotfile name like `.gitignore` therefore comes back as `gitignore`.
   - If the result is empty after sanitization, return `{:error, :empty}`.
   - Return `{:ok, sanitized}` on success.
 
@@ -108,8 +109,11 @@ defmodule Sanitizer do
 
   # Uses a case-insensitive, dotall regex so multiline script blocks are caught.
   @raw_tag_pattern Enum.join(@raw_content_tags, "|")
+  # The closing tag may be missing entirely (`<script>alert(1)` at the end of
+  # the input): the alternation with `\z` drops such unterminated raw content
+  # to the end of the string, honouring "entire inner content is dropped".
   @raw_tag_re Regex.compile!(
-                "<(#{@raw_tag_pattern})(\\s[^>]*)?>.*?<\\/\\1>",
+                "<(#{@raw_tag_pattern})(\\s[^>]*)?>.*?(<\\/\\1>|\\z)",
                 [:caseless, :dotall]
               )
 
@@ -247,8 +251,18 @@ defmodule Sanitizer do
       m = Regex.run(~r/\bhref\s*=\s*'([^']*)'/i, attrs_raw, capture: :all_but_first) ->
         hd(m)
 
-      m = Regex.run(~r/\bhref\s*=\s*([^\s>\/]+)/i, attrs_raw, capture: :all_but_first) ->
-        hd(m)
+      m = Regex.run(~r/\bhref\s*=\s*([^\s>]+)/i, attrs_raw, capture: :all_but_first) ->
+        # Unquoted values may contain slashes (https://…). Only a trailing
+        # "/" that is simultaneously the tag's own self-closing marker (the
+        # very end of the attribute string) is not part of the value.
+        value = hd(m)
+        trimmed = String.trim_trailing(attrs_raw)
+
+        if String.ends_with?(value, "/") and String.ends_with?(trimmed, value) do
+          String.slice(value, 0..-2//1)
+        else
+          value
+        end
 
       true ->
         nil
@@ -389,7 +403,7 @@ end
 ## Failing test report
 
 ```
-13 of 25 test(s) failed:
+15 of 29 test(s) failed:
 
   * test Sanitizer.html/1 with default allowlist passes through allowed tags untouched
       &String.downcase/2 with arity 2 called with 1 argument ("b")
@@ -403,5 +417,5 @@ end
   * test Sanitizer.html/1 with default allowlist preserves href attribute on <a> tags
       &String.downcase/2 with arity 2 called with 1 argument ("b")
 
-  (…9 more)
+  (…11 more)
 ```

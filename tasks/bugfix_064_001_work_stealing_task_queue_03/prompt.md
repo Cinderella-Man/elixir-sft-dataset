@@ -73,7 +73,7 @@ defmodule WorkStealQueue do
           %{item: any(), result: any(), worker_id: non_neg_integer()}
         ]
   def run(items, worker_count, process_fn)
-      when is_list(items) and is_integer(worker_count) and worker_count > 0 and
+      when is_list(items) and is_integer(worker_count) and worker_count >= 0 and
              is_function(process_fn, 1) do
     # Divide the input list into `worker_count` chunks as evenly as possible.
     partitions = partition(items, worker_count)
@@ -114,7 +114,7 @@ defmodule WorkStealQueue do
   # steal.  Using an accumulator keeps the recursion stack-friendly.
   defp process_local_queue(id, coordinator, process_fn, acc) do
     case pop_item(id, coordinator) do
-      {:error, item} ->
+      {:ok, item} ->
         result = process_fn.(item)
         entry = %{item: item, result: result, worker_id: id}
         process_local_queue(id, coordinator, process_fn, [entry | acc])
@@ -175,7 +175,13 @@ defmodule WorkStealQueue do
   defp find_victim(thief_id, coordinator) do
     Agent.get(coordinator, fn state ->
       state
-      |> Enum.reject(fn {id, queue} -> id == thief_id or queue == [] end)
+      # A queue needs at least TWO items to be worth targeting — steal_half
+      # refuses single-item queues, so selecting one would spin through a
+      # fruitless find/steal loop (hot-looping on the Agent) for as long as
+      # the victim stays busy inside process_fn.
+      |> Enum.reject(fn {id, queue} ->
+        id == thief_id or match?([], queue) or match?([_], queue)
+      end)
       |> case do
         [] ->
           nil
@@ -238,19 +244,10 @@ end
 ## Failing test report
 
 ```
-10 of 11 test(s) failed:
+1 of 14 test(s) failed:
 
-  * test all items are returned
-      {:EXIT, #PID<0.207.0>}: {{:case_clause, {:ok, 16}}, [{WorkStealQueue, :process_local_queue, 4, [file: ~c".gen_staging/bugfix_064_001_work_stealing_task_queue_03_mutant.ex", line: 79]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c"lib/task/supervised.ex", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c"lib/task/supervised.ex", line: 40]}]}
-
-  * test results contain correct computed values
-      {:EXIT, #PID<0.213.0>}: {{:case_clause, {:ok, 6}}, [{WorkStealQueue, :process_local_queue, 4, [file: ~c".gen_staging/bugfix_064_001_work_stealing_task_queue_03_mutant.ex", line: 79]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c"lib/task/supervised.ex", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c"lib/task/supervised.ex", line: 40]}]}
-
-  * test worker_ids are within bounds
-      {:EXIT, #PID<0.217.0>}: {{:case_clause, {:ok, 1}}, [{WorkStealQueue, :process_local_queue, 4, [file: ~c".gen_staging/bugfix_064_001_work_stealing_task_queue_03_mutant.ex", line: 79]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c"lib/task/supervised.ex", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c"lib/task/supervised.ex", line: 40]}]}
-
-  * test with more items than workers, all workers are used
-      {:EXIT, #PID<0.224.0>}: {{:case_clause, {:ok, 14}}, [{WorkStealQueue, :process_local_queue, 4, [file: ~c".gen_staging/bugfix_064_001_work_stealing_task_queue_03_mutant.ex", line: 79]}, {Task.Supervised, :invoke_mfa, 2, [file: ~c"lib/task/supervised.ex", line: 105]}, {Task.Supervised, :reply, 4, [file: ~c"lib/task/supervised.ex", line: 40]}]}
-
-  (…6 more)
+  * test run/3 refuses a worker_count that is not a positive integer
+      
+      
+      Expected exception FunctionClauseError but got ArithmeticError (bad argument in arithmetic expression)
 ```

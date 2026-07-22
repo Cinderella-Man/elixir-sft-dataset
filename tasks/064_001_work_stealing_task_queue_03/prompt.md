@@ -151,7 +151,13 @@ defmodule WorkStealQueue do
   defp find_victim(thief_id, coordinator) do
     Agent.get(coordinator, fn state ->
       state
-      |> Enum.reject(fn {id, queue} -> id == thief_id or queue == [] end)
+      # A queue needs at least TWO items to be worth targeting — steal_half
+      # refuses single-item queues, so selecting one would spin through a
+      # fruitless find/steal loop (hot-looping on the Agent) for as long as
+      # the victim stays busy inside process_fn.
+      |> Enum.reject(fn {id, queue} ->
+        id == thief_id or match?([], queue) or match?([_], queue)
+      end)
       |> case do
         [] ->
           nil
@@ -168,6 +174,7 @@ defmodule WorkStealQueue do
   # the items we take are the furthest from being processed imminently.
   # Returns `[]` if the victim's queue is now too small to bother stealing from.
   @spec steal_half(non_neg_integer(), pid()) :: list()
+
   defp steal_half(victim_id, coordinator) do
     # TODO
   end

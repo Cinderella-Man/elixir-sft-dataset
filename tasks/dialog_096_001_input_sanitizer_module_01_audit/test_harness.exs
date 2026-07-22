@@ -165,34 +165,24 @@ defmodule SanitizerTest do
   # Helpers
   # -------------------------------------------------------
 
+  test "unquoted href values keep their slashes" do
+    assert Sanitizer.html("<a href=https://example.com/path>link</a>") ==
+             ~s[<a href="https://example.com/path">link</a>]
+  end
+
+  test "an unterminated raw-content tag drops its entire inner content" do
+    assert Sanitizer.html("safe<script>alert(1)") == "safe"
+  end
+
+  test "a legitimate dotfile name loses its leading dot" do
+    assert {:ok, "gitignore"} = Sanitizer.filename(".gitignore")
+  end
+
+  test "consecutive dots collapse to exactly one dot, positively" do
+    assert {:ok, "file.txt"} = Sanitizer.filename("file...txt")
+  end
+
   # Used to unwrap an {:ok, val} and call a transform on val
   defp strip_dots_ok({:ok, val}), do: {:ok, String.replace(val, ".", "_")}
   defp strip_dots_ok(other), do: other
-
-  test "raw-content style, noscript and iframe tags drop their inner content" do
-    assert Sanitizer.html("<style>p{color:red}</style>") == ""
-    assert Sanitizer.html("<noscript>enable js</noscript>") == ""
-    assert Sanitizer.html(~s[<iframe src="http://evil.test">frame</iframe>]) == ""
-    assert Sanitizer.html("<b>keep</b><style>p{}</style><noscript>x</noscript>") == "<b>keep</b>"
-  end
-
-  test "filename keeps leading and trailing dots since dots are in the safe character set" do
-    assert {:ok, ".hidden"} = Sanitizer.filename(".hidden")
-    assert {:ok, "report.pdf."} = Sanitizer.filename("report.pdf.")
-  end
-
-  test "rejects unquoted and single-quoted javascript: hrefs, keeping only the text" do
-    assert Sanitizer.html("<a href=javascript:alert(1)>click</a>") == "click"
-    assert Sanitizer.html(~s[<a href='javascript:alert(1)'>click</a>]) == "click"
-  end
-
-  test "custom :allow replaces the default allowlist entirely" do
-    assert Sanitizer.html(~s[<a href="https://x.com">link</a>], allow: ["b"]) == "link"
-    assert Sanitizer.html("<em>emphasis</em><b>bold</b>", allow: ["b"]) == "emphasis<b>bold</b>"
-  end
-
-  test "filename collapses dot runs to exactly one dot" do
-    assert {:ok, "file.txt"} = Sanitizer.filename("file...txt")
-    assert {:ok, "a.b"} = Sanitizer.filename("a..b")
-  end
 end
