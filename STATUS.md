@@ -13,151 +13,87 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
 
 ## NEXT ACTIVITIES (in order)
 
-1. **[DONE except retry pass → see 2] close_gaps campaign.** Batch
-   1/HIGH: 27/31 applied (61 tests). Remainder: 111/155 applied (+253
-   tests). Campaign: 138/186 families, 314 tests, all gate-arbitrated;
-   resync sweeps + pushes done after each batch.
+1. **[IN FLIGHT] rubric judge-error scoped re-run** — pid 3573398,
+   log `logs/rubric_errfix.log`. Expected: the 4 judge-error rows
+   (095_003, 032_002, 131_001, 131_002) re-judged clean; check the
+   report tail for any NEW triage flags. Idempotent relaunch:
+   `scripts/run_detached.sh logs/rubric_errfix.log mix run
+   scripts/rubric_judge.exs -- --go --sample 400 --only
+   "095_003*,032_002*,131_001*,131_002*"`. Do NOT edit those 4
+   families' files while it rides (rows would be written on pre-edit
+   shas).
 
-**NIGHT RUN 2026-07-21/22 — full lane map (parallelism audit
-2026-07-21 23:35):**
-- **RUBRIC FULL PASS COMPLETE 2026-07-22 13:14 (activity 4 DONE):**
-  334 roots × 2 judges, agreement 314-321/330 per axis (95-97%),
-  planted control flags correctly. TRIAGE LIST (all sha-CURRENT,
-  hypotheses per docs/14 rule 10 — artifact-read each): 015_002 (all
-  3 axes), 013_002, 045_001, 032_004, 096_001, 015_004 (2 axes
-  each), 041_002, 011_004, 003_003, 064_001, 110_004 (1 axis). 4
-  judge-error rows to re-run scoped. Merge with the 26 remaining
-  docs/19 mediums — one visit per overlapping family (041_002 in
-  both).
-- **LLM lane 2 (short jobs):** 020_004 salience candidate verifying
-  via keep_land (the prompt-fix batch COLLAPSED to this one — hand
-  checks overturned the judge's NOT-ENTAILED on 005_003 (line 46
-  documents topic-drop verbatim) and 074_002 (line 5 documents
-  missing-element listing), and my own shallow 041_004 read (line 53
-  'derive ETS table names' entails per-instance tables): all three =
-  entailed-hard, G9 seeds, no prompt churn. Judge scorecard on
-  NOT-ENTAILED verdicts: 1 right, 3 wrong — hand-verify always.)
-- **G2 MACHINE PHASE CLOSED 2026-07-22 04:01**: 7/9 tail roots
-  strengthened (037_001, 042_001, 073_002, 019_004, 045_004,
-  037_002-self-cleared, 108_003-after-documented-refusal), all
-  rescreened/blind-green. HAND-TAIL: 064_001 (4 rolls, 4 different
-  documented-pin blind failures — hard-family profile; candidates
-  not archived, Task-B: strengthen should archive like close_gaps)
-  + 071_001 (3x honest below-floor). REMAINING before the floor
-  promotion (activity 5's last step, a validate.exs script edit):
-  hand-tail tests + repair_-dir harness refresh
-  (074_003/101_002/101_003/102_003 pairs re-verified fix-green AND
-  broken-non-green). Floor stays report-only until the corpus is
-  clean under it.
-- **In-session: docs/19 HIGHS 12/12 DONE 2026-07-22** (9 fixed:
-  035_001, 101_001, 074_001, 013_003, 040_003, 015_004, 019_004,
-  061_001, 045_002; 3 refuted-stale: 031_002, 095_003, 040_001).
-  045_002 closed the set: persistent_term routing documented →
-  blind-green first try → both close_gaps tests landed 24/24 →
-  rescreen green. Staleness sweep refuted 5 mediums; **NEXT: the 34
-  live medium findings** (docs/19). G4 pre-classification DONE:
-  `logs/sleep_audit_worklist.jsonl`.
-- **Deliberately QUEUED (same-lane contention, not idleness):** G9
-  probe + G5 sweep + rewrite_reachins all need the LLM lane — they
-  queue behind rubric so the backbone finishes tonight; G8 gated by
-  G3 by design; G3 rotation + G6 reads are hand-work behind docs/19.
-- CLOSED tonight: G1a (dormant 25→0), G7 (full accounting), all 3
-  stragglers, CI adapt-drift (family-wide resync rule memorized).
+2. **[ ] MERGED HAND QUEUE (activities 3+4): rubric triage + docs/19
+   mediums — one visit per family, one commit each, full cascade +
+   re-grade, hypotheses verified against artifacts (docs/14 rule 10).**
+   - Rubric triage (sha-current, both judges ≤3): **015_002 (all 3
+     axes)**; 013_002, 045_001, 032_004, 096_001, 015_004 (2 axes);
+     041_002, 011_004, 003_003, 064_001, 110_004 (1 axis). Note
+     015_004/032_004/011_004/110_004/041_002 overlap docs/19 — one
+     visit covers both signals.
+   - docs/19 live mediums (unchecked boxes in the doc; refuted-stale
+     already excluded): 004_003, 013_003(med), 022_001, 022_004(×2),
+     031_002(med), 031_003, 032_001, 032_002, 035_002, 038_001,
+     040_001(×2 med), 041_002, 043_001, 043_003, 044_001(×3),
+     061_001(med), 063_001, 063_002, 065_003, 071_001, 072_002,
+     075_001(×2), 079_001, 080_001, 089_003, 091_003, 095_003(med),
+     097_001, 103_003, 103_004, 107_002, 109_001, 110_002.
+   - 095_003 + 032_002 only after the re-run exits (item 1).
 
-2. **[DONE 2026-07-22] Campaign follow-ups — every hand queue
-   emptied** (blind-ADDED reads, solver-weak reads incl. the judge
-   overturns, stragglers, DORMANT? reads, prompt-fix batch, S6/keep
-   resolutions; details in docs/15-bound commits).
-   - Mini-pass DONE: all 3 stragglers rejected with their SAME
-     systematic reasons → hand queue (098_004 mold bitstring-pin bug,
-     100_003 max_turns, 100_004 solver no-compile).
-   - **Classifier bug FOUND + FIXED 2026-07-21** during the 018_001
-     read: blind_gate matched bare `test "..."` names against
-     ExUnit's describe-prefixed failure names, so every pre-existing
-     failure inside a `describe` block read as "fails ADDED test(s)"
-     — the whole "endpoint cluster" was this artifact. Fix in
-     close_gaps.exs (describe-aware matching); the 13 flagged
-     families re-partitioned deterministically from the ledger.
-   - **Blind-ADDED hand-reads: 9 of 10 DONE 2026-07-21.** 8 landed by
-     hand (020_002, 020_003, 022_002, 022_003, 025_002, 043_001 —
-     initial over-pin call reversed on deeper read, 045_003, 108_003;
-     +005_003 re-sorted from solver-weak and landed) — every one pins
-     an explicit/verbatim prompt promise; candidates had passed all
-     local gates, all re-graded green post-land with cascades.
-     045_002 = REAL prompt defect (module-level API signatures make
-     the :name/:table_name promises unexercisable) → docs/19.
-   - **S6 CLOSED 2026-07-21: zero stale roots, push UNBLOCKED (commit
-     e20224e59).** All 7 keep packets reviewed on the data and
-     APPROVED (delegated; resolution rows carry the honest resolver);
-     098_004 rescreened GREEN first try; the old 007_002/110_002
-     packets were MOOT (improvements already in the current prompts).
-     The 9 keep/hard families seed G9's probe set.
-   - **DORMANT? hand-reads: 8/8 DONE, all FINE** (4 observe via
-     assert_receive; 2 observe positionally; adapt_006_002 +
-     adapt_023_004 specs explicitly FORBID timers — projection
-     artifacts). lint_harnesses now scopes adapt_ timer detection to
-     the new-spec section (6 false-positives cleared; remaining
-     DORMANT? = the 2 verified-fine 015_001 projections). Same
-     spec-scoping refinement owed to the S9 evaluator detector (lib
-     edit — land in the next between-campaigns window). **Remaining
-     G1a tail: enumerate the lint's 25 CONFIRMED dirs** (derivatives +
-     never-applied roots; no campaign-applied root can be dormant —
-     the S9 gate proved each apply).
+3. **[ ] Weak-assertion tail (G2) — hand phase + floor promotion.**
+   Machine phase closed (7/9). Remaining: (a) hand-write strengthening
+   tests for 064_001 (4 rolls, 4 different documented-pin blind
+   failures — hard-family profile) + 071_001 (3× honest below-floor);
+   (b) repair_-dir harness refresh — 074_003/101_002/101_003/102_003
+   pairs re-verified fix-green AND broken-non-green against their
+   strengthened parents; (c) THEN promote the 0.6 floor to a failing
+   check in validate.exs + CI (floor stays report-only until the
+   corpus is clean under it). Task-B rider: strengthen_harnesses
+   should archive rejected candidates like close_gaps does (064_001
+   lesson).
 
-3. **[ ] Hand-triage docs/19 — 63 gold/prompt-defect findings (11
-   high, 52 families).** Top-down, one family = one commit + full
-   cascade + re-grade. Never auto-strengthened.
-
-4. **[ ] rubric_judge full two-family pass** over all roots (~330 LLM
-   judge calls) — the last G1 instrument still owed.
-
-5. **[ ] Weak-assertion tail (G2).** `strengthen_harnesses` the 27
-   tasks under the 0.6 kill floor (report:
-   `logs/semantic_mutants_full.log`), local re-measure, then promote
-   the floor to a failing check in validate/CI.
-
-6. **[ ] Harness style debt (G4).** `rewrite_reachins` the 52
+4. **[ ] Harness style debt (G4).** `rewrite_reachins` the 52
    `:sys.get_state` harnesses; audit the 142 `Process.sleep` users
-   (legit timing contract vs needs-injected-clock); includes the
-   tfim_107_002 stability-3 hard fail (reproduce under parallel load,
-   fix or document the timing contract).
+   (pre-classification DONE: `logs/sleep_audit_worklist.jsonl`);
+   includes the tfim_107_002 stability-3 hard fail (reproduce under
+   parallel load, fix or document the timing contract). Also owed
+   here: S9 evaluator timer-detection spec-scoping for adapt_ (lib
+   edit — land in a between-campaigns window; lint_harnesses already
+   has it).
 
-7. **[ ] Prompt-register variety (G3).** Template rotation for the
+5. **[ ] Prompt-register variety (G3).** Template rotation for the
    six templated shapes (deterministic, no LLM), then LLM register
    rewrites of monotone seed prompts, each with a mandatory blind
    re-screen. Wire rotation into the generator templates too.
 
-8. **[ ] @doc prose truth on existing golds (G5).** Sweep @doc claims
+6. **[ ] @doc prose truth on existing golds (G5).** Sweep @doc claims
    vs prompt contract; un-promised claims get prompt sentences +
-   anchored tests (promise-audit machinery) or get cut.
+   anchored tests (promise-audit machinery) or get cut. (The hand
+   queue in item 2 fixes many @doc-contradiction findings — check
+   what the sweep still owes after it.)
 
-9. **[ ] Family spot-checks (G6, CONTEXT rule 8).** Structured hand
+7. **[ ] Family spot-checks (G6, CONTEXT rule 8).** Structured hand
    READS of sampled families across eras/shapes, both accepted and
    rejected sides; notes ledgered.
 
-10. **[ ] Repair-pair recovery (G7).** Run `mint_repairs.exs` (local
-    grading; why-ledger `logs/repair_unverified.jsonl` — rule-9 pilot
-    the first rows), investigate the 134 unverified pairs, recover
-    what's honestly recoverable.
+8. **[ ] Screen depth (G9) — decide by probe.** Run 3-solve
+   consistency on 10 of the ~50 keep/hard roots; if the 3-solve
+   verdict diverges from the recorded single-solve verdict on ≥2 of
+   10, run all 50 and update the difficulty metadata; otherwise close
+   the item with the probe evidence.
 
-11. **[ ] Screen depth (G9) — decide by probe.** Run 3-solve
-    consistency on 10 of the ~50 keep/hard roots; if the 3-solve
-    verdict diverges from the recorded single-solve verdict on ≥2 of
-    10, run all 50 and update the difficulty metadata; otherwise close
-    the item with the probe evidence.
+9. **[ ] Extension headroom (G8) — DECIDED in scope** (the goal
+   literally says "extended"; deciding by probe, not by asking).
+   Probe first: 2 strong base families × 1 new variation each through
+   the full loop, then the SAME instruments that found this month's
+   debt (semantic_review on the new roots + a rubric spot-judge);
+   acceptance = zero triage-grade findings (the docs/12 §5.5 bar).
+   Pass → size and run the extension loop as the LAST activity before
+   the finish line (so new mints carry every gate from the items
+   above, incl. the varied register). Findings → fix the generator,
+   regenerate, re-probe. Probe earliest after item 5 (G3).
 
-12. **[ ] Extension headroom (G8) — DECIDED in scope** (the goal
-    literally says "extended"; deciding by probe, not by asking).
-    Probe first: 2 strong base families × 1 new variation each through
-    the full loop, then the SAME instruments that found this month's
-    debt (semantic_review on the new roots + a rubric spot-judge);
-    acceptance = zero triage-grade findings (the docs/12 §5.5 bar).
-    Pass → size and run the extension loop as the LAST activity before
-    the finish line (so new mints carry every gate from activities
-    2-7, incl. the varied register). Findings → fix the generator,
-    regenerate, re-probe. Probe earliest after activity 7.
-
-13. **[ ] Finish line.** Full sweeps (perfect + fim + mutants +
+10. **[ ] Finish line.** Full sweeps (perfect + fim + mutants +
     decontam), export refresh, README — then this file becomes the
     one-liner. (The docs/18 training-run handoff stays available to
     Kamil at any time; gold-first proceeds regardless.)

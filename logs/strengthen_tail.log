@@ -237,3 +237,66 @@ rejected — still below floor after strengthening (0.58)
   019_004_concurrent_bulk_create_with_bounded_concurrency_and_timeouts_01: 0.52 → 0.71 (+3 test(s))
   045_004_dependency_aware_feature_flag_store_01: 0.57 → 0.95 (+5 test(s))
   108_003_capacity_bounded_bimap_with_lru_eviction_01: 0.55 → 0.75 (+3 test(s))
+strengthening 1 family(ies), sequential, ledger logs/strengthen_harnesses.jsonl
+
+[1/1] 064_001_work_stealing_task_queue_01 (ledgered 0.58) ... warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_4105.ex:113: WorkStealQueue.partition/2
+  /tmp/strn_4105.ex:10: WorkStealQueue.run/3
+  .gen_staging/strengthen_064_001_work_stealing_task_queue_01/test_harness.exs:141: WorkStealQueueTest."test single worker processes all items without stealing"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_4233.ex:113: WorkStealQueue.partition/2
+  /tmp/strn_4233.ex:10: WorkStealQueue.run/3
+  .gen_staging/strengthen_064_001_work_stealing_task_queue_01/test_harness.exs:141: WorkStealQueueTest."test single worker processes all items without stealing"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+
+03:47:06.622 [warning] transient error (error_max_turns ) on strengthen_harness (064_001_work_stealing_task_queue_01) — retry 1/5 after 2000ms
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_6217.ex:113: WorkStealQueue.partition/2
+  /tmp/strn_6217.ex:10: WorkStealQueue.run/3
+  .gen_staging/strengthen_064_001_work_stealing_task_queue_01/test_harness.exs:141: WorkStealQueueTest."test single worker processes all items without stealing"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+warning: Range.new/2 and first..last default to a step of -1 when last < first. Use Range.new(first, last, -1) or first..last//-1, or pass 1 if that was your intention
+  /tmp/strn_6345.ex:113: WorkStealQueue.partition/2
+  /tmp/strn_6345.ex:10: WorkStealQueue.run/3
+  .gen_staging/strengthen_064_001_work_stealing_task_queue_01/test_harness.exs:141: WorkStealQueueTest."test single worker processes all items without stealing"/1
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:533: ExUnit.Runner.exec_test/2
+  (stdlib 8.0.2) timer.erl:599: :timer.tc/2
+  (ex_unit 1.20.2) lib/ex_unit/runner.ex:455: anonymous fn/6 in ExUnit.Runner.spawn_test_monitor/4
+
+rejected — blind solver fails ADDED test(s) — EITHER the harness pins behavior the prompt does not state (enrich the prompt), OR the solver got documented behavior wrong (retry — 101_003's 1_000-ms default was documented verbatim and still failed blind). Check the prompt for each failing test BEFORE enriching. Failing: thief takes the back of a two-item queue while the victim keeps the front
+
+=== STRENGTHEN LEDGER (88 row(s)) === %{"already_ok" => 10, "applied" => 24, "rejected" => 54}
+  002_003_progressive_recovery_cb_01: 0.4 → 0.68 (+8 test(s))
+  097_002_weighted_strength_score_password_policy_01: 0.47 → 0.84 (+7 test(s))
+  077_004_max_overlap_interval_tree_01: 0.48 → 0.52 (+5 test(s))
+  002_003_progressive_recovery_cb_01: 0.4 → 0.68 (+8 test(s))
+  097_002_weighted_strength_score_password_policy_01: 0.47 → 0.84 (+7 test(s))
+  077_004_max_overlap_interval_tree_01: 0.48 → 0.52 (+5 test(s))
+  105_001_genserver_based_debouncer_01: 0.4 → 0.8 (+3 test(s))
+  013_002_timeout_guarded_retry_worker_01: 0.4 → 0.84 (+6 test(s))
+  107_002_keyed_event_aggregator_with_per_key_batching_01: 0.43 → 0.79 (+3 test(s))
+  001_001_rate_limiter_01: 0.47 → 0.87 (+4 test(s))
+  002_002_rolling_window_error_rate_cb_01: 0.47 → 0.75 (+5 test(s))
+  104_004_usage_recycling_connection_pool_01: 0.47 → 0.82 (+9 test(s))
+  041_002_lfu_cache_backed_by_ets_01: 0.48 → 0.78 (+4 test(s))
+  079_001_bloom_filter_01: 0.48 → 1.0 (+6 test(s))
+  075_001_property_based_test_generators_01: 0.49 → 1.0 (+7 test(s))
+  074_001_custom_exunit_assertion_helpers_01: 0.41 → 1.0 (+8 test(s))
+  063_004_bounded_concurrency_concurrent_fetcher_01: 0.47 → 0.94 (+5 test(s))
+  097_004_stateful_password_policy_server_with_reuse_history_01: 0.4 → 0.97 (+8 test(s))
+  037_001_data_anonymizer_01: 0.42 → 0.5 (+2 test(s))
+  042_001_ets_based_write_through_cache_layer_01: 0.5 → 0.63 (+1 test(s))
+  073_002_savepoint_stack_nested_transaction_cleaner_01: 0.55 → 0.68 (+2 test(s))
+  019_004_concurrent_bulk_create_with_bounded_concurrency_and_timeouts_01: 0.52 → 0.71 (+3 test(s))
+  045_004_dependency_aware_feature_flag_store_01: 0.57 → 0.95 (+5 test(s))
+  108_003_capacity_bounded_bimap_with_lru_eviction_01: 0.55 → 0.75 (+3 test(s))

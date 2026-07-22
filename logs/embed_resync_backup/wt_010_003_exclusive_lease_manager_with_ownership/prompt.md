@@ -25,13 +25,13 @@ I need these functions in the public API:
 
 - `LeaseManager.release(server, resource, owner)` which releases a lease on the resource. Return `:ok` if the lease existed and was held by the given owner, or `{:error, :not_held}` if no lease exists for the resource, the lease has expired, or the lease is held by a different owner. Only the owner of a lease may release it.
 
-- `LeaseManager.renew(server, resource, owner)` which extends the lease for another full duration from the current time. Return `{:ok, new_expires_at}` if the lease exists and is held by the given owner, or `{:error, :not_held}` if the lease doesn't exist, has expired, or is held by a different owner.
+- `LeaseManager.renew(server, resource, owner)` which extends the lease for another full duration from the current time. Return `{:ok, new_expires_at}` if the lease exists and is held by the given owner, or `{:error, :not_held}` if the lease doesn't exist, has expired, or is held by a different owner. `new_expires_at` is `now + lease_duration_ms`.
 
 - `LeaseManager.holder(server, resource)` which returns `{:ok, owner, expires_at}` if the resource has a valid (non-expired) lease, or `{:error, :available}` if the resource is available.
 
 - `LeaseManager.force_release(server, resource)` which unconditionally removes any lease on the resource regardless of owner. Return `:ok` always. This is an administrative operation.
 
-Each resource can have at most one active lease at a time — this is a mutual exclusion primitive. Expired leases should be lazily cleaned up on access (treat an expired lease as if the resource is available), and a periodic sweep using `Process.send_after` every 60 seconds (configurable via `:cleanup_interval_ms` option) must remove expired leases to prevent memory leaks.
+Each resource can have at most one active lease at a time — this is a mutual exclusion primitive. A lease is considered expired once the current time reaches or passes its expiry — that is, when `now >= expires_at` (so at exactly `expires_at` the lease is already expired and the resource is available). Expired leases should be lazily cleaned up on access (treat an expired lease as if the resource is available), and a periodic sweep using `Process.send_after` every 60 seconds (configurable via `:cleanup_interval_ms` option) must remove expired leases to prevent memory leaks.
 
 Lease IDs should be generated using `:crypto.strong_rand_bytes(16) |> Base.url_encode64(padding: false)`.
 

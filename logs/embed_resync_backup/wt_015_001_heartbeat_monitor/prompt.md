@@ -339,9 +339,21 @@ defmodule Monitor do
 
         {new_service, notify?} = apply_check_result(service, result, now)
 
-        # Schedule the next check before updating state so the cadence is
-        # maintained even if the check itself took a while; the fresh ref
-        # replaces the fired one so deregister always cancels the live timer.
+        # AT MOST ONE live timer per service, unconditionally: cancel the
+        # pending timer before re-arming. For a chain tick this is a no-op
+        # (its own timer already fired); for a MANUAL `{:check, name}` it
+        # retires the pending chain tick so the manual check resets the
+        # cadence instead of arming a second chain whose ref would be lost —
+        # an orphan that leaks, double-drives the cadence, and can even
+        # resurrect into a later re-registration (F23).
+        _ = Process.cancel_timer(service.timer)
+
+        receive do
+          {:check, ^name} -> :ok
+        after
+          0 -> :ok
+        end
+
         timer = schedule_check(name, service.interval_ms)
         new_state = put_in(state.services[name], %{new_service | timer: timer})
 

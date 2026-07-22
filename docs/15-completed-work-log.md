@@ -9,6 +9,35 @@ and in git history / docs/14).
 
 ## Log
 
+- **2026-07-21/22 (night run + day) — the STATUS activities 1, 2 and 4
+  CLOSED; G2 machine phase closed; docs/19 HIGHs 12/12 + first 8
+  mediums done.** Full detail in the commit messages (b2cb46a0e →
+  b6ae1a6b1); headlines: (1) **Activity 4 DONE** — rubric_judge full
+  pass, 334 roots × 2 judges, 95-97% per-axis agreement, control flags
+  correctly; triage list = 11 sha-current roots (015_002 all 3 axes),
+  merged into the hand queue; 4 judge-error rows left for a scoped
+  re-run. (2) **Activity 1+2 DONE** — close_gaps campaign 138/186
+  families (+314 tests, all gate-arbitrated) and every campaign hand
+  queue emptied (blind-ADDED reads 9/10 landed, DORMANT? 8/8 fine,
+  S6/keep resolutions, prompt-fix batch collapsed to 020_004 — judge
+  scorecard on NOT-ENTAILED verdicts 1 right / 3 wrong, hand-verify
+  always; 020_004 landed_keep). The describe-prefix classifier bug in
+  close_gaps found + fixed en route. (3) **G2 machine phase CLOSED** —
+  7/9 tail roots strengthened (documented-refusal pattern unblocked 2),
+  corpus kill 83.5% (+1.1pt), sub-0.6 tail 27→18; 064_001 + 071_001
+  declared hand-tail on the data. (4) **G1a CLOSED** (dormant timers
+  25→0; 6 reviewer-missed roots hand-tested; S9 hard gate is Task B)
+  and **G7 CLOSED** (mint_repairs full accounting: all 134 unverified
+  pairs bad_green=true — green-but-gate-rejected attempts, honestly
+  unmintable; style_ route already fully harvested; corpus stands at
+  89 behavioral + 50 style repair pairs). (5) docs/19 HIGHs 12/12
+  (9 fixed, 3 refuted-stale — reviewer hallucinated pre-fix evidence
+  three times; staleness sweep then mechanically refuted 5 more
+  mediums) and mediums 002_003, 003_004, 008_004, 009_002, 010_001,
+  010_003, 013_004 (the G1b fake-clock namesake, fixed at the root),
+  015_001 — each with anchor tests, cascades, rescreens. (6) CI
+  adapt-drift closed (family-wide resync rule memorized).
+
 - **2026-07-20 (night) — G1b Task B LANDED: promise_audit checklist
   hardened with the review sweep's three recurring miss classes**
   (lib/gen_task/prompts.ex — powers BOTH accept-time T1.10 and the
