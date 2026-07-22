@@ -5,8 +5,8 @@ def handle_call({:subscribe, topic, pid, priority}, _from, state) do
 
   sub = %{ref: ref, pid: pid, priority: priority, seq: seq}
 
-  existing = Map.get(state.topics, topic, []) |> without(ref)
-  new_subs_for_topic = insert_sorted([sub | existing], sub)
+  existing = Map.get(state.topics, topic, [])
+  new_subs_for_topic = insert_sorted(existing, sub)
 
   monitors =
     Map.update(state.monitors, ref, {pid, [topic]}, fn {p, topics} ->

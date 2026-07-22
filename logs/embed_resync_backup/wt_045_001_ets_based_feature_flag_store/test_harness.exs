@@ -192,6 +192,31 @@ defmodule FeatureFlagsTest do
     assert :ets.info(table, :owner) == pid
   end
 
+  test ":table_name backs the new server with its own store, not the default table",
+       %{pid: default_pid} do
+    suffix = "#{System.pid()}_#{System.unique_integer([:positive])}"
+    table = String.to_atom("opts_table_#{suffix}")
+    server = String.to_atom("opts_server_#{suffix}")
+
+    # Seed a flag through the default server, then bring up a second server
+    # configured with its own table and registration name.
+    FeatureFlags.enable(:seeded_in_default)
+    assert :ets.lookup(:feature_flags, :seeded_in_default) != []
+
+    pid =
+      start_supervised!(
+        {FeatureFlags, [table_name: table, name: server]},
+        id: :opts_feature_flags
+      )
+
+    # A distinct process owns a distinct table: the configured table is empty
+    # of the default table's flags rather than an alias for it.
+    assert pid != default_pid
+    assert Process.whereis(server) == pid
+    assert :ets.info(table, :owner) == pid
+    assert :ets.lookup(table, :seeded_in_default) == []
+  end
+
   # -------------------------------------------------------
   # Reads bypass the GenServer process
   # -------------------------------------------------------
@@ -214,5 +239,103 @@ defmodule FeatureFlagsTest do
     :sys.resume(pid)
 
     assert outcome == {:ok, {true, true}}
+  end
+
+  test "reads deliver no message to the server while writes do", %{pid: pid} do
+    FeatureFlags.enable(:traced_on)
+    FeatureFlags.enable_for_percentage(:traced_pct, 100)
+
+    :erlang.trace(pid, true, [:receive])
+
+    try do
+      # Every read answers correctly from the named table...
+      assert FeatureFlags.enabled?(:traced_on)
+      assert FeatureFlags.enabled_for?(:traced_pct, "user:1")
+      refute FeatureFlags.enabled?(:traced_pct)
+      refute FeatureFlags.enabled_for?(:traced_unknown, "user:1")
+
+      # ...without the server process receiving anything at all.
+      refute_receive {:trace, ^pid, :receive, _}, 200
+
+      # A write, by contrast, is serialised through the server, which proves
+      # the observation above was not silently blind.
+      FeatureFlags.enable(:traced_write)
+      assert_receive {:trace, ^pid, :receive, _}, 1_000
+    after
+      :erlang.trace(pid, false, [:receive])
+    end
+  end
+
+  test "writes stall while the owning server is suspended and land once it resumes", %{pid: pid} do
+    # A suspended GenServer cannot serve calls. If the writes really go through
+    # the server, none of them can take effect until it is resumed again.
+    :sys.suspend(pid)
+
+    writers = [
+      Task.async(fn -> FeatureFlags.enable(:write_path_on) end),
+      Task.async(fn -> FeatureFlags.disable(:write_path_off) end),
+      Task.async(fn -> FeatureFlags.enable_for_percentage(:write_path_pct, 100) end)
+    ]
+
+    assert Enum.all?(writers, fn task -> Task.yield(task, 200) == nil end)
+    refute FeatureFlags.enabled?(:write_path_on)
+    refute FeatureFlags.enabled_for?(:write_path_pct, "user:1")
+
+    :sys.resume(pid)
+
+    assert Enum.map(writers, &Task.await(&1, 1_000)) == [:ok, :ok, :ok]
+    assert FeatureFlags.enabled?(:write_path_on)
+    assert FeatureFlags.enabled_for?(:write_path_pct, "user:1")
+  end
+
+  test "ETS tables are created with read_concurrency enabled, default and custom" do
+    assert :ets.info(:feature_flags, :read_concurrency) == true
+
+    suffix = "#{System.pid()}_#{System.unique_integer([:positive])}"
+    table = String.to_atom("rc_table_#{suffix}")
+    server = String.to_atom("rc_server_#{suffix}")
+
+    start_supervised!(
+      {FeatureFlags, [table_name: table, name: server]},
+      id: :read_concurrency_feature_flags
+    )
+
+    assert :ets.info(table, :read_concurrency) == true
+  end
+
+  test "enable_for_percentage refuses non-integer or out-of-range percentages" do
+    assert_raise FunctionClauseError, fn ->
+      FeatureFlags.enable_for_percentage(:guarded, 101)
+    end
+
+    assert_raise FunctionClauseError, fn ->
+      FeatureFlags.enable_for_percentage(:guarded, -1)
+    end
+
+    assert_raise FunctionClauseError, fn ->
+      FeatureFlags.enable_for_percentage(:guarded, 50.0)
+    end
+
+    # No rejected call may leave a flag behind.
+    refute FeatureFlags.enabled?(:guarded)
+    refute FeatureFlags.enabled_for?(:guarded, "user:1")
+  end
+
+  test "user hashing exactly to the threshold is excluded until the threshold grows" do
+    target = 25
+
+    user_id =
+      Enum.find_value(1..50_000, fn i ->
+        candidate = "user:#{i}"
+        if :erlang.phash2({:edge, candidate}, 100) == target, do: candidate
+      end)
+
+    assert user_id, "expected some user hashing to exactly #{target} for flag :edge"
+
+    FeatureFlags.enable_for_percentage(:edge, target)
+    refute FeatureFlags.enabled_for?(:edge, user_id)
+
+    FeatureFlags.enable_for_percentage(:edge, target + 1)
+    assert FeatureFlags.enabled_for?(:edge, user_id)
   end
 end

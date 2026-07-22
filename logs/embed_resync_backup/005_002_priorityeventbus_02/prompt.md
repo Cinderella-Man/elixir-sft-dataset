@@ -114,8 +114,8 @@ defmodule PriorityEventBus do
 
     sub = %{ref: ref, pid: pid, priority: priority, seq: seq}
 
-    new_subs_for_topic =
-      insert_sorted([sub | Map.get(state.topics, topic, []) |> without(ref)], sub)
+    existing = Map.get(state.topics, topic, []) |> without(ref)
+    new_subs_for_topic = insert_sorted([sub | existing], sub)
 
     monitors =
       Map.update(state.monitors, ref, {pid, [topic]}, fn {p, topics} ->
@@ -178,11 +178,9 @@ defmodule PriorityEventBus do
   # Serial delivery with ack/cancel — the core of this module
   # ---------------------------------------------------------------------------
 
-  # Walks the list in order.  For each subscriber:
-  #   - Send {:event, topic, event, {self(), unique_ref}}
-  #   - Receive {:ack, unique_ref} | {:cancel, unique_ref} | timeout | :DOWN
-  #   - :ack / timeout / :DOWN continue; :cancel stops delivery.
-  # TODO defp deliver_serially
+  defp deliver_serially([], _topic, _event, _timeout, delivered) do
+    # TODO
+  end
 
   # ---------------------------------------------------------------------------
   # Helpers

@@ -151,8 +151,8 @@ defmodule PriorityEventBus do
 
     sub = %{ref: ref, pid: pid, priority: priority, seq: seq}
 
-    existing = Map.get(state.topics, topic, []) |> without(ref)
-    new_subs_for_topic = insert_sorted([sub | existing], sub)
+    existing = Map.get(state.topics, topic, [])
+    new_subs_for_topic = insert_sorted(existing, sub)
 
     monitors =
       Map.update(state.monitors, ref, {pid, [topic]}, fn {p, topics} ->
@@ -185,8 +185,8 @@ defmodule PriorityEventBus do
 
   def handle_call({:publish, topic, event}, _from, state) do
     subs = Map.get(state.topics, topic, [])
-    delivered = deliver_serially(subs, topic, event, state.delivery_timeout_ms, 1)
-    {:reply, {:ok, delivered}, state}
+    delivered = deliver_serially(subs, topic, event, state.delivery_timeout_ms, 0)
+    {:reply, {:error, delivered}, state}
   end
 
   @impl true
@@ -253,10 +253,10 @@ defmodule PriorityEventBus do
 
   # Sorted insert: descending priority, then ascending subscription order (seq).
   defp insert_sorted(list, sub) do
-    # `list` already has `sub` filtered out (see caller).  Prepend and sort —
-    # the list is typically small so this is fine.
+    # Prepend and sort — the list is typically small so this is fine. Every
+    # entry carries its own globally-unique monitor ref, so entries can never
+    # collide and no dedup or pre-filtering is needed.
     [sub | list]
-    |> Enum.uniq_by(& &1.ref)
     |> Enum.sort_by(fn %{priority: p, seq: s} -> {-p, s} end)
   end
 
@@ -298,7 +298,7 @@ end
 ## Failing test report
 
 ```
-8 of 11 test(s) failed:
+15 of 18 test(s) failed:
 
   * test exact-topic publish delivers to a single subscriber who acks
       
@@ -306,7 +306,7 @@ end
       match (=) failed
       code:  assert {:ok, 1} = PriorityEventBus.publish(bus, "orders.created", %{id: 1})
       left:  {:ok, 1}
-      right: {:ok, 2}
+      right: {:error, 1}
       
 
   * test non-matching topic is not delivered (exact match only)
@@ -315,7 +315,7 @@ end
       match (=) failed
       code:  assert {:ok, 0} = PriorityEventBus.publish(bus, "orders.updated", %{})
       left:  {:ok, 0}
-      right: {:ok, 1}
+      right: {:error, 0}
       
 
   * test delivery order respects descending priority
@@ -324,17 +324,17 @@ end
       match (=) failed
       code:  assert {:ok, 3} = PriorityEventBus.publish(bus, "t", :evt)
       left:  {:ok, 3}
-      right: {:ok, 4}
+      right: {:error, 3}
       
 
-  * test high-priority cancel stops delivery to lower priorities
+  * test exact arrival sequence is descending priority then oldest subscription
       
       
       match (=) failed
-      code:  assert {:ok, 2} = PriorityEventBus.publish(bus, "t", :evt)
-      left:  {:ok, 2}
-      right: {:ok, 3}
+      code:  assert {:ok, 4} = PriorityEventBus.publish(bus, "t", :evt)
+      left:  {:ok, 4}
+      right: {:error, 4}
       
 
-  (…4 more)
+  (…11 more)
 ```

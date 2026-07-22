@@ -104,7 +104,6 @@ defmodule PriorityEventBus do
      }}
   end
 
-  @impl true
   def handle_call({:subscribe, topic, pid, priority}, _from, state) do
     # TODO
   end
@@ -193,10 +192,10 @@ defmodule PriorityEventBus do
 
   # Sorted insert: descending priority, then ascending subscription order (seq).
   defp insert_sorted(list, sub) do
-    # `list` already has `sub` filtered out (see caller).  Prepend and sort —
-    # the list is typically small so this is fine.
+    # Prepend and sort — the list is typically small so this is fine. Every
+    # entry carries its own globally-unique monitor ref, so entries can never
+    # collide and no dedup or pre-filtering is needed.
     [sub | list]
-    |> Enum.uniq_by(& &1.ref)
     |> Enum.sort_by(fn %{priority: p, seq: s} -> {-p, s} end)
   end
 

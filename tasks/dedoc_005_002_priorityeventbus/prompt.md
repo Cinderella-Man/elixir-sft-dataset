@@ -80,8 +80,8 @@ defmodule PriorityEventBus do
 
     sub = %{ref: ref, pid: pid, priority: priority, seq: seq}
 
-    existing = Map.get(state.topics, topic, []) |> without(ref)
-    new_subs_for_topic = insert_sorted([sub | existing], sub)
+    existing = Map.get(state.topics, topic, [])
+    new_subs_for_topic = insert_sorted(existing, sub)
 
     monitors =
       Map.update(state.monitors, ref, {pid, [topic]}, fn {p, topics} ->
@@ -182,10 +182,10 @@ defmodule PriorityEventBus do
 
   # Sorted insert: descending priority, then ascending subscription order (seq).
   defp insert_sorted(list, sub) do
-    # `list` already has `sub` filtered out (see caller).  Prepend and sort —
-    # the list is typically small so this is fine.
+    # Prepend and sort — the list is typically small so this is fine. Every
+    # entry carries its own globally-unique monitor ref, so entries can never
+    # collide and no dedup or pre-filtering is needed.
     [sub | list]
-    |> Enum.uniq_by(& &1.ref)
     |> Enum.sort_by(fn %{priority: p, seq: s} -> {-p, s} end)
   end
 

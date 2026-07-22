@@ -151,8 +151,8 @@ defmodule PriorityEventBus do
 
     sub = %{ref: ref, pid: pid, priority: priority, seq: seq}
 
-    existing = Map.get(state.topics, topic, []) |> without(ref)
-    new_subs_for_topic = insert_sorted([sub | existing], sub)
+    existing = Map.get(state.topics, topic, [])
+    new_subs_for_topic = insert_sorted(existing, sub)
 
     monitors =
       Map.update(state.monitors, ref, {pid, [topic]}, fn {p, topics} ->
@@ -253,10 +253,10 @@ defmodule PriorityEventBus do
 
   # Sorted insert: descending priority, then ascending subscription order (seq).
   defp insert_sorted(list, sub) do
-    # `list` already has `sub` filtered out (see caller).  Prepend and sort —
-    # the list is typically small so this is fine.
+    # Prepend and sort — the list is typically small so this is fine. Every
+    # entry carries its own globally-unique monitor ref, so entries can never
+    # collide and no dedup or pre-filtering is needed.
     [sub | list]
-    |> Enum.uniq_by(& &1.ref)
     |> Enum.sort_by(fn %{priority: p, seq: s} -> {-p, s} end)
   end
 
@@ -298,31 +298,31 @@ end
 ## Failing test report
 
 ```
-11 of 11 test(s) failed:
+18 of 18 test(s) failed:
 
   * test exact-topic publish delivers to a single subscriber who acks
       no match of right hand side value:
       
-          {:error, #Reference<0.2277227610.3589799937.142807>}
+          {:error, #Reference<0.3136903028.1486356484.40792>}
       
 
   * test non-matching topic is not delivered (exact match only)
       no match of right hand side value:
       
-          {:error, #Reference<0.2277227610.3589799937.142825>}
+          {:error, #Reference<0.3136903028.1486356484.40810>}
       
 
   * test subscribers/2 lists subs sorted by descending priority
       no match of right hand side value:
       
-          {:error, #Reference<0.2277227610.3589799937.142838>}
+          {:error, #Reference<0.3136903028.1486356484.40823>}
       
 
-  * test delivery order respects descending priority
+  * test subscribers/2 returns [] for a topic with no subscribers
       no match of right hand side value:
       
-          {:error, #Reference<0.2277227610.3589799937.142851>}
+          {:error, #Reference<0.3136903028.1486356484.40833>}
       
 
-  (…7 more)
+  (…14 more)
 ```
