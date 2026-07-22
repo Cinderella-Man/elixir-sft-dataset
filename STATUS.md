@@ -42,12 +42,13 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    disk — the old "52" counted the 102-family's DOMAIN-API get_state/2
    and derivative copies; :sys.suspend/resume uses are deliberate
    stall-testing, not reach-ins). Remaining:
-   (a) sleep audit: logs/sleep_audit_worklist2.jsonl tiers the 142
-   bare-wait files — 104 real-timer-contract (no injected clock:
-   sleeps wait on mandated real timers; legit by design), 38
-   suspicious (fake clock coexists — hand-read each: legit hybrid
-   [clock stamps, real timers schedule — the 015-family pattern] vs
-   masking a missing clock advance);
+   (a) DONE 2026-07-22: sleep audit CLOSED — the 38 suspicious files
+   collapse to 18 unique parents (rest are wt_/repair_/dialog_
+   mirrors) and EVERY sleep is a sanctioned class (bounded poll
+   helpers, payload sleeps, 013-family tick-catch-up, 015-family
+   real-timer waits, 023-family clock-set-then-real-sweep hybrids);
+   none masks a missing clock advance. Verdict row appended to
+   logs/sleep_audit_worklist2.jsonl with per-family classes;
    (b) DONE 2026-07-22: the tfim_107_002 hard fail was child _11's
    STALE GOLD still asserting the pre-widening 1ms upper tolerance
    (elapsed < 1_001_000 on a real 1s timer — a 5us overshoot under
