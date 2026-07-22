@@ -134,7 +134,6 @@ defmodule ParallelMap do
       ...> end, 2)
       [10, {:error, _}, 30]
   """
-
   def pmap(collection, func, max_concurrency)
       when is_function(func, 1) and is_integer(max_concurrency) and max_concurrency >= 1 do
     # TODO

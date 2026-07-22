@@ -30,12 +30,13 @@ defmodule SlidingCounter do
   ### Counting accuracy vs. bucket width
 
   A bucket covers the closed-open interval `[b * bucket_ms, (b+1) * bucket_ms)`.
-  When answering `count/3` for a window `[now - window_ms, now]`, any bucket
-  whose range *overlaps* that window is included in full.  This means events
-  near the leading edge of the oldest bucket are counted even if they are
-  technically just outside the window.  The error is bounded by at most one
-  bucket width, so choose `:bucket_ms` to be small relative to the smallest
-  window you plan to query.
+  When answering `count/3` for a window `[now - window_ms, now]`, a bucket is
+  included only when its start lies inside the window (a bucket starting exactly
+  at `now - window_ms` counts).  The effective cutoff is therefore quantized to
+  bucket boundaries, and events sitting in the partially-overlapping oldest
+  bucket are *under*-reported.  The error is bounded by at most one bucket
+  width, so choose `:bucket_ms` to be small relative to the smallest window you
+  plan to query.
 
   ## Cleanup
 
@@ -218,6 +219,7 @@ defmodule SlidingCounter do
   #
   # So we keep buckets where b >= cutoff, where cutoff = ceil((now - max_window_ms) / bucket_ms).
   # Ceiling division: -floor_div(-(now - max_window_ms), bucket_ms).
+
   defp do_cleanup(state) do
     # TODO
   end

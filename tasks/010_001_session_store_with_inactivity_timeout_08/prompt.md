@@ -91,7 +91,7 @@ defmodule SessionStore do
   @type state :: %{
           sessions: %{session_id() => session()},
           timeout_ms: non_neg_integer(),
-          cleanup_interval_ms: non_neg_integer(),
+          cleanup_interval_ms: non_neg_integer() | :infinity,
           clock: (-> integer())
         }
 
@@ -162,6 +162,7 @@ defmodule SessionStore do
   """
   @spec update(server(), session_id(), session_data()) ::
           {:ok, session_data()} | {:error, :not_found}
+
   def update(server, session_id, new_data) do
     # TODO
   end

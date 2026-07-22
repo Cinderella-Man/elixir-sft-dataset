@@ -42,6 +42,18 @@ if [ -n "$families" ]; then
   # check less than CI does.
   echo "[pre-push] format check (corpus-wide, matching CI)"
   elixir scripts/format_corpus.exs --check | tail -1
+  # Corpus-wide, matching CI (same reasoning as the format gate above): this
+  # was the ONE CI embed gate missing here, and 53 drifted module-FIM prompts
+  # from 8 hand-fixed families reached a green local push and a red CI on
+  # 2026-07-22.
+  echo "[pre-push] module-FIM/wt_ fence check (corpus-wide, matching CI)"
+  embeds_out=$(elixir scripts/check_embeds.exs)
+  echo "$embeds_out" | tail -1
+  if ! echo "$embeds_out" | grep -q "^embed check: .*, 0 reflow, 0 drift, "; then
+    echo "[pre-push] FAIL: module-FIM/wt_ fences drifted —" \
+      "see the scripts/resync_embeds.exs header for the scoped remediation flow"
+    exit 1
+  fi
   echo "[pre-push] bugfix embed staleness check on touched families"
   bugfix_out=$(mix run scripts/resync_bugfix_embeds.exs -- --only "$globs")
   echo "$bugfix_out" | tail -1

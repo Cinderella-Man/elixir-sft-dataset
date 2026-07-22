@@ -41,7 +41,7 @@ defmodule TimeSeriesResampler do
 
       iex> data = [{100, 1.0}, {250, 2.0}, {600, 3.0}]
       iex> TimeSeriesResampler.resample(data, 200, agg: :mean, fill: :nil)
-      [{0, 1.5}, {200, nil}, {400, nil}, {600, 3.0}]
+      [{0, 1.0}, {200, 2.0}, {400, nil}, {600, 3.0}]
   """
 
   @type timestamp_ms :: integer()

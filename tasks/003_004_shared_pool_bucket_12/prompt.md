@@ -146,7 +146,6 @@ defmodule SharedPoolBucket do
   """
   @spec key_level(GenServer.server(), term(), pos_integer(), number()) ::
           {:ok, non_neg_integer()}
-
   def key_level(server, bucket_name, key_capacity, key_refill_rate)
       when is_integer(key_capacity) and key_capacity > 0 and
              is_number(key_refill_rate) and key_refill_rate > 0 do

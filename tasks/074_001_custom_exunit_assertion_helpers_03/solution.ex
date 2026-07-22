@@ -1,9 +1,10 @@
   defmacro assert_eventually(func, timeout_ms \\ 1_000, interval_ms \\ 50) do
     quote bind_quoted: [func: func, timeout_ms: timeout_ms, interval_ms: interval_ms] do
-      deadline = System.monotonic_time(:millisecond) + timeout_ms
+      started_at = System.monotonic_time(:millisecond)
+      deadline = started_at + timeout_ms
 
       result =
-        AssertHelpers.__poll__(func, deadline, interval_ms, _last_value = nil)
+        AssertHelpers.__poll__(func, deadline, started_at, interval_ms, _last_value = nil)
 
       case result do
         {:ok, _value} ->

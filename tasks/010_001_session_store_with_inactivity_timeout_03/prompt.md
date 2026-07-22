@@ -53,7 +53,7 @@ defmodule SessionStore do
   @type state :: %{
           sessions: %{session_id() => session()},
           timeout_ms: non_neg_integer(),
-          cleanup_interval_ms: non_neg_integer(),
+          cleanup_interval_ms: non_neg_integer() | :infinity,
           clock: (-> integer())
         }
 
@@ -278,8 +278,6 @@ defmodule SessionStore do
 
   defp schedule_cleanup(_), do: :ok
 
-  # Returns whether a session's sliding deadline has passed.
-  @spec expired?(session(), integer(), non_neg_integer()) :: boolean()
   defp expired?(session, now, timeout_ms) do
     # TODO
   end

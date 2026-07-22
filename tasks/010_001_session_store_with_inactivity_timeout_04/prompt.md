@@ -52,7 +52,7 @@ defmodule SessionStore do
   @type state :: %{
           sessions: %{session_id() => session()},
           timeout_ms: non_neg_integer(),
-          cleanup_interval_ms: non_neg_integer(),
+          cleanup_interval_ms: non_neg_integer() | :infinity,
           clock: (-> integer())
         }
 
@@ -263,8 +263,6 @@ defmodule SessionStore do
   # Private helpers
   # ---------------------------------------------------------------------------
 
-  # Generates a URL-safe, base64-encoded, 16-byte random session ID (~22 chars).
-  @spec generate_session_id() :: session_id()
   defp generate_session_id do
     # TODO
   end

@@ -1,4 +1,4 @@
-def __poll__(func, deadline, interval_ms, _last_value) do
+def __poll__(func, deadline, started_at, interval_ms, _last_value) do
   value = func.()
   now = System.monotonic_time(:millisecond)
 
@@ -12,11 +12,10 @@ def __poll__(func, deadline, interval_ms, _last_value) do
       {:ok, value}
 
     now >= deadline ->
-      elapsed = interval_ms + (now - (deadline - interval_ms))
-      {:error, value, max(elapsed, 0)}
+      {:error, value, now - started_at}
 
     true ->
       Process.sleep(interval_ms)
-      __poll__(func, deadline, interval_ms, value)
+      __poll__(func, deadline, started_at, interval_ms, value)
   end
 end
