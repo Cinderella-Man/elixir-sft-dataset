@@ -445,5 +445,29 @@ defmodule CacheLayerTest do
     assert :ets.info(users_tid) == :undefined
     assert :ets.info(posts_tid) == :undefined
   end
+
+  test "shutdown ordered by a supervisor also erases published tids and frees tables" do
+    pid = start_supervised!({CacheLayer, []})
+
+    {:ok, :db_value} = CacheLayer.fetch(pid, :users, "u:1", &CallTracker.fallback/0)
+    {:ok, :db_value} = CacheLayer.fetch(pid, :orders, "o:1", &CallTracker.fallback/0)
+
+    users_tid = :persistent_term.get({CacheLayer, pid, :users})
+    orders_tid = :persistent_term.get({CacheLayer, pid, :orders})
+    assert :ets.info(users_tid) != :undefined
+    assert :ets.info(orders_tid) != :undefined
+
+    ref = Process.monitor(pid)
+    stop_supervised!(CacheLayer)
+    assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 5000
+
+    # A supervisor shuts a child down with an exit signal rather than a direct
+    # stop call; that is still the server stopping, so every tid it published
+    # must be gone and every table it owned must be freed.
+    assert :persistent_term.get({CacheLayer, pid, :users}, :erased) == :erased
+    assert :persistent_term.get({CacheLayer, pid, :orders}, :erased) == :erased
+    assert :ets.info(users_tid) == :undefined
+    assert :ets.info(orders_tid) == :undefined
+  end
 end
 ```

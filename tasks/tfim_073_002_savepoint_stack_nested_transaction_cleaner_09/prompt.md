@@ -297,5 +297,30 @@ defmodule DBCleanerTest do
     DBCleaner.start(:savepoint, repo: FakeRepo)
     assert DBCleaner.active_savepoints() == []
   end
+
+  # A savepoint name must be an identifier string; anything that is not a
+  # string is a bad identifier, so it is refused and no SQL reaches the repo.
+  test "savepoint/1 rejects a non-string name as an invalid identifier" do
+    DBCleaner.start(:savepoint, repo: FakeRepo)
+    FakeRepo.reset()
+
+    assert {:error, {:invalid_name, :users}} = DBCleaner.savepoint(:users)
+    assert {:error, {:invalid_name, 42}} = DBCleaner.savepoint(42)
+
+    assert sqls() == []
+    assert DBCleaner.active_savepoints() == []
+  end
+
+  # With no outer transaction open there are no active savepoints, so naming
+  # one for rollback or release cannot succeed and no SQL is issued.
+  test "rollback_to/1 and release/1 before start fail instead of reporting success" do
+    assert DBCleaner.active_savepoints() == []
+
+    assert {:error, _} = DBCleaner.rollback_to("a")
+    assert {:error, _} = DBCleaner.release("a")
+
+    assert FakeRepo.calls() == []
+    assert DBCleaner.active_savepoints() == []
+  end
 end
 ```

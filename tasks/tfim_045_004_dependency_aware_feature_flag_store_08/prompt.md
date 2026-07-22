@@ -337,6 +337,55 @@ defmodule FeatureFlagsTest do
     :ok = GenServer.stop(pid)
   end
 
+  test "percentage 0 excludes every user and percentage 100 includes every user" do
+    FeatureFlags.enable_for_percentage(:pct_zero, 0)
+    FeatureFlags.enable_for_percentage(:pct_full, 100)
+
+    for i <- 1..150 do
+      user = "pct_user#{i}"
+      refute FeatureFlags.enabled_for?(:pct_zero, user)
+      assert FeatureFlags.enabled_for?(:pct_full, user)
+    end
+  end
+
+  test "a percentage outside 0..100 is not accepted" do
+    assert_raise FunctionClauseError, fn ->
+      FeatureFlags.enable_for_percentage(:pct_over, 101)
+    end
+
+    assert_raise FunctionClauseError, fn ->
+      FeatureFlags.enable_for_percentage(:pct_under, -1)
+    end
+  end
+
+  test "an :off flag is disabled for every user, not just under enabled?/1" do
+    FeatureFlags.enable(:switch)
+    assert FeatureFlags.enabled_for?(:switch, "user-a")
+
+    FeatureFlags.disable(:switch)
+    refute FeatureFlags.enabled_for?(:switch, "user-a")
+    refute FeatureFlags.enabled_for?(:switch, "user-b")
+  end
+
+  test "set_prerequisites returns :ok when the edges introduce no cycle" do
+    assert FeatureFlags.set_prerequisites(:sp_mid, [:sp_root]) == :ok
+    assert FeatureFlags.set_prerequisites(:sp_leaf, [:sp_mid]) == :ok
+    assert FeatureFlags.set_prerequisites(:sp_leaf, [:sp_mid, :sp_root]) == :ok
+    assert FeatureFlags.prerequisites(:sp_leaf) == [:sp_mid, :sp_root]
+  end
+
+  test "the ETS table exists once start_link returns, as a set owned by the server" do
+    table = unique_atom("ff_table_shape")
+    {:ok, pid} = FeatureFlags.start_link(table_name: table, name: nil)
+
+    assert :ets.info(table, :type) == :set
+    assert :ets.info(table, :named_table) == true
+    assert :ets.info(table, :read_concurrency) == true
+    assert :ets.info(table, :owner) == pid
+
+    :ok = GenServer.stop(pid)
+  end
+
   # Distinct atom per test run so concurrently living servers and ETS tables
   # from other runs of this file never collide.
   defp unique_atom(prefix) do
