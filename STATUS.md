@@ -57,12 +57,10 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    current body (raw slice, <=98 cols), 1.0 x4;
    (c) DONE 2026-07-22: S9 evaluator timer-detection spec-scoping
    landed (content-keyed contract_text; 3 unit tests; 415 green).
-   [IN FLIGHT] the gate-sha flip invalidated the semantic ledger by
-   design — full re-measure riding: pid 479337, log
-   logs/semantic_full3.log; when it exits, commit the refreshed
-   ledger (the weekly CI floor gate depends on it being sha-current).
-   Relaunch: scripts/run_detached.sh logs/semantic_full3.log elixir
-   scripts/validate.exs --semantic-mutants.
+   The post-flip full re-measure LANDED 2026-07-23: 663 tasks,
+   corpus kill 83.7% (mean per-task 0.853), floor gate EXIT 0 with
+   only the two waived 037 families below 0.6 — ledger sha-current
+   for the weekly CI gate.
 
 5. **[ ] Prompt-register variety (G3).** Template rotation for the
    six templated shapes (deterministic, no LLM), then LLM register
