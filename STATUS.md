@@ -36,7 +36,7 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    Task-B rider is closed-as-moot: the tool retires at the line and
    the floor gate is the standing protection.
 
-4. **[ ] Harness style debt (G4) — reach-ins DONE, remainder scoped.**
+4. **[DONE 2026-07-22] Harness style debt (G4) — CLOSED.**
    The :sys.get_state/replace_state purge ALREADY RAN 2026-07-14 (34
    applied rows in logs/rewrite_reachins.jsonl; zero reach-ins on
    disk — the old "52" counted the 102-family's DOMAIN-API get_state/2
