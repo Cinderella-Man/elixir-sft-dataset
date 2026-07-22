@@ -36,14 +36,22 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    Task-B rider is closed-as-moot: the tool retires at the line and
    the floor gate is the standing protection.
 
-4. **[ ] Harness style debt (G4).** `rewrite_reachins` the 52
-   `:sys.get_state` harnesses; audit the 142 `Process.sleep` users
-   (pre-classification DONE: `logs/sleep_audit_worklist.jsonl`);
-   includes the tfim_107_002 stability-3 hard fail (reproduce under
-   parallel load, fix or document the timing contract). Also owed
-   here: S9 evaluator timer-detection spec-scoping for adapt_ (lib
-   edit — land in a between-campaigns window; lint_harnesses already
-   has it).
+4. **[ ] Harness style debt (G4) — reach-ins DONE, remainder scoped.**
+   The :sys.get_state/replace_state purge ALREADY RAN 2026-07-14 (34
+   applied rows in logs/rewrite_reachins.jsonl; zero reach-ins on
+   disk — the old "52" counted the 102-family's DOMAIN-API get_state/2
+   and derivative copies; :sys.suspend/resume uses are deliberate
+   stall-testing, not reach-ins). Remaining:
+   (a) sleep audit: logs/sleep_audit_worklist2.jsonl tiers the 142
+   bare-wait files — 104 real-timer-contract (no injected clock:
+   sleeps wait on mandated real timers; legit by design), 38
+   suspicious (fake clock coexists — hand-read each: legit hybrid
+   [clock stamps, real timers schedule — the 015-family pattern] vs
+   masking a missing clock advance);
+   (b) tfim_107_002 stability-3 hard fail (reproduce under parallel
+   load, fix or document the timing contract);
+   (c) S9 evaluator timer-detection spec-scoping for adapt_ (lib
+   edit — no ledgered tool in flight, the window is open).
 
 5. **[ ] Prompt-register variety (G3).** Template rotation for the
    six templated shapes (deterministic, no LLM), then LLM register
