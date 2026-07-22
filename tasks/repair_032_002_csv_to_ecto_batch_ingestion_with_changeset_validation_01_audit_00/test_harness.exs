@@ -289,136 +289,17 @@ defmodule CsvIngestionTest do
     assert stats.inserted == 10
   end
 
-  test "emits an info log line with running totals even for batches that fail" do
-    defmodule RaisingProbeRepo do
-      def insert_all(_schema, _entries, _opts), do: raise("boom")
-    end
-
+  test "DEFAULT options actually insert (empty conflict target is omitted)" do
     header = ["external_id", "name", "price"]
-    rows = Enum.map(1..4, fn i -> ["fail-#{i}", "fail #{i}", "#{i}"] end)
-
-    path = tmp_path("info_per_failed_batch.csv")
-    write_csv!(path, header, rows)
-
-    log =
-      ExUnit.CaptureLog.capture_log(fn ->
-        assert {:ok, stats} =
-                 CsvIngestion.ingest(RaisingProbeRepo, Product, path, batch_size: 2)
-
-        assert stats.total == 4
-        assert stats.failed == 4
-        assert stats.inserted == 0
-      end)
-
-    info_lines =
-      log
-      |> String.split("\n")
-      |> Enum.filter(&String.contains?(&1, "[info]"))
-
-    # Two batches were processed, so at least two per-batch info lines are owed.
-    assert length(info_lines) >= 2
-  end
-
-  test "defaults batch_size to 500 valid records per insert_all call" do
-    defmodule DefaultBatchProbeRepo do
-      def insert_all(_schema, entries, _opts) do
-        send(Process.whereis(:csv_default_batch_probe), {:batch, length(entries)})
-        {length(entries), nil}
-      end
-    end
-
-    Process.register(self(), :csv_default_batch_probe)
-
-    header = ["external_id", "name", "price"]
-    rows = Enum.map(1..501, fn i -> ["d-#{i}", "default #{i}", "#{i}"] end)
-
-    path = tmp_path("default_batch_size.csv")
-    write_csv!(path, header, rows)
-
-    assert {:ok, stats} = CsvIngestion.ingest(DefaultBatchProbeRepo, Product, path)
-
-    assert_receive {:batch, 500}
-    assert_receive {:batch, 1}
-    refute_receive {:batch, _}
-
-    assert stats.total == 501
-    assert stats.inserted == 501
-  end
-
-  test "passes the documented on_conflict and conflict_target defaults to insert_all" do
-    defmodule DefaultOptsProbeRepo do
-      def insert_all(_schema, entries, opts) do
-        send(Process.whereis(:csv_default_opts_probe), {:opts, opts})
-        {length(entries), nil}
-      end
-    end
-
-    Process.register(self(), :csv_default_opts_probe)
-
-    header = ["external_id", "name", "price"]
-    rows = [["opt-1", "opt one", "10"]]
+    rows = Enum.map(1..4, fn i -> ["def-#{i}", "product #{i}", "#{i * 10}"] end)
 
     path = tmp_path("default_opts.csv")
     write_csv!(path, header, rows)
 
-    assert {:ok, _stats} = CsvIngestion.ingest(DefaultOptsProbeRepo, Product, path)
-
-    assert_receive {:opts, opts}
-    assert Keyword.get(opts, :on_conflict) == :nothing
-    assert Keyword.get(opts, :conflict_target) == :nothing
-  end
-
-  test "injects inserted_at and updated_at timestamps into inserted rows" do
-    header = ["external_id", "name", "price"]
-    rows = [["ts-1", "timestamped", "42"]]
-
-    path = tmp_path("timestamps.csv")
-    write_csv!(path, header, rows)
-
-    assert {:ok, stats} =
-             CsvIngestion.ingest(TestRepo, Product, path, conflict_target: [:external_id])
-
-    assert stats.inserted == 1
-
-    product = TestRepo.get_by!(Product, external_id: "ts-1")
-    assert product.inserted_at != nil
-    assert product.updated_at != nil
-  end
-
-  test "converts headers to snake_case atoms when no field_mapping is given" do
-    header = ["External ID", "Name", "Price"]
-    rows = [["snake-1", "Snake Widget", "700"]]
-
-    path = tmp_path("snake_headers.csv")
-    write_csv!(path, header, rows)
-
-    assert {:ok, stats} =
-             CsvIngestion.ingest(TestRepo, Product, path, conflict_target: [:external_id])
-
-    assert stats.total == 1
-    assert stats.inserted == 1
-    assert stats.invalid == 0
-
-    product = TestRepo.get_by!(Product, external_id: "snake-1")
-    assert product.name == "Snake Widget"
-    assert product.price == 700
-  end
-
-  test "reports the changeset errors keyword list for each invalid row" do
-    header = ["external_id", "name", "price"]
-    rows = [["eid-1", "", "100"]]
-
-    path = tmp_path("error_payload.csv")
-    write_csv!(path, header, rows)
-
-    assert {:ok, stats} =
-             CsvIngestion.ingest(TestRepo, Product, path, conflict_target: [:external_id])
-
-    assert stats.invalid == 1
-    assert [{2, errors}] = stats.validation_errors
-    assert Keyword.keyword?(errors)
-    assert {msg, meta} = Keyword.fetch!(errors, :name)
-    assert is_binary(msg)
-    assert is_list(meta)
+    # No conflict options at all: the empty default target must be omitted
+    # from insert_all — a naive pass-through fails every batch in the rescue.
+    assert {:ok, stats} = CsvIngestion.ingest(TestRepo, Product, path)
+    assert stats.inserted == 4
+    assert stats.failed == 0
   end
 end

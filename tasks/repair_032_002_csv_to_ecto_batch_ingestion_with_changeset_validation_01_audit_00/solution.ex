@@ -46,7 +46,7 @@ defmodule CsvIngestion do
 
   @default_batch_size 500
   @default_on_conflict :nothing
-  @default_conflict_target :nothing
+  @default_conflict_target []
 
   # ---------------------------------------------------------------------------
   # CSV parser definition
@@ -123,8 +123,8 @@ defmodule CsvIngestion do
   defp parse_csv(path) do
     raw = File.read!(path)
 
-    # NimbleCSV.parse_string with skip_headers: false returns every row, so we
-    # peel off the header ourselves (header = line 1, first data row = line 2).
+    # NimbleCSV.parse_string with skip_headers: false returns every row as a
+    # list of fields; the first row is split off as the header list.
     parsed =
       raw
       |> CsvIngestion.Parser.parse_string(skip_headers: false)
@@ -133,7 +133,9 @@ defmodule CsvIngestion do
         [hdr | rows] -> {hdr, rows}
       end)
 
-    {:ok, parsed}
+    case parsed do
+      {_headers, _data} = pair -> {:ok, pair}
+    end
   end
 
   # ---------------------------------------------------------------------------
@@ -203,7 +205,9 @@ defmodule CsvIngestion do
     Enum.map(headers, fn h ->
       h
       |> String.trim()
-      |> default_atom()
+      |> String.downcase()
+      |> String.replace(~r/\s+/, "_")
+      |> String.to_atom()
     end)
   end
 
@@ -214,7 +218,6 @@ defmodule CsvIngestion do
     end)
   end
 
-  @spec default_atom(String.t()) :: atom()
   defp default_atom(header) do
     header
     |> String.downcase()
@@ -235,7 +238,6 @@ defmodule CsvIngestion do
     |> Map.new()
   end
 
-  @spec normalize_value(String.t()) :: String.t() | nil
   defp normalize_value(""), do: nil
   defp normalize_value(v), do: String.trim(v)
 
@@ -269,50 +271,57 @@ defmodule CsvIngestion do
 
   @spec process_batch(repo(), schema(), [map()], map(), stats()) :: stats()
   defp process_batch(repo, schema, batch, cfg, acc) do
+    # Ecto forbids `:conflict_target` together with `on_conflict: :raise` (the
+    # default), so only attach a conflict target for the conflict-handling modes.
+    # With `:raise`, a duplicate key surfaces as a normal constraint error (caught
+    # below and counted against this batch).
+    insert_opts =
+      case {cfg.on_conflict, cfg.conflict_target} do
+        {:raise, _} ->
+          [on_conflict: :raise]
+
+        # An empty conflict target cannot be handed to Ecto (it rejects the
+        # wrapped [:nothing]/[] as an unknown column) — omit the option, so
+        # a default-opts ingest actually inserts instead of failing every
+        # batch inside the rescue.
+        {other, []} ->
+          [on_conflict: other]
+
+        {other, target} ->
+          [on_conflict: other, conflict_target: target]
+      end
+
     batch_size = length(batch)
-    new_acc = insert_batch(repo, schema, batch, insert_opts(cfg), batch_size, acc)
 
-    # An info line with the running totals is emitted after EVERY batch —
-    # successful or failed — so progress logs never go silent mid-import.
-    Logger.info(
-      "[CsvIngestion] Batch done — size: #{batch_size}. " <>
-        "Running totals — #{format_stats(new_acc)}"
-    )
+    try do
+      {count, _} = repo.insert_all(schema, batch, insert_opts)
 
-    new_acc
-  end
+      new_acc = %{acc | inserted: acc.inserted + count}
 
-  # Ecto forbids `:conflict_target` together with `on_conflict: :raise` (the
-  # default), so only attach a conflict target for the conflict-handling modes.
-  # With `:raise`, a duplicate key surfaces as a normal constraint error (caught
-  # in `insert_batch/6` and counted against this batch).
-  @spec insert_opts(map()) :: keyword()
-  defp insert_opts(%{on_conflict: :raise}), do: [on_conflict: :raise]
-
-  defp insert_opts(cfg),
-    do: [on_conflict: cfg.on_conflict, conflict_target: cfg.conflict_target]
-
-  @spec insert_batch(repo(), schema(), [map()], keyword(), non_neg_integer(), stats()) ::
-          stats()
-  defp insert_batch(repo, schema, batch, insert_opts, batch_size, acc) do
-    {count, _} = repo.insert_all(schema, batch, insert_opts)
-    %{acc | inserted: acc.inserted + count}
-  rescue
-    error ->
-      Logger.error(
-        "[CsvIngestion] Batch failed (#{batch_size} records skipped): " <>
-          Exception.format(:error, error, __STACKTRACE__)
+      Logger.info(
+        "[CsvIngestion] Batch done — " <>
+          "size: #{batch_size}, inserted: #{count}. " <>
+          "Running totals — #{format_stats(new_acc)}"
       )
 
-      %{acc | failed: acc.failed + batch_size}
-  catch
-    kind, reason ->
-      Logger.error(
-        "[CsvIngestion] Batch failed with #{kind} " <>
-          "(#{batch_size} records skipped): #{inspect(reason)}"
-      )
+      new_acc
+    rescue
+      error ->
+        Logger.error(
+          "[CsvIngestion] Batch failed (#{batch_size} records skipped): " <>
+            Exception.format(:error, error, __STACKTRACE__)
+        )
 
-      %{acc | failed: acc.failed + batch_size}
+        %{acc | failed: acc.failed + batch_size}
+    catch
+      kind, reason ->
+        Logger.error(
+          "[CsvIngestion] Batch failed with #{kind} " <>
+            "(#{batch_size} records skipped): #{inspect(reason)}"
+        )
+
+        %{acc | failed: acc.failed + batch_size}
+    end
   end
 
   # ---------------------------------------------------------------------------

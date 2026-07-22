@@ -446,9 +446,11 @@ defmodule TeamRouter do
 
   use Plug.Router
 
-  plug(:match)
-
+  # AuthPlug runs BEFORE :match — every request is authenticated before any
+  # route matching happens (including the `match _` catch-all).
   plug(AuthPlug, store: Application.compile_env(:team_app, :store, TeamStore))
+
+  plug(:match)
 
   plug(Plug.Parsers,
     parsers: [:json],
@@ -479,9 +481,6 @@ defmodule TeamRouter do
     conn = put_private(conn, :team_store, store)
     super(conn, opts)
   end
-
-  # AuthPlug needs the store at match time; resolve it from conn.private.
-  defoverridable call: 2
 
   get "/api/teams/:team_id/members" do
     store = store(conn)
@@ -619,7 +618,7 @@ end
 ## Failing test report
 
 ```
-3 of 36 test(s) failed:
+4 of 41 test(s) failed:
 
   * test GET members returns 401 with missing auth header
       
@@ -640,6 +639,15 @@ end
       
 
   * test POST invitations returns 401 with an invalid token
+      
+      
+      Assertion with == failed
+      code:  assert conn.status == 401
+      left:  400
+      right: 401
+      
+
+  * test authentication runs BEFORE route matching: unknown path without auth is 401, not 404
       
       
       Assertion with == failed

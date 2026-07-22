@@ -403,9 +403,11 @@ defmodule TeamRouter do
 
   use Plug.Router
 
-  plug(:match)
-
+  # AuthPlug runs BEFORE :match — every request is authenticated before any
+  # route matching happens (including the `match _` catch-all).
   plug(AuthPlug, store: Application.compile_env(:team_app, :store, TeamStore))
+
+  plug(:match)
 
   plug(Plug.Parsers,
     parsers: [:json],
@@ -436,9 +438,6 @@ defmodule TeamRouter do
     conn = put_private(conn, :team_store, store)
     super(conn, opts)
   end
-
-  # AuthPlug needs the store at match time; resolve it from conn.private.
-  defoverridable call: 2
 
   get "/api/teams/:team_id/members" do
     store = store(conn)
@@ -981,6 +980,17 @@ defmodule TeamRouterInvitationTest do
     conn = get_invitations(store, "team-1", "token-dave")
     assert conn.status == 403
     assert json_body(conn)["error"] == "forbidden"
+  end
+
+  test "authentication runs BEFORE route matching: unknown path without auth is 401, not 404",
+       %{store: store} do
+    conn =
+      :get
+      |> conn("/api/absolutely/not/a/route")
+      |> call(store)
+
+    assert conn.status == 401
+    assert json_body(conn)["error"] == "unauthorized"
   end
 end
 ```

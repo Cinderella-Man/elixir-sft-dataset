@@ -73,7 +73,7 @@ defmodule CsvIngestion do
 
   @default_batch_size 500
   @default_on_conflict :nothing
-  @default_conflict_target :nothing
+  @default_conflict_target []
 
   # ---------------------------------------------------------------------------
   # CSV parser definition

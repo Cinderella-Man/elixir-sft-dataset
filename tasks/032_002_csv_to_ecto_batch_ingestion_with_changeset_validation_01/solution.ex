@@ -46,7 +46,7 @@ defmodule CsvIngestion do
 
   @default_batch_size 500
   @default_on_conflict :nothing
-  @default_conflict_target :nothing
+  @default_conflict_target []
 
   # ---------------------------------------------------------------------------
   # CSV parser definition
@@ -276,9 +276,19 @@ defmodule CsvIngestion do
     # With `:raise`, a duplicate key surfaces as a normal constraint error (caught
     # below and counted against this batch).
     insert_opts =
-      case cfg.on_conflict do
-        :raise -> [on_conflict: :raise]
-        other -> [on_conflict: other, conflict_target: cfg.conflict_target]
+      case {cfg.on_conflict, cfg.conflict_target} do
+        {:raise, _} ->
+          [on_conflict: :raise]
+
+        # An empty conflict target cannot be handed to Ecto (it rejects the
+        # wrapped [:nothing]/[] as an unknown column) — omit the option, so
+        # a default-opts ingest actually inserts instead of failing every
+        # batch inside the rescue.
+        {other, []} ->
+          [on_conflict: other]
+
+        {other, target} ->
+          [on_conflict: other, conflict_target: target]
       end
 
     batch_size = length(batch)

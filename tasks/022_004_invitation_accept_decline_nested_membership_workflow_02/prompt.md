@@ -372,6 +372,7 @@ defmodule AuthPlug do
   with a `401` unauthorized JSON response.
   """
   @spec call(Plug.Conn.t(), keyword()) :: Plug.Conn.t()
+
   def call(conn, opts) do
     # TODO
   end
@@ -402,9 +403,11 @@ defmodule TeamRouter do
 
   use Plug.Router
 
-  plug(:match)
-
+  # AuthPlug runs BEFORE :match — every request is authenticated before any
+  # route matching happens (including the `match _` catch-all).
   plug(AuthPlug, store: Application.compile_env(:team_app, :store, TeamStore))
+
+  plug(:match)
 
   plug(Plug.Parsers,
     parsers: [:json],
@@ -435,9 +438,6 @@ defmodule TeamRouter do
     conn = put_private(conn, :team_store, store)
     super(conn, opts)
   end
-
-  # AuthPlug needs the store at match time; resolve it from conn.private.
-  defoverridable call: 2
 
   get "/api/teams/:team_id/members" do
     store = store(conn)

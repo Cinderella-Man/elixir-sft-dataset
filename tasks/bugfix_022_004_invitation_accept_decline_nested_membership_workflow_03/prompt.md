@@ -303,9 +303,9 @@ defmodule TeamStore do
   def handle_call({:invite_member, team_id, user_id}, _from, state) do
     case Map.fetch(state.teams, team_id) do
       :error ->
-        {:reply, {:error, :not_found}, state}
+        {:reply, {:ok, :not_found}, state}
 
-      {:error, team} ->
+      {:ok, team} ->
         cond do
           MapSet.member?(team.members, user_id) ->
             {:reply, {:error, :conflict}, state}
@@ -446,9 +446,11 @@ defmodule TeamRouter do
 
   use Plug.Router
 
-  plug(:match)
-
+  # AuthPlug runs BEFORE :match — every request is authenticated before any
+  # route matching happens (including the `match _` catch-all).
   plug(AuthPlug, store: Application.compile_env(:team_app, :store, TeamStore))
+
+  plug(:match)
 
   plug(Plug.Parsers,
     parsers: [:json],
@@ -479,9 +481,6 @@ defmodule TeamRouter do
     conn = put_private(conn, :team_store, store)
     super(conn, opts)
   end
-
-  # AuthPlug needs the store at match time; resolve it from conn.private.
-  defoverridable call: 2
 
   get "/api/teams/:team_id/members" do
     store = store(conn)
@@ -619,19 +618,13 @@ end
 ## Failing test report
 
 ```
-15 of 36 test(s) failed:
+1 of 41 test(s) failed:
 
-  * test POST invitations returns 201 and lists the pending invitation
-      :exit: {{{:case_clause, {:ok, %{members: MapSet.new(["alice", "bob"]), invitations: MapSet.new([])}}}, [{TeamStore, :handle_call, 3, [file: ~c".gen_staging/bugfix_022_004_invitation_accept_decline_nested_membership_workflow_03_mutant.ex", line: 252]}, {:gen_server, :try_handle_call, 4, [file: ~c"gen_server.erl", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c"gen_server.erl", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c"proc_lib.erl", line: 333]}]}, {GenServer, :call, [#PID<0.2
-
-  * test POST invitations does not make the invited user a member yet
-      :exit: {{{:case_clause, {:ok, %{members: MapSet.new(["alice", "bob"]), invitations: MapSet.new([])}}}, [{TeamStore, :handle_call, 3, [file: ~c".gen_staging/bugfix_022_004_invitation_accept_decline_nested_membership_workflow_03_mutant.ex", line: 252]}, {:gen_server, :try_handle_call, 4, [file: ~c"gen_server.erl", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c"gen_server.erl", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c"proc_lib.erl", line: 333]}]}, {GenServer, :call, [#PID<0.2
-
-  * test POST invitations returns 409 conflict when inviting an existing member
-      :exit: {{{:case_clause, {:ok, %{members: MapSet.new(["alice", "bob"]), invitations: MapSet.new([])}}}, [{TeamStore, :handle_call, 3, [file: ~c".gen_staging/bugfix_022_004_invitation_accept_decline_nested_membership_workflow_03_mutant.ex", line: 252]}, {:gen_server, :try_handle_call, 4, [file: ~c"gen_server.erl", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c"gen_server.erl", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c"proc_lib.erl", line: 333]}]}, {GenServer, :call, [#PID<0.2
-
-  * test POST invitations returns 409 already_invited on a duplicate invite
-      :exit: {{{:case_clause, {:ok, %{members: MapSet.new(["alice", "bob"]), invitations: MapSet.new([])}}}, [{TeamStore, :handle_call, 3, [file: ~c".gen_staging/bugfix_022_004_invitation_accept_decline_nested_membership_workflow_03_mutant.ex", line: 252]}, {:gen_server, :try_handle_call, 4, [file: ~c"gen_server.erl", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c"gen_server.erl", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c"proc_lib.erl", line: 333]}]}, {GenServer, :call, [#PID<0.2
-
-  (…11 more)
+  * test TeamStore.invite_member returns not_found for a missing team
+      
+      
+      match (=) failed
+      code:  assert {:error, :not_found} = TeamStore.invite_member(store, "nope", "dave")
+      left:  {:error, :not_found}
+      right: {:ok, :not_found}
 ```

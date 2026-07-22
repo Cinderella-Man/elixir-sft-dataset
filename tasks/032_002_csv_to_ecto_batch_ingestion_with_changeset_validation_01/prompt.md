@@ -27,10 +27,12 @@ I need these functions in the public API:
       `insert_all` call
     - `:on_conflict` (atom or keyword, default `:nothing`) — passed
       directly to `Repo.insert_all` as the `on_conflict:` option
-    - `:conflict_target` (atom or list, default `:nothing`) — passed as
-      `conflict_target:`. Exception: when `:on_conflict` is `:raise`, do NOT
-      pass `conflict_target:` at all — Ecto forbids that combination and would
-      raise on every batch. In that case pass only `on_conflict: :raise` and
+    - `:conflict_target` (atom or list, default `[]`) — passed as
+      `conflict_target:` when non-empty and omitted entirely when `[]`
+      (Ecto rejects an empty target as an unknown column, so a default-opts
+      ingest must still insert). Exception: when `:on_conflict` is `:raise`,
+      do NOT pass `conflict_target:` at all — Ecto forbids that combination
+      and would raise on every batch. In that case pass only `on_conflict: :raise` and
       let conflicting rows surface as a normal insert error (caught and counted
       against that batch's `:failed`).
     - `:field_mapping` (map, default `nil`) — an optional map from CSV

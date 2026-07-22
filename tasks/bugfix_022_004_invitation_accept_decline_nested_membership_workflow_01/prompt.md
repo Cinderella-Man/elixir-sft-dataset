@@ -446,9 +446,11 @@ defmodule TeamRouter do
 
   use Plug.Router
 
-  plug(:match)
-
+  # AuthPlug runs BEFORE :match — every request is authenticated before any
+  # route matching happens (including the `match _` catch-all).
   plug(AuthPlug, store: Application.compile_env(:team_app, :store, TeamStore))
+
+  plug(:match)
 
   plug(Plug.Parsers,
     parsers: [:json],
@@ -479,9 +481,6 @@ defmodule TeamRouter do
     conn = put_private(conn, :team_store, store)
     super(conn, opts)
   end
-
-  # AuthPlug needs the store at match time; resolve it from conn.private.
-  defoverridable call: 2
 
   get "/api/teams/:team_id/members" do
     store = store(conn)
@@ -619,23 +618,23 @@ end
 ## Failing test report
 
 ```
-36 of 36 test(s) failed:
+41 of 41 test(s) failed:
 
   * test GET members returns 200 with active members for a member
-      failed to start child with the spec {TeamStore, [name: :store_645]}.
+      failed to start child with the spec {TeamStore, [name: :store_260]}.
       Reason: %{tokens: %{}, users: %{}, teams: %{}}
 
   * test GET members returns 403 for a non-member
-      failed to start child with the spec {TeamStore, [name: :store_709]}.
+      failed to start child with the spec {TeamStore, [name: :store_324]}.
       Reason: %{tokens: %{}, users: %{}, teams: %{}}
 
   * test GET members returns 401 with missing auth header
-      failed to start child with the spec {TeamStore, [name: :store_773]}.
+      failed to start child with the spec {TeamStore, [name: :store_388]}.
       Reason: %{tokens: %{}, users: %{}, teams: %{}}
 
   * test GET members returns 401 with invalid token
-      failed to start child with the spec {TeamStore, [name: :store_837]}.
+      failed to start child with the spec {TeamStore, [name: :store_452]}.
       Reason: %{tokens: %{}, users: %{}, teams: %{}}
 
-  (…32 more)
+  (…37 more)
 ```

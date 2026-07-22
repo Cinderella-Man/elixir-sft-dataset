@@ -495,5 +495,16 @@ defmodule HistogramPercentileTest do
   test "non-positive slots raises synchronously from start_link" do
     # TODO
   end
+
+  test "p = 1.0 returns the high edge of the highest OCCUPIED bucket" do
+    start_server([])
+
+    # Edges 0,10,...,100: a single value of 3 occupies only bucket 0, so the
+    # interpolation's answer for p = 1.0 is that bucket's high edge (10) —
+    # not the histogram's global high edge (100).
+    assert :ok = HistogramPercentile.record(:lowonly, 3)
+    assert {:ok, p100} = HistogramPercentile.query(:lowonly, 1.0)
+    assert_in_delta p100, 10.0, 0.001
+  end
 end
 ```

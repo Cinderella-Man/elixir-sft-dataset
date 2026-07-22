@@ -80,7 +80,7 @@ estimate = lo + (hi - lo) * clamp(frac, 0.0, 1.0)
 
 Consequences:
 - `percentile = 0.0` returns `e0` (the low edge).
-- `percentile = 1.0` returns `ek` (the high edge).
+- `percentile = 1.0` returns the high edge of the highest OCCUPIED bucket (that is what the interpolation above yields — e.g. `e1` when only bucket 0 holds counts; it equals `ek` only when the last bucket is occupied).
 - Results are approximate; error is bounded by bucket width.
 
 ## Semantics

@@ -407,4 +407,15 @@ defmodule TeamRouterInvitationTest do
     assert conn.status == 403
     assert json_body(conn)["error"] == "forbidden"
   end
+
+  test "authentication runs BEFORE route matching: unknown path without auth is 401, not 404",
+       %{store: store} do
+    conn =
+      :get
+      |> conn("/api/absolutely/not/a/route")
+      |> call(store)
+
+    assert conn.status == 401
+    assert json_body(conn)["error"] == "unauthorized"
+  end
 end

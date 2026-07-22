@@ -55,7 +55,7 @@ defmodule CsvIngestion do
 
   @default_batch_size 500
   @default_on_conflict :nothing
-  @default_conflict_target :nothing
+  @default_conflict_target []
 
   # ---------------------------------------------------------------------------
   # CSV parser definition
@@ -285,9 +285,19 @@ defmodule CsvIngestion do
     # With `:raise`, a duplicate key surfaces as a normal constraint error (caught
     # below and counted against this batch).
     insert_opts =
-      case cfg.on_conflict do
-        :raise -> [on_conflict: :raise]
-        other -> [on_conflict: other, conflict_target: cfg.conflict_target]
+      case {cfg.on_conflict, cfg.conflict_target} do
+        {:raise, _} ->
+          [on_conflict: :raise]
+
+        # An empty conflict target cannot be handed to Ecto (it rejects the
+        # wrapped [:nothing]/[] as an unknown column) — omit the option, so
+        # a default-opts ingest actually inserts instead of failing every
+        # batch inside the rescue.
+        {other, []} ->
+          [on_conflict: other]
+
+        {other, target} ->
+          [on_conflict: other, conflict_target: target]
       end
 
     batch_size = length(batch)
@@ -625,6 +635,20 @@ defmodule CsvIngestionTest do
     assert stats.total == 15
     assert stats.failed == 5
     assert stats.inserted == 10
+  end
+
+  test "DEFAULT options actually insert (empty conflict target is omitted)" do
+    header = ["external_id", "name", "price"]
+    rows = Enum.map(1..4, fn i -> ["def-#{i}", "product #{i}", "#{i * 10}"] end)
+
+    path = tmp_path("default_opts.csv")
+    write_csv!(path, header, rows)
+
+    # No conflict options at all: the empty default target must be omitted
+    # from insert_all — a naive pass-through fails every batch in the rescue.
+    assert {:ok, stats} = CsvIngestion.ingest(TestRepo, Product, path)
+    assert stats.inserted == 4
+    assert stats.failed == 0
   end
 end
 ```
