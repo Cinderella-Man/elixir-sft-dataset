@@ -258,101 +258,131 @@ defmodule LeaseBucketTest do
     assert {:ok, _, 0} = LeaseBucket.acquire_lease(lb, "gone", 2, 10.0, 2, 100)
   end
 
-  test "start_link registers the process under the :name option" do
-    name = :lease_bucket_named_test
+  # -------------------------------------------------------
+  # Public-head contract: out-of-contract arguments raise
+  # -------------------------------------------------------
 
-    {:ok, _pid} =
+  test "acquire_lease raises FunctionClauseError on out-of-contract arguments", %{lb: lb} do
+    # capacity must be a positive integer
+    assert_raise FunctionClauseError, fn ->
+      LeaseBucket.acquire_lease(lb, "k", 0, 1.0, 1, 60_000)
+    end
+
+    # tokens must be a positive integer
+    assert_raise FunctionClauseError, fn ->
+      LeaseBucket.acquire_lease(lb, "k", 5, 1.0, 0, 60_000)
+    end
+
+    # refill_rate must be a positive number
+    assert_raise FunctionClauseError, fn ->
+      LeaseBucket.acquire_lease(lb, "k", 5, 0.0, 1, 60_000)
+    end
+
+    # lease_timeout_ms must be a positive integer
+    assert_raise FunctionClauseError, fn ->
+      LeaseBucket.acquire_lease(lb, "k", 5, 1.0, 1, 0)
+    end
+
+    # tokens must not exceed capacity
+    assert_raise FunctionClauseError, fn ->
+      LeaseBucket.acquire_lease(lb, "k", 5, 1.0, 6, 60_000)
+    end
+  end
+
+  # -------------------------------------------------------
+  # retry_after_ms is a real backoff estimate, not a placeholder
+  # -------------------------------------------------------
+
+  test "retry_after_ms estimates the milliseconds until the deficit refills", %{lb: lb} do
+    # Capacity 5, reserve 3 → 2 tokens free.
+    assert {:ok, _, 2} = LeaseBucket.acquire_lease(lb, "k", 5, 1.0, 3, 60_000)
+
+    # A second 3-token request has a 1-token deficit; at 1.0 token/sec that
+    # is 1000 ms until enough tokens refill.
+    assert {:error, :empty, 1000} =
+             LeaseBucket.acquire_lease(lb, "k", 5, 1.0, 3, 60_000)
+  end
+
+  # -------------------------------------------------------
+  # Periodic cleanup fires on its own timer (no external trigger)
+  # -------------------------------------------------------
+
+  test "periodic cleanup fires automatically on a real interval" do
+    # A real, short interval means the sweep runs on its own timer, driven by
+    # the default wall-clock. The lease deadline passes on its own, and an
+    # automatic sweep returns the bucket to fresh behaviour.
+    server = start_supervised!({LeaseBucket, cleanup_interval_ms: 25})
+
+    {:ok, _lease, 0} = LeaseBucket.acquire_lease(server, "k", 2, 1000.0, 2, 20)
+
+    # Poll a generous window (well over 20× the interval) for the automatic
+    # outcome, never sending :cleanup ourselves.
+    deadline = System.monotonic_time(:millisecond) + 1_000
+
+    assert :ok =
+             wait_until(
+               fn -> LeaseBucket.active_leases(server, "k") == {:ok, 0} end,
+               deadline
+             )
+
+    # Back to fresh: a full-capacity reservation succeeds again.
+    assert {:ok, _, 0} = LeaseBucket.acquire_lease(server, "k", 2, 1000.0, 2, 20)
+  end
+
+  defp wait_until(fun, deadline) do
+    cond do
+      fun.() ->
+        :ok
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        :timeout
+
+      true ->
+        Process.sleep(5)
+        wait_until(fun, deadline)
+    end
+  end
+
+  test "cancel refund is capped at capacity even after a refill", %{lb: lb} do
+    # Drain the bucket, then PERSIST a refill through a real acquire before
+    # cancelling: free is 2.0 when the 5-token refund lands, so 2 + 5 must
+    # cap at capacity 5 — an uncapped refund would leave 7.
+    {:ok, lease_a, 0} = LeaseBucket.acquire_lease(lb, "cap", 5, 1.0, 5, 60_000)
+    Clock.advance(3_000)
+    {:ok, lease_b, 2} = LeaseBucket.acquire_lease(lb, "cap", 5, 1.0, 1, 60_000)
+    assert :ok = LeaseBucket.release(lb, "cap", lease_a, :cancelled)
+
+    # Exactly capacity 5 is available — and not a token more.
+    assert {:ok, lease_c, 0} = LeaseBucket.acquire_lease(lb, "cap", 5, 1.0, 5, 60_000)
+    assert {:error, :empty, _} = LeaseBucket.acquire_lease(lb, "cap", 5, 1.0, 1, 60_000)
+    :ok = LeaseBucket.release(lb, "cap", lease_b, :completed)
+    :ok = LeaseBucket.release(lb, "cap", lease_c, :completed)
+  end
+
+  test "a lease expires exactly AT its deadline, not one tick later", %{lb: lb} do
+    {:ok, _lease, _} = LeaseBucket.acquire_lease(lb, "edge", 5, 1.0, 2, 1_000)
+
+    # One millisecond before the deadline the lease is still outstanding...
+    Clock.advance(999)
+    assert {:ok, 1} = LeaseBucket.active_leases(lb, "edge")
+
+    # ...and at expires_at == now (the documented <= rule) it is gone.
+    Clock.advance(1)
+    assert {:ok, 0} = LeaseBucket.active_leases(lb, "edge")
+  end
+
+  test "start_link registers under :name and serves calls through it" do
+    name = :"lease_bucket_#{System.pid()}_#{System.unique_integer([:positive])}"
+
+    {:ok, pid} =
       LeaseBucket.start_link(
         clock: &Clock.now/0,
         cleanup_interval_ms: :infinity,
         name: name
       )
 
-    assert {:ok, lease_id, 2} = LeaseBucket.acquire_lease(name, "k", 5, 1.0, 3, 60_000)
-    assert is_reference(lease_id)
-    assert {:ok, 1} = LeaseBucket.active_leases(name, "k")
-  end
-
-  test "lease ids are unique across different buckets", %{lb: lb} do
-    {:ok, l1, _} = LeaseBucket.acquire_lease(lb, "a", 5, 1.0, 1, 60_000)
-    {:ok, l2, _} = LeaseBucket.acquire_lease(lb, "b", 5, 1.0, 1, 60_000)
-
-    assert is_reference(l1) and is_reference(l2)
-    assert l1 != l2
-  end
-
-  # -------------------------------------------------------
-  # retry_after is the EXACT time to refill the deficit
-  #
-  # These pin the documented formula
-  #   retry_after = ceil((tokens - free) * 1000 / refill_rate)
-  # so any change to the subtraction, the *1000 factor, or the 1000
-  # constant is observable through the public {:error, :empty, n} reply.
-  # -------------------------------------------------------
-
-  test "retry_after equals the exact ms needed to refill the deficit", %{lb: lb} do
-    # capacity 5, refill 1.0 tok/s.  Reserve 3, leaving 2 free.
-    assert {:ok, _l, 2} = LeaseBucket.acquire_lease(lb, "k", 5, 1.0, 3, 60_000)
-
-    # No time elapses, so 2 tokens are free and we ask for 3: deficit is 1
-    # token, which at 1 tok/s takes exactly 1000 ms to refill.
-    assert {:error, :empty, 1000} =
-             LeaseBucket.acquire_lease(lb, "k", 5, 1.0, 3, 60_000)
-  end
-
-  test "retry_after rounds the fractional refill time up", %{lb: lb} do
-    # capacity 5, refill 3.0 tok/s.  Reserve 4, leaving 1 free.
-    assert {:ok, _l, 1} = LeaseBucket.acquire_lease(lb, "k", 5, 3.0, 4, 60_000)
-
-    # Ask for 3 with only 1 free: deficit of 2 tokens at 3 tok/s is 666.66 ms,
-    # which must round UP to 667.
-    assert {:error, :empty, 667} =
-             LeaseBucket.acquire_lease(lb, "k", 5, 3.0, 3, 60_000)
-  end
-
-  # -------------------------------------------------------
-  # Argument boundaries: the smallest legal values are accepted,
-  # and non-positive values are rejected by the guards.
-  # -------------------------------------------------------
-
-  test "a capacity-1 / 1-token lease is accepted", %{lb: lb} do
-    assert {:ok, lease_id, 0} = LeaseBucket.acquire_lease(lb, "one", 1, 1.0, 1, 60_000)
-    assert is_reference(lease_id)
-    assert {:ok, 1} = LeaseBucket.active_leases(lb, "one")
-  end
-
-  test "a 1-ms lease timeout is accepted", %{lb: lb} do
-    assert {:ok, _l, 4} = LeaseBucket.acquire_lease(lb, "t", 5, 1.0, 1, 1)
-  end
-
-  test "non-positive arguments are rejected by the guards", %{lb: lb} do
-    # refill_rate must be strictly positive
-    assert_raise FunctionClauseError, fn ->
-      LeaseBucket.acquire_lease(lb, "k", 5, 0.0, 3, 60_000)
-    end
-
-    # tokens must be strictly positive
-    assert_raise FunctionClauseError, fn ->
-      LeaseBucket.acquire_lease(lb, "k", 5, 1.0, 0, 60_000)
-    end
-
-    # lease_timeout_ms must be strictly positive
-    assert_raise FunctionClauseError, fn ->
-      LeaseBucket.acquire_lease(lb, "k", 5, 1.0, 3, 0)
-    end
-  end
-
-  # -------------------------------------------------------
-  # Expiry boundary: expires_at <= now (inclusive), not strictly <.
-  # -------------------------------------------------------
-
-  test "a lease expires exactly at its deadline (expires_at == now)", %{lb: lb} do
-    {:ok, _l, _} = LeaseBucket.acquire_lease(lb, "k", 5, 1.0, 3, 1_000)
-    assert {:ok, 1} = LeaseBucket.active_leases(lb, "k")
-
-    # Advance to EXACTLY the expiry instant.  expires_at (1000) <= now (1000),
-    # so the lease must be treated as expired.
-    Clock.advance(1_000)
-    assert {:ok, 0} = LeaseBucket.active_leases(lb, "k")
+    assert Process.whereis(name) == pid
+    assert {:ok, _lease, 2} = LeaseBucket.acquire_lease(name, "named", 3, 1.0, 1, 60_000)
+    assert {:ok, 1} = LeaseBucket.active_leases(name, "named")
   end
 end

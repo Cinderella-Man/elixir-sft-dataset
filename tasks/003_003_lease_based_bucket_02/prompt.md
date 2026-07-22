@@ -207,10 +207,15 @@ defmodule LeaseBucket do
 
       {:ok, bucket} ->
         now = state.clock.()
-        bucket = refill_and_expire(bucket, now)
 
-        {:reply, {:ok, map_size(bucket.leases)},
-         %{state | buckets: Map.put(state.buckets, bucket_name, bucket)}}
+        # Compute the up-to-date count WITHOUT persisting anything: the
+        # contract's touch-list (acquire, release, the cleanup sweep) is
+        # exhaustive — a query must never be the operation that mutates a
+        # bucket. Expiry/refill are recomputed identically by the next
+        # real touch, so nothing is lost by not storing them here.
+        %{leases: live} = refill_and_expire(bucket, now)
+
+        {:reply, {:ok, map_size(live)}, state}
     end
   end
 
@@ -259,9 +264,6 @@ defmodule LeaseBucket do
     end
   end
 
-  # Single entry point for all bucket state transitions.  Applies elapsed-time
-  # refill math AND expires any lease whose deadline has passed (expired leases
-  # are treated as :completed — NO token refund).
   defp refill_and_expire(bucket, now) do
     # TODO
   end

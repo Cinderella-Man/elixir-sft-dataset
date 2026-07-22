@@ -201,7 +201,7 @@ defmodule LeaseBucket do
       retry_after = ceil_positive(deficit * 1000 / refill_rate)
 
       # Persist the refill-expire update even on failure.
-      {:reply, {:error, :empty, retry_after},
+      {:reply, {:ok, :empty, retry_after},
        %{state | buckets: Map.put(state.buckets, bucket_name, bucket)}}
     end
   end
@@ -250,10 +250,15 @@ defmodule LeaseBucket do
 
       {:ok, bucket} ->
         now = state.clock.()
-        bucket = refill_and_expire(bucket, now)
 
-        {:reply, {:ok, map_size(bucket.leases)},
-         %{state | buckets: Map.put(state.buckets, bucket_name, bucket)}}
+        # Compute the up-to-date count WITHOUT persisting anything: the
+        # contract's touch-list (acquire, release, the cleanup sweep) is
+        # exhaustive — a query must never be the operation that mutates a
+        # bucket. Expiry/refill are recomputed identically by the next
+        # real touch, so nothing is lost by not storing them here.
+        %{leases: live} = refill_and_expire(bucket, now)
+
+        {:reply, {:ok, map_size(live)}, state}
     end
   end
 
@@ -267,7 +272,7 @@ defmodule LeaseBucket do
 
         # A bucket with no leases and full free balance is indistinguishable
         # from a never-seen one — safe to drop.
-        if map_size(bucket.leases) == 1 and bucket.free >= bucket.capacity do
+        if map_size(bucket.leases) == 0 and bucket.free >= bucket.capacity do
           acc
         else
           Map.put(acc, name, bucket)
@@ -337,27 +342,43 @@ end
 ## Failing test report
 
 ```
-2 of 15 test(s) failed:
+8 of 21 test(s) failed:
 
-  * test cleanup drops fully-refilled buckets with no active leases
+  * test rejects acquire when tokens exceed free balance
       
       
-      Assertion with == failed
-      code:  assert map_size(state.buckets) == 0
-      left:  50
-      right: 0
+      match (=) failed
+      code:  assert {:error, :empty, retry_after} = LeaseBucket.acquire_lease(lb, "k", 5, 1.0, 3, 60000)
+      left:  {:error, :empty, retry_after}
+      right: {:ok, :empty, 1000}
       
 
-  * test cleanup keeps buckets with active leases
+  * test release :completed keeps tokens consumed
       
       
-      Expected truthy, got false
-      code: assert Map.has_key?(state.buckets, "alive")
-      arguments:
+      match (=) failed
+      code:  assert {:error, :empty, _} = LeaseBucket.acquire_lease(lb, "k", 5, 1.0, 3, 60000)
+      left:  {:error, :empty, _}
+      right: {:ok, :empty, 1000}
       
-               # 1
-               %{"gone" => %{free: 2.0, capacity: 2, refill_rate: 10.0, leases: %{}, last_update_at: 10000}}
+
+  * test expired leases disappear without refunding tokens
       
-               # 2
-               "alive"
+      
+      match (=) failed
+      code:  assert {:error, :empty, _} = LeaseBucket.acquire_lease(lb, "k", 5, 1.0, 4, 60000)
+      left:  {:error, :empty, _}
+      right: {:ok, :empty, 500}
+      
+
+  * test free balance refills lazily between calls
+      
+      
+      match (=) failed
+      code:  assert {:error, :empty, _} = LeaseBucket.acquire_lease(lb, "k", 5, 1.0, 1, 60000)
+      left:  {:error, :empty, _}
+      right: {:ok, :empty, 1000}
+      
+
+  (…4 more)
 ```

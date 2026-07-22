@@ -208,10 +208,15 @@ defmodule LeaseBucket do
 
       {:ok, bucket} ->
         now = state.clock.()
-        bucket = refill_and_expire(bucket, now)
 
-        {:reply, {:ok, map_size(bucket.leases)},
-         %{state | buckets: Map.put(state.buckets, bucket_name, bucket)}}
+        # Compute the up-to-date count WITHOUT persisting anything: the
+        # contract's touch-list (acquire, release, the cleanup sweep) is
+        # exhaustive — a query must never be the operation that mutates a
+        # bucket. Expiry/refill are recomputed identically by the next
+        # real touch, so nothing is lost by not storing them here.
+        %{leases: live} = refill_and_expire(bucket, now)
+
+        {:reply, {:ok, map_size(live)}, state}
     end
   end
 
@@ -619,6 +624,49 @@ defmodule LeaseBucketTest do
         Process.sleep(5)
         wait_until(fun, deadline)
     end
+  end
+
+  test "cancel refund is capped at capacity even after a refill", %{lb: lb} do
+    # Drain the bucket, then PERSIST a refill through a real acquire before
+    # cancelling: free is 2.0 when the 5-token refund lands, so 2 + 5 must
+    # cap at capacity 5 — an uncapped refund would leave 7.
+    {:ok, lease_a, 0} = LeaseBucket.acquire_lease(lb, "cap", 5, 1.0, 5, 60_000)
+    Clock.advance(3_000)
+    {:ok, lease_b, 2} = LeaseBucket.acquire_lease(lb, "cap", 5, 1.0, 1, 60_000)
+    assert :ok = LeaseBucket.release(lb, "cap", lease_a, :cancelled)
+
+    # Exactly capacity 5 is available — and not a token more.
+    assert {:ok, lease_c, 0} = LeaseBucket.acquire_lease(lb, "cap", 5, 1.0, 5, 60_000)
+    assert {:error, :empty, _} = LeaseBucket.acquire_lease(lb, "cap", 5, 1.0, 1, 60_000)
+    :ok = LeaseBucket.release(lb, "cap", lease_b, :completed)
+    :ok = LeaseBucket.release(lb, "cap", lease_c, :completed)
+  end
+
+  test "a lease expires exactly AT its deadline, not one tick later", %{lb: lb} do
+    {:ok, _lease, _} = LeaseBucket.acquire_lease(lb, "edge", 5, 1.0, 2, 1_000)
+
+    # One millisecond before the deadline the lease is still outstanding...
+    Clock.advance(999)
+    assert {:ok, 1} = LeaseBucket.active_leases(lb, "edge")
+
+    # ...and at expires_at == now (the documented <= rule) it is gone.
+    Clock.advance(1)
+    assert {:ok, 0} = LeaseBucket.active_leases(lb, "edge")
+  end
+
+  test "start_link registers under :name and serves calls through it" do
+    name = :"lease_bucket_#{System.pid()}_#{System.unique_integer([:positive])}"
+
+    {:ok, pid} =
+      LeaseBucket.start_link(
+        clock: &Clock.now/0,
+        cleanup_interval_ms: :infinity,
+        name: name
+      )
+
+    assert Process.whereis(name) == pid
+    assert {:ok, _lease, 2} = LeaseBucket.acquire_lease(name, "named", 3, 1.0, 1, 60_000)
+    assert {:ok, 1} = LeaseBucket.active_leases(name, "named")
   end
 end
 ```

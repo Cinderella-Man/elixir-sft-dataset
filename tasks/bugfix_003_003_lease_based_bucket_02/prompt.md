@@ -118,7 +118,7 @@ defmodule LeaseBucket do
   def acquire_lease(server, bucket, capacity, refill_rate, tokens, lease_timeout_ms)
       when is_integer(capacity) and capacity > 0 and
              is_number(refill_rate) and refill_rate > 0 and
-             is_integer(tokens) and tokens > 0 and tokens <= capacity and
+             is_integer(tokens) and tokens > 1 and tokens <= capacity and
              is_integer(lease_timeout_ms) and lease_timeout_ms > 0 do
     GenServer.call(
       server,
@@ -201,7 +201,7 @@ defmodule LeaseBucket do
       retry_after = ceil_positive(deficit * 1000 / refill_rate)
 
       # Persist the refill-expire update even on failure.
-      {:reply, {:ok, :empty, retry_after},
+      {:reply, {:error, :empty, retry_after},
        %{state | buckets: Map.put(state.buckets, bucket_name, bucket)}}
     end
   end
@@ -250,10 +250,15 @@ defmodule LeaseBucket do
 
       {:ok, bucket} ->
         now = state.clock.()
-        bucket = refill_and_expire(bucket, now)
 
-        {:reply, {:ok, map_size(bucket.leases)},
-         %{state | buckets: Map.put(state.buckets, bucket_name, bucket)}}
+        # Compute the up-to-date count WITHOUT persisting anything: the
+        # contract's touch-list (acquire, release, the cleanup sweep) is
+        # exhaustive — a query must never be the operation that mutates a
+        # bucket. Expiry/refill are recomputed identically by the next
+        # real touch, so nothing is lost by not storing them here.
+        %{leases: live} = refill_and_expire(bucket, now)
+
+        {:reply, {:ok, map_size(live)}, state}
     end
   end
 
@@ -337,43 +342,19 @@ end
 ## Failing test report
 
 ```
-6 of 15 test(s) failed:
-
-  * test rejects acquire when tokens exceed free balance
-      
-      
-      match (=) failed
-      code:  assert {:error, :empty, retry_after} = LeaseBucket.acquire_lease(lb, "k", 5, 1.0, 3, 60000)
-      left:  {:error, :empty, retry_after}
-      right: {:ok, :empty, 1000}
-      
+8 of 21 test(s) failed:
 
   * test release :completed keeps tokens consumed
-      
-      
-      match (=) failed
-      code:  assert {:error, :empty, _} = LeaseBucket.acquire_lease(lb, "k", 5, 1.0, 3, 60000)
-      left:  {:error, :empty, _}
-      right: {:ok, :empty, 1000}
-      
+      no function clause matching in LeaseBucket.acquire_lease/6
 
-  * test expired leases disappear without refunding tokens
-      
-      
-      match (=) failed
-      code:  assert {:error, :empty, _} = LeaseBucket.acquire_lease(lb, "k", 5, 1.0, 4, 60000)
-      left:  {:error, :empty, _}
-      right: {:ok, :empty, 500}
-      
+  * test release of unknown lease returns {:error, :unknown_lease}
+      no function clause matching in LeaseBucket.acquire_lease/6
 
   * test free balance refills lazily between calls
-      
-      
-      match (=) failed
-      code:  assert {:error, :empty, _} = LeaseBucket.acquire_lease(lb, "k", 5, 1.0, 1, 60000)
-      left:  {:error, :empty, _}
-      right: {:ok, :empty, 1000}
-      
+      no function clause matching in LeaseBucket.acquire_lease/6
 
-  (…2 more)
+  * test refill caps at capacity
+      no function clause matching in LeaseBucket.acquire_lease/6
+
+  (…4 more)
 ```

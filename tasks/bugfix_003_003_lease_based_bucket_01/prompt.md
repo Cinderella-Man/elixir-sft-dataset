@@ -250,10 +250,15 @@ defmodule LeaseBucket do
 
       {:ok, bucket} ->
         now = state.clock.()
-        bucket = refill_and_expire(bucket, now)
 
-        {:reply, {:ok, map_size(bucket.leases)},
-         %{state | buckets: Map.put(state.buckets, bucket_name, bucket)}}
+        # Compute the up-to-date count WITHOUT persisting anything: the
+        # contract's touch-list (acquire, release, the cleanup sweep) is
+        # exhaustive — a query must never be the operation that mutates a
+        # bucket. Expiry/refill are recomputed identically by the next
+        # real touch, so nothing is lost by not storing them here.
+        %{leases: live} = refill_and_expire(bucket, now)
+
+        {:reply, {:ok, map_size(live)}, state}
     end
   end
 
@@ -337,7 +342,7 @@ end
 ## Failing test report
 
 ```
-12 of 15 test(s) failed:
+18 of 21 test(s) failed:
 
   * test acquire_lease reserves tokens and returns a lease id
       
@@ -345,7 +350,7 @@ end
       match (=) failed
       code:  assert {:ok, lease_id, 7} = LeaseBucket.acquire_lease(lb, "k", 10, 1.0, 3, 60000)
       left:  {:ok, lease_id, 7}
-      right: {:error, #Reference<0.648278389.4126670850.79604>, 7}
+      right: {:error, #Reference<0.1819649989.429391878.84628>, 7}
       
 
   * test rejects acquire when tokens exceed free balance
@@ -354,7 +359,7 @@ end
       match (=) failed
       code:  assert {:ok, _, 2} = LeaseBucket.acquire_lease(lb, "k", 5, 1.0, 3, 60000)
       left:  {:ok, _, 2}
-      right: {:error, #Reference<0.648278389.4126670850.79631>, 2}
+      right: {:error, #Reference<0.1819649989.429391878.84655>, 2}
       
 
   * test release :cancelled refunds the tokens
@@ -363,7 +368,7 @@ end
       match (=) failed
       code:  assert {:ok, lease_id, 2} = LeaseBucket.acquire_lease(lb, "k", 5, 1.0, 3, 60000)
       left:  {:ok, lease_id, 2}
-      right: {:error, #Reference<0.648278389.4126670850.79649>, 2}
+      right: {:error, #Reference<0.1819649989.429391878.84673>, 2}
       
 
   * test release :completed keeps tokens consumed
@@ -372,8 +377,8 @@ end
       match (=) failed
       code:  assert {:ok, lease_id, 2} = LeaseBucket.acquire_lease(lb, "k", 5, 1.0, 3, 60000)
       left:  {:ok, lease_id, 2}
-      right: {:error, #Reference<0.648278389.4126670850.79667>, 2}
+      right: {:error, #Reference<0.1819649989.429391878.84691>, 2}
       
 
-  (…8 more)
+  (…14 more)
 ```

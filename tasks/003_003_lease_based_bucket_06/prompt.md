@@ -138,6 +138,7 @@ defmodule LeaseBucket do
   """
   @spec release(GenServer.server(), term(), reference(), :completed | :cancelled) ::
           :ok | {:error, :unknown_lease}
+
   def release(server, bucket, lease_id, outcome) when outcome in [:completed, :cancelled] do
     # TODO
   end
@@ -252,10 +253,15 @@ defmodule LeaseBucket do
 
       {:ok, bucket} ->
         now = state.clock.()
-        bucket = refill_and_expire(bucket, now)
 
-        {:reply, {:ok, map_size(bucket.leases)},
-         %{state | buckets: Map.put(state.buckets, bucket_name, bucket)}}
+        # Compute the up-to-date count WITHOUT persisting anything: the
+        # contract's touch-list (acquire, release, the cleanup sweep) is
+        # exhaustive — a query must never be the operation that mutates a
+        # bucket. Expiry/refill are recomputed identically by the next
+        # real touch, so nothing is lost by not storing them here.
+        %{leases: live} = refill_and_expire(bucket, now)
+
+        {:reply, {:ok, map_size(live)}, state}
     end
   end
 
