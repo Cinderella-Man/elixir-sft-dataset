@@ -340,12 +340,17 @@ defmodule Monitor do
         # cadence instead of arming a second chain whose ref would be lost —
         # an orphan that leaks, double-drives the cadence, and can even
         # resurrect into a later re-registration (F23).
-        _ = Process.cancel_timer(service.timer)
-
-        receive do
-          {:check, ^name} -> :ok
-        after
-          0 -> :ok
+        # The drain runs ONLY when the cancel came too late (the timer already
+        # fired, so ITS message may sit in the mailbox). When the cancel
+        # succeeded there is nothing of ours in flight — draining then would
+        # swallow a USER-sent {:check, name} queued right behind this one,
+        # silently dropping a requested check.
+        if Process.cancel_timer(service.timer) == false do
+          receive do
+            {:check, ^name} -> :ok
+          after
+            0 -> :ok
+          end
         end
 
         timer = schedule_check(name, service.interval_ms)

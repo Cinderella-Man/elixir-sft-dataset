@@ -221,12 +221,17 @@ defmodule Monitor do
         # cadence instead of arming a second chain whose ref would be lost —
         # an orphan that leaks, double-drives the cadence, and can even
         # resurrect into a later re-registration (F23).
-        _ = Process.cancel_timer(service.timer)
-
-        receive do
-          {:check, ^name} -> :ok
-        after
-          0 -> :ok
+        # The drain runs ONLY when the cancel came too late (the timer already
+        # fired, so ITS message may sit in the mailbox). When the cancel
+        # succeeded there is nothing of ours in flight — draining then would
+        # swallow a USER-sent {:check, name} queued right behind this one,
+        # silently dropping a requested check.
+        if Process.cancel_timer(service.timer) == false do
+          receive do
+            {:check, ^name} -> :ok
+          after
+            0 -> :ok
+          end
         end
 
         timer = schedule_check(name, service.interval_ms)
@@ -889,6 +894,26 @@ defmodule MonitorTest do
              Monitor.status(silent, "silent")
 
     assert Notifications.count() == 0
+  end
+
+  test "two back-to-back manual checks both run (the drain never eats a user send)", %{mon: mon} do
+    test_pid = self()
+
+    Monitor.register(
+      mon,
+      "svc",
+      fn ->
+        send(test_pid, :checked)
+        :ok
+      end,
+      60_000
+    )
+
+    send(mon, {:check, "svc"})
+    send(mon, {:check, "svc"})
+
+    assert_receive :checked, 500
+    assert_receive :checked, 500
   end
 end
 ```

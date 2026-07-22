@@ -19,7 +19,8 @@ defmodule LeaseManager do
 
     * `:name`               - process registration name (optional)
     * `:lease_duration_ms`  - default lease duration in ms (default: 30_000 / 30 sec)
-    * `:cleanup_interval_ms`- how often the sweep runs in ms (default: 60_000 / 1 min)
+    * `:cleanup_interval_ms`- how often the sweep runs in ms (default: 60_000 / 1
+      min) — or `:infinity` to disable the automatic sweep
     * `:clock`              - zero-arity fn returning current time in ms;
                               defaults to `fn -> System.monotonic_time(:millisecond) end`
 
@@ -56,7 +57,7 @@ defmodule LeaseManager do
   @type state :: %{
           leases: %{resource() => lease()},
           lease_duration_ms: non_neg_integer(),
-          cleanup_interval_ms: non_neg_integer(),
+          cleanup_interval_ms: non_neg_integer() | :infinity,
           clock: (-> integer())
         }
 
@@ -298,8 +299,6 @@ defmodule LeaseManager do
     now >= lease.expires_at
   end
 
-  @spec fetch_live_lease(%{resource() => lease()}, resource(), integer()) ::
-          {:ok, lease()} | :expired | :missing
   defp fetch_live_lease(leases, resource, now) do
     # TODO
   end

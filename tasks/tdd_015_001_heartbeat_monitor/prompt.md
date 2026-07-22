@@ -595,6 +595,26 @@ defmodule MonitorTest do
 
     assert Notifications.count() == 0
   end
+
+  test "two back-to-back manual checks both run (the drain never eats a user send)", %{mon: mon} do
+    test_pid = self()
+
+    Monitor.register(
+      mon,
+      "svc",
+      fn ->
+        send(test_pid, :checked)
+        :ok
+      end,
+      60_000
+    )
+
+    send(mon, {:check, "svc"})
+    send(mon, {:check, "svc"})
+
+    assert_receive :checked, 500
+    assert_receive :checked, 500
+  end
 end
 ```
 
