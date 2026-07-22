@@ -31,11 +31,15 @@
 #                 Suspects that fail even serially get a `hard_fail: true` row
 #                 carrying the serial failure detail too (they'd otherwise be
 #                 undiagnosable after the fact — the 2026-07-20 tfim_107_002 case).
-#   --semantic-mutants  REPORT-ONLY assertion-tightness measurement: first-order
-#                 semantic mutants (comparison swap, ±1, :ok↔:error, bool flip) of
-#                 the reference; per-task kill-rate + corpus histogram + weakest 20;
-#                 ledger logs/semantic_mutants.jsonl. ≤ --sm-limit (40) evals/task —
-#                 EXPENSIVE; scope with --only for spot checks.
+#   --semantic-mutants  assertion-tightness measurement WITH A FAILING FLOOR
+#                 (promoted 2026-07-22, G2): first-order semantic mutants
+#                 (comparison swap, ±1, :ok↔:error, bool flip) of the reference;
+#                 per-task kill-rate + corpus histogram + weakest 20; ledger
+#                 logs/semantic_mutants.jsonl. A non-wt_ family below 0.6 that is
+#                 not in the documented at-ceiling waiver list EXITS 1. ≤
+#                 --sm-limit (40) evals/task — EXPENSIVE on cache misses; the
+#                 sha-keyed ledger makes unchanged corpora cheap. Scope with
+#                 --only for spot checks.
 #   --decontam    REPORT-ONLY benchmark decontamination (§4.1.9): loads the fixture
 #                 test/fixtures/benchmarks/benchmarks.jsonl (build with
 #                 scripts/fetch_benchmarks.exs) and checks every prompt.md AND
@@ -117,7 +121,7 @@ defmodule Validate do
 
       opts[:semantic_mutants] ->
         semantic_report(tasks, opts[:sm_limit] || 40)
-        finish(true, "SEMANTIC-MUTANT REPORT COMPLETE (report-only — no gate)")
+        finish(true, "SEMANTIC-MUTANT REPORT COMPLETE (floor #{0.6} enforced; waived families listed above)")
 
       opts[:decontam] ->
         self_test? = opts[:self_test] || false
@@ -694,7 +698,27 @@ defmodule Validate do
     IO.puts("\n  (work-list written to #{path})")
   end
 
-  # ── semantic mutants (docs/10 R10, REPORT-ONLY) ─────────────────────────────
+  # ── semantic mutants (docs/10 R10; floor PROMOTED to a failing check, G2) ──
+
+  # The kill floor. A family below it that is not waived fails the run.
+  @sm_floor 0.6
+
+  # Families PROVEN at their ceiling (docs/14 §5.3/§6.11: every survivor is
+  # unpinnable through the public API without violating S6 prompt-entailment
+  # or the S9 internals lint) — waived, each with its evidence. A waiver is a
+  # RECORDED VERDICT, not an escape hatch: adding one requires the survivor
+  # read/fuzz that proves the ceiling.
+  @sm_floor_waivers %{
+    "037_001_data_anonymizer_01" =>
+      "all 18 survivors sit in the {:fake, seed} derivation arithmetic " <>
+        "(name tables, format pick, suffix/age formulas) that the prompt " <>
+        "deliberately leaves unspecified — exact-output pins would be " <>
+        "S6-illegal (2026-07-22 survivor read)",
+    "037_002_path_addressed_nested_record_anonymizer_01" =>
+      "same generator class as 037_001 — the path-addressed variant's " <>
+        "survivors live in the same unspecified derivation constants " <>
+        "(2026-07-22)"
+  }
 
   # Measures assertion TIGHTNESS: each first-order semantic mutant (comparison
   # swap, off-by-one, :ok↔:error, boolean flip) is a behavior change; a survivor
@@ -873,6 +897,41 @@ defmodule Validate do
             "(survivors: #{Enum.join(Enum.take(r.survivors, 4), "; ")}#{if length(r.survivors) > 4, do: "; …"})"
         )
       end)
+
+      # ── the floor (failing) ──────────────────────────────────────────────
+      # wt_ dirs are byte-mirrors of their parents (docs/14 §6.2) — their rows
+      # would double-report every parent verdict, so the floor reads parents
+      # (and any other non-wt shape) only.
+      below =
+        scored
+        |> Enum.reject(&String.starts_with?(&1.task, "wt_"))
+        |> Enum.filter(&(&1.killed / &1.total < @sm_floor))
+
+      {waived, failing} = Enum.split_with(below, &Map.has_key?(@sm_floor_waivers, &1.task))
+
+      for r <- waived do
+        IO.puts(
+          "
+  WAIVED below floor (at ceiling): #{r.task} " <>
+            "#{r.killed}/#{r.total} — #{@sm_floor_waivers[r.task]}"
+        )
+      end
+
+      if failing != [] do
+        IO.puts("
+  FLOOR FAILURES (kill rate < #{@sm_floor}, no ceiling waiver):")
+
+        for r <- failing do
+          IO.puts("    - #{r.task}: #{r.killed}/#{r.total}")
+        end
+
+        IO.puts(
+          "  Strengthen the harness (anchored, prompt-entailed tests) or prove " <>
+            "the ceiling (survivor read/fuzz) and add a documented waiver."
+        )
+
+        System.halt(1)
+      end
     else
       IO.puts("  no mutable tasks matched")
     end

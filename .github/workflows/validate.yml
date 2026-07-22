@@ -163,6 +163,12 @@ jobs:
         run: elixir scripts/validate.exs
       - if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: elixir scripts/validate.exs --fim
+      # G2 floor (2026-07-22): assertion tightness with a FAILING 0.6 floor +
+      # documented at-ceiling waivers. The sha-keyed ledger is committed, so an
+      # unchanged corpus costs seconds; only families whose gold/harness moved
+      # since their ledger row re-measure.
+      - if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: elixir scripts/validate.exs --semantic-mutants
       # Weekly rot detectors (STATUS T3.2; CONTEXT rule 8 — spot-check BOTH
       # sides). Accepted side: the six-property bugfix audit on a random
       # sample (properties the perfect sweep cannot see: bug reproduces,

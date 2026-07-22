@@ -23,17 +23,18 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    pre-push perfect sweep is the backstop); stage with git add of the
    tasks tree, never bare multi-globs.
 
-3. **[ ] Weak-assertion tail (G2) — hand phase + floor promotion.**
-   Machine phase closed (7/9). Remaining: (a) hand-write strengthening
-   tests for 064_001 (4 rolls, 4 different documented-pin blind
-   failures — hard-family profile) + 071_001 (3× honest below-floor);
-   (b) repair_-dir harness refresh — 074_003/101_002/101_003/102_003
-   pairs re-verified fix-green AND broken-non-green against their
-   strengthened parents; (c) THEN promote the 0.6 floor to a failing
-   check in validate.exs + CI (floor stays report-only until the
-   corpus is clean under it). Task-B rider: strengthen_harnesses
-   should archive rejected candidates like close_gaps does (064_001
-   lesson).
+3. **[DONE 2026-07-22] Weak-assertion tail (G2) — CLOSED, floor
+   PROMOTED.** Machine phase 7/9; hand-tails 064_001 (0.82) + 071_001
+   (0.67); nine repair_-dir pairs refreshed and verified both sides;
+   corpus re-measure: 0 families < 0.5, sub-0.6 tail = the two 037
+   anonymizer families, PROVEN at ceiling (survivors live in the
+   {:fake, seed} derivation arithmetic the prompt deliberately leaves
+   unspecified — S6-unpinnable). validate.exs --semantic-mutants now
+   FAILS below 0.6 for non-waived non-wt families (waivers are
+   recorded verdicts with evidence; bite-proven both ways) and runs
+   in weekly CI off the committed ledger. The strengthen-archiving
+   Task-B rider is closed-as-moot: the tool retires at the line and
+   the floor gate is the standing protection.
 
 4. **[ ] Harness style debt (G4).** `rewrite_reachins` the 52
    `:sys.get_state` harnesses; audit the 142 `Process.sleep` users
