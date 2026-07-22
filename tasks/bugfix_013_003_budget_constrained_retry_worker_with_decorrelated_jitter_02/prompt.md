@@ -25,7 +25,7 @@ The clock is read exactly once when an execution starts and exactly once after e
 
 The GenServer should support multiple concurrent `execute` calls — each tracked independently so that one caller's retry schedule doesn't block another caller's work. Use `GenServer.reply/2` to respond asynchronously once a given execution completes or exhausts its budget.
 
-The function passed to execute will be called inside the GenServer process. Each retry should call the function again fresh.
+The function passed to execute will be called inside that execution's spawned worker process — never inside the GenServer itself, which must stay free to serve other callers. Each retry should call the function again fresh.
 
 Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
 
@@ -90,7 +90,7 @@ defmodule BudgetRetryWorker do
 
   defp retry_loop(func, opts, clock_fn, random_fn) do
     started_at = clock_fn.()
-    base_delay = Keyword.get(opts, :base_delay_ms, 100)
+    base_delay = Keyword.get(opts, :base_delay_ms, 101)
     budget = Keyword.get(opts, :budget_ms, 30_000)
     max_delay = Keyword.get(opts, :max_delay_ms, 10_000)
 
@@ -121,7 +121,7 @@ defmodule BudgetRetryWorker do
     attempts = attempts + 1
 
     case func.() do
-      {:error, result} ->
+      {:ok, result} ->
         {:ok, result}
 
       {:error, reason} ->
@@ -153,11 +153,15 @@ defmodule BudgetRetryWorker do
     end
   end
 
+  # Bounded-tick wait against the injected clock: sleep 1ms per check so a
+  # fake-clock test advances deterministically while a real clock never pegs
+  # a scheduler. The budget is deliberately NOT re-checked here — the single
+  # post-attempt clock reading already decided this wait fits the budget.
   defp await_clock(target_time, clock_fn) do
     if clock_fn.() < target_time do
       receive do
       after
-        0 -> await_clock(target_time, clock_fn)
+        1 -> await_clock(target_time, clock_fn)
       end
     end
   end
@@ -167,31 +171,19 @@ end
 ## Failing test report
 
 ```
-9 of 9 test(s) failed:
+2 of 12 test(s) failed:
 
-  * test returns immediately when function succeeds on first try
-      {:EXIT, #PID<0.216.0>}: {{:case_clause, {:ok, 42}}, [{BudgetRetryWorker, :do_attempt, 9, [file: ~c".gen_staging/bugfix_013_003_budget_constrained_retry_worker_with_decorrelated_jitter_02_mutant.ex", line: 89]}, {BudgetRetryWorker, :"-handle_call/3-fun-0-", 5, [file: ~c".gen_staging/bugfix_013_003_budget_constrained_retry_worker_with_decorrelated_jitter_02_mutant.ex", line: 48]}]}
-
-  * test does not retry when function succeeds on first try
-      {:EXIT, #PID<0.221.0>}: {{:case_clause, {:ok, :yep}}, [{BudgetRetryWorker, :do_attempt, 9, [file: ~c".gen_staging/bugfix_013_003_budget_constrained_retry_worker_with_decorrelated_jitter_02_mutant.ex", line: 89]}, {BudgetRetryWorker, :"-handle_call/3-fun-0-", 5, [file: ~c".gen_staging/bugfix_013_003_budget_constrained_retry_worker_with_decorrelated_jitter_02_mutant.ex", line: 48]}]}
-
-  * test retries and succeeds within the time budget
+  * test the injected random receives (base_delay_ms, prev_delay * 3) under defaults
       
       
-      match (=) failed
-      code:  assert {:ok, :recovered} = Task.await(task, 5000)
-      left:  {:ok, :recovered}
-      right: {:ok, :boom}
+      Assertion failed, no matching message after 2000ms
+           Showing 1 of 1 message in the mailbox
+      code: assert_receive {:rand_args, 100, 300}
+      mailbox:
+             pattern: {:rand_args, 100, 300}
+             value:   {:rand_args, 101, 303}
       
 
-  * test returns budget_exhausted when time runs out
-      
-      
-      match (=) failed
-      code:  assert {:error, :budget_exhausted, :boom, attempts} = Task.await(task, 5000)
-      left:  {:error, :budget_exhausted, :boom, attempts}
-      right: {:ok, :boom}
-      
-
-  (…5 more)
+  * test elapsed time is measured against the recorded start timestamp
+      :exit: {:timeout, {Task, :await, [%Task{mfa: {:erlang, :apply, 2}, owner: #PID<0.284.0>, pid: #PID<0.290.0>, ref: #Reference<0.0.36355.394094391.2297757699.68600>}, 5000]}}
 ```

@@ -25,7 +25,7 @@ The clock is read exactly once when an execution starts and exactly once after e
 
 The GenServer should support multiple concurrent `execute` calls — each tracked independently so that one caller's retry schedule doesn't block another caller's work. Use `GenServer.reply/2` to respond asynchronously once a given execution completes or exhausts its budget.
 
-The function passed to execute will be called inside the GenServer process. Each retry should call the function again fresh.
+The function passed to execute will be called inside that execution's spawned worker process — never inside the GenServer itself, which must stay free to serve other callers. Each retry should call the function again fresh.
 
 Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
 
@@ -118,7 +118,7 @@ defmodule BudgetRetryWorker do
          prev_delay,
          attempts
        ) do
-    attempts = attempts + 2
+    attempts = attempts + 1
 
     case func.() do
       {:ok, result} ->
@@ -132,7 +132,7 @@ defmodule BudgetRetryWorker do
         next_delay = random_fn.(base_delay, jitter_max)
         capped_delay = min(next_delay, max_delay)
 
-        if elapsed + capped_delay > budget do
+        if elapsed + capped_delay >= budget do
           {:error, :budget_exhausted, reason, attempts}
         else
           target_time = now + capped_delay
@@ -153,11 +153,15 @@ defmodule BudgetRetryWorker do
     end
   end
 
+  # Bounded-tick wait against the injected clock: sleep 1ms per check so a
+  # fake-clock test advances deterministically while a real clock never pegs
+  # a scheduler. The budget is deliberately NOT re-checked here — the single
+  # post-attempt clock reading already decided this wait fits the budget.
   defp await_clock(target_time, clock_fn) do
     if clock_fn.() < target_time do
       receive do
       after
-        0 -> await_clock(target_time, clock_fn)
+        1 -> await_clock(target_time, clock_fn)
       end
     end
   end
@@ -167,32 +171,13 @@ end
 ## Failing test report
 
 ```
-3 of 9 test(s) failed:
+1 of 12 test(s) failed:
 
-  * test returns budget_exhausted when time runs out
-      
-      
-      Assertion with == failed
-      code:  assert attempts == 3
-      left:  6
-      right: 3
-      
-
-  * test zero budget means only one attempt
+  * test a retry landing exactly on the budget boundary is still scheduled
       
       
       match (=) failed
-      code:  assert {:error, :budget_exhausted, :boom, 1} =
-                    BudgetRetryWorker.execute(rw, func, budget_ms: 0, base_delay_ms: 100)
-      left:  {:error, :budget_exhausted, :boom, 1}
-      right: {:error, :budget_exhausted, :boom, 2}
-      
-
-  * test attempt count reflects all tries made
-      
-      
-      match (=) failed
-      code:  assert {:error, :budget_exhausted, _reason, 4} = Task.await(task, 5000)
-      left:  {:error, :budget_exhausted, _reason, 4}
-      right: {:error, :budget_exhausted, :fail_4, 8}
+      code:  assert {:ok, :done} = Task.await(task, 5000)
+      left:  {:ok, :done}
+      right: {:error, :budget_exhausted, :boom, 1}
 ```

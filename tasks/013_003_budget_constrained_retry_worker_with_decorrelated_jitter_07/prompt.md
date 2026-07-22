@@ -27,7 +27,7 @@ The clock is read exactly once when an execution starts and exactly once after e
 
 The GenServer should support multiple concurrent `execute` calls — each tracked independently so that one caller's retry schedule doesn't block another caller's work. Use `GenServer.reply/2` to respond asynchronously once a given execution completes or exhausts its budget.
 
-The function passed to execute will be called inside the GenServer process. Each retry should call the function again fresh.
+The function passed to execute will be called inside that execution's spawned worker process — never inside the GenServer itself, which must stay free to serve other callers. Each retry should call the function again fresh.
 
 Give me the complete module in a single file. Use only OTP standard library, no external dependencies.
 
