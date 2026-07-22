@@ -48,8 +48,12 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    suspicious (fake clock coexists — hand-read each: legit hybrid
    [clock stamps, real timers schedule — the 015-family pattern] vs
    masking a missing clock advance);
-   (b) tfim_107_002 stability-3 hard fail (reproduce under parallel
-   load, fix or document the timing contract);
+   (b) DONE 2026-07-22: the tfim_107_002 hard fail was child _11's
+   STALE GOLD still asserting the pre-widening 1ms upper tolerance
+   (elapsed < 1_001_000 on a real 1s timer — a 5us overshoot under
+   parallel load failed it); the parent test had already been widened
+   to 1_500_000 with the jitter rationale. Gold re-carved from the
+   current body (raw slice, <=98 cols), 1.0 x4;
    (c) DONE 2026-07-22: S9 evaluator timer-detection spec-scoping
    landed (content-keyed contract_text; 3 unit tests; 415 green).
    [IN FLIGHT] the gate-sha flip invalidated the semantic ledger by
