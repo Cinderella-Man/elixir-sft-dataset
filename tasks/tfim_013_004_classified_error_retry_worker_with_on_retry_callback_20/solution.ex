@@ -3,7 +3,7 @@
     start_supervised!({RetryLog, []})
 
     {:ok, rw2} =
-      ClassifiedRetryWorker.start_link(clock: &Clock.now/0, random: fn _max -> 7 end)
+      ClassifiedRetryWorker.start_link(random: fn _max -> 7 end)
 
     func = fn ->
       attempt = Counter.increment_and_get()

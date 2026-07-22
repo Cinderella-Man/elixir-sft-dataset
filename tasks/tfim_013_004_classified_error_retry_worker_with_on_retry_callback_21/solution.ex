@@ -3,7 +3,6 @@
 
     {:ok, rw2} =
       ClassifiedRetryWorker.start_link(
-        clock: &Clock.now/0,
         random: fn max ->
           send(test_pid, {:rand_arg, max})
           0
