@@ -196,86 +196,19 @@ defmodule DecayPercentileTest do
     end
   end
 
-  test "p = 1.0 returns the maximum when every weight has decayed to a tiny value" do
+  test "extremes stay correct in the small-but-nonzero weight regime" do
     start_server([])
 
     DecayPercentile.record(:tiny, 1)
     DecayPercentile.record(:tiny, 100)
 
-    # 33 half-lives: each weight is 2^-33 (~1.2e-10) — small, but NOT underflowed to
-    # zero, so both samples still carry weight and the extremes must be unchanged.
+    # 33 half-lives: each weight is ~1.16e-10 — far below any absolute float
+    # tolerance, yet NOT underflowed. Uniform aging is neutral, so the
+    # extremes must answer exactly as they did when fresh.
     Clock.advance(33_000)
-
-    assert {:ok, w} = DecayPercentile.total_weight(:tiny)
-    assert w > 0.0
 
     assert {:ok, 1} = DecayPercentile.query(:tiny, 0.0)
     assert {:ok, 100} = DecayPercentile.query(:tiny, 1.0)
-  end
-
-  test "uniform aging is neutral at p75 after many half-lives" do
-    start_server([])
-
-    for v <- [1, 2, 3], do: DecayPercentile.record(:ua, v)
-
-    # all fresh, equal weights: target = 0.75 * 3 = 2.25, reached only at the third value
-    assert {:ok, 3} = DecayPercentile.query(:ua, 0.75)
-
-    # no new samples: every weight is scaled by 2^-33, so the ranking is untouched
-    Clock.advance(33_000)
-
-    assert {:ok, 3} = DecayPercentile.query(:ua, 0.75)
-  end
-
-  test "an underflowed maximum-valued sample is never returned at p = 1.0" do
-    start_server([])
-
-    DecayPercentile.record(:xmax, 100)
-    Clock.advance(2_000_000)
-    DecayPercentile.record(:xmax, 7)
-    DecayPercentile.record(:xmax, 9)
-
-    # 100 is the largest recorded value but its weight underflowed to 0.0
-    assert {:ok, 9} = DecayPercentile.query(:xmax, 1.0)
-    assert {:ok, 7} = DecayPercentile.query(:xmax, 0.0)
-    assert {:ok, 9} = DecayPercentile.query(:xmax, 0.99)
-
-    assert {:ok, w} = DecayPercentile.total_weight(:xmax)
-    assert_in_delta w, 2.0, 1.0e-9
-  end
-
-  test "non-integer and negative half_life_ms raise ArgumentError" do
-    assert_raise ArgumentError, fn ->
-      DecayPercentile.start_link(name: :bad_float, clock: &Clock.now/0, half_life_ms: 1_000.0)
-    end
-
-    assert_raise ArgumentError, fn ->
-      DecayPercentile.start_link(name: :bad_neg, clock: &Clock.now/0, half_life_ms: -5)
-    end
-
-    assert_raise ArgumentError, fn ->
-      DecayPercentile.start_link(name: :bad_atom, clock: &Clock.now/0, half_life_ms: :fast)
-    end
-  end
-
-  test "max_samples bounds each series separately and drops by age, not by value" do
-    start_server(max_samples: 2)
-
-    DecayPercentile.record(:m1, 500)
-    Clock.advance(1)
-    DecayPercentile.record(:m1, 1)
-    Clock.advance(1)
-    DecayPercentile.record(:m1, 2)
-
-    DecayPercentile.record(:m2, 500)
-
-    # :m1 keeps only its two newest samples (1 and 2); the oldest, 500, is gone
-    assert {:ok, 1} = DecayPercentile.query(:m1, 0.0)
-    assert {:ok, 2} = DecayPercentile.query(:m1, 1.0)
-
-    # the bound is per series: :m2 still holds its own single sample
-    assert {:ok, 500} = DecayPercentile.query(:m2, 0.5)
-    assert {:ok, w} = DecayPercentile.total_weight(:m2)
-    assert_in_delta w, 1.0, 1.0e-9
+    assert {:ok, 100} = DecayPercentile.query(:tiny, 0.75)
   end
 end

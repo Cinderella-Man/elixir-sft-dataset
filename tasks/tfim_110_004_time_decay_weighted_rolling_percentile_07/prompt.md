@@ -126,11 +126,18 @@ defmodule DecayPercentile do
     else
       target = percentile * total
 
+      # The float tolerance must scale WITH the weights: an absolute epsilon
+      # dwarfs the whole distribution once a series has aged 30+ half-lives
+      # (total < 1.0e-9 yet nonzero), making the first sample win every
+      # percentile. Relative to total, the comparison is invariant under
+      # uniform aging — the prompt's neutrality rule.
+      tolerance = @epsilon * total
+
       {_cum, value} =
         Enum.reduce_while(sorted, {0.0, nil}, fn {v, w}, {cum, _last} ->
           cum2 = cum + w
 
-          if cum2 >= target - @epsilon do
+          if cum2 >= target - tolerance do
             {:halt, {cum2, v}}
           else
             {:cont, {cum2, v}}
@@ -346,6 +353,22 @@ defmodule DecayPercentileTest do
     assert_raise ArgumentError, fn ->
       DecayPercentile.start_link(name: :bad, clock: &Clock.now/0, half_life_ms: 0)
     end
+  end
+
+  test "extremes stay correct in the small-but-nonzero weight regime" do
+    start_server([])
+
+    DecayPercentile.record(:tiny, 1)
+    DecayPercentile.record(:tiny, 100)
+
+    # 33 half-lives: each weight is ~1.16e-10 — far below any absolute float
+    # tolerance, yet NOT underflowed. Uniform aging is neutral, so the
+    # extremes must answer exactly as they did when fresh.
+    Clock.advance(33_000)
+
+    assert {:ok, 1} = DecayPercentile.query(:tiny, 0.0)
+    assert {:ok, 100} = DecayPercentile.query(:tiny, 1.0)
+    assert {:ok, 100} = DecayPercentile.query(:tiny, 0.75)
   end
 end
 ```

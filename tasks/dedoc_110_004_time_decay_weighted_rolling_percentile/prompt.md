@@ -121,11 +121,18 @@ defmodule DecayPercentile do
     else
       target = percentile * total
 
+      # The float tolerance must scale WITH the weights: an absolute epsilon
+      # dwarfs the whole distribution once a series has aged 30+ half-lives
+      # (total < 1.0e-9 yet nonzero), making the first sample win every
+      # percentile. Relative to total, the comparison is invariant under
+      # uniform aging — the prompt's neutrality rule.
+      tolerance = @epsilon * total
+
       {_cum, value} =
         Enum.reduce_while(sorted, {0.0, nil}, fn {v, w}, {cum, _last} ->
           cum2 = cum + w
 
-          if cum2 >= target - @epsilon do
+          if cum2 >= target - tolerance do
             {:halt, {cum2, v}}
           else
             {:cont, {cum2, v}}
