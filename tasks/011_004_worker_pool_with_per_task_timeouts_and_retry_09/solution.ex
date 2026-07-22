@@ -12,7 +12,7 @@
     }
 
     new_state =
-      Enum.reduce(1..pool_size, state, fn _, acc ->
+      Enum.reduce(1..pool_size//1, state, fn _, acc ->
         {:ok, pid} = start_worker(acc.sup)
         mref = Process.monitor(pid)
 

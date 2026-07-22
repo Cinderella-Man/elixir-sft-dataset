@@ -5,11 +5,6 @@
 
       {timer_ref, new_worker_timers} ->
         Process.cancel_timer(timer_ref)
-
-        %{
-          state
-          | worker_timers: new_worker_timers,
-            timers: Map.delete(state.timers, timer_ref)
-        }
+        %{state | worker_timers: new_worker_timers}
     end
   end

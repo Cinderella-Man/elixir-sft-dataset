@@ -17,7 +17,7 @@ I need these functions in the public API:
 
 - `RetryPool.submit(pool, task_func, opts \\ [])` where `task_func` is a zero-arity function to execute. Options include `:task_timeout` (max milliseconds a single execution attempt may run, default 30_000) and `:max_retries` (number of retry attempts after the initial try, default 0 meaning no retries). If a worker is idle, dispatch immediately. If all workers are busy but the queue isn't full, enqueue it. If the queue is full, return `{:error, :queue_full}`. On success return `{:ok, ref}`.
 
-- `RetryPool.await(pool, ref, timeout \\ 5_000)` which blocks the caller until the final result for `ref` is available or the timeout expires. Return `{:ok, result}` if the task completed successfully (on any attempt), `{:error, :timeout}` if the await timeout fires, `{:error, {:task_failed, reason, attempts}}` if the task exhausted all retries where `attempts` is the total number of attempts made, or `{:error, {:task_timeout, attempts}}` if the task timed out on its final attempt (again `attempts` is the total number of attempts made).
+- `RetryPool.await(pool, ref, timeout \\ 5_000)` which blocks the caller until the final result for `ref` is available or the timeout expires. Return `{:ok, result}` if the task completed successfully (on any attempt), `{:error, :timeout}` if the await timeout fires, `{:error, {:task_failed, reason, attempts}}` if the task exhausted all retries where `attempts` is the total number of attempts made, or `{:error, {:task_timeout, attempts}}` if the task timed out on its final attempt (again `attempts` is the total number of attempts made). `await` must be called from the same process that called `submit` for that `ref` — results are delivered as plain messages to the submitter's mailbox, so any other process awaiting the ref just times out.
 
 - `RetryPool.status(pool)` which returns a map whose values are all non-negative integers, with keys `:busy_workers` (count of workers currently executing a task), `:idle_workers` (count of workers waiting for work), `:queue_length` (number of pending tasks in the queue), and `:retry_count` (cumulative number of retry attempts made since pool start).
 
@@ -61,6 +61,7 @@ defmodule RetryPool do
 
   @spec await(GenServer.server(), reference(), non_neg_integer()) ::
           {:ok, any()} | {:error, any()}
+
   def await(_pool, ref, timeout \\ 5_000) when is_reference(ref) do
     # TODO
   end
@@ -95,8 +96,6 @@ defmodule RetryPool do
       busy_workers: %{},
       # %{monitor_ref => worker_pid}
       monitors: %{},
-      # %{timer_ref => worker_pid} for task timeouts
-      timers: %{},
       # %{worker_pid => timer_ref}
       worker_timers: %{},
       retry_count: 0
@@ -117,7 +116,7 @@ defmodule RetryPool do
     }
 
     new_state =
-      Enum.reduce(1..pool_size, state, fn _, acc ->
+      Enum.reduce(1..pool_size//1, state, fn _, acc ->
         {:ok, pid} = start_worker(acc.sup)
         mref = Process.monitor(pid)
 
@@ -187,9 +186,9 @@ defmodule RetryPool do
   end
 
   @impl true
-  def handle_info({:task_timeout, worker_pid}, state) do
+  def handle_info({:task_timeout, worker_pid, ref}, state) do
     case Map.get(state.busy_workers, worker_pid) do
-      %TaskInfo{} = task_info ->
+      %TaskInfo{ref: ^ref} = task_info ->
         # Kill the worker
         Process.exit(worker_pid, :kill)
 
@@ -278,13 +277,20 @@ defmodule RetryPool do
     updated_task = %{task_info | attempts: task_info.attempts + 1}
     send(worker, {:run, {updated_task.ref, updated_task.client_pid, updated_task.func}})
 
-    # Set a timer for task timeout
-    timer_ref = Process.send_after(self(), {:task_timeout, worker}, updated_task.task_timeout)
+    # Set a timer for task timeout. The message carries the task ref: a
+    # timer that fired just as its task finished leaves a stale message in
+    # the mailbox, and worker pids are reused — without the ref match the
+    # stale timeout would kill whatever task the worker runs NEXT.
+    timer_ref =
+      Process.send_after(
+        self(),
+        {:task_timeout, worker, updated_task.ref},
+        updated_task.task_timeout
+      )
 
     %{
       state
       | busy_workers: Map.put(state.busy_workers, worker, updated_task),
-        timers: Map.put(state.timers, timer_ref, worker),
         worker_timers: Map.put(state.worker_timers, worker, timer_ref)
     }
   end
@@ -310,12 +316,7 @@ defmodule RetryPool do
 
       {timer_ref, new_worker_timers} ->
         Process.cancel_timer(timer_ref)
-
-        %{
-          state
-          | worker_timers: new_worker_timers,
-            timers: Map.delete(state.timers, timer_ref)
-        }
+        %{state | worker_timers: new_worker_timers}
     end
   end
 

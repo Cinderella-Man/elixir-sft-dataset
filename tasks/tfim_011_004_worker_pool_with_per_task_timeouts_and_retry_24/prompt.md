@@ -73,8 +73,6 @@ defmodule RetryPool do
       busy_workers: %{},
       # %{monitor_ref => worker_pid}
       monitors: %{},
-      # %{timer_ref => worker_pid} for task timeouts
-      timers: %{},
       # %{worker_pid => timer_ref}
       worker_timers: %{},
       retry_count: 0
@@ -95,7 +93,7 @@ defmodule RetryPool do
     }
 
     new_state =
-      Enum.reduce(1..pool_size, state, fn _, acc ->
+      Enum.reduce(1..pool_size//1, state, fn _, acc ->
         {:ok, pid} = start_worker(acc.sup)
         mref = Process.monitor(pid)
 
@@ -165,9 +163,9 @@ defmodule RetryPool do
   end
 
   @impl true
-  def handle_info({:task_timeout, worker_pid}, state) do
+  def handle_info({:task_timeout, worker_pid, ref}, state) do
     case Map.get(state.busy_workers, worker_pid) do
-      %TaskInfo{} = task_info ->
+      %TaskInfo{ref: ^ref} = task_info ->
         # Kill the worker
         Process.exit(worker_pid, :kill)
 
@@ -256,13 +254,20 @@ defmodule RetryPool do
     updated_task = %{task_info | attempts: task_info.attempts + 1}
     send(worker, {:run, {updated_task.ref, updated_task.client_pid, updated_task.func}})
 
-    # Set a timer for task timeout
-    timer_ref = Process.send_after(self(), {:task_timeout, worker}, updated_task.task_timeout)
+    # Set a timer for task timeout. The message carries the task ref: a
+    # timer that fired just as its task finished leaves a stale message in
+    # the mailbox, and worker pids are reused — without the ref match the
+    # stale timeout would kill whatever task the worker runs NEXT.
+    timer_ref =
+      Process.send_after(
+        self(),
+        {:task_timeout, worker, updated_task.ref},
+        updated_task.task_timeout
+      )
 
     %{
       state
       | busy_workers: Map.put(state.busy_workers, worker, updated_task),
-        timers: Map.put(state.timers, timer_ref, worker),
         worker_timers: Map.put(state.worker_timers, worker, timer_ref)
     }
   end
@@ -288,12 +293,7 @@ defmodule RetryPool do
 
       {timer_ref, new_worker_timers} ->
         Process.cancel_timer(timer_ref)
-
-        %{
-          state
-          | worker_timers: new_worker_timers,
-            timers: Map.delete(state.timers, timer_ref)
-        }
+        %{state | worker_timers: new_worker_timers}
     end
   end
 
@@ -763,6 +763,40 @@ defmodule RetryPoolTest do
 
   test "max_queue defaults to 10 pending tasks", _context do
     # TODO
+  end
+
+  test "pool_size: 0 starts exactly zero workers" do
+    pool =
+      start_supervised!(
+        {RetryPool,
+         pool_size: 0, max_queue: 5, name: :"pool_zero_#{:erlang.unique_integer([:positive])}"},
+        id: :zero_pool
+      )
+
+    status = RetryPool.status(pool)
+    assert status.idle_workers == 0
+    assert status.busy_workers == 0
+
+    # With no workers the task can only queue — it must never run.
+    {:ok, ref} = RetryPool.submit(pool, quick_task(:never))
+    assert {:error, :timeout} = RetryPool.await(pool, ref, 150)
+    assert RetryPool.status(pool).queue_length == 1
+  end
+
+  test "await delivers to the submitting process only, as documented", %{pool: pool} do
+    {:ok, ref} = RetryPool.submit(pool, quick_task(:mine))
+
+    # Another process awaiting the same ref gets nothing: results are
+    # messages in the SUBMITTER's mailbox.
+    other =
+      Task.async(fn ->
+        RetryPool.await(pool, ref, 150)
+      end)
+
+    assert {:error, :timeout} = Task.await(other, 1_000)
+
+    # The submitter still receives the result afterwards.
+    assert {:ok, :mine} = RetryPool.await(pool, ref, 1_000)
   end
 end
 ```

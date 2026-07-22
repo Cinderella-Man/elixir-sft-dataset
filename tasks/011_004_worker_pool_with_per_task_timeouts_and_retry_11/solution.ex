@@ -12,9 +12,9 @@
   end
 
   @impl true
-  def handle_info({:task_timeout, worker_pid}, state) do
+  def handle_info({:task_timeout, worker_pid, ref}, state) do
     case Map.get(state.busy_workers, worker_pid) do
-      %TaskInfo{} = task_info ->
+      %TaskInfo{ref: ^ref} = task_info ->
         # Kill the worker
         Process.exit(worker_pid, :kill)
 
