@@ -30,15 +30,18 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
   'derive ETS table names' entails per-instance tables): all three =
   entailed-hard, G9 seeds, no prompt churn. Judge scorecard on
   NOT-ENTAILED verdicts: 1 right, 3 wrong — hand-verify always.)
-- **CPU lane → LLM: G2 re-measure DONE 2026-07-22 01:01** — corpus
-  kill 83.5% (was 82.4% pre-campaign), mean 0.85, sub-0.6 tail
-  SHRANK 27→18 (9 true roots + 9 repair_ mint-copies).
-  `strengthen_harnesses` batch over the 9 roots RIDING (pid in
-  `logs/strengthen_tail.pid`, ~2 calls/family, monitor armed). NEW
-  sub-item: repair_ dirs (074_003/101_002/101_003/102_003 pairs)
-  carry mint-time harness copies — refresh from the strengthened
-  parents + re-verify each pair (fix green AND broken non-green),
-  after the parents' strengthen lands.
+- **G2 MACHINE PHASE CLOSED 2026-07-22 04:01**: 7/9 tail roots
+  strengthened (037_001, 042_001, 073_002, 019_004, 045_004,
+  037_002-self-cleared, 108_003-after-documented-refusal), all
+  rescreened/blind-green. HAND-TAIL: 064_001 (4 rolls, 4 different
+  documented-pin blind failures — hard-family profile; candidates
+  not archived, Task-B: strengthen should archive like close_gaps)
+  + 071_001 (3x honest below-floor). REMAINING before the floor
+  promotion (activity 5's last step, a validate.exs script edit):
+  hand-tail tests + repair_-dir harness refresh
+  (074_003/101_002/101_003/102_003 pairs re-verified fix-green AND
+  broken-non-green). Floor stays report-only until the corpus is
+  clean under it.
 - **In-session: docs/19 HIGHS 12/12 DONE 2026-07-22** (9 fixed:
   035_001, 101_001, 074_001, 013_003, 040_003, 015_004, 019_004,
   061_001, 045_002; 3 refuted-stale: 031_002, 095_003, 040_001).
