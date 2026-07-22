@@ -95,8 +95,8 @@ defmodule BloomFilter do
   Given an expected number of items `n` and a desired false-positive rate `p`,
   the optimal parameters are derived as:
 
-      m = -ceil(n * ln(p) / ln(2)^2)   — number of bits
-      k = round(m / n * ln(2))         — number of hash functions
+      m = ceil(-n * ln(p) / ln(2)^2)     — number of bits
+      k = max(1, round(m / n * ln(2)))   — number of hash functions
   """
 
   @enforce_keys [:m, :k, :bits]
@@ -138,7 +138,7 @@ defmodule BloomFilter do
     # Represent bits as a tuple of integers where each integer is used as a
     # 64-bit word.  This gives O(1) element access via `elem/2`.
     num_words = ceil(m / 64)
-    bits = Tuple.duplicate(0, num_words)
+    bits = Tuple.duplicate(1, num_words)
 
     %__MODULE__{m: m, k: k, bits: bits}
   end
@@ -171,7 +171,7 @@ defmodule BloomFilter do
   def member?(%__MODULE__{m: m, k: k, bits: bits}, item) do
     Enum.all?(0..(k - 1), fn seed ->
       bit_index = hash(item, seed, m)
-      get_bit(bits, bit_index) == 2
+      get_bit(bits, bit_index) == 1
     end)
   end
 
@@ -260,53 +260,37 @@ end
 ## Failing test report
 
 ```
-6 of 11 test(s) failed:
+3 of 23 test(s) failed:
 
-  * test member?/2 always returns true for added items (no false negatives)
-      
-      
-      Expected "item-1" to be a member but got false
-      
-
-  * test atoms, integers, and tuples are never false-negatives
+  * test new/2 derives the documented m, k, word count and all-zero words
       
       
       Expected truthy, got false
-      code: assert BloomFilter.member?(filter, item)
+      code: assert Enum.all?(Tuple.to_list(filter.bits), &(&1 == 0))
       arguments:
       
                # 1
-               %BloomFilter{m: 480, k: 7, bits: {4670796934452084744, 9223935124247216128, 13521793998389248, 18023194602504256, 108988989440, 70369214203936, 576742227414351872, 388}}
+               [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1
+
+  * test new/2 floors k at 1 for a very loose false-positive rate
+      
+      
+      Expected truthy, got false
+      code: assert Enum.all?(Tuple.to_list(filter.bits), &(&1 == 0))
+      arguments:
+      
+               # 1
+               [1, 1, 1, 1]
       
                # 2
-               :alpha
+               #Function<26.46588427/1 in BloomFilterTest."test new/2 floors k at 1 for a very loose false-positive rate"/1>
       
       
 
-  * test merge/2 contains all items from both filters
+  * test add/2 sets exactly the bits phash2({i, item}, m) for i in 0..k-1
       
       
-      Expected truthy, got false
-      code: assert BloomFilter.member?(merged, "a-#{i}")
-      arguments:
-      
-               # 1
-               %BloomFilter{m: 1918, k: 7, bits: {3567262077732321182, 15087206728851363179, 18417382730607025708, 5949236808860680517, 5636820866425971585, 5073075874840369766, 4734511261416743866, 85537759816208573, 17455508721173036035, 13113377097487722885, 17541848752824813543, 2216960435845748727, 7788587279093545214, 17769151636316027308, 6705988693012504753, 11101709640171087070, 1612314222
-
-  * test merge/2 with an empty filter leaves the other unchanged
-      
-      
-      Expected truthy, got false
-      code: assert BloomFilter.member?(merged, "x")
-      arguments:
-      
-               # 1
-               %BloomFilter{m: 959, k: 7, bits: {16777216, 4294967296, 8589934592, 72057594037927936, 1090519040, 1125899907891200, 4503599627370496, 68719476736, 17592186046464, 1099514773504, 1153484454560268288, 2199023255584, 9007199254749184, 0, 0}}
-      
-               # 2
-               "x"
-      
-      
-
-  (…2 more)
+      Assertion with == failed
+      code:  assert set_bit_indices(added.bits) == expected
+      left:  MapSet.new([3328, 5376, 7616, 960, 6912, 3200, 3520, 7488, 1408, 6656, 1664, 6464, 128, 5120, 4608, 384, 5952, 8384, 6144, 6208, 7168, 7808, 6592, 7040, 8000, 5440, 1152, 6720, 9408, 3241, 3008, 576, 7193, 9344, 192, 7104, 1344, 2304, 1536, 8640, 4160, 768, 4416, 1856, 704, 7910, 4736, 4864, 3712, 4288, 8256, 7360, 6784, 8896, 2624, 5504, 1728, 3648, 512, 8576, 1216, 640, 8320, 8064, 8192, 2240, 2176, 320, 40
 ```

@@ -25,7 +25,7 @@ defmodule SlidingWindowLeaderboard do
   players share a rank and the next lower group is bumped by the tie-group size.
   """
 
-  @type board :: {:ets.tid(), pos_integer()}
+  @type board :: {atom(), pos_integer()}
   @type player_id :: term()
 
   @doc """
@@ -104,6 +104,7 @@ defmodule SlidingWindowLeaderboard do
   Deletes every event with `timestamp <= now - window_ms`.  Returns the count.
   """
   @spec prune(board(), integer()) :: non_neg_integer()
+
   def prune({tid, window}, now) when is_integer(now) do
     # TODO
   end

@@ -1,1 +1,1 @@
-  @spec add_edge(t(), vertex(), vertex()) :: {:ok, t()} | {:error, :cycle}
+  @spec add_edge(t(), vertex(), vertex()) :: {:ok, t()} | {:error, :cycle | :vertex_not_found}

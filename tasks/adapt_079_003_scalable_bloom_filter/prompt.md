@@ -35,8 +35,8 @@ defmodule BloomFilter do
   Given an expected number of items `n` and a desired false-positive rate `p`,
   the optimal parameters are derived as:
 
-      m = -ceil(n * ln(p) / ln(2)^2)   — number of bits
-      k = round(m / n * ln(2))         — number of hash functions
+      m = ceil(-n * ln(p) / ln(2)^2)     — number of bits
+      k = max(1, round(m / n * ln(2)))   — number of hash functions
   """
 
   @enforce_keys [:m, :k, :bits]

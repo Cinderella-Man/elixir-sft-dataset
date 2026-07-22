@@ -93,7 +93,11 @@ defmodule Workflow do
           states: [atom()]
         }
 
-  @doc "Defines an FSM named by the atom from the given `states`. Returns the machine."
+  @doc """
+  Builds an FSM from its `initial` state atom and a list of transition
+  specs. Returns the machine; raises `ArgumentError` on a malformed or
+  duplicate transition spec.
+  """
   @spec define(atom(), list()) :: t()
   def define(initial, transitions) when is_atom(initial) and is_list(transitions) do
     normalized = Enum.map(transitions, &normalize/1)
@@ -160,7 +164,7 @@ end
 ## Failing test report
 
 ```
-2 of 17 test(s) failed:
+3 of 23 test(s) failed:
 
   * test guard failure returns guard_failed and leaves record unchanged
       
@@ -178,4 +182,13 @@ end
       code:  assert {:error, :guard_failed, :submitted, :approve} = Workflow.transition(m, bad, :approve)
       left:  {:error, :guard_failed, :submitted, :approve}
       right: {:ok, :guard_failed, :submitted, :approve}
+      
+
+  * test a guard returning nil is falsy and fails the transition
+      
+      
+      match (=) failed
+      code:  assert {:error, :guard_failed, :a, :go} = Workflow.transition(m, rec, :go)
+      left:  {:error, :guard_failed, :a, :go}
+      right: {:ok, :guard_failed, :a, :go}
 ```

@@ -17,7 +17,7 @@ defmodule SlidingWindowLeaderboard do
   players share a rank and the next lower group is bumped by the tie-group size.
   """
 
-  @type board :: {:ets.tid(), pos_integer()}
+  @type board :: {atom(), pos_integer()}
   @type player_id :: term()
 
   @doc """

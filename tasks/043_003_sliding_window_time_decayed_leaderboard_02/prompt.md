@@ -40,7 +40,7 @@ defmodule SlidingWindowLeaderboard do
   players share a rank and the next lower group is bumped by the tie-group size.
   """
 
-  @type board :: {:ets.tid(), pos_integer()}
+  @type board :: {atom(), pos_integer()}
   @type player_id :: term()
 
   @doc """
@@ -131,6 +131,7 @@ defmodule SlidingWindowLeaderboard do
 
   # Returns [{player_id, active_score}] for every player with at least one event
   # whose timestamp is strictly greater than (now - window).
+
   defp active_scores({tid, window}, now) do
     # TODO
   end

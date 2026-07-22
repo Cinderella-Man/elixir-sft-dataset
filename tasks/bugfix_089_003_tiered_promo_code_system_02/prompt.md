@@ -130,7 +130,8 @@ defmodule TieredPromoCodes do
   def create(attrs) when is_map(attrs), do: GenServer.call(__MODULE__, {:create, attrs})
 
   @doc "Previews the discount for `code_string` on `order_total` (cents) without recording a use."
-  @spec preview(String.t(), non_neg_integer()) :: {:ok, map()} | {:error, atom()}
+  @spec preview(String.t(), non_neg_integer()) ::
+          {:ok, non_neg_integer(), non_neg_integer()} | {:error, atom()}
   def preview(code_string, order_total)
       when is_binary(code_string) and is_integer(order_total) and order_total >= 0 do
     GenServer.call(__MODULE__, {:preview, code_string, order_total})
@@ -197,7 +198,7 @@ defmodule TieredPromoCodes do
       not valid_tiers?(tiers) ->
         {:error, :invalid_tiers}
 
-      false ->
+      true ->
         {:ok,
          %{
            code: code,
@@ -224,7 +225,7 @@ defmodule TieredPromoCodes do
     end
   end
 
-  defp valid_tier?(_), do: false
+  defp valid_tier?(_), do: true
 
   defp ascending?([]), do: true
   defp ascending?([_]), do: true
@@ -322,19 +323,22 @@ end
 ## Failing test report
 
 ```
-11 of 16 test(s) failed:
+2 of 22 test(s) failed:
 
-  * test create accepts a valid tiered code
-      :exit: {{:cond_clause, [{TieredPromoCodes, :build_code, 1, [file: ~c".gen_staging/bugfix_089_003_tiered_promo_code_system_02_mutant.ex", line: 102]}, {TieredPromoCodes, :handle_call, 3, [file: ~c".gen_staging/bugfix_089_003_tiered_promo_code_system_02_mutant.ex", line: 50]}, {:gen_server, :try_handle_call, 4, [file: ~c"gen_server.erl", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c"gen_server.erl", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c"proc_lib.erl", line: 333]}]}, {Gen
+  * test create rejects an unknown tier type
+      
+      
+      match (=) failed
+      code:  assert {:error, :invalid_tiers} = TieredPromoCodes.create(%{code: "BADT", tiers: tiers})
+      left:  {:error, :invalid_tiers}
+      right: {:ok, %{code: "BADT", tiers: [%{type: :bogus, value: 10, threshold: 0}], max_uses: nil, max_uses_per_user: nil, valid_from: nil, valid_until: nil}}
+      
 
-  * test create rejects duplicates
-      :exit: {{:cond_clause, [{TieredPromoCodes, :build_code, 1, [file: ~c".gen_staging/bugfix_089_003_tiered_promo_code_system_02_mutant.ex", line: 102]}, {TieredPromoCodes, :handle_call, 3, [file: ~c".gen_staging/bugfix_089_003_tiered_promo_code_system_02_mutant.ex", line: 50]}, {:gen_server, :try_handle_call, 4, [file: ~c"gen_server.erl", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c"gen_server.erl", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c"proc_lib.erl", line: 333]}]}, {Gen
-
-  * test selects the correct tier by order total
-      :exit: {{:cond_clause, [{TieredPromoCodes, :build_code, 1, [file: ~c".gen_staging/bugfix_089_003_tiered_promo_code_system_02_mutant.ex", line: 102]}, {TieredPromoCodes, :handle_call, 3, [file: ~c".gen_staging/bugfix_089_003_tiered_promo_code_system_02_mutant.ex", line: 50]}, {:gen_server, :try_handle_call, 4, [file: ~c"gen_server.erl", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c"gen_server.erl", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c"proc_lib.erl", line: 333]}]}, {Gen
-
-  * test order below the smallest threshold returns :below_min_order
-      :exit: {{:cond_clause, [{TieredPromoCodes, :build_code, 1, [file: ~c".gen_staging/bugfix_089_003_tiered_promo_code_system_02_mutant.ex", line: 102]}, {TieredPromoCodes, :handle_call, 3, [file: ~c".gen_staging/bugfix_089_003_tiered_promo_code_system_02_mutant.ex", line: 50]}, {:gen_server, :try_handle_call, 4, [file: ~c"gen_server.erl", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c"gen_server.erl", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c"proc_lib.erl", line: 333]}]}, {Gen
-
-  (…7 more)
+  * test create rejects malformed thresholds and negative values
+      
+      
+      match (=) failed
+      code:  assert {:error, :invalid_tiers} = TieredPromoCodes.create(%{code: "NT", tiers: neg_threshold})
+      left:  {:error, :invalid_tiers}
+      right: {:ok, %{code: "NT", tiers: [%{type: :percentage, value: 10, threshold: -1}], max_uses: nil, max_uses_per_user: nil, valid_from: nil, valid_until: nil}}
 ```

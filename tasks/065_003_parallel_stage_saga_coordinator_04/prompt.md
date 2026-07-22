@@ -28,7 +28,7 @@ defmodule ParallelSaga do
   The saga is a list of stages; the steps within a stage run **concurrently**, each
   receiving the same start-of-stage context. If any step in a stage fails, the
   succeeded steps of that stage plus all earlier stages are compensated (best-effort)
-  in reverse completion order.
+  in reverse of their declared order, stage by stage.
   """
 
   @opaque t :: %__MODULE__{stages: [[step()]]}
@@ -55,6 +55,7 @@ defmodule ParallelSaga do
 
   @doc "Appends a stage of `{name, action, compensation}` tuples."
   @spec stage(t(), [{term(), function(), function()}]) :: t()
+
   def stage(%__MODULE__{stages: stages} = saga, steps) when is_list(steps) do
     # TODO
   end

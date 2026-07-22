@@ -95,8 +95,8 @@ defmodule BloomFilter do
   Given an expected number of items `n` and a desired false-positive rate `p`,
   the optimal parameters are derived as:
 
-      m = -ceil(n * ln(p) / ln(2)^2)   — number of bits
-      k = round(m / n * ln(2))         — number of hash functions
+      m = ceil(-n * ln(p) / ln(2)^2)     — number of bits
+      k = max(1, round(m / n * ln(2)))   — number of hash functions
   """
 
   @enforce_keys [:m, :k, :bits]
@@ -129,7 +129,7 @@ defmodule BloomFilter do
   """
   @spec new(pos_integer(), float()) :: t()
   def new(expected_size, false_positive_rate)
-      when is_integer(expected_size) and expected_size > 0 and
+      when is_integer(expected_size) and expected_size >= 0 and
              is_float(false_positive_rate) and false_positive_rate > 0.0 and
              false_positive_rate < 1.0 do
     m = optimal_m(expected_size, false_positive_rate)
@@ -152,7 +152,7 @@ defmodule BloomFilter do
   @spec add(t(), term()) :: t()
   def add(%__MODULE__{m: m, k: k, bits: bits} = filter, item) do
     new_bits =
-      Enum.reduce(0..(k - 2), bits, fn seed, acc ->
+      Enum.reduce(0..(k - 1), bits, fn seed, acc ->
         bit_index = hash(item, seed, m)
         set_bit(acc, bit_index)
       end)
@@ -260,53 +260,10 @@ end
 ## Failing test report
 
 ```
-6 of 11 test(s) failed:
+1 of 23 test(s) failed:
 
-  * test member?/2 always returns true for added items (no false negatives)
+  * test new/2 rejects sizes <= 0 and rates outside (0.0, 1.0) with FunctionClauseError
       
       
-      Expected "item-4" to be a member but got false
-      
-
-  * test atoms, integers, and tuples are never false-negatives
-      
-      
-      Expected truthy, got false
-      code: assert BloomFilter.member?(filter, item)
-      arguments:
-      
-               # 1
-               %BloomFilter{m: 480, k: 7, bits: {59110913877213192, 9223935124247216128, 13521793998389248, 18023194602504256, 104694022144, 70368945768480, 576742227414351872, 388}}
-      
-               # 2
-               :alpha
-      
-      
-
-  * test merge/2 contains all items from both filters
-      
-      
-      Expected truthy, got false
-      code: assert BloomFilter.member?(merged, "a-#{i}")
-      arguments:
-      
-               # 1
-               %BloomFilter{m: 1918, k: 7, bits: {2414340298247567262, 13934285222097032299, 18417382730573471276, 5948040230971998533, 5636820178694333313, 5064033491045765732, 4734511261416702650, 13480165241409725, 16302587144491269123, 13113376753890339205, 17541813568452724711, 2216960435845748727, 7212121544359360766, 17769134043590981932, 6705988684422439089, 11101709640171087068, 1491617752
-
-  * test merge/2 with an empty filter leaves the other unchanged
-      
-      
-      Expected truthy, got false
-      code: assert BloomFilter.member?(merged, "x")
-      arguments:
-      
-               # 1
-               %BloomFilter{m: 959, k: 7, bits: {16777216, 4294967296, 8589934592, 72057594037927936, 1090519040, 1125899907891200, 4503599627370496, 68719476736, 17592186044416, 3145728, 1153484454560268288, 2199023255552, 9007199254749184, 0, 0}}
-      
-               # 2
-               "x"
-      
-      
-
-  (…2 more)
+      Expected exception FunctionClauseError but got ArithmeticError (bad argument in arithmetic expression)
 ```

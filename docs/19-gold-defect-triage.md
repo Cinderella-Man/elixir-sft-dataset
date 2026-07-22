@@ -131,11 +131,13 @@ live medium-tier worklist.
 - [ ] **gold_defect/medium** (solution.ex): `use Plug.Router` already marks `call/2` overridable, and nothing redefines `call/2` after this line, so the `defoverridable` is a no-op; its attached comment also describes store resolution, which is unrelated to what the construct does.
   - evidence: `# AuthPlug needs the store at match time; resolve it from conn.private. defoverridable call: 2`
 ## 031_001_csv_importer_with_validation_and_error_report_01
+- [x] **finding 1 REFUTED-stale (doc/spec already carry {:error, :empty_file}); finding 2 FIXED 2026-07-22** (dead schema_by_name computation removed; validate_row/3 -> /2; fim _04/_10 golds re-derived)
 - [ ] **gold_defect/medium** (solution.ex): The @doc and @spec both claim `import_string/2` only ever returns `{:ok, ...}`, but the body returns `{:error, :empty_file}` for blank input — a contract the prompt's "Additional interface contract" section makes load-bearing and the harness pins. The documented contract contradicts the code (and Dialyzer would flag callers relying on the spec).
   - evidence: `Returns `{:ok, valid_rows, error_report}`. """ @spec import_string(String.t(), [map()]) :: {:ok, [map()], [{pos_integer(), String.t(), String.t()}]}`
 - [ ] **gold_defect/medium** (solution.ex): `schema_by_name` is built for every import and threaded into `validate_row/3`, whose third parameter is underscore-ignored — a dead computation whose only effect is to avoid an unused-variable warning.
   - evidence: `schema_by_name = Map.new(schema, fn field -> {field.name, field} end) ... defp validate_row(row_map, schema, _schema_by_name) do`
 ## 031_002_jsonl_importer_with_schema_validation_01
+- [x] **medium REFUTED 2026-07-22 (stale)**: the 07-14 fix rewrote the clause — branches now genuinely differ (whole floats [] vs fractional error); no identical-branch if on disk.
 - [ ] **gold_defect/medium** (solution.ex): Both branches of the `if` return the identical value, so the entire condition (and the `when is_float(value)` clause itself, which is subsumed by the catch-all `check_type(_value, :integer, name)`) is dead code that computes nothing and can never change behavior.
   - evidence: `if value == Float.round(value, 0) and value == trunc(value) * 1.0 do ... [{name, "must be a valid integer"}] else [{name, "must be a valid integer"}] end`
 ## 031_003_csv_loader_with_type_coercion_and_enriched_schema_01
@@ -152,6 +154,7 @@ live medium-tier worklist.
 - [ ] ~~**gold_defect/medium**~~ (solution.ex): The prompt requires "Groups are processed in the order of their first appearance", but groups are accumulated in a plain map keyed by schema module and then iterated with `Enum.reduce`, which yields Erlang term order of the module atoms, not first-appearance order. A file whose first record is a refund will still have the `Order` group inserted (and logged) first whenever the module atom sorts lower.
   - evidence: `Enum.reduce(records, {%{}, 0, 0}, fn record, {groups, unr, miss} -> ... by_schema = groups |> Enum.reduce(%{}, fn {schema, schema_records}, acc ->`
 ## 035_002_multi_series_aligned_resampler_01
+- [x] **REFUTED 2026-07-22 (stale)**: floor_bucket already uses Integer.floor_div and the prompt documents the negative example (t=-1500 -> bucket -2000).
 - [ ] **gold_defect/medium** (solution.ex): `div/2` truncates toward zero, not floor, contradicting the prompt's explicit rule `floor(t / interval_ms) * interval_ms`; for a negative timestamp (e.g. `t = -1500`, `interval_ms = 2000`) the point is placed in bucket `0` instead of `-2000`, shifting both the grid origin and the point's bucket.
   - evidence: `defp floor_bucket(ts, interval_ms), do: div(ts, interval_ms) * interval_ms`
 ## 038_001_tree_structure_builder_from_flat_list_01
@@ -167,9 +170,11 @@ live medium-tier worklist.
 - [ ] ~~**gold_defect/medium**~~ (solution.ex): The prompt states "If it is missing, or if it is present but is not an integer or is not greater than zero (e.g. `0`, `-1`, `1.5`, `:many`), starting the cache must fail with an `ArgumentError` raised during initialisation", but a missing `:max_size` makes `Keyword.fetch!/2` raise `KeyError`, not `ArgumentError`; the harness only exercises the four present-but-invalid values, so the contradiction is never caught.
   - evidence: `max_size = Keyword.fetch!(opts, :max_size)`
 ## 043_001_ets_based_leaderboard_01
+- [x] **REFUTED 2026-07-22 (stale)**: @type board :: atom() already on disk (fixed with the 07-21 hand-land).
 - [ ] **gold_defect/medium** (solution.ex): With `:named_table`, `:ets.new/2` returns the *atom* name, not a `:ets.tid()`, so the declared `board` type (and the `tid` binding name) contradicts what `new/1` actually returns and what every other function is handed; the correct type is `:ets.table()`.
   - evidence: ``@type board :: :ets.tid()` together with `tid = :ets.new(board_name, [:set, :public, :named_table, read_concurrency: true])``
 ## 043_003_sliding_window_time_decayed_leaderboard_01
+- [x] **DONE 2026-07-22**: @type board :: {atom(), pos_integer()} — a :named_table :ets.new returns the name atom (043_001 precedent).
 - [ ] **gold_defect/medium** (solution.ex): `:ets.new/2` is called with `:named_table`, so it returns the table-name atom, not a `tid()`; the declared type contradicts what `new/2` actually puts in the tuple it returns, misdescribing the public `board` identifier for every other function's spec.
   - evidence: `@type board :: {:ets.tid(), pos_integer()}`
 ## 044_001_ets_based_metrics_collector_01
@@ -180,15 +185,19 @@ live medium-tier worklist.
 - [ ] **prompt_defect/medium** (prompt.md): The prompt requires only public+named, but the harness additionally pins the table's registered name to `Metrics` and asserts `:ets.info(Metrics, :read_concurrency) == true` and `:ets.info(Metrics, :write_concurrency) == true`; a conforming solution using a different table name or omitting those options fails.
   - evidence: `The ETS table should be public and named so that `increment` can bypass the GenServer process for maximum throughput`
 ## 061_001_parallel_map_with_concurrency_limit_01
+- [x] **medium DONE 2026-07-22**: the catch-all receive died with the 07-22 rewrite; the RESIDUAL found on re-read — the blanket {:EXIT,_,_} flush could eat a TRAPPING caller's own unrelated exit mail — fixed by threading pmap's task pids into a selective flush (guard is_map_key). Anchor: trapping caller with queued {:EXIT} + a crashing pmap element; blanket-flush gold fails exactly it; x3 stable.
 - [ ] **gold_defect/medium** (solution.ex): The catch-all receive clause consumes and discards any unrelated message sitting in (or arriving at) the caller's mailbox, so calling `pmap` silently destroys the caller's own messages — a data-loss bug invisible to the harness, which never has pending mail.
   - evidence: `_other -> await_one(running)`
 ## 063_001_concurrent_data_fetcher_with_timeout_01
+- [x] **DONE 2026-07-22**: @spec non-empty-list dropped to [tuple] — matches the empty-clause + @doc + prompt.
 - [ ] **gold_defect/medium** (solution.ex): The `[..., ...]` spec declares a non-empty list, which excludes `[]`, yet the very next line defines the empty-list clause and the @doc directly above promises "Returns `%{}` immediately when `sources` is empty" — the spec contradicts both the code and the doc (and the prompt's explicit empty-list requirement), making the published contract wrong for a load-bearing documented case.
   - evidence: `@spec fetch_all([{term(), (-> {:ok, term()} | {:error, term()})}, ...], non_neg_integer()) :: %{term() => {:ok, term()} | {:error, term()}} def fetch_all([], _timeout_ms), do: %{}`
 ## 063_002_quorum_first_n_concurrent_fetcher_01
+- [x] **DONE 2026-07-22**: Task.shutdown's {:ok, reply} now reported as the source's REAL outcome (the promised 'already succeeded' class was unreachable); 50-instant-sources anchor (>= 2 non-winner {:ok,_}), x3 stable, bite-proven; fim _03 gold re-derived.
 - [ ] **gold_defect/medium** (solution.ex): `Task.shutdown/2` returns `{:ok, reply}` when the task had already sent its result before being killed, but the gold discards that return and unconditionally writes `{:error, :cancelled}` / `{:error, :timeout}`; a source that fully completed (e.g. several equal-latency sources with `count: 1`, or a fetch that finished microseconds before the deadline) is therefore reported as cancelled/timed-out, contradicting the prompt's "`{:ok, value}` — this fetch completed successfully (winners plus any source that had already succeeded)" and "sources that finished are reported with their real outcome". Under this implementation the set of `{:ok, _}` entries can never exceed the drained quorum, so the promised "already succeeded" class is unreachable.
   - evidence: `Task.shutdown(Map.fetch!(ref_to_task, ref), :brutal_kill) Map.put(acc, ref, fill_result)`
 ## 065_003_parallel_stage_saga_coordinator_01
+- [x] **DONE 2026-07-22**: moduledoc ordering claim corrected to reverse-DECLARED order (the prompt's rule and the code's behavior).
 - [ ] **gold_defect/medium** (solution.ex): The code never observes completion order — steps are collected and compensated in reverse *declared* order (`Enum.reverse(succeeded) ++ completed`), which for concurrent steps is generally different from reverse completion order; the moduledoc therefore documents an ordering guarantee the module does not provide and contradicts the prompt's "in reverse of their declared order within the stage".
   - evidence: `succeeded steps of that stage plus all earlier stages are compensated (best-effort) in reverse completion order.`
 ## 071_001_factory_module_for_test_data_generation_01
@@ -196,41 +205,53 @@ live medium-tier worklist.
 - [ ] ~~**gold_defect/medium**~~ (solution.ex): The prompt sanctions "automatically on first use via a lazy init" while also requiring "Sequences must be unique across the entire test run even if tests run concurrently"; the lazy path uses `Agent.start_link`, so the counter Agent is linked to whichever test process happens to call `sequence/2` first and is torn down when that test process exits (or crashes), resetting every counter to 0 and producing duplicate emails/titles for the rest of the run. `Agent.start` (unlinked) or a supervised start is required for the lazy path to satisfy the stated contract; the harness always calls `Factory.start()` in `setup_all`, so this path is never exercised.
   - evidence: `defp ensure_agent_started do case Process.whereis(@agent) do nil -> Agent.start_link(fn -> %{} end, name: @agent) _pid -> :ok end end`
 ## 072_002_deferred_timer_virtual_clock_01
+- [x] **DONE 2026-07-22**: Code.ensure_loaded?/1 before function_exported?/3 — lazy-loading no longer routes a real module's first call to Clock.Fake (:noproc); fim _04 gold re-derived.
 - [ ] **gold_defect/medium** (solution.ex): `function_exported?/3` returns false for a module that is not yet loaded (it explicitly does not load it), so in interactive/lazy-loading mode the first `Clock.now(Clock.Real)` call falls through to `Clock.Fake.now(Clock.Real)` and exits with `:noproc` instead of returning a DateTime; the harness never hits this because ExUnit has already loaded `Clock.Real`.
   - evidence: `def now(clock) when is_atom(clock) do if function_exported?(clock, :now, 0) do clock.now() else Clock.Fake.now(clock) end end`
 ## 075_001_property_based_test_generators_01
+- [x] **DONE 2026-07-22**: @spec widened to non_neg_integer() (the @doc half was already fixed — 'non-negative integers; a weight of 0 disables').
 - [ ] **gold_defect/medium** (solution.ex): The @doc and @spec both say weights are positive integers, while the code's own guard (`when is_integer(weight) and weight >= 0`) and comment (`# weight 0 → List.duplicate returns [] → generator is never selected`) implement the prompt's mandatory zero-weight behavior; the documentation contradicts the code it documents and would mislead a caller into thinking `{0, gen}` is unsupported.
   - evidence: `Weights must be positive integers. The likelihood of a value being drawn from a particular generator equals `weight / sum(all_weights)`. """ @spec one_of_weighted([{pos_integer(), StreamData.t(a)}]) :`
 - [ ] **gold_defect/medium** (solution.ex): The @spec declares weights as `pos_integer()`, contradicting the prompt ("Weights are non-negative integers", "A weight of `0` means that generator is **never** selected"), the function's own @doc ("a weight of `0` disables its generator entirely"), the guard `when is_integer(weight) and weight >= 0`, and the harness test "a weight of 0 means a generator is never selected". A caller passing `{0, gen}` — the documented, tested way to disable a branch — is a Dialyzer contract violation against the module's own published API.
   - evidence: `@spec one_of_weighted([{pos_integer(), StreamData.t(a)}]) :: StreamData.t(a) when a: term()`
 ## 079_001_bloom_filter_01
+- [x] **DONE 2026-07-22**: doc formulas corrected — m = ceil(-n ln p / ln2^2) (minus INSIDE ceil, matching the code and the module's own m: 9586 example) and k = max(1, round(m/n ln2)) with the load-bearing floor.
 - [ ] **gold_defect/medium** (solution.ex): The documented formulas contradict the code: the code computes `ceil(-n * :math.log(p) / (@ln2*@ln2))` and `max(1, round(...))`, whereas `-ceil(n*ln p/ln2^2)` is `-ceil(-9585.06) = 9585` for n=1000,p=0.01 — contradicting the module's own `m: 9586` example — and the documented `k` drops the load-bearing `max(1, …)` floor the prompt calls out. The same wrong `m` formula is repeated verbatim in the comment above `optimal_m/2`.
   - evidence: `m = -ceil(n * ln(p) / ln(2)^2) — number of bits k = round(m / n * ln(2)) — number of hash functions`
 ## 080_001_directed_acyclic_graph_with_topological_sort_01
+- [x] **DONE 2026-07-22**: @spec + @doc now carry {:error, :vertex_not_found} (the with-chain's real return on the prompt's missing-vertex path); fim _04 gold re-derived.
 - [ ] **gold_defect/medium** (solution.ex): The spec (and the accompanying @doc, which says only "Returns `{:ok, new_dag}` on success, or `{:error, :cycle}` if the edge would introduce a cycle") omits the `{:error, :vertex_not_found}` return that `require_vertex/2` actually produces via the `with` chain — a documented contract that contradicts the code, on the exact missing-vertex path the prompt calls out.
   - evidence: `@spec add_edge(t(), vertex(), vertex()) :: {:ok, t()} | {:error, :cycle}`
 ## 089_003_tiered_promo_code_system_01
+- [x] **DONE 2026-07-22**: @spec preview corrected to {:ok, non_neg_integer(), non_neg_integer()} (the real 3-tuple); fim _23 gold re-derived.
 - [ ] **gold_defect/medium** (solution.ex): The spec contradicts both the prompt and the implementation: `preview/2` returns a three-element `{:ok, discount, tier_index}` tuple (`{:ok, tier_discount(tier, order_total), index}`), never `{:ok, map()}`, so the documented contract is wrong for the module's core read API.
   - evidence: `@spec preview(String.t(), non_neg_integer()) :: {:ok, map()} | {:error, atom()}`
 ## 091_003_data_driven_finite_state_machine_engine_01
+- [x] **DONE 2026-07-22**: @doc rewritten to the real contract (initial state + transition specs; raises ArgumentError on malformed/duplicate specs).
 - [ ] **gold_defect/medium** (solution.ex): The @doc contradicts the actual function: `define/2` takes an `initial` state atom and a list of transition specs, not a name atom and a `states` list, and it also raises ArgumentError on malformed/duplicate specs — none of which the doc describes. Readers of the generated docs get a materially wrong contract for the module's primary constructor.
   - evidence: `@doc "Defines an FSM named by the atom from the given `states`. Returns the machine."`
 ## 095_003_currency_precision_money_module_01
+- [ ] (still open — prompt example commentary; queued for the LLM candidate lane with 032_001/032_002/044_001/110_002)
 - [ ] **prompt_defect/medium** (prompt.md): The example's stated result (`amount: 1234`) contradicts its own inline commentary and the following sentence ("rounds to `1235`"), which is what the harness pins; a solver reading the code example literally would implement truncation instead of half-away-from-zero rounding.
   - evidence: `Money.from_major(1.2345, :BHD) # => %Money{amount: 1234, currency: :BHD} (1.2345 -> 1234.5 -> 1235? no: 1.2345*1000=1234.5 -> 1235)`
 ## 097_001_password_policy_enforcer_01
+- [x] **DONE 2026-07-22**: moduledoc example output corrected to include :no_special — verified EMPIRICALLY (ran validate/2 with the doc's flags: [:too_short, :no_uppercase, :no_digit, :no_special, :too_similar_to_username]).
 - [ ] **gold_defect/medium** (solution.ex): The documented output is wrong: "alice" is entirely alphanumeric and the example context sets `require_special: true`, so `check_special/2` also emits `:no_special`; the real result is `[:too_short, :no_uppercase, :no_digit, :no_special, :too_similar_to_username]`. The @moduledoc contradicts the code it documents.
   - evidence: `PasswordPolicy.validate("alice", context) # => {:error, [:too_short, :no_uppercase, :no_digit, :too_similar_to_username]}`
 ## 103_003_deduplicating_dead_letter_queue_01
+- [x] **REFUTED 2026-07-22 (stale)**: @doc already documents the 3-tuple ({:ok, :new, id} | {:ok, :duplicate, id}) and calls the key dedup_key.
 - [ ] **gold_defect/medium** (solution.ex): The @doc contradicts the code and the adjacent @spec: `push/6` returns `{:ok, :new, id}` or `{:ok, :duplicate, id}` (a 3-tuple), never `{:ok, id}`, and the key is called `dedup_key`, not a "fingerprint". A learner is trained on documentation that misstates the function's contract.
   - evidence: `@doc "Pushes a failed `message`, deduplicating by fingerprint. Returns `{:ok, id}`."`
 ## 103_004_bounded_priority_dead_letter_queue_with_bulk_drain_01
+- [x] **DONE 2026-07-22**: @doc eviction claim replaced with the real {:error, :full} nothing-stored contract.
 - [ ] **gold_defect/medium** (solution.ex): The @doc claims full-queue behavior is eviction of the lowest-priority entry, but the code (and the prompt) reject with `{:error, :full}` and store nothing; the documentation directly contradicts the implementation it annotates.
   - evidence: `Pushes a dead-lettered `message` (with its `error_reason`, `metadata`, and `priority`) onto `queue_name`. Drops the lowest-priority entry when the bounded queue is full.`
 ## 107_002_keyed_event_aggregator_with_per_key_batching_01
+- [x] **DONE 2026-07-22**: @moduledoc interval rule corrected — timer arms on the empty->non-empty push (requirement 6), never from the previous flush.
 - [ ] **gold_defect/medium** (solution.ex): The @moduledoc states the interval is measured from the key's last flush, which directly contradicts requirement 6 ("the next time-based flush of that key is a full `:interval_ms` after the key's next push ... not `:interval_ms` after the flush itself") and the code, which arms the timer only in `ensure_timer` on the empty→non-empty push transition.
   - evidence: `* `:interval_ms` milliseconds elapse since that key's last flush (or since the key first started buffering) while it still has buffered events.`
 ## 109_001_task_dependency_resolver_and_executor_01
+- [x] **DONE 2026-07-22**: {:cycle, involved} now reports only PARTICIPANTS — iterative trim of stuck nodes nothing-in-set depends on (downstream feeders); anchor a<->b + c-depends-a refutes :c in involved, bite-proven; fim _02 gold re-derived.
 - [ ] **gold_defect/medium** (solution.ex): The prompt requires `involved` to be "a list of the `task_id`s participating in a cycle", but the gold returns every unresolved task, including tasks that merely depend on a cycle (e.g. with a↔b and c depends_on [:a], `involved` is [:a, :b, :c] though :c participates in no cycle); the harness only asserts membership (`assert :a in involved`) so this over-reporting is never caught.
   - evidence: `# No task with all dependencies resolved => remaining tasks form/feed a cycle. {:error, {:cycle, Map.keys(in_degree)}}`
 ## 110_002_histogram_based_approximate_rolling_percentile_01

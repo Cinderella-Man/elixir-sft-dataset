@@ -67,7 +67,7 @@ defmodule SlidingWindowLeaderboard do
   players share a rank and the next lower group is bumped by the tie-group size.
   """
 
-  @type board :: {:ets.tid(), pos_integer()}
+  @type board :: {atom(), pos_integer()}
   @type player_id :: term()
 
   @doc """
@@ -173,31 +173,31 @@ end
 ## Failing test report
 
 ```
-13 of 13 test(s) failed:
+19 of 19 test(s) failed:
 
   * test score is :not_found for unknown player
       no match of right hand side value:
       
-          {:error, {:swboard_3139, 1000}}
+          {:error, {:swboard_3397, 1000}}
       
 
   * test active events sum within the window
       no match of right hand side value:
       
-          {:error, {:swboard_3203, 1000}}
+          {:error, {:swboard_3461, 1000}}
       
 
   * test expired events fall out of the window
       no match of right hand side value:
       
-          {:error, {:swboard_3267, 1000}}
+          {:error, {:swboard_3525, 1000}}
       
 
   * test player with only expired events is :not_found
       no match of right hand side value:
       
-          {:error, {:swboard_3331, 1000}}
+          {:error, {:swboard_3589, 1000}}
       
 
-  (…9 more)
+  (…15 more)
 ```

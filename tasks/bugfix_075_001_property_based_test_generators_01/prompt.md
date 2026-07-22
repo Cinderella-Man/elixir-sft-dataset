@@ -229,7 +229,7 @@ defmodule Generators do
       ])
       # => :common roughly 10× more often than :rare
   """
-  @spec one_of_weighted([{pos_integer(), StreamData.t(a)}]) :: StreamData.t(a) when a: term()
+  @spec one_of_weighted([{non_neg_integer(), StreamData.t(a)}]) :: StreamData.t(a) when a: term()
   def one_of_weighted(weighted_list) when is_list(weighted_list) and weighted_list != [] do
     # Expand each {weight, gen} pair into `weight` copies of `gen`, then hand
     # off to `StreamData.one_of/1` for uniform selection. This keeps the
@@ -291,7 +291,7 @@ end
 ## Failing test report
 
 ```
-1 of 36 test(s) failed:
+1 of 41 test(s) failed:
 
   * test Generators.one_of_weighted/1 a weight of 0 means a generator is never selected
       no function clause matching in anonymous fn/1 in Generators.one_of_weighted/1

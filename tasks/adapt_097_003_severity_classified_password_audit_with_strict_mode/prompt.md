@@ -30,7 +30,8 @@ defmodule PasswordPolicy do
       # => :ok
 
       PasswordPolicy.validate("alice", context)
-      # => {:error, [:too_short, :no_uppercase, :no_digit, :too_similar_to_username]}
+      # => {:error, [:too_short, :no_uppercase, :no_digit, :no_special,
+      #               :too_similar_to_username]}
   """
 
   # ---------------------------------------------------------------------------

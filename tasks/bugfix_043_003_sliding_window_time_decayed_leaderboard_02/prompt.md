@@ -67,7 +67,7 @@ defmodule SlidingWindowLeaderboard do
   players share a rank and the next lower group is bumped by the tie-group size.
   """
 
-  @type board :: {:ets.tid(), pos_integer()}
+  @type board :: {atom(), pos_integer()}
   @type player_id :: term()
 
   @doc """
@@ -173,7 +173,7 @@ end
 ## Failing test report
 
 ```
-1 of 13 test(s) failed:
+2 of 19 test(s) failed:
 
   * test prune deletes expired events and returns the count
       
@@ -181,5 +181,14 @@ end
       match (=) failed
       code:  assert 2 = SlidingWindowLeaderboard.prune(board, 10500)
       left:  2
+      right: 0
+      
+
+  * test prune deletes the event exactly at the cutoff but keeps cutoff+1
+      
+      
+      match (=) failed
+      code:  assert 1 = SlidingWindowLeaderboard.prune(board, 10000)
+      left:  1
       right: 0
 ```

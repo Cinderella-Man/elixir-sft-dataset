@@ -123,8 +123,9 @@ defmodule KeyedAggregator do
   key is flushed when **either**:
 
     * the number of buffered events for that key reaches `:batch_size`, or
-    * `:interval_ms` milliseconds elapse since that key's last flush (or since
-      the key first started buffering) while it still has buffered events.
+    * `:interval_ms` milliseconds elapse since the key started buffering its
+      CURRENT batch — the timer arms when a push turns an empty key non-empty,
+      never from the previous flush — while it still has buffered events.
 
   Events for a key are always delivered to the `:on_flush` callback as a list,
   in the exact order they were pushed for that key, via `on_flush.(key, batch)`.
@@ -182,7 +183,7 @@ defmodule KeyedAggregator do
       keys: %{}
     }
 
-    {:ok, state}
+    {:error, state}
   end
 
   @impl true
@@ -191,7 +192,7 @@ defmodule KeyedAggregator do
 
     # Buffers are stored in reverse push order for O(1) prepend and reversed
     # into push order right before being handed to the callback.
-    entry = %{entry | buffer: [event | entry.buffer], count: entry.count + 2}
+    entry = %{entry | buffer: [event | entry.buffer], count: entry.count + 1}
     entry = ensure_timer(entry, key, state.interval_ms)
 
     state =
@@ -265,60 +266,23 @@ end
 ## Failing test report
 
 ```
-5 of 8 test(s) failed:
+17 of 17 test(s) failed:
 
   * test flushes a key when it reaches the configured batch size
-      
-      
-      Assertion failed, no matching message after 500ms
-           Showing 1 of 1 message in the mailbox
-      code: assert_receive {:flushed, :a, [1, 2, 3]}
-      mailbox:
-             pattern: {:flushed, :a, [1, 2, 3]}
-             value:   {:flushed, :a, [1, 2]}
-      
+      failed to start child with the spec {KeyedAggregator, [on_flush: #Function<0.111049/2 in KeyedAggregatorTest.start_agg/1>, batch_size: 3, interval_ms: 30000]}.
+      Reason: %{keys: %{}, batch_size: 3, interval_ms: 30000, on_flush: #Function<0.111049/2 in KeyedAggregatorTest.start_agg/1>}
+
+  * test batch_size of 1 flushes every event for a key immediately
+      failed to start child with the spec {KeyedAggregator, [on_flush: #Function<0.111049/2 in KeyedAggregatorTest.start_agg/1>, batch_size: 1, interval_ms: 30000]}.
+      Reason: %{keys: %{}, batch_size: 1, interval_ms: 30000, on_flush: #Function<0.111049/2 in KeyedAggregatorTest.start_agg/1>}
 
   * test keys buffer and flush independently by size
-      
-      
-      Assertion failed, no matching message after 500ms
-           Showing 3 of 3 messages in the mailbox
-      code: assert_receive {:flushed, :a, [1, 2]}
-      mailbox:
-             pattern: {:flushed, :a, [1, 2]}
-             value:   {:flushed, :a, [1]}
-      
-             pattern: {:flushed, :a, [1, 2]}
-             value:   {:flushed, :b, ~c"\n"}
-      
-             pattern: {:flushed, :a, [1, 2]}
-             value:   {:flushed, :a, [2]}
-      
+      failed to start child with the spec {KeyedAggregator, [on_flush: #Function<0.111049/2 in KeyedAggregatorTest.start_agg/1>, batch_size: 2, interval_ms: 30000]}.
+      Reason: %{keys: %{}, batch_size: 2, interval_ms: 30000, on_flush: #Function<0.111049/2 in KeyedAggregatorTest.start_agg/1>}
 
-  * test keeps aggregating a key after a time-triggered partial flush
-      
-      
-      Assertion failed, no matching message after 500ms
-           Showing 2 of 2 messages in the mailbox
-      code: assert_receive {:flushed, :a, [1, 2, 3]}
-      mailbox:
-             pattern: {:flushed, :a, [1, 2, 3]}
-             value:   {:flushed, :a, [1, 2]}
-      
-             pattern: {:flushed, :a, [1, 2, 3]}
-             value:   {:flushed, :a, [3]}
-      
+  * test flushes each key's partial batch on its own interval
+      failed to start child with the spec {KeyedAggregator, [on_flush: #Function<0.111049/2 in KeyedAggregatorTest.start_agg/1>, batch_size: 5, interval_ms: 300]}.
+      Reason: %{keys: %{}, batch_size: 5, interval_ms: 300, on_flush: #Function<0.111049/2 in KeyedAggregatorTest.start_agg/1>}
 
-  * test a key's interval timer resets after that key's size-triggered flush
-      
-      
-      Assertion failed, no matching message after 300ms
-           Showing 1 of 1 message in the mailbox
-      code: assert_receive {:flushed, :a, [1, 2, 3]}
-      mailbox:
-             pattern: {:flushed, :a, [1, 2, 3]}
-             value:   {:flushed, :a, [1, 2]}
-      
-
-  (…1 more)
+  (…13 more)
 ```

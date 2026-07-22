@@ -21,8 +21,9 @@ defmodule KeyedAggregator do
   key is flushed when **either**:
 
     * the number of buffered events for that key reaches `:batch_size`, or
-    * `:interval_ms` milliseconds elapse since that key's last flush (or since
-      the key first started buffering) while it still has buffered events.
+    * `:interval_ms` milliseconds elapse since the key started buffering its
+      CURRENT batch — the timer arms when a push turns an empty key non-empty,
+      never from the previous flush — while it still has buffered events.
 
   Events for a key are always delivered to the `:on_flush` callback as a list,
   in the exact order they were pushed for that key, via `on_flush.(key, batch)`.
@@ -83,7 +84,6 @@ defmodule KeyedAggregator do
     {:ok, state}
   end
 
-  @impl true
   def handle_cast({:push, key, event}, state) do
     # TODO
   end

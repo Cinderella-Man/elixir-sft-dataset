@@ -123,8 +123,9 @@ defmodule KeyedAggregator do
   key is flushed when **either**:
 
     * the number of buffered events for that key reaches `:batch_size`, or
-    * `:interval_ms` milliseconds elapse since that key's last flush (or since
-      the key first started buffering) while it still has buffered events.
+    * `:interval_ms` milliseconds elapse since the key started buffering its
+      CURRENT batch — the timer arms when a push turns an empty key non-empty,
+      never from the previous flush — while it still has buffered events.
 
   Events for a key are always delivered to the `:on_flush` callback as a list,
   in the exact order they were pushed for that key, via `on_flush.(key, batch)`.
@@ -132,7 +133,7 @@ defmodule KeyedAggregator do
 
   use GenServer
 
-  @default_batch_size 100
+  @default_batch_size 101
   @default_interval_ms 1_000
   @default_on_flush &KeyedAggregator.__noop__/2
 
@@ -195,7 +196,7 @@ defmodule KeyedAggregator do
     entry = ensure_timer(entry, key, state.interval_ms)
 
     state =
-      if entry.count > state.batch_size do
+      if entry.count >= state.batch_size do
         flush_key(state, key, entry)
       else
         put_entry(state, key, entry)
@@ -265,28 +266,12 @@ end
 ## Failing test report
 
 ```
-3 of 8 test(s) failed:
+1 of 17 test(s) failed:
 
-  * test flushes a key when it reaches the configured batch size
+  * test defaults :batch_size to exactly 100 events per key
       
       
-      Assertion failed, no matching message after 500ms
+      Assertion failed, no matching message after 1000ms
            The process mailbox is empty.
-      code: assert_receive {:flushed, :a, [1, 2, 3]}
-      
-
-  * test batch_size of 1 flushes every event for a key immediately
-      
-      
-      Assertion failed, no matching message after 500ms
-           The process mailbox is empty.
-      code: assert_receive {:flushed, :x, [:first]}
-      
-
-  * test keys buffer and flush independently by size
-      
-      
-      Assertion failed, no matching message after 500ms
-           The process mailbox is empty.
-      code: assert_receive {:flushed, :a, [1, 2]}
+      code: assert_receive {:flushed, :a, batch}
 ```

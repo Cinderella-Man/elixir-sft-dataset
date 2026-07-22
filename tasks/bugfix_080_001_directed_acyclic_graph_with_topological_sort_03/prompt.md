@@ -86,11 +86,12 @@ defmodule DAG do
 
   Both vertices must already exist in the DAG.
 
-  Returns `{:ok, new_dag}` on success, or `{:error, :cycle}` if the edge
-  would introduce a cycle.  Cycle detection is performed eagerly via DFS
-  before the edge is committed.
+  Returns `{:ok, new_dag}` on success, `{:error, :vertex_not_found}` when
+  either endpoint is missing, or `{:error, :cycle}` if the edge would
+  introduce a cycle.  Cycle detection is performed eagerly via DFS before
+  the edge is committed.
   """
-  @spec add_edge(t(), vertex(), vertex()) :: {:ok, t()} | {:error, :cycle}
+  @spec add_edge(t(), vertex(), vertex()) :: {:ok, t()} | {:error, :cycle | :vertex_not_found}
   def add_edge(%__MODULE__{} = dag, from, to) do
     with :ok <- require_vertex(dag, from),
          :ok <- require_vertex(dag, to),
@@ -249,7 +250,7 @@ end
 ## Failing test report
 
 ```
-6 of 14 test(s) failed:
+11 of 19 test(s) failed:
 
   * test new/0 returns an empty DAG
       
@@ -284,5 +285,5 @@ end
       right: {:error, [:a, :b, :c, :d]}
       
 
-  (…2 more)
+  (…7 more)
 ```

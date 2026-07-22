@@ -67,7 +67,7 @@ defmodule SlidingWindowLeaderboard do
   players share a rank and the next lower group is bumped by the tie-group size.
   """
 
-  @type board :: {:ets.tid(), pos_integer()}
+  @type board :: {atom(), pos_integer()}
   @type player_id :: term()
 
   @doc """
@@ -75,7 +75,7 @@ defmodule SlidingWindowLeaderboard do
   """
   @spec new(atom(), pos_integer()) :: {:ok, board()}
   def new(board_name, window_ms)
-      when is_atom(board_name) and is_integer(window_ms) and window_ms > 0 do
+      when is_atom(board_name) and is_integer(window_ms) and window_ms >= 0 do
     tid =
       :ets.new(board_name, [
         :duplicate_bag,
@@ -105,7 +105,7 @@ defmodule SlidingWindowLeaderboard do
   @spec score(board(), player_id(), integer()) :: {:ok, number()} | {:error, :not_found}
   def score(board, player_id, now) do
     case Enum.find(active_scores(board, now), fn {p, _s} -> p == player_id end) do
-      nil -> {:ok, :not_found}
+      nil -> {:error, :not_found}
       {_p, s} -> {:ok, s}
     end
   end
@@ -173,43 +173,10 @@ end
 ## Failing test report
 
 ```
-5 of 13 test(s) failed:
+1 of 19 test(s) failed:
 
-  * test score is :not_found for unknown player
+  * test new/2 rejects a non-positive or non-integer window_ms
       
       
-      match (=) failed
-      code:  assert {:error, :not_found} = SlidingWindowLeaderboard.score(board, "ghost", 10000)
-      left:  {:error, :not_found}
-      right: {:ok, :not_found}
-      
-
-  * test player with only expired events is :not_found
-      
-      
-      match (=) failed
-      code:  assert {:error, :not_found} = SlidingWindowLeaderboard.score(board, "alice", 10500)
-      left:  {:error, :not_found}
-      right: {:ok, :not_found}
-      
-
-  * test event exactly at the cutoff is expired
-      
-      
-      match (=) failed
-      code:  assert {:error, :not_found} = SlidingWindowLeaderboard.score(board, "alice", 10000)
-      left:  {:error, :not_found}
-      right: {:ok, :not_found}
-      
-
-  * test prune deletes expired events and returns the count
-      
-      
-      match (=) failed
-      code:  assert {:error, :not_found} = SlidingWindowLeaderboard.score(board, "alice", 10500)
-      left:  {:error, :not_found}
-      right: {:ok, :not_found}
-      
-
-  (…1 more)
+      Expected exception FunctionClauseError but nothing was raised
 ```

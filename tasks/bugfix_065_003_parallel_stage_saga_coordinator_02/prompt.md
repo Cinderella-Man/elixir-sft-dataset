@@ -91,7 +91,7 @@ defmodule ParallelSaga do
   The saga is a list of stages; the steps within a stage run **concurrently**, each
   receiving the same start-of-stage context. If any step in a stage fails, the
   succeeded steps of that stage plus all earlier stages are compensated (best-effort)
-  in reverse completion order.
+  in reverse of their declared order, stage by stage.
   """
 
   @opaque t :: %__MODULE__{stages: [[step()]]}
@@ -192,7 +192,7 @@ end
 ## Failing test report
 
 ```
-2 of 10 test(s) failed:
+4 of 16 test(s) failed:
 
   * test a failing step compensates its succeeded sibling and earlier stages
       
@@ -210,4 +210,22 @@ end
       code:  assert err.stage == 0
       left:  1
       right: 0
+      
+
+  * test a failing stage aborts the saga so later stages never run
+      
+      
+      Assertion with == failed
+      code:  assert err.stage == 0
+      left:  1
+      right: 0
+      
+
+  * test compensation walks every earlier stage most recent stage first
+      
+      
+      Assertion with == failed
+      code:  assert err.stage == 2
+      left:  3
+      right: 2
 ```

@@ -1,4 +1,4 @@
-  @spec add_edge(t(), vertex(), vertex()) :: {:ok, t()} | {:error, :cycle}
+  @spec add_edge(t(), vertex(), vertex()) :: {:ok, t()} | {:error, :cycle | :vertex_not_found}
   def add_edge(%__MODULE__{} = dag, from, to) do
     with :ok <- require_vertex(dag, from),
          :ok <- require_vertex(dag, to),

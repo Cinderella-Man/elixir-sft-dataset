@@ -95,8 +95,8 @@ defmodule BloomFilter do
   Given an expected number of items `n` and a desired false-positive rate `p`,
   the optimal parameters are derived as:
 
-      m = -ceil(n * ln(p) / ln(2)^2)   — number of bits
-      k = round(m / n * ln(2))         — number of hash functions
+      m = ceil(-n * ln(p) / ln(2)^2)     — number of bits
+      k = max(1, round(m / n * ln(2)))   — number of hash functions
   """
 
   @enforce_keys [:m, :k, :bits]
@@ -260,7 +260,7 @@ end
 ## Failing test report
 
 ```
-2 of 11 test(s) failed:
+3 of 23 test(s) failed:
 
   * test member?/2 always returns true for added items (no false negatives)
       errors were found at the given arguments:
@@ -272,4 +272,13 @@ end
       errors were found at the given arguments:
       
         * 1st argument: out of range
+      
+
+  * test new/2 derives the documented m, k, word count and all-zero words
+      
+      
+      Assertion with == failed
+      code:  assert tuple_size(filter.bits) == 150
+      left:  148
+      right: 150
 ```

@@ -38,7 +38,11 @@ defmodule Workflow do
           states: [atom()]
         }
 
-  @doc "Defines an FSM named by the atom from the given `states`. Returns the machine."
+  @doc """
+  Builds an FSM from its `initial` state atom and a list of transition
+  specs. Returns the machine; raises `ArgumentError` on a malformed or
+  duplicate transition spec.
+  """
   @spec define(atom(), list()) :: t()
   def define(initial, transitions) when is_atom(initial) and is_list(transitions) do
     normalized = Enum.map(transitions, &normalize/1)

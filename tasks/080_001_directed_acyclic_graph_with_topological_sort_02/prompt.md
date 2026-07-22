@@ -75,11 +75,12 @@ defmodule DAG do
 
   Both vertices must already exist in the DAG.
 
-  Returns `{:ok, new_dag}` on success, or `{:error, :cycle}` if the edge
-  would introduce a cycle.  Cycle detection is performed eagerly via DFS
-  before the edge is committed.
+  Returns `{:ok, new_dag}` on success, `{:error, :vertex_not_found}` when
+  either endpoint is missing, or `{:error, :cycle}` if the edge would
+  introduce a cycle.  Cycle detection is performed eagerly via DFS before
+  the edge is committed.
   """
-  @spec add_edge(t(), vertex(), vertex()) :: {:ok, t()} | {:error, :cycle}
+  @spec add_edge(t(), vertex(), vertex()) :: {:ok, t()} | {:error, :cycle | :vertex_not_found}
   def add_edge(%__MODULE__{} = dag, from, to) do
     with :ok <- require_vertex(dag, from),
          :ok <- require_vertex(dag, to),
@@ -155,7 +156,8 @@ defmodule DAG do
   # `in_degree` – current in-degree map (mutable across iterations)
   # `out_edges` – adjacency (unchanged)
   # `acc`       – reversed result list
-  defp kahn(queue, in_degree, out_edges, acc) do
+
+  defp kahn([], in_degree, _out_edges, acc) do
     # TODO
   end
 

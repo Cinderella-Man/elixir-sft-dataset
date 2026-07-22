@@ -44,7 +44,12 @@ defmodule CsvLoader do
   # Public API
   # ---------------------------------------------------------------------------
 
-  @doc "Loads CSV at `file_path`, coercing rows to `schema`. Returns `{:ok, rows}` or error."
+  @doc """
+  Loads CSV at `file_path`, coercing rows to `schema`.
+
+  Returns `{:ok, valid_rows, error_report}` (the same 3-tuple `load_string/2`
+  documents) or `{:error, :file_not_found | :empty_file}`.
+  """
   # TODO: @spec
   def load_file(file_path, schema) do
     case File.read(file_path) do

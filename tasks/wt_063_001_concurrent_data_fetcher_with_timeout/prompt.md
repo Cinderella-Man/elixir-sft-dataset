@@ -66,7 +66,7 @@ defmodule ConcurrentFetcher do
 
   Returns `%{}` immediately when `sources` is empty.
   """
-  @spec fetch_all([{term(), (-> {:ok, term()} | {:error, term()})}, ...], non_neg_integer()) ::
+  @spec fetch_all([{term(), (-> {:ok, term()} | {:error, term()})}], non_neg_integer()) ::
           %{term() => {:ok, term()} | {:error, term()}}
   def fetch_all([], _timeout_ms), do: %{}
 

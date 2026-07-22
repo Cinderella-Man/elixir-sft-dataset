@@ -31,7 +31,8 @@ defmodule PriorityDLQ do
 
   @doc """
   Pushes a dead-lettered `message` (with its `error_reason`, `metadata`, and `priority`)
-  onto `queue_name`. Drops the lowest-priority entry when the bounded queue is full.
+  onto `queue_name`. Returns `{:error, :full}` when the bounded queue is full —
+  nothing is stored and nothing is evicted.
   """
   # TODO: @spec
   def push(server, queue_name, message, error_reason, metadata, priority)

@@ -216,7 +216,7 @@ defmodule Generators do
       ])
       # => :common roughly 10× more often than :rare
   """
-  @spec one_of_weighted([{pos_integer(), StreamData.t(a)}]) :: StreamData.t(a) when a: term()
+  @spec one_of_weighted([{non_neg_integer(), StreamData.t(a)}]) :: StreamData.t(a) when a: term()
   def one_of_weighted(weighted_list) when is_list(weighted_list) and weighted_list != [] do
     # Expand each {weight, gen} pair into `weight` copies of `gen`, then hand
     # off to `StreamData.one_of/1` for uniform selection. This keeps the

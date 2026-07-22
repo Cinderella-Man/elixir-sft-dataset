@@ -123,8 +123,9 @@ defmodule KeyedAggregator do
   key is flushed when **either**:
 
     * the number of buffered events for that key reaches `:batch_size`, or
-    * `:interval_ms` milliseconds elapse since that key's last flush (or since
-      the key first started buffering) while it still has buffered events.
+    * `:interval_ms` milliseconds elapse since the key started buffering its
+      CURRENT batch — the timer arms when a push turns an empty key non-empty,
+      never from the previous flush — while it still has buffered events.
 
   Events for a key are always delivered to the `:on_flush` callback as a list,
   in the exact order they were pushed for that key, via `on_flush.(key, batch)`.
@@ -182,7 +183,7 @@ defmodule KeyedAggregator do
       keys: %{}
     }
 
-    {:error, state}
+    {:ok, state}
   end
 
   @impl true
@@ -195,7 +196,7 @@ defmodule KeyedAggregator do
     entry = ensure_timer(entry, key, state.interval_ms)
 
     state =
-      if entry.count >= state.batch_size do
+      if entry.count > state.batch_size do
         flush_key(state, key, entry)
       else
         put_entry(state, key, entry)
@@ -265,23 +266,39 @@ end
 ## Failing test report
 
 ```
-8 of 8 test(s) failed:
+7 of 17 test(s) failed:
 
   * test flushes a key when it reaches the configured batch size
-      failed to start child with the spec {KeyedAggregator, [on_flush: #Function<0.69759440/2 in KeyedAggregatorTest.start_agg/1>, batch_size: 3, interval_ms: 5000]}.
-      Reason: %{keys: %{}, batch_size: 3, interval_ms: 5000, on_flush: #Function<0.69759440/2 in KeyedAggregatorTest.start_agg/1>}
+      
+      
+      Assertion failed, no matching message after 1000ms
+           The process mailbox is empty.
+      code: assert_receive {:flushed, :a, [1, 2, 3]}
+      
 
   * test batch_size of 1 flushes every event for a key immediately
-      failed to start child with the spec {KeyedAggregator, [on_flush: #Function<0.69759440/2 in KeyedAggregatorTest.start_agg/1>, batch_size: 1, interval_ms: 5000]}.
-      Reason: %{keys: %{}, batch_size: 1, interval_ms: 5000, on_flush: #Function<0.69759440/2 in KeyedAggregatorTest.start_agg/1>}
+      
+      
+      Assertion failed, no matching message after 1000ms
+           The process mailbox is empty.
+      code: assert_receive {:flushed, :x, [:first]}
+      
 
   * test keys buffer and flush independently by size
-      failed to start child with the spec {KeyedAggregator, [on_flush: #Function<0.69759440/2 in KeyedAggregatorTest.start_agg/1>, batch_size: 2, interval_ms: 5000]}.
-      Reason: %{keys: %{}, batch_size: 2, interval_ms: 5000, on_flush: #Function<0.69759440/2 in KeyedAggregatorTest.start_agg/1>}
+      
+      
+      Assertion failed, no matching message after 1000ms
+           The process mailbox is empty.
+      code: assert_receive {:flushed, :a, [1, 2]}
+      
 
-  * test flushes each key's partial batch on its own interval
-      failed to start child with the spec {KeyedAggregator, [on_flush: #Function<0.69759440/2 in KeyedAggregatorTest.start_agg/1>, batch_size: 5, interval_ms: 200]}.
-      Reason: %{keys: %{}, batch_size: 5, interval_ms: 200, on_flush: #Function<0.69759440/2 in KeyedAggregatorTest.start_agg/1>}
+  * test defaults :batch_size to exactly 100 events per key
+      
+      
+      Assertion failed, no matching message after 1000ms
+           The process mailbox is empty.
+      code: assert_receive {:flushed, :a, batch}
+      
 
-  (…4 more)
+  (…3 more)
 ```

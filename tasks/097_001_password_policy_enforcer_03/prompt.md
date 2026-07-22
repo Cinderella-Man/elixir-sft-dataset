@@ -40,7 +40,8 @@ defmodule PasswordPolicy do
       # => :ok
 
       PasswordPolicy.validate("alice", context)
-      # => {:error, [:too_short, :no_uppercase, :no_digit, :too_similar_to_username]}
+      # => {:error, [:too_short, :no_uppercase, :no_digit, :no_special,
+      #               :too_similar_to_username]}
   """
 
   # ---------------------------------------------------------------------------
@@ -71,6 +72,7 @@ defmodule PasswordPolicy do
   `context` must include `:username`. All other keys are optional and fall
   back to the module defaults.
   """
+
   def validate(password, %{username: _} = context) do
     # TODO
   end

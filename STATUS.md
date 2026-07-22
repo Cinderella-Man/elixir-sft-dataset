@@ -25,9 +25,16 @@ Finding details for the current campaign: `logs/semantic_review.jsonl`
    message says 015_004 — full 096_001 story in docs/15). Also done:
    005_002 (sweep's refutation was WRONG — per-finding evidence
    checks now mandatory), 004_003 refuted-stale.)
-   - Rubric triage remaining: **064_001** ONLY (worker_count refusal
-     unpinned + find_victim hot-loops on 1-item peers; do together
-     with its G2 hand-tail strengthening — one visit).
+   - Rubric triage: ALL 11 ROOTS DONE (064_001 closed the set; its
+     G2 hand-tail + 071_001's done with it — see commits).
+   - [IN FLIGHT] corpus-wide semantic re-measure for the G2 floor
+     promotion: pid 4113769, log logs/semantic_full2.log. Expected:
+     sub-0.6 tail = only at-ceiling families. Relaunch:
+     scripts/run_detached.sh logs/semantic_full2.log elixir
+     scripts/validate.exs --semantic-mutants. When it lands: design
+     the floor gate (observable-kill semantics per docs/14 §5.1.2,
+     at-ceiling waivers), wire into validate.exs + CI (G2 item c);
+     plus Task-B rider: strengthen_harnesses candidate archiving.
    - DONE additionally: 032_004 (4 findings), 013_003 medium
      (candidate landed), 041_002, 110_004 (both sweep-refutations
      WRONG — per-finding evidence checks are now the rule), 011_004

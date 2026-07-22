@@ -130,7 +130,8 @@ defmodule TieredPromoCodes do
   def create(attrs) when is_map(attrs), do: GenServer.call(__MODULE__, {:create, attrs})
 
   @doc "Previews the discount for `code_string` on `order_total` (cents) without recording a use."
-  @spec preview(String.t(), non_neg_integer()) :: {:ok, map()} | {:error, atom()}
+  @spec preview(String.t(), non_neg_integer()) ::
+          {:ok, non_neg_integer(), non_neg_integer()} | {:error, atom()}
   def preview(code_string, order_total)
       when is_binary(code_string) and is_integer(order_total) and order_total >= 0 do
     GenServer.call(__MODULE__, {:preview, code_string, order_total})
@@ -322,7 +323,7 @@ end
 ## Failing test report
 
 ```
-16 of 16 test(s) failed:
+22 of 22 test(s) failed:
 
   * test create accepts a valid tiered code
       failed to start child with the spec {TieredPromoCodes, [clock: &TieredPromoCodesTest.Clock.now/0]}.
@@ -340,5 +341,5 @@ end
       failed to start child with the spec {TieredPromoCodes, [clock: &TieredPromoCodesTest.Clock.now/0]}.
       Reason: %{clock: &TieredPromoCodesTest.Clock.now/0, codes: %{}, total_uses: %{}, user_uses: %{}}
 
-  (…12 more)
+  (…18 more)
 ```

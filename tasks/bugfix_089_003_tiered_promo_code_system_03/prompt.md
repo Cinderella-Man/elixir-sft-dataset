@@ -130,7 +130,8 @@ defmodule TieredPromoCodes do
   def create(attrs) when is_map(attrs), do: GenServer.call(__MODULE__, {:create, attrs})
 
   @doc "Previews the discount for `code_string` on `order_total` (cents) without recording a use."
-  @spec preview(String.t(), non_neg_integer()) :: {:ok, map()} | {:error, atom()}
+  @spec preview(String.t(), non_neg_integer()) ::
+          {:ok, non_neg_integer(), non_neg_integer()} | {:error, atom()}
   def preview(code_string, order_total)
       when is_binary(code_string) and is_integer(order_total) and order_total >= 0 do
     GenServer.call(__MODULE__, {:preview, code_string, order_total})
@@ -145,7 +146,7 @@ defmodule TieredPromoCodes do
 
   @impl true
   def handle_call({:create, attrs}, _from, state) do
-    with {:error, code} <- build_code(attrs),
+    with {:ok, code} <- build_code(attrs),
          :ok <- ensure_unique(code.code, state) do
       {:reply, {:ok, code}, put_in(state.codes[code.code], code)}
     else
@@ -217,7 +218,7 @@ defmodule TieredPromoCodes do
   defp valid_tiers?(_), do: false
 
   defp valid_tier?(%{threshold: t, type: type, value: v})
-       when is_integer(t) and t >= 0 and is_number(v) and type in @tier_types do
+       when is_integer(t) and t > 0 and is_number(v) and type in @tier_types do
     case type do
       :percentage -> v >= 0 and v <= 100
       :fixed_amount -> v >= 0
@@ -322,19 +323,37 @@ end
 ## Failing test report
 
 ```
-15 of 16 test(s) failed:
+11 of 22 test(s) failed:
 
   * test create accepts a valid tiered code
-      :exit: {{{:else_clause, {:ok, %{code: "SPEND", tiers: [%{type: :percentage, value: 5, threshold: 0}, %{type: :percentage, value: 10, threshold: 5000}, %{type: :percentage, value: 20, threshold: 10000}], max_uses: nil, max_uses_per_user: nil, valid_from: nil, valid_until: nil}}}, [{TieredPromoCodes, :"-handle_call/3-fun-0-", 2, [file: ~c".gen_staging/bugfix_089_003_tiered_promo_code_system_03_mutant.ex", line: 50]}, {:gen_server, :try_handle_call, 4, [file: ~c"gen_server.erl", line: 2470]}, {:gen
+      
+      
+      match (=) failed
+      code:  assert {:ok, _} = TieredPromoCodes.create(%{code: "SPEND", tiers: @pct_tiers})
+      left:  {:ok, _}
+      right: {:error, :invalid_tiers}
+      
 
   * test create rejects duplicates
-      :exit: {{{:else_clause, {:ok, %{code: "DUP", tiers: [%{type: :percentage, value: 5, threshold: 0}, %{type: :percentage, value: 10, threshold: 5000}, %{type: :percentage, value: 20, threshold: 10000}], max_uses: nil, max_uses_per_user: nil, valid_from: nil, valid_until: nil}}}, [{TieredPromoCodes, :"-handle_call/3-fun-0-", 2, [file: ~c".gen_staging/bugfix_089_003_tiered_promo_code_system_03_mutant.ex", line: 50]}, {:gen_server, :try_handle_call, 4, [file: ~c"gen_server.erl", line: 2470]}, {:gen_s
+      
+      
+      match (=) failed
+      code:  assert {:ok, _} = TieredPromoCodes.create(%{code: "DUP", tiers: @pct_tiers})
+      left:  {:ok, _}
+      right: {:error, :invalid_tiers}
+      
 
-  * test create rejects an empty tier list
-      :exit: {{:undef, [{:invalid_tiers, :code, [], []}, {:elixir_erl_pass, :no_parens_remote, 2, [file: ~c"src/elixir_erl_pass.erl", line: 798]}, {TieredPromoCodes, :handle_call, 3, [file: ~c".gen_staging/bugfix_089_003_tiered_promo_code_system_03_mutant.ex", line: 51]}, {:gen_server, :try_handle_call, 4, [file: ~c"gen_server.erl", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c"gen_server.erl", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c"proc_lib.erl", line: 333]}]}, {GenServer, :
+  * test selects the correct tier by order total
+      no match of right hand side value:
+      
+          {:error, :invalid_tiers}
+      
 
-  * test create rejects non-ascending thresholds
-      :exit: {{:undef, [{:invalid_tiers, :code, [], []}, {:elixir_erl_pass, :no_parens_remote, 2, [file: ~c"src/elixir_erl_pass.erl", line: 798]}, {TieredPromoCodes, :handle_call, 3, [file: ~c".gen_staging/bugfix_089_003_tiered_promo_code_system_03_mutant.ex", line: 51]}, {:gen_server, :try_handle_call, 4, [file: ~c"gen_server.erl", line: 2470]}, {:gen_server, :handle_msg, 3, [file: ~c"gen_server.erl", line: 2499]}, {:proc_lib, :init_p_do_apply, 3, [file: ~c"proc_lib.erl", line: 333]}]}, {GenServer, :
+  * test fixed-amount tiers cap at the order total
+      no match of right hand side value:
+      
+          {:error, :invalid_tiers}
+      
 
-  (…11 more)
+  (…7 more)
 ```

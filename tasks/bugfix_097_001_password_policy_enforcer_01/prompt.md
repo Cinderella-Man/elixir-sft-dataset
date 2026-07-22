@@ -51,7 +51,8 @@ defmodule PasswordPolicy do
       # => :ok
 
       PasswordPolicy.validate("alice", context)
-      # => {:error, [:too_short, :no_uppercase, :no_digit, :too_similar_to_username]}
+      # => {:error, [:too_short, :no_uppercase, :no_digit, :no_special,
+      #               :too_similar_to_username]}
   """
 
   # ---------------------------------------------------------------------------
@@ -270,7 +271,16 @@ end
 ## Failing test report
 
 ```
-7 of 23 test(s) failed:
+8 of 25 test(s) failed:
+
+  * test reuse comparison is exact, so a case variant of a previous password passes
+      
+      
+      Assertion with == failed
+      code:  assert case_variant == :ok
+      left:  :error
+      right: :ok
+      
 
   * test valid password - all rules pass
       
@@ -299,14 +309,5 @@ end
       right: :ok
       
 
-  * test password far from username is accepted
-      
-      
-      Assertion with == failed
-      code:  assert result == :ok
-      left:  :error
-      right: :ok
-      
-
-  (…3 more)
+  (…4 more)
 ```
